@@ -57,8 +57,10 @@ const BLOCKED_EDIT_SELECTOR = [
 module.exports = class NoteDoodlePreviewPlugin extends Plugin {
   async onload() {
     this.controllers = new WeakMap();
+    this.headerActions = new Map();
     this.saveTimers = new Map();
     this.textSaveStates = new WeakMap();
+    cleanupAllDoodleHeaderButtons();
 
     this.addCommand({
       id: "toggle-note-doodle-preview",
@@ -67,17 +69,17 @@ module.exports = class NoteDoodlePreviewPlugin extends Plugin {
     });
 
     this.registerMarkdownPostProcessor((el, ctx) => {
-      const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+      const preview = el.closest(".markdown-preview-view");
+      if (!preview || isEmbeddedPreview(preview)) {
+        return;
+      }
+
+      const view = findOwningMarkdownView(this.app, preview, ctx.sourcePath);
       if (!view || !view.file || !ctx.sourcePath || view.file.path !== ctx.sourcePath) {
         return;
       }
 
       annotateEditableElements(el, ctx);
-
-      const preview = el.closest(".markdown-preview-view");
-      if (!preview) {
-        return;
-      }
 
       const existingController = this.controllers.get(preview) || preview._noteDoodleController;
       if (existingController?.plugin === this) {
@@ -101,6 +103,12 @@ module.exports = class NoteDoodlePreviewPlugin extends Plugin {
   }
 
   onunload() {
+    for (const state of this.headerActions.values()) {
+      state.button?.remove();
+    }
+    this.headerActions.clear();
+    cleanupAllDoodleHeaderButtons();
+
     for (const timer of this.saveTimers.values()) {
       clearTimeout(timer);
     }
@@ -109,7 +117,7 @@ module.exports = class NoteDoodlePreviewPlugin extends Plugin {
 
   toggleActiveController() {
     const view = this.app.workspace.getActiveViewOfType(MarkdownView);
-    const preview = view?.containerEl?.querySelector(".markdown-preview-view");
+    const preview = view ? findRootPreviewForView(view) : null;
     const controller = preview ? this.controllers.get(preview) || preview._noteDoodleController : null;
 
     if (!controller) {
@@ -118,6 +126,81 @@ module.exports = class NoteDoodlePreviewPlugin extends Plugin {
     }
 
     controller.toggle();
+  }
+
+  installHeaderButton(controller) {
+    const view = controller.view;
+    let state = this.headerActions.get(view);
+
+    if (!state || !state.button?.isConnected) {
+      state = {
+        button: null,
+        controller: null,
+      };
+
+      state.clickHandler = (event) => state.controller?.onButtonClick(event);
+      state.pointerDownHandler = (event) => state.controller?.onButtonPointerDown(event);
+      state.pointerUpHandler = (event) => state.controller?.onButtonPointerUp(event);
+
+      let button = null;
+      if (typeof view?.addAction === "function") {
+        button = view.addAction("wand-sparkles", "Edit text / draw", state.clickHandler);
+      }
+
+      if (!button) {
+        const actions = view?.containerEl?.querySelector(".view-actions");
+        button = document.createElement("div");
+        button.classList.add("clickable-icon", "view-action");
+        setIcon(button, "wand-sparkles");
+        button.addEventListener("click", state.clickHandler);
+
+        if (actions) {
+          actions.appendChild(button);
+        } else {
+          controller.previewEl.appendChild(button);
+          button.classList.add("note-doodle-fallback-button");
+        }
+      }
+
+      button.addEventListener("pointerdown", state.pointerDownHandler);
+      button.addEventListener("pointerup", state.pointerUpHandler);
+      button.addEventListener("pointercancel", state.pointerUpHandler);
+      button.addEventListener("pointerleave", state.pointerUpHandler);
+
+      state.button = button;
+      this.headerActions.set(view, state);
+    }
+
+    state.controller = controller;
+    state.button._noteDoodleController = controller;
+    state.button.classList.add("note-doodle-header-button");
+    state.button.setAttribute("aria-label", "Edit text / draw");
+    state.button.setAttribute("title", "Edit text / draw");
+    state.button.classList.toggle("is-active", controller.active);
+    this.cleanupHeaderButtons(view, state.button);
+
+    return state.button;
+  }
+
+  releaseHeaderButton(controller) {
+    const state = this.headerActions.get(controller.view);
+    if (!state || state.controller !== controller) {
+      return;
+    }
+
+    state.button?.remove();
+    this.headerActions.delete(controller.view);
+    this.cleanupHeaderButtons(controller.view);
+  }
+
+  cleanupHeaderButtons(view, keepButton = null) {
+    view?.containerEl
+      ?.querySelectorAll(".note-doodle-header-button")
+      .forEach((button) => {
+        if (button !== keepButton) {
+          button.remove();
+        }
+      });
   }
 
   async ensureDoodleDir() {
@@ -548,10 +631,6 @@ class PreviewDoodleController {
     this.previewEl.addClass("note-doodle-shell");
 
     this.button = this.createHeaderButton();
-    this.button.addEventListener("pointerdown", this.onButtonPointerDown);
-    this.button.addEventListener("pointerup", this.onButtonPointerUp);
-    this.button.addEventListener("pointercancel", this.onButtonPointerUp);
-    this.button.addEventListener("pointerleave", this.onButtonPointerUp);
 
     this.toolbar = this.previewEl.createDiv({ cls: "note-doodle-toolbar" });
     this.undoButton = this.toolbar.createEl("button", {
@@ -613,34 +692,7 @@ class PreviewDoodleController {
   }
 
   createHeaderButton() {
-    let button = null;
-
-    if (typeof this.view?.addAction === "function") {
-      button = this.view.addAction("wand-sparkles", "Edit text / draw", this.onButtonClick);
-    }
-
-    if (!button) {
-      const actions = this.view?.containerEl?.querySelector(".view-actions");
-      button = document.createElement("div");
-      button.classList.add("clickable-icon", "view-action");
-      button.setAttribute("aria-label", "Edit text / draw");
-      button.setAttribute("title", "Edit text / draw");
-      setIcon(button, "wand-sparkles");
-      button.addEventListener("click", this.onButtonClick);
-
-      if (actions) {
-        actions.appendChild(button);
-      } else {
-        this.previewEl.appendChild(button);
-        button.classList.add("note-doodle-fallback-button");
-      }
-    }
-
-    button.classList.add("note-doodle-header-button");
-    button.setAttribute("aria-label", "Edit text / draw");
-    button.setAttribute("title", "Edit text / draw");
-
-    return button;
+    return this.plugin.installHeaderButton(this);
   }
 
   async setFile(file) {
@@ -674,7 +726,7 @@ class PreviewDoodleController {
     this.clearButtonLongPress();
     this.resizeObserver?.disconnect();
     window.removeEventListener("resize", this.onResize);
-    this.button?.remove();
+    this.plugin.releaseHeaderButton(this);
     this.toolbar?.remove();
     this.canvas?.remove();
     this.previewEl.removeClass("note-doodle-shell");
@@ -1600,6 +1652,42 @@ function safeGetSectionInfo(ctx, element) {
   } catch (_) {
     return null;
   }
+}
+
+function findOwningMarkdownView(app, element, sourcePath) {
+  const leaves = app.workspace.getLeavesOfType?.("markdown") || [];
+
+  for (const leaf of leaves) {
+    const view = leaf.view;
+    if (!(view instanceof MarkdownView)) {
+      continue;
+    }
+
+    if (sourcePath && view.file?.path !== sourcePath) {
+      continue;
+    }
+
+    if (view.containerEl?.contains(element)) {
+      return view;
+    }
+  }
+
+  return null;
+}
+
+function findRootPreviewForView(view) {
+  const previews = Array.from(view?.containerEl?.querySelectorAll(".markdown-preview-view") || []);
+  return previews.find((preview) => !isEmbeddedPreview(preview)) || null;
+}
+
+function isEmbeddedPreview(preview) {
+  return Boolean(preview.closest(".markdown-embed, .markdown-embed-content, .internal-embed, .external-embed"));
+}
+
+function cleanupAllDoodleHeaderButtons() {
+  document
+    .querySelectorAll(".note-doodle-header-button")
+    .forEach((button) => button.remove());
 }
 
 function cleanupDoodleUi(preview) {

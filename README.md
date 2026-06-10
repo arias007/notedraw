@@ -29,6 +29,7 @@ Obsidian prototype plugin for editing rendered text and drawing directly in read
 - Version 0.1.7 makes selected doodles semi-transparent and forwards two-finger scrolling to the preview.
 - Version 0.1.8 makes drags from the selected frame move the selected doodle instead of creating a new stroke.
 - Version 0.1.9 moves the mode button into the Obsidian view header and changes it to a magic-wand icon.
+- Version 0.1.12 keeps the 0.1.9 drawing path and prevents duplicate magic-wand buttons when multiple notes or embedded previews render.
 
 ## Manual install
 
