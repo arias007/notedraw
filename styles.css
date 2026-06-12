@@ -79,7 +79,6 @@
   left: auto;
   right: var(--notedraw-toolbar-right, 8px);
   display: none;
-  flex-wrap: wrap;
   gap: 3px;
   align-items: center;
   padding: 4px;
@@ -87,7 +86,7 @@
   border-radius: 999px;
   background: color-mix(in srgb, var(--background-primary) 88%, var(--background-secondary));
   box-shadow: 0 1px 5px rgba(0, 0, 0, 0.10);
-  max-width: min(392px, calc(100vw - 16px));
+  max-width: calc(100vw - 16px);
 }
 
 .notedraw-shell.is-drawing-active .notedraw-toolbar {
@@ -206,6 +205,75 @@
 .notedraw-shell.is-drawing-active.is-palette-open .notedraw-palette-panel {
   display: grid;
   gap: 8px;
+}
+
+.notedraw-text-panel {
+  position: fixed;
+  z-index: 1002;
+  top: var(--notedraw-text-panel-top, 92px);
+  left: auto;
+  right: var(--notedraw-toolbar-right, 8px);
+  display: none;
+  width: 252px;
+  max-width: calc(100vw - 16px);
+  padding: 9px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-primary);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
+}
+
+.notedraw-shell.is-drawing-active.is-text-panel-open .notedraw-text-panel {
+  display: grid;
+  gap: 9px;
+}
+
+.notedraw-text-panel-section {
+  display: grid;
+  gap: 6px;
+}
+
+.notedraw-text-panel-title {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  font-weight: 600;
+}
+
+.notedraw-text-panel-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.notedraw-text-panel-button {
+  height: 30px;
+  min-width: 0;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 7px;
+  color: var(--text-muted);
+  background: var(--background-secondary);
+  cursor: pointer;
+}
+
+.notedraw-text-panel-button:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+.notedraw-text-panel-button.is-active {
+  color: var(--interactive-accent);
+  border-color: color-mix(in srgb, var(--interactive-accent) 38%, transparent);
+  background: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
+}
+
+.notedraw-text-panel-button svg,
+.notedraw-text-panel-button .svg-icon {
+  width: 17px;
+  height: 17px;
 }
 
 .notedraw-palette-row {

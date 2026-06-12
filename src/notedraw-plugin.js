@@ -941,6 +941,7 @@ class PreviewDrawingController {
     this.buttonLongPressed = false;
     this.buttonLongPressTimer = null;
     this.paletteOpen = false;
+    this.textPanelOpen = false;
     this.canvasCssWidth = 1;
     this.canvasCssHeight = 1;
     this.renderFrameId = null;
@@ -988,55 +989,14 @@ class PreviewDrawingController {
     this.watercolorButton.addEventListener("click", () => this.setBrushMode(BRUSH_WATERCOLOR));
 
     this.textButton = this.toolbar.createEl("button", {
-      attr: { type: "button", title: "Floating text" },
+      attr: { type: "button", title: "Text and shapes" },
     });
     setIcon(this.textButton, "type");
-    this.textButton.addEventListener("click", () => this.setShapeToolMode(TOOL_TEXT));
-
-    this.boldButton = this.toolbar.createEl("button", {
-      cls: "notedraw-style-button",
-      text: "B",
-      attr: { type: "button", title: "Bold text" },
+    this.textButton.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.toggleTextPanel();
     });
-    this.boldButton.addEventListener("click", () => this.toggleTextStyle("bold"));
-
-    this.italicButton = this.toolbar.createEl("button", {
-      cls: "notedraw-style-button notedraw-style-italic",
-      text: "I",
-      attr: { type: "button", title: "Italic text" },
-    });
-    this.italicButton.addEventListener("click", () => this.toggleTextStyle("italic"));
-
-    this.underlineButton = this.toolbar.createEl("button", {
-      cls: "notedraw-style-button notedraw-style-underline",
-      text: "U",
-      attr: { type: "button", title: "Underline text" },
-    });
-    this.underlineButton.addEventListener("click", () => this.toggleTextStyle("underline"));
-
-    this.boxedTextButton = this.toolbar.createEl("button", {
-      attr: { type: "button", title: "Button-style text box" },
-    });
-    setIcon(this.boxedTextButton, "badge");
-    this.boxedTextButton.addEventListener("click", () => this.toggleTextStyle("boxed"));
-
-    this.rectButton = this.toolbar.createEl("button", {
-      attr: { type: "button", title: "Box" },
-    });
-    setIcon(this.rectButton, "square");
-    this.rectButton.addEventListener("click", () => this.setShapeToolMode(TOOL_RECT));
-
-    this.lineButton = this.toolbar.createEl("button", {
-      attr: { type: "button", title: "Line" },
-    });
-    setIcon(this.lineButton, "minus");
-    this.lineButton.addEventListener("click", () => this.setShapeToolMode(TOOL_LINE));
-
-    this.arrowButton = this.toolbar.createEl("button", {
-      attr: { type: "button", title: "Arrow" },
-    });
-    setIcon(this.arrowButton, "arrow-up-right");
-    this.arrowButton.addEventListener("click", () => this.setShapeToolMode(TOOL_ARROW));
 
     this.selectButton = this.toolbar.createEl("button", {
       attr: { type: "button", title: "Select drawings" },
@@ -1122,6 +1082,9 @@ class PreviewDrawingController {
       this.syncCurrentBrushFields();
       this.updateToolButtons();
     });
+
+    this.textPanel = this.previewEl.createDiv({ cls: "notedraw-text-panel" });
+    this.createTextToolPanel();
 
     this.canvas = this.previewEl.createEl("canvas", { cls: "notedraw-canvas" });
     this.canvas.addEventListener("pointerdown", this.onPointerDown);
@@ -1238,6 +1201,7 @@ class PreviewDrawingController {
     this.plugin.releaseHeaderButton(this);
     this.toolbar?.remove();
     this.palettePanel?.remove();
+    this.textPanel?.remove();
     this.canvas?.remove();
     this.previewEl.removeClass("notedraw-shell");
     this.previewEl.removeClass("is-drawing-active");
@@ -1389,6 +1353,7 @@ class PreviewDrawingController {
     this.previewEl.style.setProperty("--notedraw-toolbar-right", `${Math.round(right)}px`);
     this.previewEl.style.setProperty("--notedraw-toolbar-top", `${Math.round(top)}px`);
     this.previewEl.style.setProperty("--notedraw-palette-top", `${Math.round(top + 42)}px`);
+    this.previewEl.style.setProperty("--notedraw-text-panel-top", `${Math.round(top + 42)}px`);
   }
 
   setBrushMode(mode) {
@@ -1414,6 +1379,10 @@ class PreviewDrawingController {
     }
 
     this.toolMode = mode;
+    if (mode === TOOL_TEXT) {
+      this.textPanelOpen = false;
+      this.previewEl.removeClass("is-text-panel-open");
+    }
     this.previewEl.removeClass("is-select-mode");
     this.endTextEdit();
     this.cancelCurrentStroke();
@@ -1432,6 +1401,21 @@ class PreviewDrawingController {
       this.toolMode = TOOL_TEXT;
     }
     this.previewEl.removeClass("is-select-mode");
+    this.updateToolButtons();
+    this.syncTextPanelButtons();
+  }
+
+  toggleTextPanel() {
+    if (this.toolMode === TOOL_SELECT) {
+      this.previewEl.removeClass("is-select-mode");
+    }
+    this.textPanelOpen = !this.textPanelOpen;
+    if (this.textPanelOpen) {
+      this.setPaletteOpen(false);
+      this.updateFloatingControlsPosition();
+      this.syncTextPanelButtons();
+    }
+    this.previewEl.toggleClass("is-text-panel-open", this.textPanelOpen);
     this.updateToolButtons();
   }
 
@@ -1471,14 +1455,8 @@ class PreviewDrawingController {
     const watercolorActive = this.toolMode === TOOL_DRAW && this.brushMode === BRUSH_WATERCOLOR;
     this.applyBrushButtonState(this.penButton, this.brushSettings?.[BRUSH_PEN], penActive);
     this.applyBrushButtonState(this.watercolorButton, this.brushSettings?.[BRUSH_WATERCOLOR], watercolorActive);
-    this.textButton?.classList.toggle("is-active", this.toolMode === TOOL_TEXT);
-    this.rectButton?.classList.toggle("is-active", this.toolMode === TOOL_RECT);
-    this.lineButton?.classList.toggle("is-active", this.toolMode === TOOL_LINE);
-    this.arrowButton?.classList.toggle("is-active", this.toolMode === TOOL_ARROW);
-    this.boldButton?.classList.toggle("is-active", Boolean(this.textStyle.bold));
-    this.italicButton?.classList.toggle("is-active", Boolean(this.textStyle.italic));
-    this.underlineButton?.classList.toggle("is-active", Boolean(this.textStyle.underline));
-    this.boxedTextButton?.classList.toggle("is-active", Boolean(this.textStyle.boxed));
+    this.textButton?.classList.toggle("is-active", this.textPanelOpen || [TOOL_TEXT, TOOL_RECT, TOOL_LINE, TOOL_ARROW].includes(this.toolMode));
+    this.syncTextPanelButtons();
     this.selectButton?.classList.toggle("is-active", this.toolMode === TOOL_SELECT);
     this.paletteButton?.toggleAttribute("disabled", this.toolMode === TOOL_SELECT);
     this.previewEl.toggleClass("is-watercolor-mode", this.toolMode === TOOL_DRAW && this.brushMode === BRUSH_WATERCOLOR);
@@ -1522,6 +1500,85 @@ class PreviewDrawingController {
       event.stopPropagation();
       this.colorInput?.click();
     });
+  }
+
+  createTextToolPanel() {
+    this.textPanel.empty();
+    this.createTextPanelSection("Insert", [
+      { label: "Text", icon: "type", action: () => this.chooseTextPreset({}) },
+      { label: "Title", icon: "heading", action: () => this.chooseTextPreset({ text: "Title", fontSize: 24, bold: true, boxed: false }) },
+      { label: "Code", icon: "code-2", action: () => this.chooseTextPreset({ text: "code", fontSize: 16, boxed: true, code: true }) },
+      { label: "File", icon: "paperclip", action: () => this.chooseTextPreset({ text: "File", fontSize: 16, boxed: true, file: true }) },
+    ]);
+    this.createTextPanelSection("Style", [
+      { id: "bold", label: "Bold", text: "B", className: "notedraw-style-button", action: () => this.toggleTextStyle("bold") },
+      { id: "italic", label: "Italic", text: "I", className: "notedraw-style-button notedraw-style-italic", action: () => this.toggleTextStyle("italic") },
+      { id: "underline", label: "Underline", text: "U", className: "notedraw-style-button notedraw-style-underline", action: () => this.toggleTextStyle("underline") },
+      { id: "boxed", label: "Button box", icon: "badge", action: () => this.toggleTextStyle("boxed") },
+    ]);
+    this.createTextPanelSection("Shapes", [
+      { id: TOOL_RECT, label: "Box", icon: "square", action: () => this.chooseShapeTool(TOOL_RECT) },
+      { id: TOOL_LINE, label: "Line", icon: "minus", action: () => this.chooseShapeTool(TOOL_LINE) },
+      { id: TOOL_ARROW, label: "Arrow", icon: "arrow-up-right", action: () => this.chooseShapeTool(TOOL_ARROW) },
+    ]);
+  }
+
+  createTextPanelSection(title, items) {
+    const section = this.textPanel.createDiv({ cls: "notedraw-text-panel-section" });
+    section.createDiv({ cls: "notedraw-text-panel-title", text: title });
+    const grid = section.createDiv({ cls: "notedraw-text-panel-grid" });
+    for (const item of items) {
+      const button = grid.createEl("button", {
+        cls: `notedraw-text-panel-button ${item.className || ""}`.trim(),
+        attr: { type: "button", title: item.label },
+      });
+      button.dataset.noteDrawPanelId = item.id || "";
+      if (item.icon) {
+        setIcon(button, item.icon);
+      } else {
+        button.setText(item.text || item.label);
+      }
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        item.action();
+      });
+    }
+  }
+
+  chooseTextPreset(preset) {
+    this.textStyle = {
+      ...this.textStyle,
+      bold: Boolean(preset.bold ?? this.textStyle.bold),
+      italic: Boolean(preset.italic ?? this.textStyle.italic),
+      underline: Boolean(preset.underline ?? this.textStyle.underline),
+      boxed: Boolean(preset.boxed ?? this.textStyle.boxed),
+      code: Boolean(preset.code),
+      file: Boolean(preset.file),
+      text: preset.text || "",
+      fontSize: preset.fontSize || 18,
+    };
+    this.setShapeToolMode(TOOL_TEXT);
+  }
+
+  chooseShapeTool(mode) {
+    this.setShapeToolMode(mode);
+    this.textPanelOpen = false;
+    this.previewEl.removeClass("is-text-panel-open");
+    this.updateToolButtons();
+  }
+
+  syncTextPanelButtons() {
+    if (!this.textPanel) {
+      return;
+    }
+    this.textPanel.querySelector('[data-note-draw-panel-id="bold"]')?.classList.toggle("is-active", Boolean(this.textStyle.bold));
+    this.textPanel.querySelector('[data-note-draw-panel-id="italic"]')?.classList.toggle("is-active", Boolean(this.textStyle.italic));
+    this.textPanel.querySelector('[data-note-draw-panel-id="underline"]')?.classList.toggle("is-active", Boolean(this.textStyle.underline));
+    this.textPanel.querySelector('[data-note-draw-panel-id="boxed"]')?.classList.toggle("is-active", Boolean(this.textStyle.boxed));
+    for (const mode of [TOOL_RECT, TOOL_LINE, TOOL_ARROW]) {
+      this.textPanel.querySelector(`[data-note-draw-panel-id="${mode}"]`)?.classList.toggle("is-active", this.toolMode === mode);
+    }
   }
 
   setCurrentBrushColor(color) {
@@ -1587,6 +1644,10 @@ class PreviewDrawingController {
 
   setPaletteOpen(open) {
     this.paletteOpen = Boolean(open);
+    if (this.paletteOpen) {
+      this.textPanelOpen = false;
+      this.previewEl.removeClass("is-text-panel-open");
+    }
     this.previewEl.toggleClass("is-palette-open", this.paletteOpen);
     this.paletteButton?.classList.toggle("is-active", this.paletteOpen);
     if (this.paletteOpen) {
@@ -1595,7 +1656,7 @@ class PreviewDrawingController {
   }
 
   onDocumentPointerDown(event) {
-    if (!this.paletteOpen) {
+    if (!this.paletteOpen && !this.textPanelOpen) {
       return;
     }
 
@@ -1603,8 +1664,14 @@ class PreviewDrawingController {
     if (this.palettePanel?.contains(target) || this.paletteButton?.contains(target)) {
       return;
     }
+    if (this.textPanel?.contains(target) || this.textButton?.contains(target)) {
+      return;
+    }
 
     this.setPaletteOpen(false);
+    this.textPanelOpen = false;
+    this.previewEl.removeClass("is-text-panel-open");
+    this.updateToolButtons();
   }
 
   onButtonPointerDown() {
@@ -1764,12 +1831,14 @@ class PreviewDrawingController {
       return {
         ...base,
         kind: TOOL_TEXT,
-        text: "",
-        fontSize: 18,
+        text: this.textStyle.text || "",
+        fontSize: this.textStyle.fontSize || 18,
         bold: Boolean(this.textStyle.bold),
         italic: Boolean(this.textStyle.italic),
         underline: Boolean(this.textStyle.underline),
         boxed: Boolean(this.textStyle.boxed),
+        code: Boolean(this.textStyle.code),
+        file: Boolean(this.textStyle.file),
       };
     }
 
@@ -1895,7 +1964,7 @@ class PreviewDrawingController {
     const editable = this.pointerStartEditable;
 
     if (this.currentStroke.kind === TOOL_TEXT) {
-      const text = window.prompt("Text", "");
+      const text = window.prompt("Text", this.currentStroke.text || "");
       if (text?.trim()) {
         this.currentStroke.text = text.trim();
         this.drawingData.strokes.push(this.currentStroke);
@@ -2606,14 +2675,17 @@ class PreviewDrawingController {
     if (stroke.kind === TOOL_TEXT) {
       const fontSize = clamp(Number(stroke.fontSize || 18), 10, 96);
       const text = String(stroke.text || "Text");
-      ctx.font = `${stroke.italic ? "italic " : ""}${stroke.bold ? "700 " : "500 "}${fontSize}px system-ui, -apple-system, Segoe UI, sans-serif`;
+      const fontFamily = stroke.code
+        ? "ui-monospace, SFMono-Regular, Consolas, monospace"
+        : "system-ui, -apple-system, Segoe UI, sans-serif";
+      ctx.font = `${stroke.italic ? "italic " : ""}${stroke.bold ? "700 " : "500 "}${fontSize}px ${fontFamily}`;
       ctx.textBaseline = "top";
       const metrics = ctx.measureText(text);
       const paddingX = stroke.boxed ? 8 : 0;
       const paddingY = stroke.boxed ? 5 : 0;
       if (stroke.boxed) {
         ctx.save();
-        ctx.globalAlpha = alpha * Math.max(0.14, opacity * 0.18);
+        ctx.globalAlpha = alpha * Math.max(stroke.code ? 0.22 : 0.14, opacity * 0.18);
         ctx.fillStyle = color;
         roundRect(ctx, first.x - paddingX, first.y - paddingY, metrics.width + paddingX * 2, fontSize + paddingY * 2, 7);
         ctx.fill();
@@ -3749,6 +3821,8 @@ function normalizeStroke(stroke) {
       italic: kind === TOOL_TEXT ? Boolean(stroke?.italic) : undefined,
       underline: kind === TOOL_TEXT ? Boolean(stroke?.underline) : undefined,
       boxed: kind === TOOL_TEXT ? stroke?.boxed !== false : undefined,
+      code: kind === TOOL_TEXT ? Boolean(stroke?.code) : undefined,
+      file: kind === TOOL_TEXT ? Boolean(stroke?.file) : undefined,
     } : {}),
     brush: stroke?.brush === BRUSH_WATERCOLOR ? BRUSH_WATERCOLOR : BRUSH_PEN,
     color: typeof stroke?.color === "string" ? stroke.color : "#e53935",
