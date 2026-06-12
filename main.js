@@ -43,6 +43,10 @@ var require_notedraw_plugin = __commonJS({
     var DEFAULT_PEN_OPACITY = 1;
     var TOOL_DRAW = "draw";
     var TOOL_SELECT = "select";
+    var TOOL_TEXT = "text";
+    var TOOL_RECT = "rect";
+    var TOOL_LINE = "line";
+    var TOOL_ARROW = "arrow";
     var BRUSH_PEN = "pen";
     var BRUSH_WATERCOLOR = "watercolor";
     var COMMON_COLORS = [
@@ -136,17 +140,21 @@ var require_notedraw_plugin = __commonJS({
         window.setTimeout(syncSource, 0);
         this.registerMarkdownPostProcessor((el, ctx) => {
           const preview = el.closest(".markdown-preview-view");
-          if (!preview || isEmbeddedPreview(preview)) {
+          if (!preview) {
             return;
           }
-          const view = findOwningMarkdownView(this.app, preview, ctx.sourcePath);
-          if (!view || !view.file || !ctx.sourcePath || view.file.path !== ctx.sourcePath) {
+          const view = findOwningMarkdownView(this.app, preview);
+          if (!view || !view.file || !ctx.sourcePath) {
+            return;
+          }
+          const targetFile = this.app.vault.getAbstractFileByPath(ctx.sourcePath);
+          if (!targetFile) {
             return;
           }
           annotateEditableElements(el, ctx);
           const existingController = this.controllers.get(preview) || preview._noteDrawController;
           if (existingController?.plugin === this) {
-            existingController.setFile(view.file).catch((error) => {
+            existingController.setFile(targetFile).catch((error) => {
               console.error(`[${PLUGIN_ID}] Failed to switch preview controller file`, error);
             });
             return;
@@ -155,7 +163,9 @@ var require_notedraw_plugin = __commonJS({
             existingController.destroy();
           }
           cleanupDrawingUi(preview);
-          const controller = new PreviewDrawingController(this, preview, view, view.file);
+          const controller = new PreviewDrawingController(this, preview, view, targetFile, {
+            allowTextEdit: !isEmbeddedPreview(preview)
+          });
           this.controllers.set(preview, controller);
           controller.mount();
           this.register(() => controller.destroy());
@@ -201,7 +211,7 @@ var require_notedraw_plugin = __commonJS({
       }
       createPublicApi() {
         return {
-          version: "0.2.0",
+          version: "0.2.5",
           getActiveController: () => {
             const view = this.app.workspace.getActiveViewOfType(MarkdownView);
             if (!view) {
@@ -762,6 +772,12 @@ var require_notedraw_plugin = __commonJS({
         this.penOpacity = this.brushSettings[BRUSH_PEN].opacity;
         this.penCount = this.brushSettings[BRUSH_PEN].count;
         this.toolMode = TOOL_DRAW;
+        this.textStyle = {
+          bold: false,
+          italic: false,
+          underline: false,
+          boxed: true
+        };
         this.pointerDown = false;
         this.startedOnText = false;
         this.pointerStartPoint = null;
@@ -835,6 +851,49 @@ var require_notedraw_plugin = __commonJS({
         });
         setIcon(this.watercolorButton, "paintbrush");
         this.watercolorButton.addEventListener("click", () => this.setBrushMode(BRUSH_WATERCOLOR));
+        this.textButton = this.toolbar.createEl("button", {
+          attr: { type: "button", title: "Floating text" }
+        });
+        setIcon(this.textButton, "type");
+        this.textButton.addEventListener("click", () => this.setShapeToolMode(TOOL_TEXT));
+        this.boldButton = this.toolbar.createEl("button", {
+          cls: "notedraw-style-button",
+          text: "B",
+          attr: { type: "button", title: "Bold text" }
+        });
+        this.boldButton.addEventListener("click", () => this.toggleTextStyle("bold"));
+        this.italicButton = this.toolbar.createEl("button", {
+          cls: "notedraw-style-button notedraw-style-italic",
+          text: "I",
+          attr: { type: "button", title: "Italic text" }
+        });
+        this.italicButton.addEventListener("click", () => this.toggleTextStyle("italic"));
+        this.underlineButton = this.toolbar.createEl("button", {
+          cls: "notedraw-style-button notedraw-style-underline",
+          text: "U",
+          attr: { type: "button", title: "Underline text" }
+        });
+        this.underlineButton.addEventListener("click", () => this.toggleTextStyle("underline"));
+        this.boxedTextButton = this.toolbar.createEl("button", {
+          attr: { type: "button", title: "Button-style text box" }
+        });
+        setIcon(this.boxedTextButton, "badge");
+        this.boxedTextButton.addEventListener("click", () => this.toggleTextStyle("boxed"));
+        this.rectButton = this.toolbar.createEl("button", {
+          attr: { type: "button", title: "Box" }
+        });
+        setIcon(this.rectButton, "square");
+        this.rectButton.addEventListener("click", () => this.setShapeToolMode(TOOL_RECT));
+        this.lineButton = this.toolbar.createEl("button", {
+          attr: { type: "button", title: "Line" }
+        });
+        setIcon(this.lineButton, "minus");
+        this.lineButton.addEventListener("click", () => this.setShapeToolMode(TOOL_LINE));
+        this.arrowButton = this.toolbar.createEl("button", {
+          attr: { type: "button", title: "Arrow" }
+        });
+        setIcon(this.arrowButton, "arrow-up-right");
+        this.arrowButton.addEventListener("click", () => this.setShapeToolMode(TOOL_ARROW));
         this.selectButton = this.toolbar.createEl("button", {
           attr: { type: "button", title: "Select drawings" }
         });
@@ -1157,6 +1216,29 @@ var require_notedraw_plugin = __commonJS({
         this.updateToolButtons();
         this.render();
       }
+      setShapeToolMode(mode) {
+        if (![TOOL_TEXT, TOOL_RECT, TOOL_LINE, TOOL_ARROW].includes(mode)) {
+          return;
+        }
+        this.toolMode = mode;
+        this.previewEl.removeClass("is-select-mode");
+        this.endTextEdit();
+        this.cancelCurrentStroke();
+        this.cancelSelectionDrag(true);
+        this.updateToolButtons();
+        this.render();
+      }
+      toggleTextStyle(name) {
+        if (!Object.prototype.hasOwnProperty.call(this.textStyle, name)) {
+          return;
+        }
+        this.textStyle[name] = !this.textStyle[name];
+        if (this.toolMode !== TOOL_TEXT) {
+          this.toolMode = TOOL_TEXT;
+        }
+        this.previewEl.removeClass("is-select-mode");
+        this.updateToolButtons();
+      }
       currentBrushSettings() {
         if (!this.brushSettings[this.brushMode]) {
           this.brushMode = BRUSH_PEN;
@@ -1188,6 +1270,14 @@ var require_notedraw_plugin = __commonJS({
         const watercolorActive = this.toolMode === TOOL_DRAW && this.brushMode === BRUSH_WATERCOLOR;
         this.applyBrushButtonState(this.penButton, this.brushSettings?.[BRUSH_PEN], penActive);
         this.applyBrushButtonState(this.watercolorButton, this.brushSettings?.[BRUSH_WATERCOLOR], watercolorActive);
+        this.textButton?.classList.toggle("is-active", this.toolMode === TOOL_TEXT);
+        this.rectButton?.classList.toggle("is-active", this.toolMode === TOOL_RECT);
+        this.lineButton?.classList.toggle("is-active", this.toolMode === TOOL_LINE);
+        this.arrowButton?.classList.toggle("is-active", this.toolMode === TOOL_ARROW);
+        this.boldButton?.classList.toggle("is-active", Boolean(this.textStyle.bold));
+        this.italicButton?.classList.toggle("is-active", Boolean(this.textStyle.italic));
+        this.underlineButton?.classList.toggle("is-active", Boolean(this.textStyle.underline));
+        this.boxedTextButton?.classList.toggle("is-active", Boolean(this.textStyle.boxed));
         this.selectButton?.classList.toggle("is-active", this.toolMode === TOOL_SELECT);
         this.paletteButton?.toggleAttribute("disabled", this.toolMode === TOOL_SELECT);
         this.previewEl.toggleClass("is-watercolor-mode", this.toolMode === TOOL_DRAW && this.brushMode === BRUSH_WATERCOLOR);
@@ -1413,17 +1503,42 @@ var require_notedraw_plugin = __commonJS({
           this.canvas.setPointerCapture(event.pointerId);
         } catch (_) {
         }
+        this.currentStroke = this.createStrokeDraft(this.pointerStartPoint);
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      createStrokeDraft(point) {
         const brush = this.currentBrushSettings();
-        this.currentStroke = {
-          brush: this.brushMode,
+        const base = {
           color: brush.color,
           width: brush.width,
           opacity: brush.opacity,
           count: brush.count,
-          points: [this.pointerStartPoint]
+          points: [point]
         };
-        event.preventDefault();
-        event.stopPropagation();
+        if (this.toolMode === TOOL_TEXT) {
+          return {
+            ...base,
+            kind: TOOL_TEXT,
+            text: "",
+            fontSize: 18,
+            bold: Boolean(this.textStyle.bold),
+            italic: Boolean(this.textStyle.italic),
+            underline: Boolean(this.textStyle.underline),
+            boxed: Boolean(this.textStyle.boxed)
+          };
+        }
+        if ([TOOL_RECT, TOOL_LINE, TOOL_ARROW].includes(this.toolMode)) {
+          return {
+            ...base,
+            kind: this.toolMode,
+            points: [point, point]
+          };
+        }
+        return {
+          ...base,
+          brush: this.brushMode
+        };
       }
       elementBelowCanvas(clientX, clientY) {
         const previous = this.canvas.style.pointerEvents;
@@ -1508,7 +1623,31 @@ var require_notedraw_plugin = __commonJS({
         this.pointerDown = false;
         const movedDistance = this.pointerStartClient ? pointerDistance(this.pointerStartClient, { x: event.clientX, y: event.clientY }) : 0;
         const editable = this.pointerStartEditable;
-        if (!this.didMove || movedDistance <= SELECT_TAP_DISTANCE || this.currentStroke.points.length < 2) {
+        if (this.currentStroke.kind === TOOL_TEXT) {
+          const text = window.prompt("Text", "");
+          if (text?.trim()) {
+            this.currentStroke.text = text.trim();
+            this.drawingData.strokes.push(this.currentStroke);
+            this.clearSelectedStrokes();
+            this.redoStack = [];
+            this.invalidateStaticCache();
+            this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+          } else {
+            this.setSelectedStrokes(this.findStrokeAt(this.pointerStartPoint || this.eventToPoint(event)));
+          }
+          this.currentStroke = null;
+        } else if (isStructuredStroke(this.currentStroke) && this.currentStroke.kind !== TOOL_TEXT) {
+          if (this.didMove && movedDistance > SELECT_TAP_DISTANCE) {
+            this.drawingData.strokes.push(this.currentStroke);
+            this.clearSelectedStrokes();
+            this.redoStack = [];
+            this.invalidateStaticCache();
+            this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+          } else {
+            this.setSelectedStrokes(this.findStrokeAt(this.pointerStartPoint || this.eventToPoint(event)));
+          }
+          this.currentStroke = null;
+        } else if (!this.didMove || movedDistance <= SELECT_TAP_DISTANCE || this.currentStroke.points.length < 2) {
           const point = this.pointerStartPoint || this.eventToPoint(event);
           this.currentStroke = null;
           if (editable) {
@@ -1692,13 +1831,14 @@ var require_notedraw_plugin = __commonJS({
           return;
         }
         const point = this.eventToPoint(event);
-        const originalPoints = Array.from(this.dragStrokeOriginalPoints.values()).flat();
-        const xs = originalPoints.map((strokePoint) => strokePoint.x);
-        const ys = originalPoints.map((strokePoint) => strokePoint.y);
-        const minX = Math.min(...xs);
-        const maxX = Math.max(...xs);
-        const minY = Math.min(...ys);
-        const maxY = Math.max(...ys);
+        const originalBounds = getNormalizedBoundsForIndexedStrokes(this.drawingData.strokes, this.dragStrokeOriginalPoints);
+        if (!originalBounds) {
+          return;
+        }
+        const minX = originalBounds.minX;
+        const maxX = originalBounds.maxX;
+        const minY = originalBounds.minY;
+        const maxY = originalBounds.maxY;
         const dx = clamp(point.x - this.dragStrokeStartPoint.x, -minX, 1 - maxX);
         const dy = clamp(point.y - this.dragStrokeStartPoint.y, -minY, 1 - maxY);
         const movedDistance = pointDistanceOnCanvas(
@@ -1782,7 +1922,8 @@ var require_notedraw_plugin = __commonJS({
           index,
           {
             width: this.drawingData.strokes[index].width || this.penWidth,
-            points: this.drawingData.strokes[index].points.map((strokePoint) => ({ ...strokePoint }))
+            points: this.drawingData.strokes[index].points.map((strokePoint) => ({ ...strokePoint })),
+            fontSize: this.drawingData.strokes[index].fontSize
           }
         ]));
         this.resizeSelectionMoved = false;
@@ -1835,6 +1976,7 @@ var require_notedraw_plugin = __commonJS({
         for (const [index, original] of originalStrokes.entries()) {
           nextByIndex.set(index, {
             width: clamp((original.width || this.penWidth) * strokeScale, 0.5, 80),
+            fontSize: original.fontSize ? clamp(Number(original.fontSize) * strokeScale, 10, 96) : void 0,
             points: original.points.map((strokePoint) => ({
               x: anchor.x + (strokePoint.x - anchor.x) * scaleX,
               y: anchor.y + (strokePoint.y - anchor.y) * scaleY
@@ -1848,6 +1990,9 @@ var require_notedraw_plugin = __commonJS({
             continue;
           }
           stroke.width = next.width;
+          if (next.fontSize) {
+            stroke.fontSize = next.fontSize;
+          }
           stroke.points = next.points.map((strokePoint) => ({
             x: clamp(strokePoint.x, 0, 1),
             y: clamp(strokePoint.y, 0, 1)
@@ -1873,6 +2018,9 @@ var require_notedraw_plugin = __commonJS({
             const stroke = this.drawingData.strokes[index];
             if (stroke) {
               stroke.width = original.width;
+              if (original.fontSize) {
+                stroke.fontSize = original.fontSize;
+              }
               stroke.points = original.points.map((strokePoint) => ({ ...strokePoint }));
             }
           }
@@ -1917,6 +2065,20 @@ var require_notedraw_plugin = __commonJS({
       }
       addStrokePoint(point) {
         if (!this.currentStroke?.points?.length) {
+          return;
+        }
+        if (isStructuredStroke(this.currentStroke)) {
+          if (this.pointerStartClient && pointDistanceOnCanvas(
+            this.pointerStartPoint,
+            point,
+            this.canvasWidth(),
+            this.canvasHeight()
+          ) > SELECT_TAP_DISTANCE) {
+            this.didMove = true;
+          }
+          if (this.currentStroke.kind !== TOOL_TEXT) {
+            this.currentStroke.points[1] = point;
+          }
           return;
         }
         const points = this.currentStroke.points;
@@ -2018,6 +2180,10 @@ var require_notedraw_plugin = __commonJS({
         if (!stroke.points.length) {
           return;
         }
+        if (isStructuredStroke(stroke)) {
+          this.drawStructuredStrokeOn(ctx, stroke, alpha);
+          return;
+        }
         if ((stroke.brush || BRUSH_PEN) === BRUSH_WATERCOLOR) {
           this.drawWatercolorStrokeOn(ctx, stroke, alpha);
           return;
@@ -2040,6 +2206,74 @@ var require_notedraw_plugin = __commonJS({
             ctx.lineTo(next.x + offset.x, next.y + offset.y);
           }
           ctx.stroke();
+        }
+        ctx.restore();
+      }
+      drawStructuredStrokeOn(ctx, stroke, alpha = 1) {
+        const points = stroke.points || [];
+        const first = this.pointToCanvas(points[0]);
+        const second = this.pointToCanvas(points[1] || points[0]);
+        const color = stroke.color || this.penColor;
+        const width = Math.max(MIN_BRUSH_WIDTH, stroke.width || this.penWidth);
+        const opacity = clamp(Number(stroke.opacity ?? DEFAULT_PEN_OPACITY), 0, 1);
+        ctx.save();
+        ctx.globalAlpha = alpha * opacity;
+        ctx.strokeStyle = color;
+        ctx.fillStyle = color;
+        ctx.lineWidth = width;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        if (stroke.kind === TOOL_TEXT) {
+          const fontSize = clamp(Number(stroke.fontSize || 18), 10, 96);
+          const text = String(stroke.text || "Text");
+          ctx.font = `${stroke.italic ? "italic " : ""}${stroke.bold ? "700 " : "500 "}${fontSize}px system-ui, -apple-system, Segoe UI, sans-serif`;
+          ctx.textBaseline = "top";
+          const metrics = ctx.measureText(text);
+          const paddingX = stroke.boxed ? 8 : 0;
+          const paddingY = stroke.boxed ? 5 : 0;
+          if (stroke.boxed) {
+            ctx.save();
+            ctx.globalAlpha = alpha * Math.max(0.14, opacity * 0.18);
+            ctx.fillStyle = color;
+            roundRect(ctx, first.x - paddingX, first.y - paddingY, metrics.width + paddingX * 2, fontSize + paddingY * 2, 7);
+            ctx.fill();
+            ctx.restore();
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 1.5;
+            roundRect(ctx, first.x - paddingX, first.y - paddingY, metrics.width + paddingX * 2, fontSize + paddingY * 2, 7);
+            ctx.stroke();
+          }
+          ctx.fillStyle = color;
+          ctx.fillText(text, first.x, first.y);
+          if (stroke.underline) {
+            const underlineY = first.y + fontSize + 2;
+            ctx.beginPath();
+            ctx.moveTo(first.x, underlineY);
+            ctx.lineTo(first.x + metrics.width, underlineY);
+            ctx.stroke();
+          }
+          ctx.restore();
+          return;
+        }
+        if (stroke.kind === TOOL_RECT) {
+          const rect = normalizeCanvasRect(first, second);
+          ctx.save();
+          ctx.globalAlpha = alpha * Math.max(0.08, opacity * 0.12);
+          ctx.fillStyle = color;
+          roundRect(ctx, rect.minX, rect.minY, rect.maxX - rect.minX, rect.maxY - rect.minY, 8);
+          ctx.fill();
+          ctx.restore();
+          roundRect(ctx, rect.minX, rect.minY, rect.maxX - rect.minX, rect.maxY - rect.minY, 8);
+          ctx.stroke();
+          ctx.restore();
+          return;
+        }
+        ctx.beginPath();
+        ctx.moveTo(first.x, first.y);
+        ctx.lineTo(second.x, second.y);
+        ctx.stroke();
+        if (stroke.kind === TOOL_ARROW) {
+          drawArrowHead(ctx, first, second, color, width);
         }
         ctx.restore();
       }
@@ -2843,7 +3077,17 @@ var require_notedraw_plugin = __commonJS({
     }
     function normalizeStroke(stroke) {
       const points = Array.isArray(stroke?.points) ? stroke.points : [];
+      const kind = [TOOL_TEXT, TOOL_RECT, TOOL_LINE, TOOL_ARROW].includes(stroke?.kind) ? stroke.kind : null;
       return {
+        ...kind ? {
+          kind,
+          text: kind === TOOL_TEXT ? String(stroke?.text || "Text").slice(0, 500) : void 0,
+          fontSize: kind === TOOL_TEXT ? clamp(Number(stroke?.fontSize || 18), 10, 96) : void 0,
+          bold: kind === TOOL_TEXT ? Boolean(stroke?.bold) : void 0,
+          italic: kind === TOOL_TEXT ? Boolean(stroke?.italic) : void 0,
+          underline: kind === TOOL_TEXT ? Boolean(stroke?.underline) : void 0,
+          boxed: kind === TOOL_TEXT ? stroke?.boxed !== false : void 0
+        } : {},
         brush: stroke?.brush === BRUSH_WATERCOLOR ? BRUSH_WATERCOLOR : BRUSH_PEN,
         color: typeof stroke?.color === "string" ? stroke.color : "#e53935",
         width: Number.isFinite(Number(stroke?.width)) ? clamp(Number(stroke.width), MIN_BRUSH_WIDTH, 80) : 3,
@@ -3353,6 +3597,21 @@ var require_notedraw_plugin = __commonJS({
       if (!stroke?.points?.length) {
         return null;
       }
+      if (stroke.kind === TOOL_TEXT) {
+        const point = stroke.points[0];
+        const fontSize = clamp(Number(stroke.fontSize || 18), 10, 96);
+        const textWidth = estimateTextWidth(stroke.text || "Text", fontSize, Boolean(stroke.bold));
+        const paddingX = stroke.boxed ? 8 : 0;
+        const paddingY = stroke.boxed ? 5 : 0;
+        const x = point.x * width;
+        const y = point.y * height;
+        return {
+          minX: x - paddingX,
+          minY: y - paddingY,
+          maxX: x + textWidth + paddingX,
+          maxY: y + fontSize + paddingY
+        };
+      }
       const xs = stroke.points.map((point) => point.x * width);
       const ys = stroke.points.map((point) => point.y * height);
       return {
@@ -3372,6 +3631,57 @@ var require_notedraw_plugin = __commonJS({
     }
     function rectsIntersect(a, b) {
       return a.minX <= b.maxX && a.maxX >= b.minX && a.minY <= b.maxY && a.maxY >= b.minY;
+    }
+    function isStructuredStroke(stroke) {
+      return [TOOL_TEXT, TOOL_RECT, TOOL_LINE, TOOL_ARROW].includes(stroke?.kind);
+    }
+    function estimateTextWidth(text, fontSize, bold = false) {
+      const weight = bold ? 0.64 : 0.58;
+      return Math.max(fontSize * 1.5, String(text || "Text").length * fontSize * weight);
+    }
+    function roundRect(ctx, x, y, width, height, radius) {
+      const r = Math.min(radius, Math.abs(width) / 2, Math.abs(height) / 2);
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.lineTo(x + width - r, y);
+      ctx.quadraticCurveTo(x + width, y, x + width, y + r);
+      ctx.lineTo(x + width, y + height - r);
+      ctx.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
+      ctx.lineTo(x + r, y + height);
+      ctx.quadraticCurveTo(x, y + height, x, y + height - r);
+      ctx.lineTo(x, y + r);
+      ctx.quadraticCurveTo(x, y, x + r, y);
+      ctx.closePath();
+    }
+    function drawArrowHead(ctx, from, to, color, width) {
+      const angle = Math.atan2(to.y - from.y, to.x - from.x);
+      const size = Math.max(10, width * 3.2);
+      ctx.save();
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(to.x, to.y);
+      ctx.lineTo(to.x - size * Math.cos(angle - Math.PI / 6), to.y - size * Math.sin(angle - Math.PI / 6));
+      ctx.lineTo(to.x - size * Math.cos(angle + Math.PI / 6), to.y - size * Math.sin(angle + Math.PI / 6));
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
+    function getNormalizedBoundsForIndexedStrokes(strokes, pointsByIndex) {
+      let result = null;
+      for (const [index, points] of pointsByIndex.entries()) {
+        const clone = { ...strokes[index] || {}, points };
+        const bounds = getStrokeBounds(clone, 1, 1);
+        if (!bounds) {
+          continue;
+        }
+        result = result ? {
+          minX: Math.min(result.minX, bounds.minX),
+          minY: Math.min(result.minY, bounds.minY),
+          maxX: Math.max(result.maxX, bounds.maxX),
+          maxY: Math.max(result.maxY, bounds.maxY)
+        } : { ...bounds };
+      }
+      return result;
     }
     function getSelectionHandlePointsFromRect(rect) {
       return [
@@ -3463,6 +3773,10 @@ var require_notedraw_plugin = __commonJS({
       return offsets;
     }
     function strokeHitTest(stroke, hitPoint, width, height, threshold) {
+      if (stroke.kind === TOOL_TEXT || stroke.kind === TOOL_RECT) {
+        const bounds = getStrokeBounds(stroke, width, height);
+        return Boolean(bounds && hitPoint.x >= bounds.minX - threshold && hitPoint.x <= bounds.maxX + threshold && hitPoint.y >= bounds.minY - threshold && hitPoint.y <= bounds.maxY + threshold);
+      }
       const points = stroke.points.map((point) => ({
         x: point.x * width,
         y: point.y * height

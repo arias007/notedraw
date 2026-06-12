@@ -11,6 +11,8 @@ It is built as a note-surface layer: the same drawing and text-edit logic can be
 - Source/edit view overlay using the same command entry.
 - Pen and watercolor brushes with separate default color, width, and opacity.
 - Stroke selection, multi-select, movement, resize handles, and delete.
+- Floating text, button-style text boxes, rectangles, straight lines, and arrows.
+- Text style toggles for bold, italic, underline, and boxed text.
 - Circular toolbar buttons sized for quick touch or mouse use.
 - Palette button is disabled while select mode is active.
 - Active pen and watercolor buttons use their current brush color as the button background.
@@ -20,6 +22,7 @@ It is built as a note-surface layer: the same drawing and text-edit logic can be
 - Click-to-caret behavior inside active text blocks.
 - Drawing data stored outside Markdown so notes stay clean.
 - Public API for scripts, other plugins, and AI agents.
+- Drawings made inside embedded note previews are stored against the embedded note path, so opening that note shows the same layer.
 
 ## Storage
 
@@ -185,4 +188,4 @@ The current package focuses on the local Obsidian plugin runtime. The API and DO
 
 ## Version
 
-Current version: `0.2.0`.
+Current version: `0.2.5`.

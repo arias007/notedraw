@@ -79,6 +79,7 @@
   left: auto;
   right: var(--notedraw-toolbar-right, 8px);
   display: none;
+  flex-wrap: wrap;
   gap: 3px;
   align-items: center;
   padding: 4px;
@@ -86,7 +87,7 @@
   border-radius: 999px;
   background: color-mix(in srgb, var(--background-primary) 88%, var(--background-secondary));
   box-shadow: 0 1px 5px rgba(0, 0, 0, 0.10);
-  max-width: calc(100vw - 16px);
+  max-width: min(392px, calc(100vw - 16px));
 }
 
 .notedraw-shell.is-drawing-active .notedraw-toolbar {
@@ -137,6 +138,21 @@
   min-width: 20px;
   min-height: 20px;
   stroke-width: 1.7;
+}
+
+.notedraw-style-button {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.notedraw-style-italic {
+  font-style: italic;
+}
+
+.notedraw-style-underline {
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .notedraw-shell.is-watercolor-mode .notedraw-toolbar button.is-active {
