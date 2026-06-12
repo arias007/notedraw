@@ -62,6 +62,31 @@ Then enable:
 Settings -> Community plugins -> Installed plugins -> NoteDraw
 ```
 
+## Source Build
+
+NoteDraw now keeps source code under `src/` and builds the Obsidian runtime file at the repository root.
+
+```bash
+npm install
+npm run build
+```
+
+Build output:
+
+```text
+main.js
+```
+
+The release package still uses the standard Obsidian plugin layout:
+
+```text
+main.js
+manifest.json
+styles.css
+README.md
+extras/
+```
+
 ## Settings
 
 The settings page currently includes:
