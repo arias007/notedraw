@@ -139,11 +139,14 @@ class NoteDrawPlugin extends Plugin {
       }
 
       const view = findOwningMarkdownView(this.app, preview);
-      if (!view || !view.file || !ctx.sourcePath) {
+      if (!view || !view.file) {
         return;
       }
 
-      const targetFile = this.app.vault.getAbstractFileByPath(ctx.sourcePath);
+      const embedded = isEmbeddedPreview(preview);
+      const targetFile = embedded && ctx.sourcePath
+        ? this.app.vault.getAbstractFileByPath(ctx.sourcePath) || view.file
+        : view.file;
       if (!targetFile) {
         return;
       }
@@ -165,7 +168,7 @@ class NoteDrawPlugin extends Plugin {
       cleanupDrawingUi(preview);
 
       const controller = new PreviewDrawingController(this, preview, view, targetFile, {
-        allowTextEdit: !isEmbeddedPreview(preview),
+        allowTextEdit: !embedded,
       });
       this.controllers.set(preview, controller);
       controller.mount();
@@ -219,15 +222,22 @@ class NoteDrawPlugin extends Plugin {
     return controllers;
   }
 
+  findControllerForView(view) {
+    return this.getAllControllers()
+      .find((controller) => controller.view === view && controller.previewEl?.isConnected)
+      || null;
+  }
+
   createPublicApi() {
     return {
-      version: "0.2.5",
+      version: "0.2.9",
       getActiveController: () => {
         const view = this.app.workspace.getActiveViewOfType(MarkdownView);
         if (!view) {
           return null;
         }
-        return this.resolveHeaderController(view, this.headerActions.get(view) || {});
+        const state = this.headerActions.get(view);
+        return state ? this.resolveHeaderController(view, state) : this.findControllerForView(view);
       },
       readDrawings: async (file) => this.readDrawings(file),
       writeDrawings: async (file, data) => this.writeDrawings(file, normalizeDrawingData(data, file)),
