@@ -39,6 +39,8 @@ Obsidian prototype plugin for editing rendered text and drawing directly in read
 - Version 0.1.20 pins the toolbar to the current note view's right edge, softens toolbar icon strokes, makes the watercolor active state clearer, and changes watercolor rendering to centered translucent layers instead of offset multi-pen strokes.
 - Version 0.1.21 keeps one stable magic-wand header button per note view across reading/source switches, adds a static doodle render cache for smoother drawing, and restyles the toolbar as a lighter Obsidian-style icon strip.
 - Version 0.1.22 adds the same two packaged support QR codes used by the user's other plugins to the plugin settings page.
+- Version 0.1.23 keeps the toolbar below the Obsidian header while scrolling, refreshes canvas sizing after layout settles, lets native wheel scrolling pass through, simplifies watercolor to an even translucent stroke, removes the pen-count slider, expands width and opacity ranges, and clears selection when tapping outside the frame.
+- Version 0.1.24 improves text targeting: reading preview caret placement uses the nearest rendered text character instead of falling back to the line end, and source/edit view taps while doodle mode is active are forwarded to CodeMirror so text can be entered at the tapped position.
 
 ## Manual install
 

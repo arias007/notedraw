@@ -24,6 +24,8 @@ const DOODLE_INTERPOLATION_STEP_PX = 3;
 const DOODLE_MIN_POINT_DISTANCE_PX = 0.55;
 const DOODLE_COMPACT_DISTANCE_PX = 1.1;
 const MAX_PEN_COUNT = 5;
+const MIN_BRUSH_WIDTH = 0.5;
+const MAX_BRUSH_WIDTH = 32;
 const DEFAULT_PEN_OPACITY = 1;
 const TOOL_DRAW = "draw";
 const TOOL_SELECT = "select";
@@ -755,8 +757,8 @@ class PreviewDoodleController {
       [BRUSH_WATERCOLOR]: {
         color: "#3b82f6",
         width: 9,
-        opacity: 0.34,
-        count: 3,
+        opacity: 0.45,
+        count: 1,
       },
     };
     this.penColor = this.brushSettings[BRUSH_PEN].color;
@@ -769,6 +771,7 @@ class PreviewDoodleController {
     this.pointerStartPoint = null;
     this.pointerStartClient = null;
     this.pointerStartEditable = null;
+    this.pointerStartSourceText = false;
     this.activePointerId = null;
     this.touchPointers = new Map();
     this.multiTouchScrolling = false;
@@ -800,15 +803,19 @@ class PreviewDoodleController {
     this.canvasCssHeight = 1;
     this.renderFrameId = null;
     this.resizeFrameId = null;
+    this.positionFrameId = null;
     this.staticCanvas = document.createElement("canvas");
     this.staticCtx = null;
     this.staticCacheDirty = true;
+    this.scrollEventTarget = null;
+    this.layoutMeasureEl = null;
 
     this.onPointerDown = this.onPointerDown.bind(this);
     this.onPointerMove = this.onPointerMove.bind(this);
     this.onPointerUp = this.onPointerUp.bind(this);
     this.onWheel = this.onWheel.bind(this);
     this.onResize = this.onResize.bind(this);
+    this.onScroll = this.onScroll.bind(this);
     this.onButtonClick = this.onButtonClick.bind(this);
     this.onButtonPointerDown = this.onButtonPointerDown.bind(this);
     this.onButtonPointerUp = this.onButtonPointerUp.bind(this);
@@ -884,39 +891,26 @@ class PreviewDoodleController {
     this.widthInput = this.createPaletteInput("circle", "width", {
       type: "range",
       value: String(this.penWidth),
-      min: "1",
-      max: "16",
-      step: "1",
+      min: String(MIN_BRUSH_WIDTH),
+      max: String(MAX_BRUSH_WIDTH),
+      step: "0.5",
       title: "Pen width",
     });
     this.widthInput.addEventListener("input", () => {
-      this.currentBrushSettings().width = Number(this.widthInput.value);
+      this.currentBrushSettings().width = clamp(Number(this.widthInput.value), MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH);
       this.syncCurrentBrushFields();
     });
 
     this.opacityInput = this.createPaletteInput("droplets", "opacity", {
       type: "range",
       value: String(this.penOpacity),
-      min: "0.1",
+      min: "0",
       max: "1",
-      step: "0.05",
+      step: "0.02",
       title: "Pen opacity",
     });
     this.opacityInput.addEventListener("input", () => {
-      this.currentBrushSettings().opacity = clamp(Number(this.opacityInput.value), 0.1, 1);
-      this.syncCurrentBrushFields();
-    });
-
-    this.countInput = this.createPaletteInput("layers-3", "count", {
-      type: "range",
-      value: String(this.penCount),
-      min: "1",
-      max: String(MAX_PEN_COUNT),
-      step: "1",
-      title: "Pen count",
-    });
-    this.countInput.addEventListener("input", () => {
-      this.currentBrushSettings().count = clamp(Math.round(Number(this.countInput.value)), 1, MAX_PEN_COUNT);
+      this.currentBrushSettings().opacity = clamp(Number(this.opacityInput.value), 0, 1);
       this.syncCurrentBrushFields();
     });
 
@@ -926,13 +920,19 @@ class PreviewDoodleController {
     this.canvas.addEventListener("pointerup", this.onPointerUp);
     this.canvas.addEventListener("pointercancel", this.onPointerUp);
     this.canvas.addEventListener("lostpointercapture", this.onPointerUp);
-    this.canvas.addEventListener("wheel", this.onWheel, { passive: false });
+    this.canvas.addEventListener("wheel", this.onWheel, { passive: true });
     window.addEventListener("resize", this.onResize);
     document.addEventListener("pointerdown", this.onDocumentPointerDown, true);
     if (typeof ResizeObserver !== "undefined") {
       this.resizeObserver = new ResizeObserver(this.onResize);
       this.resizeObserver.observe(this.previewEl);
+      this.layoutMeasureEl = findLayoutMeasureElement(this.previewEl);
+      if (this.layoutMeasureEl && this.layoutMeasureEl !== this.previewEl) {
+        this.resizeObserver.observe(this.layoutMeasureEl);
+      }
     }
+    this.scrollEventTarget = getScrollEventTarget(findScrollableAncestor(this.previewEl));
+    this.scrollEventTarget?.addEventListener("scroll", this.onScroll, { passive: true });
 
     this.doodleData = await this.plugin.readDoodles(this.file);
     this.updateToolButtons();
@@ -999,7 +999,11 @@ class PreviewDoodleController {
     this.clearButtonLongPress();
     this.cancelRenderFrame();
     this.cancelResizeFrame();
+    this.cancelPositionFrame();
     this.resizeObserver?.disconnect();
+    this.scrollEventTarget?.removeEventListener("scroll", this.onScroll);
+    this.scrollEventTarget = null;
+    this.layoutMeasureEl = null;
     window.removeEventListener("resize", this.onResize);
     document.removeEventListener("pointerdown", this.onDocumentPointerDown, true);
     this.plugin.releaseHeaderButton(this);
@@ -1039,6 +1043,10 @@ class PreviewDoodleController {
     this.scheduleResize();
   }
 
+  onScroll() {
+    this.scheduleFloatingControlsPosition();
+  }
+
   scheduleResize() {
     if (this.resizeFrameId !== null) {
       return;
@@ -1059,12 +1067,33 @@ class PreviewDoodleController {
     }
   }
 
+  scheduleFloatingControlsPosition() {
+    if (this.positionFrameId !== null) {
+      return;
+    }
+
+    this.positionFrameId = window.requestAnimationFrame(() => {
+      this.positionFrameId = null;
+      this.updateFloatingControlsPosition();
+    });
+  }
+
+  cancelPositionFrame() {
+    if (this.positionFrameId !== null) {
+      window.cancelAnimationFrame(this.positionFrameId);
+      this.positionFrameId = null;
+    }
+  }
+
   scheduleLayoutRefresh() {
     this.scheduleResize();
     window.requestAnimationFrame?.(() => this.scheduleResize());
     window.requestAnimationFrame?.(() => window.requestAnimationFrame?.(() => this.scheduleResize()));
     window.setTimeout(() => this.scheduleResize(), 80);
     window.setTimeout(() => this.scheduleResize(), 350);
+    window.setTimeout(() => this.scheduleResize(), 800);
+    window.setTimeout(() => this.scheduleResize(), 1600);
+    window.setTimeout(() => this.scheduleResize(), 2600);
   }
 
   updateFloatingControlsPosition() {
@@ -1072,16 +1101,27 @@ class PreviewDoodleController {
       return;
     }
 
-    const hostRect = (this.view?.containerEl || this.previewEl).getBoundingClientRect();
+    const host = this.view?.containerEl
+      || this.previewEl.closest?.(".workspace-leaf-content")
+      || this.previewEl;
+    const hostRect = host.getBoundingClientRect();
     const buttonRect = this.button.getBoundingClientRect();
+    const chromeRect = this.button.closest?.(".view-actions, .view-header")?.getBoundingClientRect?.() || null;
+    const toolbarHeight = Math.max(36, this.toolbar.getBoundingClientRect().height || 36);
     const buttonVisible = buttonRect.width > 0
       && buttonRect.height > 0
       && buttonRect.bottom > 0
       && buttonRect.top < window.innerHeight;
     const anchorRight = hostRect.right > 0 ? hostRect.right : (buttonVisible ? buttonRect.right : window.innerWidth);
-    const anchorBottom = buttonVisible ? buttonRect.bottom : hostRect.top + 40;
+    const anchorBottom = Math.max(
+      buttonVisible ? buttonRect.bottom : 0,
+      chromeRect && chromeRect.bottom > 0 ? chromeRect.bottom : 0,
+      hostRect.top + 44,
+    );
     const right = clamp(window.innerWidth - anchorRight + 10, 8, Math.max(8, window.innerWidth - 48));
-    const top = clamp(anchorBottom + 10, Math.max(42, hostRect.top + 42), Math.max(42, window.innerHeight - 48));
+    const minTop = Math.max(56, hostRect.top + 48);
+    const maxTop = Math.max(minTop, window.innerHeight - toolbarHeight - 8);
+    const top = clamp(anchorBottom + 10, minTop, maxTop);
 
     this.previewEl.style.setProperty("--note-doodle-toolbar-right", `${Math.round(right)}px`);
     this.previewEl.style.setProperty("--note-doodle-toolbar-top", `${Math.round(top)}px`);
@@ -1132,9 +1172,6 @@ class PreviewDoodleController {
     }
     if (this.opacityInput) {
       this.opacityInput.value = String(settings.opacity);
-    }
-    if (this.countInput) {
-      this.countInput.value = String(settings.count);
     }
   }
 
@@ -1221,10 +1258,11 @@ class PreviewDoodleController {
   }
 
   resizeCanvas() {
-    const rect = this.previewEl.getBoundingClientRect();
+    this.layoutMeasureEl = findLayoutMeasureElement(this.previewEl);
+    const measured = measureCanvasExtent(this.previewEl, this.layoutMeasureEl);
     const ratio = window.devicePixelRatio || 1;
-    const width = Math.max(1, Math.round(this.previewEl.scrollWidth));
-    const height = Math.max(1, Math.round(this.previewEl.scrollHeight));
+    const width = Math.max(1, Math.round(measured.width));
+    const height = Math.max(1, Math.round(measured.height));
     this.canvasCssWidth = width;
     this.canvasCssHeight = height;
 
@@ -1242,8 +1280,8 @@ class PreviewDoodleController {
     }
     this.staticCtx?.setTransform(ratio, 0, 0, ratio, 0, 0);
 
-    if (rect.width > 0) {
-      this.canvas.style.minWidth = `${Math.round(rect.width)}px`;
+    if (measured.visibleWidth > 0) {
+      this.canvas.style.minWidth = `${Math.round(measured.visibleWidth)}px`;
     }
   }
 
@@ -1263,6 +1301,9 @@ class PreviewDoodleController {
 
     const target = this.elementBelowCanvas(event.clientX, event.clientY);
     const editable = this.allowTextEdit ? findEditableTarget(target, this.previewEl) : null;
+    const sourceTextTarget = this.surfaceType === "source"
+      && this.toolMode !== TOOL_SELECT
+      && isSourceTextTarget(target, this.previewEl);
     const point = this.eventToPoint(event);
     const hitStrokeIndex = this.findStrokeAt(point);
     const resizeHandle = this.findSelectionHandleAt(point);
@@ -1270,6 +1311,18 @@ class PreviewDoodleController {
     if (resizeHandle) {
       this.startSelectedStrokeResize(event, point, resizeHandle);
       return;
+    }
+
+    if (this.getSelectedStrokeIndexes().length
+      && !this.selectedStrokeFrameContains(point)
+      && hitStrokeIndex < 0) {
+      this.clearSelectedStrokes();
+      if (!editable && this.toolMode !== TOOL_SELECT) {
+        this.render();
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
     }
 
     if (this.selectedStrokeFrameContains(point)) {
@@ -1288,6 +1341,7 @@ class PreviewDoodleController {
     this.pointerStartClient = { x: event.clientX, y: event.clientY };
     this.pointerStartPoint = point;
     this.pointerStartEditable = editable;
+    this.pointerStartSourceText = sourceTextTarget;
     this.activePointerId = event.pointerId;
 
     if (!editable) {
@@ -1425,6 +1479,9 @@ class PreviewDoodleController {
       this.currentStroke = null;
       if (editable) {
         this.startTextEdit(editable, this.pointerStartClient || { x: event.clientX, y: event.clientY });
+      } else if (this.pointerStartSourceText) {
+        this.focusSourceEditorAt(this.pointerStartClient || { x: event.clientX, y: event.clientY });
+        this.clearSelectedStrokes();
       } else {
         this.setSelectedStrokes(this.findStrokeAt(point));
       }
@@ -1448,6 +1505,7 @@ class PreviewDoodleController {
     this.pointerStartPoint = null;
     this.pointerStartClient = null;
     this.pointerStartEditable = null;
+    this.pointerStartSourceText = false;
     this.activePointerId = null;
     this.didMove = false;
     this.render();
@@ -1460,18 +1518,7 @@ class PreviewDoodleController {
       return;
     }
 
-    const scroller = findScrollableAncestor(this.previewEl);
-    if (!scroller) {
-      return;
-    }
-
-    scroller.scrollBy({
-      left: event.deltaX,
-      top: event.deltaY,
-      behavior: "auto",
-    });
-    event.preventDefault();
-    event.stopPropagation();
+    this.scheduleFloatingControlsPosition();
   }
 
   startMultiTouchScroll(event) {
@@ -1537,6 +1584,7 @@ class PreviewDoodleController {
     this.pointerStartPoint = null;
     this.pointerStartClient = null;
     this.pointerStartEditable = null;
+    this.pointerStartSourceText = false;
     this.activePointerId = null;
     this.didMove = false;
     this.render();
@@ -2040,7 +2088,7 @@ class PreviewDoodleController {
     }
 
     const count = clamp(Math.round(Number(stroke.count || 1)), 1, MAX_PEN_COUNT);
-    const opacity = clamp(Number(stroke.opacity ?? DEFAULT_PEN_OPACITY), 0.1, 1);
+    const opacity = clamp(Number(stroke.opacity ?? DEFAULT_PEN_OPACITY), 0, 1);
     const offsets = getPenOffsets(count, stroke.width || this.penWidth);
 
     ctx.save();
@@ -2075,33 +2123,25 @@ class PreviewDoodleController {
       return;
     }
 
-    const width = Math.max(2, stroke.width || this.penWidth);
-    const opacity = clamp(Number(stroke.opacity ?? 0.34), 0.08, 1);
-    const layers = [
-      { width: width * 2.25, opacity: 0.12 },
-      { width: width * 1.45, opacity: 0.18 },
-      { width: width * 0.78, opacity: 0.26 },
-    ];
+    const width = Math.max(MIN_BRUSH_WIDTH, stroke.width || this.penWidth);
+    const opacity = clamp(Number(stroke.opacity ?? 0.45), 0, 1);
 
     ctx.save();
+    ctx.globalAlpha = alpha * opacity;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
     ctx.strokeStyle = stroke.color || this.penColor;
+    ctx.lineWidth = width;
+    ctx.beginPath();
+    const first = this.pointToCanvas(stroke.points[0]);
+    ctx.moveTo(first.x, first.y);
 
-    for (const layer of layers) {
-      ctx.globalAlpha = alpha * opacity * layer.opacity;
-      ctx.lineWidth = layer.width;
-      ctx.beginPath();
-      const first = this.pointToCanvas(stroke.points[0]);
-      ctx.moveTo(first.x, first.y);
-
-      for (let pointIndex = 1; pointIndex < stroke.points.length; pointIndex += 1) {
-        const next = this.pointToCanvas(stroke.points[pointIndex]);
-        ctx.lineTo(next.x, next.y);
-      }
-
-      ctx.stroke();
+    for (let pointIndex = 1; pointIndex < stroke.points.length; pointIndex += 1) {
+      const next = this.pointToCanvas(stroke.points[pointIndex]);
+      ctx.lineTo(next.x, next.y);
     }
+
+    ctx.stroke();
 
     ctx.restore();
   }
@@ -2401,6 +2441,33 @@ class PreviewDoodleController {
     element.addEventListener("blur", onBlur);
   }
 
+  focusSourceEditorAt(clientPoint) {
+    if (!clientPoint || !Number.isFinite(clientPoint.x) || !Number.isFinite(clientPoint.y)) {
+      return false;
+    }
+
+    const cmView = getCodeMirrorView(this.view, this.previewEl);
+    if (cmView && typeof cmView.posAtCoords === "function") {
+      const pos = cmView.posAtCoords({ x: clientPoint.x, y: clientPoint.y }, false)
+        ?? cmView.posAtCoords({ x: clientPoint.x, y: clientPoint.y });
+      if (Number.isFinite(pos)) {
+        cmView.focus?.();
+        cmView.dispatch?.({
+          selection: { anchor: pos },
+          scrollIntoView: false,
+        });
+        return true;
+      }
+    }
+
+    const editor = this.view?.editor;
+    if (editor && typeof editor.focus === "function") {
+      editor.focus();
+    }
+
+    return dispatchMouseClickThroughOverlay(this.canvas, clientPoint);
+  }
+
   endTextEdit() {
     const element = this.currentEditor;
     if (!element) {
@@ -2542,6 +2609,22 @@ function findEditableTarget(target, previewEl) {
   return editable;
 }
 
+function isSourceTextTarget(target, previewEl) {
+  if (!target || !previewEl?.contains(target)) {
+    return false;
+  }
+
+  if (target.closest(BLOCKED_EDIT_SELECTOR)) {
+    return false;
+  }
+
+  return Boolean(
+    target.closest?.(".cm-line, .cm-content, .cm-activeLine")
+    || target.classList?.contains("cm-line")
+    || target.classList?.contains("cm-content")
+  );
+}
+
 function normalizeRenderedText(value) {
   return String(value || "")
     .replace(/\u00a0/g, " ")
@@ -2573,6 +2656,11 @@ function rangeFromClientPoint(element, clientPoint) {
     return null;
   }
 
+  const nearestTextRange = nearestTextRangeFromPoint(element, clientPoint);
+  if (nearestTextRange) {
+    return nearestTextRange;
+  }
+
   let range = null;
 
   if (typeof document.caretRangeFromPoint === "function") {
@@ -2592,6 +2680,76 @@ function rangeFromClientPoint(element, clientPoint) {
 
   range.collapse(true);
   return range;
+}
+
+function nearestTextRangeFromPoint(element, clientPoint) {
+  const walker = document.createTreeWalker(
+    element,
+    NodeFilter.SHOW_TEXT,
+    {
+      acceptNode(node) {
+        return node.nodeValue && node.nodeValue.trim()
+          ? NodeFilter.FILTER_ACCEPT
+          : NodeFilter.FILTER_REJECT;
+      },
+    },
+  );
+
+  let best = null;
+  let bestScore = Number.POSITIVE_INFINITY;
+  let node = walker.nextNode();
+
+  while (node) {
+    const value = node.nodeValue || "";
+    for (let offset = 0; offset < value.length; offset += 1) {
+      const charRange = document.createRange();
+      charRange.setStart(node, offset);
+      charRange.setEnd(node, offset + 1);
+
+      for (const rect of Array.from(charRange.getClientRects())) {
+        if (!isUsableRect(rect)) {
+          continue;
+        }
+
+        const score = scoreRectDistance(rect, clientPoint);
+        if (score < bestScore) {
+          const caretOffset = clientPoint.x > rect.left + rect.width / 2 ? offset + 1 : offset;
+          const caretRange = document.createRange();
+          caretRange.setStart(node, caretOffset);
+          caretRange.collapse(true);
+          best = caretRange;
+          bestScore = score;
+        }
+      }
+    }
+    node = walker.nextNode();
+  }
+
+  return best;
+}
+
+function isUsableRect(rect) {
+  return rect
+    && Number.isFinite(rect.left)
+    && Number.isFinite(rect.top)
+    && rect.width > 0
+    && rect.height > 0;
+}
+
+function scoreRectDistance(rect, point) {
+  const xDistance = point.x < rect.left
+    ? rect.left - point.x
+    : point.x > rect.right
+      ? point.x - rect.right
+      : 0;
+  const yDistance = point.y < rect.top
+    ? rect.top - point.y
+    : point.y > rect.bottom
+      ? point.y - rect.bottom
+      : 0;
+  const linePenalty = yDistance * 8;
+  const inlinePenalty = xDistance;
+  return linePenalty + inlinePenalty;
 }
 
 function rangeAtEditableEnd(element) {
@@ -2800,6 +2958,52 @@ function findSourceSurfaceForView(view) {
     || null;
 }
 
+function getCodeMirrorView(markdownView, sourceEl) {
+  const candidates = [
+    markdownView?.editor?.cm,
+    markdownView?.editor?.editor?.cm,
+    markdownView?.editor?.editor,
+    markdownView?.cm,
+    markdownView?.cmEditor,
+    sourceEl?.cmView,
+  ];
+
+  return candidates.find((candidate) => (
+    candidate
+    && typeof candidate.posAtCoords === "function"
+    && typeof candidate.dispatch === "function"
+  )) || null;
+}
+
+function dispatchMouseClickThroughOverlay(canvas, clientPoint) {
+  if (!canvas || !clientPoint) {
+    return false;
+  }
+
+  const previousPointerEvents = canvas.style.pointerEvents;
+  canvas.style.pointerEvents = "none";
+  const target = document.elementFromPoint(clientPoint.x, clientPoint.y);
+  canvas.style.pointerEvents = previousPointerEvents;
+
+  if (!target) {
+    return false;
+  }
+
+  const eventInit = {
+    bubbles: true,
+    cancelable: true,
+    view: window,
+    clientX: clientPoint.x,
+    clientY: clientPoint.y,
+    button: 0,
+    buttons: 1,
+  };
+  target.dispatchEvent(new MouseEvent("mousedown", eventInit));
+  target.dispatchEvent(new MouseEvent("mouseup", { ...eventInit, buttons: 0 }));
+  target.dispatchEvent(new MouseEvent("click", { ...eventInit, buttons: 0 }));
+  return true;
+}
+
 function isEmbeddedPreview(preview) {
   return Boolean(preview.closest(".markdown-embed, .markdown-embed-content, .internal-embed, .external-embed"));
 }
@@ -2852,8 +3056,8 @@ function normalizeStroke(stroke) {
   return {
     brush: stroke?.brush === BRUSH_WATERCOLOR ? BRUSH_WATERCOLOR : BRUSH_PEN,
     color: typeof stroke?.color === "string" ? stroke.color : "#e53935",
-    width: Number.isFinite(Number(stroke?.width)) ? Number(stroke.width) : 3,
-    opacity: clamp(Number(stroke?.opacity ?? DEFAULT_PEN_OPACITY), 0.1, 1),
+    width: Number.isFinite(Number(stroke?.width)) ? clamp(Number(stroke.width), MIN_BRUSH_WIDTH, 80) : 3,
+    opacity: clamp(Number(stroke?.opacity ?? DEFAULT_PEN_OPACITY), 0, 1),
     count: clamp(Math.round(Number(stroke?.count) || 1), 1, MAX_PEN_COUNT),
     points: points
       .map((point) => ({
@@ -3446,6 +3650,49 @@ function parseInteger(value) {
 
 function pointerDistance(a, b) {
   return Math.hypot((a.x || 0) - (b.x || 0), (a.y || 0) - (b.y || 0));
+}
+
+function findLayoutMeasureElement(previewEl) {
+  return previewEl?.querySelector?.(".markdown-preview-sizer")
+    || previewEl?.querySelector?.(".cm-sizer")
+    || previewEl?.querySelector?.(".cm-content")
+    || previewEl;
+}
+
+function measureCanvasExtent(previewEl, measureEl = null) {
+  const previewRect = previewEl.getBoundingClientRect();
+  const measureRect = measureEl?.getBoundingClientRect?.();
+  const width = Math.max(
+    previewEl.scrollWidth || 0,
+    measureEl?.scrollWidth || 0,
+    measureEl?.offsetWidth || 0,
+    previewRect.width || 0,
+    measureRect?.width || 0,
+  );
+  const height = Math.max(
+    previewEl.scrollHeight || 0,
+    measureEl?.scrollHeight || 0,
+    measureEl?.offsetHeight || 0,
+    previewEl.offsetHeight || 0,
+    previewRect.height || 0,
+    measureRect?.height || 0,
+  );
+
+  return {
+    width: Math.max(1, width),
+    height: Math.max(1, height),
+    visibleWidth: Math.max(1, previewRect.width || width),
+  };
+}
+
+function getScrollEventTarget(scroller) {
+  if (!scroller) {
+    return window;
+  }
+
+  return scroller === document.documentElement || scroller === document.body
+    ? window
+    : scroller;
 }
 
 function findScrollableAncestor(element) {
