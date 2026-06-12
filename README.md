@@ -13,6 +13,7 @@ It is built as a note-surface layer: the same drawing and text-edit logic can be
 - Stroke selection, multi-select, movement, resize handles, and delete.
 - Circular toolbar buttons sized for quick touch or mouse use.
 - Palette button is disabled while select mode is active.
+- Active pen and watercolor buttons use their current brush color as the button background.
 - Lazy drawing-data loading to reduce note-open lag.
 - Click-to-caret behavior inside active text blocks.
 - Drawing data stored outside Markdown so notes stay clean.

@@ -861,6 +861,7 @@ var require_notedraw_plugin = __commonJS({
         this.colorInput.addEventListener("input", () => {
           this.currentBrushSettings().color = this.colorInput.value;
           this.syncCurrentBrushFields();
+          this.updateToolButtons();
         });
         this.widthInput = this.createPaletteInput("circle", "width", {
           type: "range",
@@ -873,6 +874,7 @@ var require_notedraw_plugin = __commonJS({
         this.widthInput.addEventListener("input", () => {
           this.currentBrushSettings().width = clamp(Number(this.widthInput.value), MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH);
           this.syncCurrentBrushFields();
+          this.updateToolButtons();
         });
         this.opacityInput = this.createPaletteInput("droplets", "opacity", {
           type: "range",
@@ -885,6 +887,7 @@ var require_notedraw_plugin = __commonJS({
         this.opacityInput.addEventListener("input", () => {
           this.currentBrushSettings().opacity = clamp(Number(this.opacityInput.value), 0, 1);
           this.syncCurrentBrushFields();
+          this.updateToolButtons();
         });
         this.canvas = this.previewEl.createEl("canvas", { cls: "notedraw-canvas" });
         this.canvas.addEventListener("pointerdown", this.onPointerDown);
@@ -922,6 +925,7 @@ var require_notedraw_plugin = __commonJS({
         }
         this.syncCurrentBrushFields?.();
         this.syncPaletteInputs?.();
+        this.updateToolButtons?.();
         this.positionToolbar?.();
         this.render?.();
       }
@@ -1156,11 +1160,24 @@ var require_notedraw_plugin = __commonJS({
         }
       }
       updateToolButtons() {
-        this.penButton?.classList.toggle("is-active", this.toolMode === TOOL_DRAW && this.brushMode === BRUSH_PEN);
-        this.watercolorButton?.classList.toggle("is-active", this.toolMode === TOOL_DRAW && this.brushMode === BRUSH_WATERCOLOR);
+        const penActive = this.toolMode === TOOL_DRAW && this.brushMode === BRUSH_PEN;
+        const watercolorActive = this.toolMode === TOOL_DRAW && this.brushMode === BRUSH_WATERCOLOR;
+        this.applyBrushButtonState(this.penButton, this.brushSettings?.[BRUSH_PEN], penActive);
+        this.applyBrushButtonState(this.watercolorButton, this.brushSettings?.[BRUSH_WATERCOLOR], watercolorActive);
         this.selectButton?.classList.toggle("is-active", this.toolMode === TOOL_SELECT);
         this.paletteButton?.toggleAttribute("disabled", this.toolMode === TOOL_SELECT);
         this.previewEl.toggleClass("is-watercolor-mode", this.toolMode === TOOL_DRAW && this.brushMode === BRUSH_WATERCOLOR);
+      }
+      applyBrushButtonState(button, settings, active) {
+        if (!button) {
+          return;
+        }
+        const color = isCssColor(settings?.color) ? settings.color : DEFAULT_SETTINGS.defaultPenColor;
+        button.classList.add("notedraw-brush-button");
+        button.classList.toggle("is-active", active);
+        button.classList.toggle("is-brush-color-active", active);
+        button.style.setProperty("--notedraw-brush-button-color", color);
+        button.style.setProperty("--notedraw-brush-button-contrast", contrastTextColor(color));
       }
       toggleSelectMode() {
         this.toolMode = this.toolMode === TOOL_SELECT ? TOOL_DRAW : TOOL_SELECT;
@@ -2397,6 +2414,16 @@ var require_notedraw_plugin = __commonJS({
     }
     function isCssColor(value) {
       return typeof value === "string" && /^#[0-9a-fA-F]{6}$/.test(value);
+    }
+    function contrastTextColor(hexColor) {
+      if (!isCssColor(hexColor)) {
+        return "#111827";
+      }
+      const red = parseInt(hexColor.slice(1, 3), 16);
+      const green = parseInt(hexColor.slice(3, 5), 16);
+      const blue = parseInt(hexColor.slice(5, 7), 16);
+      const luminance = (0.2126 * red + 0.7152 * green + 0.0722 * blue) / 255;
+      return luminance > 0.58 ? "#111827" : "#ffffff";
     }
     function isSourceTextTarget(target, previewEl) {
       if (!target || !previewEl?.contains(target)) {
