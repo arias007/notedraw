@@ -15,6 +15,7 @@ It is built as a note-surface layer: the same drawing and text-edit logic can be
 - Palette button is disabled while select mode is active.
 - Active pen and watercolor buttons use their current brush color as the button background.
 - The palette has common color swatches plus an advanced color picker entry.
+- Toolbar positioning stays below the Obsidian view header while scrolling.
 - Lazy drawing-data loading to reduce note-open lag.
 - Click-to-caret behavior inside active text blocks.
 - Drawing data stored outside Markdown so notes stay clean.

@@ -1123,17 +1123,18 @@ var require_notedraw_plugin = __commonJS({
         const host = this.view?.containerEl || this.previewEl.closest?.(".workspace-leaf-content") || this.previewEl;
         const hostRect = host.getBoundingClientRect();
         const buttonRect = this.button.getBoundingClientRect();
-        const chromeRect = this.button.closest?.(".view-actions, .view-header")?.getBoundingClientRect?.() || null;
+        const viewHeader = this.view?.containerEl?.querySelector?.(".view-header") || this.button.closest?.(".view-header") || null;
+        const chromeRect = viewHeader?.getBoundingClientRect?.() || this.button.closest?.(".view-actions")?.getBoundingClientRect?.() || null;
         const toolbarHeight = Math.max(36, this.toolbar.getBoundingClientRect().height || 36);
         const buttonVisible = buttonRect.width > 0 && buttonRect.height > 0 && buttonRect.bottom > 0 && buttonRect.top < window.innerHeight;
         const anchorRight = hostRect.right > 0 ? hostRect.right : buttonVisible ? buttonRect.right : window.innerWidth;
+        const headerBottom = chromeRect && chromeRect.bottom > 0 ? chromeRect.bottom : 48;
         const anchorBottom = Math.max(
           buttonVisible ? buttonRect.bottom : 0,
-          chromeRect && chromeRect.bottom > 0 ? chromeRect.bottom : 0,
-          hostRect.top + 44
+          headerBottom
         );
         const right = clamp(window.innerWidth - anchorRight + 10, 8, Math.max(8, window.innerWidth - 48));
-        const minTop = Math.max(56, hostRect.top + 48);
+        const minTop = Math.max(56, headerBottom + 6);
         const maxTop = Math.max(minTop, window.innerHeight - toolbarHeight - 8);
         const topOffset = sanitizeSettings(this.plugin?.settings || {}).toolbarTopOffset;
         const top = clamp(anchorBottom + topOffset, minTop, maxTop);
