@@ -45,6 +45,22 @@ var require_notedraw_plugin = __commonJS({
     var TOOL_SELECT = "select";
     var BRUSH_PEN = "pen";
     var BRUSH_WATERCOLOR = "watercolor";
+    var COMMON_COLORS = [
+      "#e53935",
+      "#fb8c00",
+      "#fdd835",
+      "#43a047",
+      "#00acc1",
+      "#1e88e5",
+      "#5e35b1",
+      "#8e24aa",
+      "#ec407a",
+      "#6d4c41",
+      "#546e7a",
+      "#111827",
+      "#ffffff",
+      "#9e9e9e"
+    ];
     var SETTINGS_EXTRA_CODE_ASSETS = [
       { path: "extras/code-1.jpg", label: "\u7ED9\u6211\u4E70\u5496\u5561 / Buy me a coffee" },
       { path: "extras/code-2.png", label: "\u652F\u6301\u7EE7\u7EED\u7EF4\u62A4 / Support this tool" }
@@ -853,14 +869,20 @@ var require_notedraw_plugin = __commonJS({
           this.togglePalettePanel();
         });
         this.palettePanel = this.previewEl.createDiv({ cls: "notedraw-palette-panel" });
-        this.colorInput = this.createPaletteInput("palette", "color", {
-          type: "color",
-          value: this.penColor,
-          title: "Pen color"
+        this.createColorPalette();
+        this.colorInput = this.palettePanel.createEl("input", {
+          cls: "notedraw-advanced-color",
+          attr: {
+            type: "color",
+            value: this.penColor,
+            title: "Advanced color",
+            "aria-label": "Advanced color"
+          }
         });
         this.colorInput.addEventListener("input", () => {
           this.currentBrushSettings().color = this.colorInput.value;
           this.syncCurrentBrushFields();
+          this.syncColorSwatches();
           this.updateToolButtons();
         });
         this.widthInput = this.createPaletteInput("circle", "width", {
@@ -1152,6 +1174,7 @@ var require_notedraw_plugin = __commonJS({
         if (this.colorInput) {
           this.colorInput.value = settings.color;
         }
+        this.syncColorSwatches();
         if (this.widthInput) {
           this.widthInput.value = String(settings.width);
         }
@@ -1167,6 +1190,66 @@ var require_notedraw_plugin = __commonJS({
         this.selectButton?.classList.toggle("is-active", this.toolMode === TOOL_SELECT);
         this.paletteButton?.toggleAttribute("disabled", this.toolMode === TOOL_SELECT);
         this.previewEl.toggleClass("is-watercolor-mode", this.toolMode === TOOL_DRAW && this.brushMode === BRUSH_WATERCOLOR);
+      }
+      createColorPalette() {
+        const row = this.palettePanel.createDiv({ cls: "notedraw-palette-row notedraw-color-row" });
+        const iconEl = row.createSpan({ cls: "notedraw-palette-icon" });
+        setIcon(iconEl, "palette");
+        this.colorSwatchGrid = row.createDiv({ cls: "notedraw-color-grid" });
+        this.colorSwatchButtons = COMMON_COLORS.map((color) => {
+          const button = this.colorSwatchGrid.createEl("button", {
+            cls: "notedraw-color-swatch",
+            attr: {
+              type: "button",
+              title: color,
+              "aria-label": `Use color ${color}`
+            }
+          });
+          button.style.setProperty("--notedraw-swatch-color", color);
+          button.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            this.setCurrentBrushColor(color);
+          });
+          return button;
+        });
+        this.advancedColorButton = this.colorSwatchGrid.createEl("button", {
+          cls: "notedraw-color-advanced",
+          attr: {
+            type: "button",
+            title: "Advanced color",
+            "aria-label": "Advanced color"
+          }
+        });
+        setIcon(this.advancedColorButton, "sliders-horizontal");
+        this.advancedColorButton.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          this.colorInput?.click();
+        });
+      }
+      setCurrentBrushColor(color) {
+        if (!isCssColor(color)) {
+          return;
+        }
+        this.currentBrushSettings().color = color;
+        this.syncCurrentBrushFields();
+        this.syncPaletteInputs();
+        this.updateToolButtons();
+      }
+      syncColorSwatches() {
+        if (!this.colorSwatchButtons?.length) {
+          return;
+        }
+        const currentColor = this.currentBrushSettings().color?.toLowerCase?.();
+        this.colorSwatchButtons.forEach((button, index) => {
+          const color = COMMON_COLORS[index].toLowerCase();
+          button.classList.toggle("is-active", color === currentColor);
+        });
+        this.advancedColorButton?.classList.toggle(
+          "is-active",
+          Boolean(currentColor) && !COMMON_COLORS.some((color) => color.toLowerCase() === currentColor)
+        );
       }
       applyBrushButtonState(button, settings, active) {
         if (!button) {
