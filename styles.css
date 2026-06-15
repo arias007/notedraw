@@ -93,6 +93,18 @@
     0 2px 9px rgba(0, 0, 0, 0.16);
 }
 
+.notedraw-embed.is-locked::after {
+  content: "";
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-yellow) 78%, var(--interactive-accent));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--background-primary) 78%, transparent);
+}
+
 .notedraw-embed img,
 .notedraw-embed video {
   display: block;
@@ -453,7 +465,7 @@
   left: auto;
   right: var(--notedraw-toolbar-right, 8px);
   display: none;
-  width: 210px;
+  width: 236px;
   padding: 8px;
   border: 1px solid var(--background-modifier-border);
   border-radius: 7px;
@@ -479,7 +491,7 @@
 
 .notedraw-text-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 5px;
 }
 
@@ -523,6 +535,54 @@
   display: none;
 }
 
+.notedraw-selection-menu {
+  position: fixed;
+  z-index: 1004;
+  top: var(--notedraw-selection-menu-top, 80px);
+  left: var(--notedraw-selection-menu-left, 8px);
+  display: none;
+  gap: 4px;
+  align-items: center;
+  padding: 4px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--background-primary) 94%, var(--background-secondary));
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.16);
+}
+
+.notedraw-selection-menu.is-visible {
+  display: inline-flex;
+}
+
+.notedraw-selection-menu-button {
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  box-sizing: border-box;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: var(--text-muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.notedraw-selection-menu-button:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+.notedraw-selection-menu-button svg,
+.notedraw-selection-menu-button .svg-icon {
+  width: 17px;
+  height: 17px;
+  min-width: 17px;
+  min-height: 17px;
+}
+
 .notedraw-palette-row {
   display: grid;
   grid-template-columns: 24px minmax(0, 1fr);
@@ -536,7 +596,7 @@
 
 .notedraw-color-grid {
   display: grid;
-  grid-template-columns: repeat(5, 24px);
+  grid-template-columns: repeat(6, 24px);
   gap: 6px;
   align-items: center;
 }
@@ -608,6 +668,14 @@
   height: 1px;
   opacity: 0;
   pointer-events: none;
+}
+
+.notedraw-settings-section-title {
+  margin: 22px 0 6px;
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+  font-weight: 700;
+  letter-spacing: 0;
 }
 
 .notedraw-settings-codes {

@@ -9,6 +9,8 @@ var {
   normalizePath,
   setIcon
 } = require("obsidian");
+var SUPPORT_CODE_ALIPAY_DATA_URL = require("../extras/code-1.jpg");
+var SUPPORT_CODE_BINANCE_DATA_URL = require("../extras/code-2.png");
 var PLUGIN_ID = "notedraw";
 var DRAWING_DIR = `${PLUGIN_ID}/drawings`;
 var ASSET_DIR = `${PLUGIN_ID}/assets`;
@@ -24,6 +26,8 @@ var SELECT_STROKE_PADDING = 8;
 var SELECTED_STROKE_ALPHA = 0.38;
 var SELECT_RESIZE_HANDLE_SIZE = 10;
 var SELECT_RESIZE_HANDLE_HIT_RADIUS = 15;
+var SNAP_GRID_PX = 8;
+var SNAP_THRESHOLD_PX = 7;
 var DRAWING_INTERPOLATION_STEP_PX = 3;
 var DRAWING_MIN_POINT_DISTANCE_PX = 0.55;
 var DRAWING_COMPACT_DISTANCE_PX = 1.1;
@@ -46,23 +50,14 @@ var EMBED_VIDEO = "video";
 var EMBED_FILE = "file";
 var COMMON_COLORS = [
   "#e53935",
-  "#fb8c00",
   "#fdd835",
   "#43a047",
-  "#00acc1",
   "#1e88e5",
-  "#5e35b1",
-  "#8e24aa",
-  "#ec407a",
-  "#6d4c41",
-  "#546e7a",
-  "#111827",
-  "#ffffff",
-  "#9e9e9e"
+  "#111827"
 ];
 var SETTINGS_EXTRA_CODE_ASSETS = [
-  { path: "extras/code-1.jpg", label: "\u7ED9\u6211\u4E70\u5496\u5561 / Buy me a coffee" },
-  { path: "extras/code-2.png", label: "\u652F\u6301\u7EE7\u7EED\u7EF4\u62A4 / Support this tool" }
+  { path: "extras/code-1.jpg", dataUrl: SUPPORT_CODE_ALIPAY_DATA_URL, labelKey: "supportCodeAlipay" },
+  { path: "extras/code-2.png", dataUrl: SUPPORT_CODE_BINANCE_DATA_URL, labelKey: "supportCodeBinance" }
 ];
 var LANGUAGE_AUTO = "auto";
 var LANGUAGE_OPTIONS = [
@@ -101,10 +96,18 @@ var I18N = {
     penWidth: "Pen width",
     penOpacity: "Pen opacity",
     textGroup: "Text",
+    buttonGroup: "Buttons",
     textPlain: "Text",
     title: "Title",
     code: "Code",
     button: "Button",
+    primaryButton: "Primary",
+    outlineButton: "Outline",
+    pillButton: "Pill",
+    arrowUp: "Up",
+    arrowDown: "Down",
+    arrowLeft: "Left",
+    arrowRight: "Right",
     fileTag: "File tag",
     importGroup: "Import",
     image: "Image",
@@ -131,6 +134,11 @@ var I18N = {
     size: "Size",
     movePanel: "Move panel",
     useColor: "Use color {color}",
+    settingsSectionInterface: "Interface",
+    settingsSectionPen: "Pen",
+    settingsSectionWatercolor: "Watercolor",
+    settingsSectionLayout: "Layout",
+    settingsSectionDiagnostics: "Diagnostics",
     settingsLanguage: "Language",
     settingsLanguageDesc: "Plugin UI language. Auto follows Obsidian when possible.",
     languageAuto: "Auto",
@@ -150,8 +158,16 @@ var I18N = {
     toolbarTopOffsetDesc: "Extra pixels below the Obsidian header.",
     debugLog: "Debug log",
     debugLogDesc: "Write text-save diagnostics to the plugin folder only while troubleshooting.",
-    supportTitle: "Buy me a coffee",
-    supportSubtitle: "If this tool helps, tips are appreciated."
+    supportTitle: "Support NoteDraw",
+    supportSubtitle: "Scan with Alipay or Binance to support ongoing maintenance.",
+    supportCodeAlipay: "Alipay",
+    supportCodeBinance: "Binance",
+    bringToFront: "Bring to front",
+    sendToBack: "Send to back",
+    moveForward: "Move up",
+    moveBackward: "Move down",
+    lockElement: "Lock",
+    unlockElement: "Unlock"
   },
   zh: {
     toggleCommand: "切换阅读编辑和涂鸦模式",
@@ -173,10 +189,18 @@ var I18N = {
     penWidth: "笔宽",
     penOpacity: "笔透明度",
     textGroup: "文字",
+    buttonGroup: "按钮/方向",
     textPlain: "普通文字",
     title: "标题",
     code: "代码",
     button: "按钮",
+    primaryButton: "主按钮",
+    outlineButton: "线框",
+    pillButton: "胶囊",
+    arrowUp: "上",
+    arrowDown: "下",
+    arrowLeft: "左",
+    arrowRight: "右",
     fileTag: "文件标签",
     importGroup: "导入",
     image: "图片",
@@ -203,6 +227,11 @@ var I18N = {
     size: "字号",
     movePanel: "移动面板",
     useColor: "使用颜色 {color}",
+    settingsSectionInterface: "界面",
+    settingsSectionPen: "笔",
+    settingsSectionWatercolor: "水彩笔",
+    settingsSectionLayout: "布局",
+    settingsSectionDiagnostics: "诊断",
     settingsLanguage: "语言",
     settingsLanguageDesc: "插件界面语言。自动模式会尽量跟随 Obsidian。",
     languageAuto: "自动",
@@ -222,8 +251,16 @@ var I18N = {
     toolbarTopOffsetDesc: "距离 Obsidian 顶部栏的额外像素。",
     debugLog: "调试日志",
     debugLogDesc: "仅排查问题时，把文字保存诊断写入插件文件夹。",
-    supportTitle: "给我买咖啡",
-    supportSubtitle: "如果这个插件帮到你，可以扫码打赏支持继续维护。"
+    supportTitle: "支持 NoteDraw / 双码",
+    supportSubtitle: "可用支付宝或币安扫码支持后续维护。",
+    supportCodeAlipay: "支付宝",
+    supportCodeBinance: "币安",
+    bringToFront: "置顶",
+    sendToBack: "置底",
+    moveForward: "上移一层",
+    moveBackward: "下移一层",
+    lockElement: "锁定",
+    unlockElement: "解锁"
   },
   "zh-TW": {
     toggleCommand: "切換閱讀編輯和塗鴉模式",
@@ -245,10 +282,18 @@ var I18N = {
     penWidth: "筆寬",
     penOpacity: "筆透明度",
     textGroup: "文字",
+    buttonGroup: "按鈕/方向",
     textPlain: "普通文字",
     title: "標題",
     code: "程式碼",
     button: "按鈕",
+    primaryButton: "主按鈕",
+    outlineButton: "線框",
+    pillButton: "膠囊",
+    arrowUp: "上",
+    arrowDown: "下",
+    arrowLeft: "左",
+    arrowRight: "右",
     fileTag: "檔案標籤",
     importGroup: "匯入",
     image: "圖片",
@@ -275,6 +320,11 @@ var I18N = {
     size: "字級",
     movePanel: "移動面板",
     useColor: "使用顏色 {color}",
+    settingsSectionInterface: "介面",
+    settingsSectionPen: "筆",
+    settingsSectionWatercolor: "水彩筆",
+    settingsSectionLayout: "佈局",
+    settingsSectionDiagnostics: "診斷",
     settingsLanguage: "語言",
     settingsLanguageDesc: "插件介面語言。自動模式會盡量跟隨 Obsidian。",
     languageAuto: "自動",
@@ -294,8 +344,16 @@ var I18N = {
     toolbarTopOffsetDesc: "距離 Obsidian 頂部列的額外像素。",
     debugLog: "除錯日誌",
     debugLogDesc: "僅排查問題時，將文字儲存診斷寫入插件資料夾。",
-    supportTitle: "請我喝咖啡",
-    supportSubtitle: "如果這個插件幫到你，可以掃碼打賞支持繼續維護。"
+    supportTitle: "支持 NoteDraw / 雙碼",
+    supportSubtitle: "可用支付寶或幣安掃碼支持後續維護。",
+    supportCodeAlipay: "支付寶",
+    supportCodeBinance: "幣安",
+    bringToFront: "置頂",
+    sendToBack: "置底",
+    moveForward: "上移一層",
+    moveBackward: "下移一層",
+    lockElement: "鎖定",
+    unlockElement: "解鎖"
   },
   ug: {
     toggleCommand: "ئوقۇش تەھرىر ۋە سىزىش ھالىتىنى ئالماشتۇرۇش",
@@ -317,10 +375,18 @@ var I18N = {
     penWidth: "قەلەم كەڭلىكى",
     penOpacity: "قەلەم سۈزۈكلۈكى",
     textGroup: "تېكىست",
+    buttonGroup: "كۇنۇپكا/يۆنىلىش",
     textPlain: "تېكىست",
     title: "ماۋزۇ",
     code: "كود",
     button: "كۇنۇپكا",
+    primaryButton: "ئاساسىي",
+    outlineButton: "سىزىقلىق",
+    pillButton: "يۇمىلاق",
+    arrowUp: "ئۈستى",
+    arrowDown: "ئاستى",
+    arrowLeft: "سول",
+    arrowRight: "ئوڭ",
     fileTag: "ھۆججەت بەلگىسى",
     importGroup: "كىرگۈزۈش",
     image: "رەسىم",
@@ -347,6 +413,11 @@ var I18N = {
     size: "چوڭلۇق",
     movePanel: "تاختىنى يۆتكەش",
     useColor: "{color} رەڭنى ئىشلىتىش",
+    settingsSectionInterface: "كۆرۈنمە يۈزى",
+    settingsSectionPen: "قەلەم",
+    settingsSectionWatercolor: "سۇ بوياق قەلەم",
+    settingsSectionLayout: "جايلىشىش",
+    settingsSectionDiagnostics: "دىئاگنوز",
     settingsLanguage: "تىل",
     settingsLanguageDesc: "قىستۇرما كۆرۈنمە يۈزى تىلى. ئاپتوماتىك ھالەت Obsidian غا ئەگىشىدۇ.",
     languageAuto: "ئاپتوماتىك",
@@ -366,8 +437,16 @@ var I18N = {
     toolbarTopOffsetDesc: "Obsidian باش قىسمىدىن قوشۇمچە پىكسېل.",
     debugLog: "سازلاش خاتىرىسى",
     debugLogDesc: "پەقەت مەسىلە تەكشۈرگەندە تېكىست ساقلاش دىئاگنوزىنى قىستۇرما قىسقۇچىغا يازىدۇ.",
-    supportTitle: "ماڭا قەھۋە ئېلىپ بېرىڭ",
-    supportSubtitle: "بۇ قىستۇرما پايدىلىق بولسا، داۋاملىق قوللاشقا ياردەم قىلالايسىز."
+    supportTitle: "NoteDraw نى قوللاش",
+    supportSubtitle: "Alipay ياكى Binance ئارقىلىق كودنى سىكانىرلاپ قوللىسىڭىز بولىدۇ.",
+    supportCodeAlipay: "Alipay",
+    supportCodeBinance: "Binance",
+    bringToFront: "ئەڭ ئۈستىگە",
+    sendToBack: "ئەڭ ئاستىغا",
+    moveForward: "ئۈستىگە يۆتكە",
+    moveBackward: "ئاستىغا يۆتكە",
+    lockElement: "قۇلۇپلاش",
+    unlockElement: "قۇلۇپنى ئېچىش"
   },
   ru: {
     toggleCommand: "Переключить редактирование предпросмотра и рисование",
@@ -389,10 +468,18 @@ var I18N = {
     penWidth: "Толщина пера",
     penOpacity: "Прозрачность пера",
     textGroup: "Текст",
+    buttonGroup: "Кнопки/стрелки",
     textPlain: "Текст",
     title: "Заголовок",
     code: "Код",
     button: "Кнопка",
+    primaryButton: "Основная",
+    outlineButton: "Контур",
+    pillButton: "Плашка",
+    arrowUp: "Вверх",
+    arrowDown: "Вниз",
+    arrowLeft: "Влево",
+    arrowRight: "Вправо",
     fileTag: "Метка файла",
     importGroup: "Импорт",
     image: "Изображение",
@@ -419,6 +506,11 @@ var I18N = {
     size: "Размер",
     movePanel: "Переместить панель",
     useColor: "Использовать цвет {color}",
+    settingsSectionInterface: "Интерфейс",
+    settingsSectionPen: "Перо",
+    settingsSectionWatercolor: "Акварель",
+    settingsSectionLayout: "Макет",
+    settingsSectionDiagnostics: "Диагностика",
     settingsLanguage: "Язык",
     settingsLanguageDesc: "Язык интерфейса плагина. Авто по возможности следует Obsidian.",
     languageAuto: "Авто",
@@ -438,8 +530,16 @@ var I18N = {
     toolbarTopOffsetDesc: "Дополнительные пиксели ниже заголовка Obsidian.",
     debugLog: "Журнал отладки",
     debugLogDesc: "Записывать диагностику сохранения текста в папку плагина только при отладке.",
-    supportTitle: "Купить мне кофе",
-    supportSubtitle: "Если инструмент помогает, можно поддержать разработку."
+    supportTitle: "Поддержать NoteDraw",
+    supportSubtitle: "Сканируйте через Alipay или Binance, чтобы поддержать разработку.",
+    supportCodeAlipay: "Alipay",
+    supportCodeBinance: "Binance",
+    bringToFront: "На передний план",
+    sendToBack: "На задний план",
+    moveForward: "Выше",
+    moveBackward: "Ниже",
+    lockElement: "Закрепить",
+    unlockElement: "Открепить"
   }
 };
 Object.assign(I18N, {
@@ -470,9 +570,18 @@ Object.assign(I18N, {
     underline: "تحته خط",
     highlight: "تمييز",
     clearFormat: "مسح التنسيق",
+    settingsSectionInterface: "الواجهة",
+    settingsSectionPen: "القلم",
+    settingsSectionWatercolor: "الألوان المائية",
+    settingsSectionLayout: "التخطيط",
+    settingsSectionDiagnostics: "التشخيص",
     movePanel: "تحريك اللوحة",
     settingsLanguage: "اللغة",
-    languageAuto: "تلقائي"
+    languageAuto: "تلقائي",
+    supportTitle: "دعم NoteDraw",
+    supportSubtitle: "امسح عبر Alipay أو Binance لدعم الصيانة.",
+    supportCodeAlipay: "Alipay",
+    supportCodeBinance: "Binance"
   }),
   es: Object.assign({}, I18N.en, {
     toggleCommand: "Cambiar edición de vista previa y dibujo",
@@ -498,9 +607,18 @@ Object.assign(I18N, {
     italic: "Cursiva",
     underline: "Subrayado",
     clearFormat: "Quitar formato",
+    settingsSectionInterface: "Interfaz",
+    settingsSectionPen: "Pluma",
+    settingsSectionWatercolor: "Acuarela",
+    settingsSectionLayout: "Diseño",
+    settingsSectionDiagnostics: "Diagnóstico",
     movePanel: "Mover panel",
     settingsLanguage: "Idioma",
-    languageAuto: "Auto"
+    languageAuto: "Auto",
+    supportTitle: "Apoyar NoteDraw",
+    supportSubtitle: "Escanea con Alipay o Binance para apoyar el mantenimiento.",
+    supportCodeAlipay: "Alipay",
+    supportCodeBinance: "Binance"
   }),
   fr: Object.assign({}, I18N.en, {
     toggleCommand: "Basculer édition de l'aperçu et dessin",
@@ -526,9 +644,18 @@ Object.assign(I18N, {
     italic: "Italique",
     underline: "Souligné",
     clearFormat: "Effacer le format",
+    settingsSectionInterface: "Interface",
+    settingsSectionPen: "Stylo",
+    settingsSectionWatercolor: "Aquarelle",
+    settingsSectionLayout: "Disposition",
+    settingsSectionDiagnostics: "Diagnostics",
     movePanel: "Déplacer le panneau",
     settingsLanguage: "Langue",
-    languageAuto: "Auto"
+    languageAuto: "Auto",
+    supportTitle: "Soutenir NoteDraw",
+    supportSubtitle: "Scannez avec Alipay ou Binance pour soutenir la maintenance.",
+    supportCodeAlipay: "Alipay",
+    supportCodeBinance: "Binance"
   }),
   de: Object.assign({}, I18N.en, {
     toggleCommand: "Vorschau-Bearbeitung und Zeichnen umschalten",
@@ -554,9 +681,18 @@ Object.assign(I18N, {
     italic: "Kursiv",
     underline: "Unterstrichen",
     clearFormat: "Formatierung löschen",
+    settingsSectionInterface: "Oberfläche",
+    settingsSectionPen: "Stift",
+    settingsSectionWatercolor: "Aquarell",
+    settingsSectionLayout: "Layout",
+    settingsSectionDiagnostics: "Diagnose",
     movePanel: "Panel verschieben",
     settingsLanguage: "Sprache",
-    languageAuto: "Auto"
+    languageAuto: "Auto",
+    supportTitle: "NoteDraw unterstützen",
+    supportSubtitle: "Mit Alipay oder Binance scannen, um die Wartung zu unterstützen.",
+    supportCodeAlipay: "Alipay",
+    supportCodeBinance: "Binance"
   }),
   ja: Object.assign({}, I18N.en, {
     toggleCommand: "プレビュー編集と描画モードを切り替え",
@@ -582,9 +718,18 @@ Object.assign(I18N, {
     italic: "斜体",
     underline: "下線",
     clearFormat: "書式をクリア",
+    settingsSectionInterface: "インターフェース",
+    settingsSectionPen: "ペン",
+    settingsSectionWatercolor: "水彩",
+    settingsSectionLayout: "レイアウト",
+    settingsSectionDiagnostics: "診断",
     movePanel: "パネルを移動",
     settingsLanguage: "言語",
-    languageAuto: "自動"
+    languageAuto: "自動",
+    supportTitle: "NoteDraw を支援",
+    supportSubtitle: "Alipay または Binance でスキャンして保守を支援できます。",
+    supportCodeAlipay: "Alipay",
+    supportCodeBinance: "Binance"
   }),
   ko: Object.assign({}, I18N.en, {
     toggleCommand: "미리보기 편집 및 그리기 모드 전환",
@@ -610,9 +755,18 @@ Object.assign(I18N, {
     italic: "기울임",
     underline: "밑줄",
     clearFormat: "서식 지우기",
+    settingsSectionInterface: "인터페이스",
+    settingsSectionPen: "펜",
+    settingsSectionWatercolor: "수채화",
+    settingsSectionLayout: "레이아웃",
+    settingsSectionDiagnostics: "진단",
     movePanel: "패널 이동",
     settingsLanguage: "언어",
-    languageAuto: "자동"
+    languageAuto: "자동",
+    supportTitle: "NoteDraw 지원",
+    supportSubtitle: "Alipay 또는 Binance로 스캔하여 유지 관리를 지원할 수 있습니다.",
+    supportCodeAlipay: "Alipay",
+    supportCodeBinance: "Binance"
   }),
   tr: Object.assign({}, I18N.en, {
     toggleCommand: "Önizleme düzenleme ve çizim modunu değiştir",
@@ -638,9 +792,18 @@ Object.assign(I18N, {
     italic: "İtalik",
     underline: "Altı çizili",
     clearFormat: "Biçimi temizle",
+    settingsSectionInterface: "Arayüz",
+    settingsSectionPen: "Kalem",
+    settingsSectionWatercolor: "Suluboya",
+    settingsSectionLayout: "Yerleşim",
+    settingsSectionDiagnostics: "Tanılama",
     movePanel: "Paneli taşı",
     settingsLanguage: "Dil",
-    languageAuto: "Otomatik"
+    languageAuto: "Otomatik",
+    supportTitle: "NoteDraw'u destekle",
+    supportSubtitle: "Bakımı desteklemek için Alipay veya Binance ile tarayın.",
+    supportCodeAlipay: "Alipay",
+    supportCodeBinance: "Binance"
   })
 });
 var DEFAULT_SETTINGS = {
@@ -672,6 +835,7 @@ var BLOCKED_EDIT_SELECTOR = [
   ".notedraw-button",
   ".notedraw-toolbar",
   ".notedraw-palette-panel",
+  ".notedraw-selection-menu",
   ".notedraw-canvas",
   "a",
   "button",
@@ -714,6 +878,7 @@ var WEBVIEW_BLOCKED_EDIT_SELECTOR = [
   ".notedraw-toolbar",
   ".notedraw-palette-panel",
   ".notedraw-text-panel",
+  ".notedraw-selection-menu",
   ".notedraw-embed-layer",
   ".notedraw-canvas",
   "button",
@@ -885,7 +1050,7 @@ var NoteDrawPlugin = class extends Plugin {
   }
   createPublicApi() {
     return {
-      version: "3.1.13",
+      version: "3.1.16",
       getActiveController: () => this.getActiveController(),
       readDrawings: async (file) => this.readDrawings(file),
       writeDrawings: async (file, data) => this.writeDrawings(file, normalizeDrawingData(data, file)),
@@ -1722,8 +1887,11 @@ var PreviewDrawingController = class {
     this.draggingStroke = false;
     this.dragStrokeStartPoint = null;
     this.dragStrokeOriginalPoints = null;
+    this.dragStrokeOriginalBounds = null;
+    this.dragStrokeOriginalBounds = null;
     this.dragStrokeMoved = false;
     this.dragStrokeHitIndex = -1;
+    this.dragStrokePreserveSelection = false;
     this.resizingSelection = false;
     this.resizeSelectionHandle = null;
     this.resizeSelectionStartPoint = null;
@@ -1742,6 +1910,9 @@ var PreviewDrawingController = class {
     this.buttonLongPressTimer = null;
     this.paletteOpen = false;
     this.textPanelOpen = false;
+    this.selectionMenuOpen = false;
+    this.selectionLongPressTimer = null;
+    this.selectionLongPressState = null;
     this.textPreset = "plain";
     this.pendingEmbedTool = null;
     this.lastTextTap = null;
@@ -1848,6 +2019,8 @@ var PreviewDrawingController = class {
       this.textPanel = this.previewEl.createDiv({ cls: "notedraw-text-panel" });
       this.createTextPanel();
     }
+    this.selectionMenu = this.previewEl.createDiv({ cls: "notedraw-selection-menu" });
+    this.createSelectionMenu();
     if (this.allowTextEdit && this.surfaceType !== "webview") {
       this.createFormatToolbar();
     }
@@ -1986,6 +2159,14 @@ var PreviewDrawingController = class {
       this.previewEl.toggleClass("is-text-panel-open", this.textPanelOpen);
       this.syncTextPanelButtons();
     }
+    if (this.selectionMenu) {
+      const wasOpen = this.selectionMenuOpen;
+      this.selectionMenu.empty();
+      this.createSelectionMenu();
+      this.selectionMenuOpen = wasOpen;
+      this.selectionMenu.toggleClass("is-visible", wasOpen);
+      this.previewEl.toggleClass("is-selection-menu-open", wasOpen);
+    }
     if (this.formatToolbar) {
       this.formatToolbar.querySelectorAll("[data-note-draw-title-key]").forEach((element) => {
         this.plugin.setAccessibleLabel(element, element.dataset.noteDrawTitleKey);
@@ -2040,6 +2221,8 @@ var PreviewDrawingController = class {
     this.selectingStrokes = false;
     this.selectionStartPoint = null;
     this.selectionCurrentPoint = null;
+    this.clearSelectionLongPress();
+    this.hideSelectionMenu();
     this.redoStack = [];
     this.selectedStrokeIndex = -1;
     this.selectedStrokeIndexes.clear();
@@ -2085,6 +2268,7 @@ var PreviewDrawingController = class {
     this.toolbar?.remove();
     this.palettePanel?.remove();
     this.textPanel?.remove();
+    this.selectionMenu?.remove();
     this.formatToolbar?.remove();
     this.hiddenFileInput?.remove();
     this.embedLayer?.remove();
@@ -2098,11 +2282,13 @@ var PreviewDrawingController = class {
     this.previewEl.removeClass("is-select-mode");
     this.previewEl.removeClass("is-palette-open");
     this.previewEl.removeClass("is-text-panel-open");
+    this.previewEl.removeClass("is-selection-menu-open");
     this.previewEl.removeClass("is-watercolor-mode");
     this.previewEl.removeClass("is-notedraw-source-shell");
     this.previewEl.removeClass("is-notedraw-webview-shell");
     this.previewEl.removeClass("is-resizing-selection");
     this.previewEl.removeClass("is-native-text-editing");
+    this.clearSelectionLongPress();
     if (this.previewEl._noteDrawController === this) {
       delete this.previewEl._noteDrawController;
     }
@@ -2116,6 +2302,8 @@ var PreviewDrawingController = class {
       this.endFloatingTextInput(false);
       this.setPaletteOpen(false);
       this.setTextPanelOpen(false);
+      this.hideSelectionMenu();
+      this.clearSelectionLongPress();
       this.cancelCurrentStroke();
       this.cancelSelectionDrag(true);
       this.cancelSelectedStrokeDrag(true);
@@ -2229,6 +2417,7 @@ var PreviewDrawingController = class {
     this.brushMode = mode;
     this.toolMode = TOOL_DRAW;
     this.previewEl.removeClass("is-select-mode");
+    this.hideSelectionMenu();
     this.endTextEdit();
     this.cancelCurrentStroke();
     this.cancelSelectionDrag(true);
@@ -2240,6 +2429,7 @@ var PreviewDrawingController = class {
   setTextMode() {
     this.toolMode = TOOL_TEXT;
     this.previewEl.removeClass("is-select-mode");
+    this.hideSelectionMenu();
     this.setPaletteOpen(false);
     this.setTextPanelOpen(false);
     this.endTextEdit();
@@ -2293,8 +2483,20 @@ var PreviewDrawingController = class {
           { id: "plain", labelKey: "textPlain", icon: "type" },
           { id: "title", labelKey: "title", icon: "type" },
           { id: "code", labelKey: "code", icon: "code-2" },
-          { id: "button", labelKey: "button", icon: "square" },
           { id: "file", labelKey: "fileTag", icon: "file-text" }
+        ]
+      },
+      {
+        labelKey: "buttonGroup",
+        items: [
+          { id: "button", labelKey: "button", icon: "square" },
+          { id: "buttonPrimary", labelKey: "primaryButton", icon: "square-check" },
+          { id: "buttonOutline", labelKey: "outlineButton", icon: "square" },
+          { id: "buttonPill", labelKey: "pillButton", icon: "circle" },
+          { id: "arrowUp", labelKey: "arrowUp", icon: "arrow-up" },
+          { id: "arrowDown", labelKey: "arrowDown", icon: "arrow-down" },
+          { id: "arrowLeft", labelKey: "arrowLeft", icon: "arrow-left" },
+          { id: "arrowRight", labelKey: "arrowRight", icon: "arrow-right" }
         ]
       },
       {
@@ -2343,6 +2545,100 @@ var PreviewDrawingController = class {
     this.textPanel?.querySelectorAll(".notedraw-text-option").forEach((button) => {
       button.classList.toggle("is-active", button.dataset.noteDrawTextPreset === this.textPreset);
     });
+  }
+  createSelectionMenu() {
+    const actions = [
+      { icon: "bring-to-front", key: "bringToFront", action: () => this.reorderSelectedStrokes("front") },
+      { icon: "move-up", key: "moveForward", action: () => this.reorderSelectedStrokes("forward") },
+      { icon: "move-down", key: "moveBackward", action: () => this.reorderSelectedStrokes("backward") },
+      { icon: "send-to-back", key: "sendToBack", action: () => this.reorderSelectedStrokes("back") },
+      { icon: "lock", key: "lockElement", action: () => this.toggleSelectedStrokeLock() }
+    ];
+    for (const item of actions) {
+      const title = this.plugin.t(item.key);
+      const button = this.selectionMenu.createEl("button", {
+        cls: "notedraw-selection-menu-button",
+        attr: { type: "button", title, "aria-label": title }
+      });
+      button.dataset.noteDrawTitleKey = item.key;
+      setIcon(button, item.icon);
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        item.action();
+      });
+    }
+    this.syncSelectionMenuButtons();
+  }
+  syncSelectionMenuButtons() {
+    if (!this.selectionMenu) {
+      return;
+    }
+    const locked = this.getSelectedStrokeIndexes().length > 0 && this.getSelectedStrokeIndexes().every((index) => this.drawingData.strokes[index]?.locked);
+    const lockButton = this.selectionMenu.querySelector('[data-note-draw-title-key="lockElement"], [data-note-draw-title-key="unlockElement"]');
+    if (lockButton) {
+      const key = locked ? "unlockElement" : "lockElement";
+      lockButton.dataset.noteDrawTitleKey = key;
+      this.plugin.setAccessibleLabel(lockButton, key);
+      setIcon(lockButton, locked ? "unlock" : "lock");
+    }
+  }
+  showSelectionMenu(clientPoint = null) {
+    const indexes = this.getSelectedStrokeIndexes();
+    if (!indexes.length || !this.selectionMenu) {
+      return;
+    }
+    this.syncSelectionMenuButtons();
+    const fallback = this.getSelectedFrameCanvasRect();
+    const canvasRect = this.canvas.getBoundingClientRect();
+    const x = Number.isFinite(clientPoint?.x) ? clientPoint.x : fallback ? canvasRect.left + fallback.x + fallback.width / 2 : canvasRect.left + 20;
+    const y = Number.isFinite(clientPoint?.y) ? clientPoint.y : fallback ? canvasRect.top + fallback.y : canvasRect.top + 20;
+    const width = Math.max(210, this.selectionMenu.getBoundingClientRect().width || 228);
+    const height = Math.max(38, this.selectionMenu.getBoundingClientRect().height || 38);
+    const viewport = window.visualViewport;
+    const viewportTop = viewport?.offsetTop || 0;
+    const viewportLeft = viewport?.offsetLeft || 0;
+    const viewportWidth = Math.max(160, viewport?.width || window.innerWidth || 160);
+    const viewportHeight = Math.max(120, viewport?.height || window.innerHeight || 120);
+    const left = clamp(Math.round(x - width / 2), viewportLeft + 8, Math.max(viewportLeft + 8, viewportLeft + viewportWidth - width - 8));
+    const top = clamp(Math.round(y - height - 14), viewportTop + 8, Math.max(viewportTop + 8, viewportTop + viewportHeight - height - 8));
+    this.selectionMenu.style.setProperty("--notedraw-selection-menu-left", `${left}px`);
+    this.selectionMenu.style.setProperty("--notedraw-selection-menu-top", `${top}px`);
+    this.selectionMenuOpen = true;
+    this.selectionMenu.addClass("is-visible");
+    this.previewEl.addClass("is-selection-menu-open");
+  }
+  hideSelectionMenu() {
+    this.selectionMenuOpen = false;
+    this.selectionMenu?.removeClass("is-visible");
+    this.previewEl?.removeClass("is-selection-menu-open");
+  }
+  startSelectionLongPress(event) {
+    this.clearSelectionLongPress();
+    if (!this.getSelectedStrokeIndexes().length) {
+      return;
+    }
+    this.selectionLongPressState = {
+      pointerId: event.pointerId,
+      client: { x: event.clientX, y: event.clientY }
+    };
+    this.selectionLongPressTimer = window.setTimeout(() => {
+      if (!this.selectionLongPressState || this.selectionLongPressState.pointerId !== this.activePointerId || this.dragStrokeMoved || this.resizeSelectionMoved) {
+        return;
+      }
+      this.releasePointerCapture(this.selectionLongPressState.pointerId);
+      this.clearSelectedStrokeDragState();
+      this.showSelectionMenu(this.selectionLongPressState.client);
+      this.clearSelectionLongPress();
+      this.render();
+    }, LONG_PRESS_MS);
+  }
+  clearSelectionLongPress() {
+    if (this.selectionLongPressTimer) {
+      window.clearTimeout(this.selectionLongPressTimer);
+      this.selectionLongPressTimer = null;
+    }
+    this.selectionLongPressState = null;
   }
   createFormatToolbar() {
     this.formatToolbar = this.previewEl.createDiv({ cls: "notedraw-format-toolbar" });
@@ -2758,6 +3054,8 @@ var PreviewDrawingController = class {
     if (this.toolMode === TOOL_SELECT) {
       this.setPaletteOpen(false);
       this.setTextPanelOpen(false);
+    } else {
+      this.hideSelectionMenu();
     }
     this.updateToolButtons();
     this.endTextEdit();
@@ -2784,7 +3082,7 @@ var PreviewDrawingController = class {
     }
   }
   onDocumentPointerDown(event) {
-    if (!this.paletteOpen && !this.textPanelOpen && !this.currentEditor) {
+    if (!this.paletteOpen && !this.textPanelOpen && !this.selectionMenuOpen && !this.currentEditor) {
       return;
     }
     const target = event.target;
@@ -2793,6 +3091,7 @@ var PreviewDrawingController = class {
       this.paletteButton?.contains(target) ||
       this.textPanel?.contains(target) ||
       this.textButton?.contains(target) ||
+      this.selectionMenu?.contains(target) ||
       this.formatToolbar?.contains(target) ||
       this.currentEditor?.contains(target)
     ) {
@@ -2800,6 +3099,7 @@ var PreviewDrawingController = class {
     }
     this.setPaletteOpen(false);
     this.setTextPanelOpen(false);
+    this.hideSelectionMenu();
     if (this.currentEditor) {
       this.endTextEdit();
     }
@@ -2883,6 +3183,26 @@ var PreviewDrawingController = class {
     const resizeHandle = this.findSelectionHandleAt(point);
     if (resizeHandle) {
       this.startSelectedStrokeResize(event, point, resizeHandle);
+      return;
+    }
+    if (this.toolMode === TOOL_SELECT && hitStrokeIndex >= 0) {
+      const additiveSelect = event.shiftKey || event.ctrlKey || event.metaKey;
+      if (additiveSelect) {
+        const wasSelected = this.isStrokeSelected(hitStrokeIndex);
+        this.toggleStrokeSelection(hitStrokeIndex);
+        if (wasSelected) {
+          this.render();
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
+        this.startSelectedStrokeDrag(event, point, hitStrokeIndex, { preserveSelection: true });
+        return;
+      }
+      if (!this.isStrokeSelected(hitStrokeIndex)) {
+        this.setSelectedStrokes(hitStrokeIndex);
+      }
+      this.startSelectedStrokeDrag(event, point, hitStrokeIndex);
       return;
     }
     if (editable && this.toolMode !== TOOL_SELECT && this.toolMode !== TOOL_TEXT) {
@@ -3260,6 +3580,10 @@ var PreviewDrawingController = class {
         file: preset.file,
         previewWidth: preset.previewWidth,
         previewHeight: preset.previewHeight,
+        uiRole: preset.uiRole,
+        buttonStyle: preset.buttonStyle,
+        snap: preset.snap,
+        locked: false,
         points: [{ ...state.point, t: Date.now() }]
       };
       this.drawingData.strokes.push(stroke);
@@ -3286,22 +3610,60 @@ var PreviewDrawingController = class {
   }
   editFloatingTextStroke(index, point = null) {
     const stroke = this.drawingData.strokes[index];
-    if (!isTextLikeStroke(stroke)) {
+    if (!isTextLikeStroke(stroke) || stroke.locked) {
       return;
     }
     this.setSelectedStrokes(index);
     this.openFloatingTextInput(point || stroke.points[0], index);
   }
   handleTextToolTap(point) {
+    const snappedPoint = this.snapPointForPreset(point, this.textPreset);
     if (isAssetTextPreset(this.textPreset)) {
-      this.pendingEmbedTool = { preset: this.textPreset, point };
+      this.pendingEmbedTool = { preset: this.textPreset, point: snappedPoint };
       if (this.hiddenFileInput) {
         this.hiddenFileInput.accept = filePickerAcceptForPreset(this.textPreset);
         this.hiddenFileInput.click();
       }
       return;
     }
-    this.openFloatingTextInput(point);
+    const instantText = instantTextForPreset(this.textPreset);
+    if (instantText) {
+      this.insertTextPresetAt(snappedPoint, this.textPreset, instantText);
+      return;
+    }
+    this.openFloatingTextInput(snappedPoint);
+  }
+  insertTextPresetAt(point, presetId, text) {
+    const brush = this.currentBrushSettings();
+    const preset = createTextPreset(presetId, text, brush.color || this.penColor);
+    const stroke = {
+      kind: preset.kind || TOOL_TEXT,
+      brush: BRUSH_PEN,
+      color: preset.color,
+      width: 3,
+      opacity: 1,
+      count: 1,
+      text: preset.text,
+      render: preset.render || TEXT_RENDER_PLAIN,
+      fontSize: preset.fontSize,
+      bold: preset.bold,
+      code: preset.code,
+      boxed: preset.boxed,
+      file: preset.file,
+      previewWidth: preset.previewWidth,
+      previewHeight: preset.previewHeight,
+      uiRole: preset.uiRole,
+      buttonStyle: preset.buttonStyle,
+      snap: preset.snap,
+      locked: false,
+      points: [{ ...point, t: Date.now() }]
+    };
+    this.drawingData.strokes.push(stroke);
+    this.setSelectedStrokes(this.drawingData.strokes.length - 1);
+    this.redoStack = [];
+    this.invalidateStaticCache();
+    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.render();
   }
   async insertImportedAsset(fileLike, point) {
     const asset = await this.plugin.importLocalAsset(fileLike);
@@ -3331,6 +3693,7 @@ var PreviewDrawingController = class {
         assetSize: asset.size,
         previewWidth: 320,
         previewHeight: isHtmlPreview ? 200 : 220,
+        locked: false,
         points: [{ ...point, t: Date.now() }]
       };
       this.pendingEmbedTool = null;
@@ -3359,6 +3722,7 @@ var PreviewDrawingController = class {
       exportImageDataUrl: kind === EMBED_IMAGE ? asset.imageDataUrl || "" : "",
       previewWidth: kind === EMBED_FILE ? 260 : 320,
       previewHeight: kind === EMBED_FILE ? 74 : 200,
+      locked: false,
       points: [{ ...point, t: Date.now() }]
     };
     this.pendingEmbedTool = null;
@@ -3487,22 +3851,31 @@ var PreviewDrawingController = class {
     this.activePointerId = null;
     this.previewEl.removeClass("is-selecting-strokes");
   }
-  startSelectedStrokeDrag(event, point, hitIndex = -1) {
+  startSelectedStrokeDrag(event, point, hitIndex = -1, options = {}) {
     const indexes = this.getSelectedStrokeIndexes();
     if (!indexes.length) {
       return;
     }
+    const movableIndexes = indexes.filter((index) => !this.drawingData.strokes[index]?.locked);
     this.endTextEdit();
     this.pointerDown = false;
     this.currentStroke = null;
+    if (!movableIndexes.length) {
+      this.showSelectionMenu({ x: event.clientX, y: event.clientY });
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     this.draggingStroke = true;
     this.dragStrokeStartPoint = point;
-    this.dragStrokeOriginalPoints = new Map(indexes.map((index) => [
+    this.dragStrokeOriginalPoints = new Map(movableIndexes.map((index) => [
       index,
       this.drawingData.strokes[index].points.map((strokePoint) => ({ ...strokePoint }))
     ]));
+    this.dragStrokeOriginalBounds = this.getStrokeIndexesNormalizedBounds(movableIndexes);
     this.dragStrokeMoved = false;
     this.dragStrokeHitIndex = hitIndex;
+    this.dragStrokePreserveSelection = Boolean(options.preserveSelection);
     this.pointerStartClient = { x: event.clientX, y: event.clientY };
     this.activePointerId = event.pointerId;
     this.previewEl.addClass("is-moving-selection");
@@ -3510,6 +3883,7 @@ var PreviewDrawingController = class {
       this.canvas.setPointerCapture(event.pointerId);
     } catch (_) {
     }
+    this.startSelectionLongPress(event);
     event.preventDefault();
     event.stopPropagation();
   }
@@ -3535,6 +3909,14 @@ var PreviewDrawingController = class {
     );
     if (movedDistance > SELECT_TAP_DISTANCE) {
       this.dragStrokeMoved = true;
+      this.clearSelectionLongPress();
+    }
+    let snappedDx = dx;
+    let snappedDy = dy;
+    if (this.shouldSnapStrokeIndexes(Array.from(this.dragStrokeOriginalPoints.keys())) && this.dragStrokeOriginalBounds) {
+      const snap = this.computeSnapDeltaForNormalizedBounds(translateNormalizedBounds(this.dragStrokeOriginalBounds, dx, dy), Array.from(this.dragStrokeOriginalPoints.keys()));
+      snappedDx = clamp(dx + snap.dx, -minX, 1 - maxX);
+      snappedDy = clamp(dy + snap.dy, -minY, 1 - maxY);
     }
     for (const [index, points] of this.dragStrokeOriginalPoints.entries()) {
       const stroke = this.drawingData.strokes[index];
@@ -3543,8 +3925,8 @@ var PreviewDrawingController = class {
       }
       stroke.points = points.map((strokePoint) => ({
         ...strokePoint,
-        x: clamp(strokePoint.x + dx, 0, 1),
-        y: clamp(strokePoint.y + dy, 0, 1)
+        x: clamp(strokePoint.x + snappedDx, 0, 1),
+        y: clamp(strokePoint.y + snappedDy, 0, 1)
       }));
     }
     this.requestRender();
@@ -3552,11 +3934,12 @@ var PreviewDrawingController = class {
     event.stopPropagation();
   }
   finishSelectedStrokeDrag(event) {
+    this.clearSelectionLongPress();
     if (this.dragStrokeMoved) {
       this.lastTextTap = null;
       this.redoStack = [];
       this.plugin.scheduleDrawingSave(this.file, this.drawingData);
-    } else if (this.getSelectedStrokeIndexes().length > 1 && this.dragStrokeHitIndex >= 0) {
+    } else if (!this.dragStrokePreserveSelection && this.getSelectedStrokeIndexes().length > 1 && this.dragStrokeHitIndex >= 0) {
       this.setSelectedStrokes(this.dragStrokeHitIndex);
     } else {
       this.cancelSelectedStrokeDrag(true);
@@ -3568,6 +3951,7 @@ var PreviewDrawingController = class {
     event.stopPropagation();
   }
   cancelSelectedStrokeDrag(restoreOriginal = false) {
+    this.clearSelectionLongPress();
     if (restoreOriginal && this.dragStrokeOriginalPoints?.size) {
       for (const [index, points] of this.dragStrokeOriginalPoints.entries()) {
         const stroke = this.drawingData.strokes[index];
@@ -3586,16 +3970,19 @@ var PreviewDrawingController = class {
     this.draggingStroke = false;
     this.dragStrokeStartPoint = null;
     this.dragStrokeOriginalPoints = null;
+    this.dragStrokeOriginalBounds = null;
     this.dragStrokeMoved = false;
     this.dragStrokeHitIndex = -1;
+    this.dragStrokePreserveSelection = false;
     this.pointerStartClient = null;
     this.activePointerId = null;
     this.previewEl.removeClass("is-moving-selection");
   }
   startSelectedStrokeResize(event, point, handle) {
     const indexes = this.getSelectedStrokeIndexes();
+    const resizableIndexes = indexes.filter((index) => !this.drawingData.strokes[index]?.locked);
     const bounds = this.getSelectedStrokeNormalizedBounds();
-    if (!indexes.length || !bounds) {
+    if (!resizableIndexes.length || !bounds) {
       return;
     }
     this.endTextEdit();
@@ -3605,7 +3992,7 @@ var PreviewDrawingController = class {
     this.resizeSelectionHandle = handle;
     this.resizeSelectionStartPoint = point;
     this.resizeSelectionOriginalBounds = bounds;
-    this.resizeSelectionOriginalStrokes = new Map(indexes.map((index) => [
+    this.resizeSelectionOriginalStrokes = new Map(resizableIndexes.map((index) => [
       index,
       {
         width: this.drawingData.strokes[index].width || this.penWidth,
@@ -3891,6 +4278,7 @@ var PreviewDrawingController = class {
       node.toggleClass("is-selected", this.isStrokeSelected(index));
       node.toggleClass("is-rich-text", isRichTextStroke(stroke));
       node.toggleClass("is-asset", isEmbedStroke(stroke));
+      node.toggleClass("is-locked", Boolean(stroke.locked));
       applyElementStyles(node, {
         left: `${Math.round(bounds.minX)}px`,
         top: `${Math.round(bounds.minY)}px`,
@@ -4085,8 +4473,11 @@ var PreviewDrawingController = class {
     const point = this.pointToCanvas(stroke.points[0]);
     const fontSize = clamp(Number(stroke.fontSize || 18), 10, 72);
     const opacity = clamp(Number(stroke.opacity ?? 1), 0, 1);
-    const paddingX = stroke.boxed || stroke.code || stroke.file ? Math.max(8, fontSize * 0.45) : 0;
-    const paddingY = stroke.boxed || stroke.code || stroke.file ? Math.max(4, fontSize * 0.26) : 0;
+    const uiArrow = stroke.uiRole === "arrow";
+    const uiButton = isButtonLikeStroke(stroke);
+    const padded = !uiArrow && (stroke.boxed || stroke.code || stroke.file || uiButton);
+    const paddingX = padded ? Math.max(8, fontSize * 0.45) : 0;
+    const paddingY = padded ? Math.max(4, fontSize * 0.26) : 0;
     ctx.save();
     ctx.globalAlpha = alpha * opacity;
     ctx.font = `${stroke.bold ? "700 " : ""}${fontSize}px ${stroke.code ? "monospace" : "sans-serif"}`;
@@ -4096,14 +4487,22 @@ var PreviewDrawingController = class {
       const metrics = ctx.measureText(text);
       const width = Math.max(fontSize, metrics.width);
       const height = fontSize * 1.28;
-      ctx.fillStyle = stroke.code ? "rgba(127, 127, 127, 0.14)" : "rgba(255, 255, 255, 0.74)";
+      const style = normalizeButtonStyle(stroke.buttonStyle);
+      if (style === "solid") {
+        ctx.fillStyle = stroke.color || this.penColor;
+      } else if (style === "outline") {
+        ctx.fillStyle = "rgba(255, 255, 255, 0.82)";
+      } else {
+        ctx.fillStyle = stroke.code ? "rgba(127, 127, 127, 0.14)" : "rgba(255, 255, 255, 0.74)";
+      }
       ctx.strokeStyle = stroke.color || this.penColor;
       ctx.lineWidth = 1.25;
-      roundRect(ctx, point.x - paddingX, point.y - paddingY, width + paddingX * 2, height + paddingY * 2, 6);
+      const radius = style === "pill" ? Math.min(999, (height + paddingY * 2) / 2) : 6;
+      roundRect(ctx, point.x - paddingX, point.y - paddingY, width + paddingX * 2, height + paddingY * 2, radius);
       ctx.fill();
       ctx.stroke();
     }
-    ctx.fillStyle = stroke.color || this.penColor;
+    ctx.fillStyle = normalizeButtonStyle(stroke.buttonStyle) === "solid" ? "#ffffff" : stroke.color || this.penColor;
     ctx.fillText(text, point.x, point.y);
     ctx.restore();
   }
@@ -4238,11 +4637,25 @@ var PreviewDrawingController = class {
     );
     const selected = this.getSelectedStrokeIndexes();
     this.selectedStrokeIndex = selected.length ? selected[selected.length - 1] : -1;
+    this.hideSelectionMenu();
     this.invalidateStaticCache();
+  }
+  toggleStrokeSelection(index) {
+    if (!Number.isInteger(index) || index < 0 || index >= this.drawingData.strokes.length) {
+      return;
+    }
+    const next = new Set(this.getSelectedStrokeIndexes());
+    if (next.has(index)) {
+      next.delete(index);
+    } else {
+      next.add(index);
+    }
+    this.setSelectedStrokes(Array.from(next));
   }
   clearSelectedStrokes() {
     this.selectedStrokeIndexes.clear();
     this.selectedStrokeIndex = -1;
+    this.hideSelectionMenu();
     this.invalidateStaticCache();
   }
   getSelectedStrokeIndexes() {
@@ -4259,6 +4672,9 @@ var PreviewDrawingController = class {
   }
   getSelectedStrokeBounds() {
     const indexes = this.getSelectedStrokeIndexes();
+    return this.getStrokeIndexesBounds(indexes);
+  }
+  getStrokeIndexesBounds(indexes) {
     let result = null;
     for (const index of indexes) {
       const bounds = getStrokeBounds(this.drawingData.strokes[index], this.canvasWidth(), this.canvasHeight());
@@ -4274,8 +4690,8 @@ var PreviewDrawingController = class {
     }
     return result;
   }
-  getSelectedStrokeNormalizedBounds() {
-    const bounds = this.getSelectedStrokeBounds();
+  getStrokeIndexesNormalizedBounds(indexes) {
+    const bounds = this.getStrokeIndexesBounds(indexes);
     const width = this.canvasWidth();
     const height = this.canvasHeight();
     if (!bounds || width <= 0 || height <= 0) {
@@ -4287,6 +4703,103 @@ var PreviewDrawingController = class {
       maxX: clamp(bounds.maxX / width, 0, 1),
       maxY: clamp(bounds.maxY / height, 0, 1)
     };
+  }
+  getSelectedStrokeNormalizedBounds() {
+    return this.getStrokeIndexesNormalizedBounds(this.getSelectedStrokeIndexes());
+  }
+  shouldSnapStrokeIndexes(indexes) {
+    return indexes.some((index) => isSnapStroke(this.drawingData.strokes[index]));
+  }
+  computeSnapDeltaForNormalizedBounds(bounds, excludeIndexes = []) {
+    if (!bounds) {
+      return { dx: 0, dy: 0 };
+    }
+    const width = this.canvasWidth();
+    const height = this.canvasHeight();
+    const exclude = new Set(excludeIndexes);
+    const otherBounds = [];
+    for (let index = 0; index < this.drawingData.strokes.length; index += 1) {
+      if (exclude.has(index)) {
+        continue;
+      }
+      const itemBounds = getStrokeBounds(this.drawingData.strokes[index], width, height);
+      if (itemBounds) {
+        otherBounds.push(itemBounds);
+      }
+    }
+    const xValues = [bounds.minX * width, (bounds.minX + bounds.maxX) * width / 2, bounds.maxX * width];
+    const yValues = [bounds.minY * height, (bounds.minY + bounds.maxY) * height / 2, bounds.maxY * height];
+    const xCandidates = otherBounds.flatMap((item) => [item.minX, (item.minX + item.maxX) / 2, item.maxX]);
+    const yCandidates = otherBounds.flatMap((item) => [item.minY, (item.minY + item.maxY) / 2, item.maxY]);
+    return {
+      dx: nearestSnapDelta(xValues, xCandidates, SNAP_GRID_PX, SNAP_THRESHOLD_PX) / width,
+      dy: nearestSnapDelta(yValues, yCandidates, SNAP_GRID_PX, SNAP_THRESHOLD_PX) / height
+    };
+  }
+  snapPointForPreset(point, preset) {
+    if (!isSnapPreset(preset)) {
+      return point;
+    }
+    const width = this.canvasWidth();
+    const height = this.canvasHeight();
+    const x = point.x * width;
+    const y = point.y * height;
+    const bounds = { minX: point.x, minY: point.y, maxX: point.x, maxY: point.y };
+    const delta = this.computeSnapDeltaForNormalizedBounds(bounds, []);
+    return {
+      ...point,
+      x: clamp((x + delta.dx * width) / width, 0, 1),
+      y: clamp((y + delta.dy * height) / height, 0, 1)
+    };
+  }
+  reorderSelectedStrokes(direction) {
+    const selectedIndexes = this.getSelectedStrokeIndexes();
+    if (!selectedIndexes.length) {
+      return;
+    }
+    const strokes = this.drawingData.strokes;
+    const selectedStrokes = selectedIndexes.map((index) => strokes[index]).filter(Boolean);
+    const selectedSet = new Set(selectedStrokes);
+    if (direction === "front" || direction === "back") {
+      const rest = strokes.filter((stroke) => !selectedSet.has(stroke));
+      this.drawingData.strokes = direction === "front" ? [...rest, ...selectedStrokes] : [...selectedStrokes, ...rest];
+    } else if (direction === "forward") {
+      for (let index = strokes.length - 2; index >= 0; index -= 1) {
+        if (selectedSet.has(strokes[index]) && !selectedSet.has(strokes[index + 1])) {
+          [strokes[index], strokes[index + 1]] = [strokes[index + 1], strokes[index]];
+        }
+      }
+    } else if (direction === "backward") {
+      for (let index = 1; index < strokes.length; index += 1) {
+        if (selectedSet.has(strokes[index]) && !selectedSet.has(strokes[index - 1])) {
+          [strokes[index], strokes[index - 1]] = [strokes[index - 1], strokes[index]];
+        }
+      }
+    }
+    this.setSelectedStrokes(selectedStrokes.map((stroke) => this.drawingData.strokes.indexOf(stroke)).filter((index) => index >= 0));
+    this.hideSelectionMenu();
+    this.redoStack = [];
+    this.invalidateStaticCache();
+    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.render();
+  }
+  toggleSelectedStrokeLock() {
+    const indexes = this.getSelectedStrokeIndexes();
+    if (!indexes.length) {
+      return;
+    }
+    const shouldUnlock = indexes.every((index) => this.drawingData.strokes[index]?.locked);
+    for (const index of indexes) {
+      const stroke = this.drawingData.strokes[index];
+      if (stroke) {
+        stroke.locked = !shouldUnlock;
+      }
+    }
+    this.hideSelectionMenu();
+    this.redoStack = [];
+    this.invalidateStaticCache();
+    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.render();
   }
   getSelectedStrokeMaxWidth() {
     return this.getSelectedStrokeIndexes().map((index) => this.drawingData.strokes[index]?.width || this.penWidth).reduce((max, width) => Math.max(max, width), this.penWidth);
@@ -4308,6 +4821,9 @@ var PreviewDrawingController = class {
     };
   }
   findSelectionHandleAt(point) {
+    if (!this.getSelectedStrokeIndexes().some((index) => !this.drawingData.strokes[index]?.locked)) {
+      return null;
+    }
     const rect = this.getSelectedFrameCanvasRect();
     if (!rect) {
       return null;
@@ -4526,7 +5042,7 @@ var PreviewDrawingController = class {
     this.render();
   }
   deleteSelectedStroke() {
-    const indexes = this.getSelectedStrokeIndexes();
+    const indexes = this.getSelectedStrokeIndexes().filter((index) => !this.drawingData.strokes[index]?.locked);
     if (!indexes.length) {
       return;
     }
@@ -4556,6 +5072,7 @@ var NoteDrawSettingTab = class extends PluginSettingTab {
   renderSettings() {
     const { containerEl } = this;
     const settings = sanitizeSettings(this.plugin.settings);
+    this.renderSectionTitle("settingsSectionInterface");
     new Setting(containerEl).setName(this.plugin.t("settingsLanguage")).setDesc(this.plugin.t("settingsLanguageDesc")).addDropdown((component) => {
       for (const option of LANGUAGE_OPTIONS) {
         component.addOption(option.value, option.value === LANGUAGE_AUTO ? `${this.plugin.t("languageAuto")} (${languageNativeName(detectNoteDrawLanguage(this.plugin.app))})` : option.label);
@@ -4566,6 +5083,7 @@ var NoteDrawSettingTab = class extends PluginSettingTab {
         this.display();
       });
     });
+    this.renderSectionTitle("settingsSectionPen");
     new Setting(containerEl).setName(this.plugin.t("defaultPenColor")).setDesc(this.plugin.t("defaultPenColorDesc")).addColorPicker((component) => component.setValue(settings.defaultPenColor).onChange(async (value) => {
       this.plugin.settings.defaultPenColor = value;
       await this.plugin.saveSettings();
@@ -4578,6 +5096,7 @@ var NoteDrawSettingTab = class extends PluginSettingTab {
       this.plugin.settings.defaultPenOpacity = value;
       await this.plugin.saveSettings();
     }));
+    this.renderSectionTitle("settingsSectionWatercolor");
     new Setting(containerEl).setName(this.plugin.t("defaultWatercolorColor")).setDesc(this.plugin.t("defaultWatercolorColorDesc")).addColorPicker((component) => component.setValue(settings.defaultWatercolorColor).onChange(async (value) => {
       this.plugin.settings.defaultWatercolorColor = value;
       await this.plugin.saveSettings();
@@ -4590,19 +5109,27 @@ var NoteDrawSettingTab = class extends PluginSettingTab {
       this.plugin.settings.defaultWatercolorOpacity = value;
       await this.plugin.saveSettings();
     }));
+    this.renderSectionTitle("settingsSectionLayout");
     new Setting(containerEl).setName(this.plugin.t("toolbarTopOffset")).setDesc(this.plugin.t("toolbarTopOffsetDesc")).addSlider((component) => component.setLimits(0, 48, 1).setValue(settings.toolbarTopOffset).setDynamicTooltip().onChange(async (value) => {
       this.plugin.settings.toolbarTopOffset = value;
       await this.plugin.saveSettings();
     }));
+    this.renderSectionTitle("settingsSectionDiagnostics");
     new Setting(containerEl).setName(this.plugin.t("debugLog")).setDesc(this.plugin.t("debugLogDesc")).addToggle((component) => component.setValue(settings.enableDebugLog).onChange(async (value) => {
       this.plugin.settings.enableDebugLog = value;
       await this.plugin.saveSettings();
     }));
   }
+  renderSectionTitle(key) {
+    this.containerEl.createDiv({
+      cls: "notedraw-settings-section-title",
+      text: this.plugin.t(key)
+    });
+  }
   async renderExtraCodes(containerEl) {
     const codeItems = (await Promise.all(
       SETTINGS_EXTRA_CODE_ASSETS.map(async (asset) => {
-        const src = await this.plugin.getOptionalAssetResourcePath(asset.path);
+        const src = await this.plugin.getOptionalAssetResourcePath(asset.path) || asset.dataUrl;
         return src ? { ...asset, src } : null;
       })
     )).filter(Boolean);
@@ -4620,11 +5147,12 @@ var NoteDrawSettingTab = class extends PluginSettingTab {
     });
     const gridEl = containerEl.createDiv({ cls: "notedraw-settings-codes-grid" });
     for (const item of codeItems) {
+      const label = this.plugin.t(item.labelKey);
       const codeEl = gridEl.createDiv({ cls: "notedraw-settings-code" });
       const imageEl = codeEl.createEl("img", {
         cls: "notedraw-settings-code-image",
         attr: {
-          alt: item.label,
+          alt: label,
           loading: "lazy",
           src: item.src
         }
@@ -4632,7 +5160,7 @@ var NoteDrawSettingTab = class extends PluginSettingTab {
       imageEl.src = item.src;
       codeEl.createDiv({
         cls: "notedraw-settings-code-label",
-        text: item.label
+        text: label
       });
     }
   }
@@ -5461,8 +5989,8 @@ function cleanupAllDrawingHeaderButtons() {
   document.querySelectorAll(".notedraw-header-button, .notedraw-webview-button").forEach((button) => button.remove());
 }
 function cleanupDrawingUi(preview) {
-  preview.querySelectorAll(".notedraw-button, .notedraw-fallback-button, .notedraw-webview-button, .notedraw-toolbar, .notedraw-palette-panel, .notedraw-text-panel, .notedraw-format-toolbar, .notedraw-embed-layer, .notedraw-file-input, .notedraw-canvas").forEach((element) => element.remove());
-  preview.classList.remove("notedraw-shell", "is-drawing-active", "is-drawing-hidden", "is-select-mode", "is-palette-open", "is-text-panel-open", "is-watercolor-mode", "is-selecting-strokes", "is-resizing-selection", "is-native-text-editing", "is-notedraw-webview-shell");
+  preview.querySelectorAll(".notedraw-button, .notedraw-fallback-button, .notedraw-webview-button, .notedraw-toolbar, .notedraw-palette-panel, .notedraw-text-panel, .notedraw-selection-menu, .notedraw-format-toolbar, .notedraw-embed-layer, .notedraw-file-input, .notedraw-canvas").forEach((element) => element.remove());
+  preview.classList.remove("notedraw-shell", "is-drawing-active", "is-drawing-hidden", "is-select-mode", "is-palette-open", "is-text-panel-open", "is-selection-menu-open", "is-watercolor-mode", "is-selecting-strokes", "is-resizing-selection", "is-native-text-editing", "is-notedraw-webview-shell");
 }
 function isWebviewSyncMutation(mutation) {
   if (!mutation) {
@@ -5678,6 +6206,10 @@ function normalizeStroke(stroke) {
     code: Boolean(stroke?.code),
     boxed: Boolean(stroke?.boxed),
     file: Boolean(stroke?.file),
+    uiRole: normalizeUiRole(stroke?.uiRole),
+    buttonStyle: normalizeButtonStyle(stroke?.buttonStyle),
+    snap: Boolean(stroke?.snap),
+    locked: Boolean(stroke?.locked),
     points: points.map((point) => ({
       x: clamp(Number(point?.x), 0, 1),
       y: clamp(Number(point?.y), 0, 1),
@@ -5700,6 +6232,29 @@ function isEmbedStroke(stroke) {
 function isImageEmbedStroke(stroke) {
   return stroke?.kind === TOOL_EMBED && normalizeEmbedType(stroke.embedType) === EMBED_IMAGE && Boolean(stroke.assetPath || stroke.exportImageDataUrl);
 }
+function isButtonLikeStroke(stroke) {
+  return stroke?.uiRole === "button" || Boolean(normalizeButtonStyle(stroke?.buttonStyle));
+}
+function isSnapStroke(stroke) {
+  return Boolean(stroke?.snap) || stroke?.uiRole === "button" || stroke?.uiRole === "arrow";
+}
+function isSnapPreset(preset) {
+  return ["button", "buttonPrimary", "buttonOutline", "buttonPill", "arrowUp", "arrowDown", "arrowLeft", "arrowRight"].includes(preset);
+}
+function instantTextForPreset(preset) {
+  return {
+    arrowUp: "\u2191",
+    arrowDown: "\u2193",
+    arrowLeft: "\u2190",
+    arrowRight: "\u2192"
+  }[preset] || "";
+}
+function normalizeUiRole(value) {
+  return ["button", "arrow"].includes(value) ? value : "";
+}
+function normalizeButtonStyle(value) {
+  return ["solid", "outline", "pill"].includes(value) ? value : "";
+}
 function createTextPreset(preset, text, color) {
   const normalized = String(text || "").trim();
   if (preset === "title") {
@@ -5709,7 +6264,19 @@ function createTextPreset(preset, text, color) {
     return { kind: TOOL_TEXT, text: normalized, render: TEXT_RENDER_PLAIN, color: "#374151", fontSize: 16, bold: false, code: true, boxed: true, file: false };
   }
   if (preset === "button") {
-    return { kind: TOOL_TEXT, text: normalized, render: TEXT_RENDER_PLAIN, color, fontSize: 17, bold: true, code: false, boxed: true, file: false };
+    return { kind: TOOL_TEXT, text: normalized, render: TEXT_RENDER_PLAIN, color, fontSize: 17, bold: true, code: false, boxed: true, file: false, uiRole: "button", buttonStyle: "", snap: true };
+  }
+  if (preset === "buttonPrimary") {
+    return { kind: TOOL_TEXT, text: normalized, render: TEXT_RENDER_PLAIN, color: "#2563eb", fontSize: 17, bold: true, code: false, boxed: true, file: false, uiRole: "button", buttonStyle: "solid", snap: true };
+  }
+  if (preset === "buttonOutline") {
+    return { kind: TOOL_TEXT, text: normalized, render: TEXT_RENDER_PLAIN, color: "#2563eb", fontSize: 17, bold: true, code: false, boxed: true, file: false, uiRole: "button", buttonStyle: "outline", snap: true };
+  }
+  if (preset === "buttonPill") {
+    return { kind: TOOL_TEXT, text: normalized, render: TEXT_RENDER_PLAIN, color: "#7c3aed", fontSize: 17, bold: true, code: false, boxed: true, file: false, uiRole: "button", buttonStyle: "pill", snap: true };
+  }
+  if (["arrowUp", "arrowDown", "arrowLeft", "arrowRight"].includes(preset)) {
+    return { kind: TOOL_TEXT, text: normalized, render: TEXT_RENDER_PLAIN, color: "#111827", fontSize: 28, bold: true, code: false, boxed: false, file: false, uiRole: "arrow", buttonStyle: "", snap: true };
   }
   if (preset === "file") {
     return { kind: TOOL_TEXT, text: normalized.startsWith("@") ? normalized : `@${normalized}`, render: TEXT_RENDER_PLAIN, color, fontSize: 17, bold: false, code: false, boxed: true, file: true };
@@ -6328,8 +6895,10 @@ function getStrokeBounds(stroke, width, height) {
     const point = stroke.points[0];
     const fontSize = clamp(Number(stroke.fontSize || 18), 10, 72);
     const textWidth = Math.max(fontSize, String(stroke.text || "").length * fontSize * 0.62);
-    const paddingX = stroke.boxed || stroke.code || stroke.file ? Math.max(8, fontSize * 0.45) : 0;
-    const paddingY = stroke.boxed || stroke.code || stroke.file ? Math.max(4, fontSize * 0.26) : 0;
+    const uiArrow = stroke.uiRole === "arrow";
+    const padded = !uiArrow && (stroke.boxed || stroke.code || stroke.file || isButtonLikeStroke(stroke));
+    const paddingX = padded ? Math.max(8, fontSize * 0.45) : 0;
+    const paddingY = padded ? Math.max(4, fontSize * 0.26) : 0;
     const x = point.x * width;
     const y = point.y * height;
     return {
@@ -6358,6 +6927,44 @@ function normalizeCanvasRect(a, b) {
 }
 function rectsIntersect(a, b) {
   return a.minX <= b.maxX && a.maxX >= b.minX && a.minY <= b.maxY && a.maxY >= b.minY;
+}
+function translateNormalizedBounds(bounds, dx, dy) {
+  return {
+    minX: bounds.minX + dx,
+    minY: bounds.minY + dy,
+    maxX: bounds.maxX + dx,
+    maxY: bounds.maxY + dy
+  };
+}
+function nearestSnapDelta(values, candidates, gridSize, threshold) {
+  let best = 0;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const value of values) {
+    if (!Number.isFinite(value)) {
+      continue;
+    }
+    if (gridSize > 0) {
+      const gridTarget = Math.round(value / gridSize) * gridSize;
+      const gridDelta = gridTarget - value;
+      const distance = Math.abs(gridDelta);
+      if (distance <= threshold && distance < bestDistance) {
+        best = gridDelta;
+        bestDistance = distance;
+      }
+    }
+    for (const candidate of candidates) {
+      if (!Number.isFinite(candidate)) {
+        continue;
+      }
+      const delta = candidate - value;
+      const distance = Math.abs(delta);
+      if (distance <= threshold && distance < bestDistance) {
+        best = delta;
+        bestDistance = distance;
+      }
+    }
+  }
+  return best;
 }
 function getSelectionHandlePointsFromRect(rect) {
   return [

@@ -63,8 +63,6 @@ Required files:
 main.js
 manifest.json
 styles.css
-README.md
-extras/
 ```
 
 Then enable:
@@ -94,9 +92,9 @@ The release package still uses the standard Obsidian plugin layout:
 main.js
 manifest.json
 styles.css
-README.md
-extras/
 ```
+
+The source tree keeps `extras/` for support-code images used at build time. Release builds embed those images into `main.js`, so the installed plugin does not require separate image files.
 
 ## Settings
 
@@ -104,8 +102,10 @@ The settings page currently includes:
 
 - Default pen color, width, opacity.
 - Default watercolor color, width, opacity.
+- UI language.
 - Toolbar top offset.
 - Debug log toggle for troubleshooting text targeting.
+- Support QR codes shown from bundled assets with embedded fallback.
 
 ## Extension API
 
