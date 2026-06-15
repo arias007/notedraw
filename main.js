@@ -162,6 +162,7 @@ var require_notedraw_plugin = __commonJS({
         codeBlock: "Code block",
         highlight: "Highlight",
         insertBreak: "Insert line break",
+        clearFormat: "Clear formatting",
         textColor: "Text color",
         highlightColor: "Highlight color",
         textSize: "Text size",
@@ -233,6 +234,7 @@ var require_notedraw_plugin = __commonJS({
         codeBlock: "\u4EE3\u7801\u5757",
         highlight: "\u9AD8\u4EAE",
         insertBreak: "\u6362\u884C",
+        clearFormat: "\u6E05\u9664\u683C\u5F0F",
         textColor: "\u6587\u5B57\u989C\u8272",
         highlightColor: "\u9AD8\u4EAE\u989C\u8272",
         textSize: "\u5B57\u53F7",
@@ -304,6 +306,7 @@ var require_notedraw_plugin = __commonJS({
         codeBlock: "\u7A0B\u5F0F\u78BC\u5340\u584A",
         highlight: "\u9192\u76EE\u63D0\u793A",
         insertBreak: "\u63DB\u884C",
+        clearFormat: "\u6E05\u9664\u683C\u5F0F",
         textColor: "\u6587\u5B57\u984F\u8272",
         highlightColor: "\u9192\u76EE\u984F\u8272",
         textSize: "\u5B57\u7D1A",
@@ -375,6 +378,7 @@ var require_notedraw_plugin = __commonJS({
         codeBlock: "\u0643\u0648\u062F \u0628\u06C6\u0644\u0649\u0643\u0649",
         highlight: "\u064A\u0648\u0631\u06C7\u062A\u06C7\u0634",
         insertBreak: "\u0642\u06C7\u0631 \u0626\u0627\u0644\u0645\u0627\u0634\u062A\u06C7\u0631\u06C7\u0634",
+        clearFormat: "\u0641\u0648\u0631\u0645\u0627\u062A\u0646\u0649 \u062A\u0627\u0632\u0649\u0644\u0627\u0634",
         textColor: "\u062A\u06D0\u0643\u0649\u0633\u062A \u0631\u06D5\u06AD\u06AF\u0649",
         highlightColor: "\u064A\u0648\u0631\u06C7\u062A\u06C7\u0634 \u0631\u06D5\u06AD\u06AF\u0649",
         textSize: "\u062E\u06D5\u062A \u0686\u0648\u06AD\u0644\u06C7\u0642\u0649",
@@ -446,6 +450,7 @@ var require_notedraw_plugin = __commonJS({
         codeBlock: "\u0411\u043B\u043E\u043A \u043A\u043E\u0434\u0430",
         highlight: "\u0412\u044B\u0434\u0435\u043B\u0435\u043D\u0438\u0435",
         insertBreak: "\u041F\u0435\u0440\u0435\u043D\u043E\u0441 \u0441\u0442\u0440\u043E\u043A\u0438",
+        clearFormat: "\u041E\u0447\u0438\u0441\u0442\u0438\u0442\u044C \u0444\u043E\u0440\u043C\u0430\u0442\u0438\u0440\u043E\u0432\u0430\u043D\u0438\u0435",
         textColor: "\u0426\u0432\u0435\u0442 \u0442\u0435\u043A\u0441\u0442\u0430",
         highlightColor: "\u0426\u0432\u0435\u0442 \u0432\u044B\u0434\u0435\u043B\u0435\u043D\u0438\u044F",
         textSize: "\u0420\u0430\u0437\u043C\u0435\u0440 \u0442\u0435\u043A\u0441\u0442\u0430",
@@ -502,6 +507,7 @@ var require_notedraw_plugin = __commonJS({
         italic: "\u0645\u0627\u0626\u0644",
         underline: "\u062A\u062D\u062A\u0647 \u062E\u0637",
         highlight: "\u062A\u0645\u064A\u064A\u0632",
+        clearFormat: "\u0645\u0633\u062D \u0627\u0644\u062A\u0646\u0633\u064A\u0642",
         movePanel: "\u062A\u062D\u0631\u064A\u0643 \u0627\u0644\u0644\u0648\u062D\u0629",
         settingsLanguage: "\u0627\u0644\u0644\u063A\u0629",
         languageAuto: "\u062A\u0644\u0642\u0627\u0626\u064A"
@@ -529,6 +535,7 @@ var require_notedraw_plugin = __commonJS({
         bold: "Negrita",
         italic: "Cursiva",
         underline: "Subrayado",
+        clearFormat: "Quitar formato",
         movePanel: "Mover panel",
         settingsLanguage: "Idioma",
         languageAuto: "Auto"
@@ -556,6 +563,7 @@ var require_notedraw_plugin = __commonJS({
         bold: "Gras",
         italic: "Italique",
         underline: "Soulign\xE9",
+        clearFormat: "Effacer le format",
         movePanel: "D\xE9placer le panneau",
         settingsLanguage: "Langue",
         languageAuto: "Auto"
@@ -583,6 +591,7 @@ var require_notedraw_plugin = __commonJS({
         bold: "Fett",
         italic: "Kursiv",
         underline: "Unterstrichen",
+        clearFormat: "Formatierung l\xF6schen",
         movePanel: "Panel verschieben",
         settingsLanguage: "Sprache",
         languageAuto: "Auto"
@@ -610,6 +619,7 @@ var require_notedraw_plugin = __commonJS({
         bold: "\u592A\u5B57",
         italic: "\u659C\u4F53",
         underline: "\u4E0B\u7DDA",
+        clearFormat: "\u66F8\u5F0F\u3092\u30AF\u30EA\u30A2",
         movePanel: "\u30D1\u30CD\u30EB\u3092\u79FB\u52D5",
         settingsLanguage: "\u8A00\u8A9E",
         languageAuto: "\u81EA\u52D5"
@@ -637,6 +647,7 @@ var require_notedraw_plugin = __commonJS({
         bold: "\uAD75\uAC8C",
         italic: "\uAE30\uC6B8\uC784",
         underline: "\uBC11\uC904",
+        clearFormat: "\uC11C\uC2DD \uC9C0\uC6B0\uAE30",
         movePanel: "\uD328\uB110 \uC774\uB3D9",
         settingsLanguage: "\uC5B8\uC5B4",
         languageAuto: "\uC790\uB3D9"
@@ -664,6 +675,7 @@ var require_notedraw_plugin = __commonJS({
         bold: "Kal\u0131n",
         italic: "\u0130talik",
         underline: "Alt\u0131 \xE7izili",
+        clearFormat: "Bi\xE7imi temizle",
         movePanel: "Paneli ta\u015F\u0131",
         settingsLanguage: "Dil",
         languageAuto: "Otomatik"
@@ -911,7 +923,7 @@ var require_notedraw_plugin = __commonJS({
       }
       createPublicApi() {
         return {
-          version: "3.1.12",
+          version: "3.1.13",
           getActiveController: () => this.getActiveController(),
           readDrawings: async (file) => this.readDrawings(file),
           writeDrawings: async (file, data) => this.writeDrawings(file, normalizeDrawingData(data, file)),
@@ -2388,6 +2400,7 @@ var require_notedraw_plugin = __commonJS({
         this.createFormatButton("square-code", "codeBlock", "block-code", () => this.applyTextBlockFormat("code"));
         this.createFormatButton("highlighter", "highlight", "mark", () => this.applyTextInlineFormat("mark", { backgroundColor: this.formatHighlightInput?.value || "#fff59d" }));
         this.createFormatButton("wrap-text", "insertBreak", "br", () => this.insertTextBreak());
+        this.createFormatButton("eraser", "clearFormat", "clear-format", () => this.clearTextFormat());
         this.formatColorInput = this.formatToolbar.createEl("input", {
           cls: "notedraw-format-color",
           attr: {
@@ -2649,6 +2662,31 @@ var require_notedraw_plugin = __commonJS({
         selection.removeAllRanges();
         selection.addRange(range);
         this.currentTextRange = range.cloneRange();
+        this.queueCurrentTextSave(true);
+        this.positionFormatToolbar();
+      }
+      clearTextFormat() {
+        if (!this.currentEditor || !this.restoreTextRange()) {
+          return;
+        }
+        const selection = window.getSelection?.();
+        if (!selection?.rangeCount) {
+          return;
+        }
+        const range = selection.getRangeAt(0);
+        if (!this.currentEditor.contains(range.commonAncestorContainer) || range.collapsed) {
+          return;
+        }
+        const plainText = selection.toString() || range.cloneContents().textContent || "";
+        const textNode = document.createTextNode(plainText);
+        range.deleteContents();
+        range.insertNode(textNode);
+        const nextRange = document.createRange();
+        nextRange.setStart(textNode, 0);
+        nextRange.setEnd(textNode, textNode.nodeValue?.length || 0);
+        selection.removeAllRanges();
+        selection.addRange(nextRange);
+        this.currentTextRange = nextRange.cloneRange();
         this.queueCurrentTextSave(true);
         this.positionFormatToolbar();
       }

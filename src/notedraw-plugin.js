@@ -124,6 +124,7 @@ var I18N = {
     codeBlock: "Code block",
     highlight: "Highlight",
     insertBreak: "Insert line break",
+    clearFormat: "Clear formatting",
     textColor: "Text color",
     highlightColor: "Highlight color",
     textSize: "Text size",
@@ -195,6 +196,7 @@ var I18N = {
     codeBlock: "代码块",
     highlight: "高亮",
     insertBreak: "换行",
+    clearFormat: "清除格式",
     textColor: "文字颜色",
     highlightColor: "高亮颜色",
     textSize: "字号",
@@ -266,6 +268,7 @@ var I18N = {
     codeBlock: "程式碼區塊",
     highlight: "醒目提示",
     insertBreak: "換行",
+    clearFormat: "清除格式",
     textColor: "文字顏色",
     highlightColor: "醒目顏色",
     textSize: "字級",
@@ -337,6 +340,7 @@ var I18N = {
     codeBlock: "كود بۆلىكى",
     highlight: "يورۇتۇش",
     insertBreak: "قۇر ئالماشتۇرۇش",
+    clearFormat: "فورماتنى تازىلاش",
     textColor: "تېكىست رەڭگى",
     highlightColor: "يورۇتۇش رەڭگى",
     textSize: "خەت چوڭلۇقى",
@@ -408,6 +412,7 @@ var I18N = {
     codeBlock: "Блок кода",
     highlight: "Выделение",
     insertBreak: "Перенос строки",
+    clearFormat: "Очистить форматирование",
     textColor: "Цвет текста",
     highlightColor: "Цвет выделения",
     textSize: "Размер текста",
@@ -464,6 +469,7 @@ Object.assign(I18N, {
     italic: "مائل",
     underline: "تحته خط",
     highlight: "تمييز",
+    clearFormat: "مسح التنسيق",
     movePanel: "تحريك اللوحة",
     settingsLanguage: "اللغة",
     languageAuto: "تلقائي"
@@ -491,6 +497,7 @@ Object.assign(I18N, {
     bold: "Negrita",
     italic: "Cursiva",
     underline: "Subrayado",
+    clearFormat: "Quitar formato",
     movePanel: "Mover panel",
     settingsLanguage: "Idioma",
     languageAuto: "Auto"
@@ -518,6 +525,7 @@ Object.assign(I18N, {
     bold: "Gras",
     italic: "Italique",
     underline: "Souligné",
+    clearFormat: "Effacer le format",
     movePanel: "Déplacer le panneau",
     settingsLanguage: "Langue",
     languageAuto: "Auto"
@@ -545,6 +553,7 @@ Object.assign(I18N, {
     bold: "Fett",
     italic: "Kursiv",
     underline: "Unterstrichen",
+    clearFormat: "Formatierung löschen",
     movePanel: "Panel verschieben",
     settingsLanguage: "Sprache",
     languageAuto: "Auto"
@@ -572,6 +581,7 @@ Object.assign(I18N, {
     bold: "太字",
     italic: "斜体",
     underline: "下線",
+    clearFormat: "書式をクリア",
     movePanel: "パネルを移動",
     settingsLanguage: "言語",
     languageAuto: "自動"
@@ -599,6 +609,7 @@ Object.assign(I18N, {
     bold: "굵게",
     italic: "기울임",
     underline: "밑줄",
+    clearFormat: "서식 지우기",
     movePanel: "패널 이동",
     settingsLanguage: "언어",
     languageAuto: "자동"
@@ -626,6 +637,7 @@ Object.assign(I18N, {
     bold: "Kalın",
     italic: "İtalik",
     underline: "Altı çizili",
+    clearFormat: "Biçimi temizle",
     movePanel: "Paneli taşı",
     settingsLanguage: "Dil",
     languageAuto: "Otomatik"
@@ -873,7 +885,7 @@ var NoteDrawPlugin = class extends Plugin {
   }
   createPublicApi() {
     return {
-      version: "3.1.12",
+      version: "3.1.13",
       getActiveController: () => this.getActiveController(),
       readDrawings: async (file) => this.readDrawings(file),
       writeDrawings: async (file, data) => this.writeDrawings(file, normalizeDrawingData(data, file)),
@@ -2350,6 +2362,7 @@ var PreviewDrawingController = class {
     this.createFormatButton("square-code", "codeBlock", "block-code", () => this.applyTextBlockFormat("code"));
     this.createFormatButton("highlighter", "highlight", "mark", () => this.applyTextInlineFormat("mark", { backgroundColor: this.formatHighlightInput?.value || "#fff59d" }));
     this.createFormatButton("wrap-text", "insertBreak", "br", () => this.insertTextBreak());
+    this.createFormatButton("eraser", "clearFormat", "clear-format", () => this.clearTextFormat());
     this.formatColorInput = this.formatToolbar.createEl("input", {
       cls: "notedraw-format-color",
       attr: {
@@ -2611,6 +2624,31 @@ var PreviewDrawingController = class {
     selection.removeAllRanges();
     selection.addRange(range);
     this.currentTextRange = range.cloneRange();
+    this.queueCurrentTextSave(true);
+    this.positionFormatToolbar();
+  }
+  clearTextFormat() {
+    if (!this.currentEditor || !this.restoreTextRange()) {
+      return;
+    }
+    const selection = window.getSelection?.();
+    if (!selection?.rangeCount) {
+      return;
+    }
+    const range = selection.getRangeAt(0);
+    if (!this.currentEditor.contains(range.commonAncestorContainer) || range.collapsed) {
+      return;
+    }
+    const plainText = selection.toString() || range.cloneContents().textContent || "";
+    const textNode = document.createTextNode(plainText);
+    range.deleteContents();
+    range.insertNode(textNode);
+    const nextRange = document.createRange();
+    nextRange.setStart(textNode, 0);
+    nextRange.setEnd(textNode, textNode.nodeValue?.length || 0);
+    selection.removeAllRanges();
+    selection.addRange(nextRange);
+    this.currentTextRange = nextRange.cloneRange();
     this.queueCurrentTextSave(true);
     this.positionFormatToolbar();
   }
