@@ -911,7 +911,7 @@ var require_notedraw_plugin = __commonJS({
       }
       createPublicApi() {
         return {
-          version: "3.1.11",
+          version: "3.1.12",
           getActiveController: () => this.getActiveController(),
           readDrawings: async (file) => this.readDrawings(file),
           writeDrawings: async (file, data) => this.writeDrawings(file, normalizeDrawingData(data, file)),
@@ -2500,9 +2500,11 @@ var require_notedraw_plugin = __commonJS({
           this.formatToolbar.style.setProperty("--notedraw-format-left", `${manualLeft}px`);
           return;
         }
+        const lineStep = Math.max(22, Math.round(rect.height + 6));
+        const belowOneLine = rect.bottom + gap + lineStep;
         const above = rect.top - height - gap;
         const below = rect.bottom + gap;
-        const top = above >= minTop ? above : below <= maxTop ? below : clamp(Math.round(above), minTop, maxTop);
+        const top = belowOneLine <= maxTop ? belowOneLine : below <= maxTop ? below : above >= minTop ? above : clamp(Math.round(belowOneLine), minTop, maxTop);
         this.formatToolbar.style.setProperty("--notedraw-format-top", `${top}px`);
         this.formatToolbar.style.setProperty("--notedraw-format-left", `${left}px`);
       }
@@ -2598,7 +2600,7 @@ var require_notedraw_plugin = __commonJS({
         range.insertNode(wrapper);
         selectNodeContents(wrapper);
         this.currentTextRange = window.getSelection()?.rangeCount ? window.getSelection().getRangeAt(0).cloneRange() : null;
-        this.queueCurrentTextSave();
+        this.queueCurrentTextSave(true);
         this.positionFormatToolbar();
       }
       applyTextBlockFormat(kind) {
@@ -2623,7 +2625,7 @@ var require_notedraw_plugin = __commonJS({
           range.insertNode(pre);
           selectNodeContents(code);
           this.currentTextRange = window.getSelection()?.rangeCount ? window.getSelection().getRangeAt(0).cloneRange() : null;
-          this.queueCurrentTextSave();
+          this.queueCurrentTextSave(true);
           this.positionFormatToolbar();
         }
       }
@@ -2647,7 +2649,7 @@ var require_notedraw_plugin = __commonJS({
         selection.removeAllRanges();
         selection.addRange(range);
         this.currentTextRange = range.cloneRange();
-        this.queueCurrentTextSave();
+        this.queueCurrentTextSave(true);
         this.positionFormatToolbar();
       }
       queueCurrentTextSave(immediate = true) {
