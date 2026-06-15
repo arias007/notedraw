@@ -1,5 +1,4 @@
-"use strict";
-var {
+import {
   MarkdownRenderer,
   MarkdownView,
   Notice,
@@ -8,9 +7,9 @@ var {
   Setting,
   normalizePath,
   setIcon
-} = require("obsidian");
-var SUPPORT_CODE_ALIPAY_DATA_URL = require("../extras/code-1.jpg");
-var SUPPORT_CODE_BINANCE_DATA_URL = require("../extras/code-2.png");
+} from "obsidian";
+import SUPPORT_CODE_ALIPAY_DATA_URL from "../extras/code-1.jpg";
+import SUPPORT_CODE_BINANCE_DATA_URL from "../extras/code-2.png";
 var PLUGIN_ID = "notedraw";
 var DRAWING_DIR = `${PLUGIN_ID}/drawings`;
 var ASSET_DIR = `${PLUGIN_ID}/assets`;
@@ -898,7 +897,7 @@ var WEBVIEW_BLOCKED_EDIT_SELECTOR = [
 var NoteDrawPlugin = class extends Plugin {
   async onload() {
     const savedSettings = await this.loadData();
-    this.settings = sanitizeSettings({ ...DEFAULT_SETTINGS, ...(savedSettings || {}) });
+    this.noteDrawSettings = sanitizeSettings({ ...DEFAULT_SETTINGS, ...(savedSettings || {}) });
     this.controllers = /* @__PURE__ */ new WeakMap();
     this.sourceControllers = /* @__PURE__ */ new Map();
     this.webviewControllers = /* @__PURE__ */ new Map();
@@ -984,8 +983,8 @@ var NoteDrawPlugin = class extends Plugin {
     }
   }
   async saveSettings() {
-    this.settings = sanitizeSettings(this.settings);
-    await this.saveData(this.settings);
+    this.noteDrawSettings = sanitizeSettings(this.noteDrawSettings);
+    await this.saveData(this.noteDrawSettings);
     for (const controller of this.getAllControllers()) {
       controller.applySettings();
       controller.refreshLocalizedLabels?.();
@@ -1050,7 +1049,7 @@ var NoteDrawPlugin = class extends Plugin {
   }
   createPublicApi() {
     return {
-      version: "3.1.16",
+      version: "3.1.17",
       getActiveController: () => this.getActiveController(),
       readDrawings: async (file) => this.readDrawings(file),
       writeDrawings: async (file, data) => this.writeDrawings(file, normalizeDrawingData(data, file)),
@@ -1423,7 +1422,7 @@ var NoteDrawPlugin = class extends Plugin {
     }
   }
   async appendDebugLog(entry) {
-    if (!this.settings?.enableDebugLog) {
+    if (!this.noteDrawSettings?.enableDebugLog) {
       return;
     }
     try {
@@ -2114,7 +2113,7 @@ var PreviewDrawingController = class {
     this.refreshLocalizedLabels();
   }
   applySettings() {
-    const settings = sanitizeSettings(this.plugin?.settings || {});
+    const settings = sanitizeSettings(this.plugin?.noteDrawSettings || {});
     if (this.brushSettings?.[BRUSH_PEN]) {
       this.brushSettings[BRUSH_PEN].color = settings.defaultPenColor;
       this.brushSettings[BRUSH_PEN].width = settings.defaultPenWidth;
@@ -2403,7 +2402,7 @@ var PreviewDrawingController = class {
     const right = clamp(window.innerWidth - anchorRight + 10, 8, Math.max(8, window.innerWidth - 48));
     const minTop = Math.max(56, headerBottom + 6);
     const maxTop = Math.max(minTop, window.innerHeight - toolbarHeight - 8);
-    const topOffset = sanitizeSettings(this.plugin?.settings || {}).toolbarTopOffset;
+    const topOffset = sanitizeSettings(this.plugin?.noteDrawSettings || {}).toolbarTopOffset;
     const top = clamp(anchorBottom + topOffset, minTop, maxTop);
     this.previewEl.style.setProperty("--notedraw-toolbar-right", `${Math.round(right)}px`);
     this.previewEl.style.setProperty("--notedraw-toolbar-top", `${Math.round(top)}px`);
@@ -3147,8 +3146,10 @@ var PreviewDrawingController = class {
     const height = Math.max(1, Math.round(measured.height));
     this.canvasCssWidth = width;
     this.canvasCssHeight = height;
-    this.canvas.style.width = `${width}px`;
-    this.canvas.style.height = `${height}px`;
+    applyElementStyles(this.canvas, {
+      width: `${width}px`,
+      height: `${height}px`
+    });
     this.canvas.width = Math.round(width * ratio);
     this.canvas.height = Math.round(height * ratio);
     this.ctx = this.canvas.getContext("2d");
@@ -3161,7 +3162,7 @@ var PreviewDrawingController = class {
     }
     this.staticCtx?.setTransform(ratio, 0, 0, ratio, 0, 0);
     if (measured.visibleWidth > 0) {
-      this.canvas.style.minWidth = `${Math.round(measured.visibleWidth)}px`;
+      applyElementStyles(this.canvas, { minWidth: `${Math.round(measured.visibleWidth)}px` });
     }
   }
   onPointerDown(event) {
@@ -3301,9 +3302,9 @@ var PreviewDrawingController = class {
   }
   elementBelowCanvas(clientX, clientY) {
     const previous = this.canvas.style.pointerEvents;
-    this.canvas.style.pointerEvents = "none";
+    applyElementStyles(this.canvas, { pointerEvents: "none" });
     const target = document.elementFromPoint(clientX, clientY);
-    this.canvas.style.pointerEvents = previous;
+    applyElementStyles(this.canvas, { pointerEvents: previous || "" });
     return target;
   }
   onPointerMove(event) {
@@ -3504,12 +3505,14 @@ var PreviewDrawingController = class {
       }
     });
     textarea.value = isTextLikeStroke(existing) ? existing.text : "";
-    textarea.style.left = `${Math.round(canvasPoint.x)}px`;
-    textarea.style.top = `${Math.round(canvasPoint.y)}px`;
-    textarea.style.color = isTextLikeStroke(existing) ? existing.color : this.currentBrushSettings().color || this.penColor;
-    textarea.style.fontSize = `${isTextLikeStroke(existing) ? clamp(Number(existing.fontSize || 18), 10, 72) : 18}px`;
-    textarea.style.fontWeight = isTextLikeStroke(existing) && existing.bold ? "700" : "400";
-    textarea.style.fontFamily = isTextLikeStroke(existing) && existing.code ? "monospace" : "sans-serif";
+    applyElementStyles(textarea, {
+      left: `${Math.round(canvasPoint.x)}px`,
+      top: `${Math.round(canvasPoint.y)}px`,
+      color: isTextLikeStroke(existing) ? existing.color : this.currentBrushSettings().color || this.penColor,
+      fontSize: `${isTextLikeStroke(existing) ? clamp(Number(existing.fontSize || 18), 10, 72) : 18}px`,
+      fontWeight: isTextLikeStroke(existing) && existing.bold ? "700" : "400",
+      fontFamily: isTextLikeStroke(existing) && existing.code ? "monospace" : "sans-serif"
+    });
     const state = {
       element: textarea,
       point: { ...point, t: Date.now() },
@@ -3518,10 +3521,11 @@ var PreviewDrawingController = class {
     };
     this.floatingTextInput = state;
     const resize = () => {
-      textarea.style.height = "auto";
-      textarea.style.width = "auto";
-      textarea.style.width = `${Math.min(Math.max(120, textarea.scrollWidth + 12), Math.max(160, this.canvasWidth() - canvasPoint.x - 16))}px`;
-      textarea.style.height = `${Math.max(32, textarea.scrollHeight + 4)}px`;
+      applyElementStyles(textarea, { height: "auto", width: "auto" });
+      applyElementStyles(textarea, {
+        width: `${Math.min(Math.max(120, textarea.scrollWidth + 12), Math.max(160, this.canvasWidth() - canvasPoint.x - 16))}px`,
+        height: `${Math.max(32, textarea.scrollHeight + 4)}px`
+      });
     };
     const commit = () => this.commitFloatingTextInput(state);
     const cancel = () => this.endFloatingTextInput(false, state);
@@ -5055,7 +5059,7 @@ var PreviewDrawingController = class {
     this.render();
   }
 };
-module.exports = NoteDrawPlugin;
+export default NoteDrawPlugin;
 var NoteDrawSettingTab = class extends PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
@@ -5071,52 +5075,52 @@ var NoteDrawSettingTab = class extends PluginSettingTab {
   }
   renderSettings() {
     const { containerEl } = this;
-    const settings = sanitizeSettings(this.plugin.settings);
+    const settings = sanitizeSettings(this.plugin.noteDrawSettings);
     this.renderSectionTitle("settingsSectionInterface");
     new Setting(containerEl).setName(this.plugin.t("settingsLanguage")).setDesc(this.plugin.t("settingsLanguageDesc")).addDropdown((component) => {
       for (const option of LANGUAGE_OPTIONS) {
         component.addOption(option.value, option.value === LANGUAGE_AUTO ? `${this.plugin.t("languageAuto")} (${languageNativeName(detectNoteDrawLanguage(this.plugin.app))})` : option.label);
       }
       component.setValue(settings.language).onChange(async (value) => {
-        this.plugin.settings.language = value;
+        this.plugin.noteDrawSettings.language = value;
         await this.plugin.saveSettings();
         this.display();
       });
     });
     this.renderSectionTitle("settingsSectionPen");
     new Setting(containerEl).setName(this.plugin.t("defaultPenColor")).setDesc(this.plugin.t("defaultPenColorDesc")).addColorPicker((component) => component.setValue(settings.defaultPenColor).onChange(async (value) => {
-      this.plugin.settings.defaultPenColor = value;
+      this.plugin.noteDrawSettings.defaultPenColor = value;
       await this.plugin.saveSettings();
     }));
     new Setting(containerEl).setName(this.plugin.t("defaultPenWidth")).setDesc(this.plugin.t("defaultPenWidthDesc")).addSlider((component) => component.setLimits(MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH, 0.5).setValue(settings.defaultPenWidth).setDynamicTooltip().onChange(async (value) => {
-      this.plugin.settings.defaultPenWidth = value;
+      this.plugin.noteDrawSettings.defaultPenWidth = value;
       await this.plugin.saveSettings();
     }));
     new Setting(containerEl).setName(this.plugin.t("defaultPenOpacity")).setDesc(this.plugin.t("defaultPenOpacityDesc")).addSlider((component) => component.setLimits(0, 1, 0.02).setValue(settings.defaultPenOpacity).setDynamicTooltip().onChange(async (value) => {
-      this.plugin.settings.defaultPenOpacity = value;
+      this.plugin.noteDrawSettings.defaultPenOpacity = value;
       await this.plugin.saveSettings();
     }));
     this.renderSectionTitle("settingsSectionWatercolor");
     new Setting(containerEl).setName(this.plugin.t("defaultWatercolorColor")).setDesc(this.plugin.t("defaultWatercolorColorDesc")).addColorPicker((component) => component.setValue(settings.defaultWatercolorColor).onChange(async (value) => {
-      this.plugin.settings.defaultWatercolorColor = value;
+      this.plugin.noteDrawSettings.defaultWatercolorColor = value;
       await this.plugin.saveSettings();
     }));
     new Setting(containerEl).setName(this.plugin.t("defaultWatercolorWidth")).setDesc(this.plugin.t("defaultWatercolorWidthDesc")).addSlider((component) => component.setLimits(MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH, 0.5).setValue(settings.defaultWatercolorWidth).setDynamicTooltip().onChange(async (value) => {
-      this.plugin.settings.defaultWatercolorWidth = value;
+      this.plugin.noteDrawSettings.defaultWatercolorWidth = value;
       await this.plugin.saveSettings();
     }));
     new Setting(containerEl).setName(this.plugin.t("defaultWatercolorOpacity")).setDesc(this.plugin.t("defaultWatercolorOpacityDesc")).addSlider((component) => component.setLimits(0, 1, 0.02).setValue(settings.defaultWatercolorOpacity).setDynamicTooltip().onChange(async (value) => {
-      this.plugin.settings.defaultWatercolorOpacity = value;
+      this.plugin.noteDrawSettings.defaultWatercolorOpacity = value;
       await this.plugin.saveSettings();
     }));
     this.renderSectionTitle("settingsSectionLayout");
     new Setting(containerEl).setName(this.plugin.t("toolbarTopOffset")).setDesc(this.plugin.t("toolbarTopOffsetDesc")).addSlider((component) => component.setLimits(0, 48, 1).setValue(settings.toolbarTopOffset).setDynamicTooltip().onChange(async (value) => {
-      this.plugin.settings.toolbarTopOffset = value;
+      this.plugin.noteDrawSettings.toolbarTopOffset = value;
       await this.plugin.saveSettings();
     }));
     this.renderSectionTitle("settingsSectionDiagnostics");
     new Setting(containerEl).setName(this.plugin.t("debugLog")).setDesc(this.plugin.t("debugLogDesc")).addToggle((component) => component.setValue(settings.enableDebugLog).onChange(async (value) => {
-      this.plugin.settings.enableDebugLog = value;
+      this.plugin.noteDrawSettings.enableDebugLog = value;
       await this.plugin.saveSettings();
     }));
   }
@@ -5218,7 +5222,7 @@ function translateNoteDraw(plugin, key, vars = {}) {
   return String(template).replace(/\{(\w+)\}/g, (_, name) => vars?.[name] ?? "");
 }
 function resolveNoteDrawLanguage(plugin) {
-  const language = normalizeLanguageCode(plugin?.settings?.language ?? DEFAULT_SETTINGS.language);
+  const language = normalizeLanguageCode(plugin?.noteDrawSettings?.language ?? DEFAULT_SETTINGS.language);
   if (language !== LANGUAGE_AUTO) {
     return language;
   }
@@ -5327,7 +5331,7 @@ function rangeFromClientPoint(element, clientPoint) {
   const previousPointerEvents = overlay?.style.pointerEvents;
   try {
     if (overlay) {
-      overlay.style.pointerEvents = "none";
+      applyElementStyles(overlay, { pointerEvents: "none" });
     }
     if (typeof document.caretRangeFromPoint === "function") {
       range = document.caretRangeFromPoint(clientPoint.x, clientPoint.y);
@@ -5341,7 +5345,7 @@ function rangeFromClientPoint(element, clientPoint) {
     }
   } finally {
     if (overlay) {
-      overlay.style.pointerEvents = previousPointerEvents || "";
+      applyElementStyles(overlay, { pointerEvents: previousPointerEvents || "" });
     }
   }
   if (!range || !element.contains(range.startContainer)) {
@@ -5430,14 +5434,18 @@ function rangeAtEditableEnd(element) {
   return range;
 }
 function applyInlineFormatStyles(element, styles = {}) {
+  const safeStyles = {};
   if (styles.color && isCssColor(styles.color)) {
-    element.style.color = styles.color;
+    safeStyles.color = styles.color;
   }
   if (styles.backgroundColor && isCssColor(styles.backgroundColor)) {
-    element.style.backgroundColor = styles.backgroundColor;
+    safeStyles.backgroundColor = styles.backgroundColor;
   }
   if (styles.fontSize && isSafeCssSize(styles.fontSize)) {
-    element.style.fontSize = styles.fontSize;
+    safeStyles.fontSize = styles.fontSize;
+  }
+  if (Object.keys(safeStyles).length) {
+    applyElementStyles(element, safeStyles);
   }
 }
 function selectNodeContents(node) {
@@ -5912,9 +5920,9 @@ function dispatchMouseClickThroughOverlay(canvas, clientPoint) {
     return false;
   }
   const previousPointerEvents = canvas.style.pointerEvents;
-  canvas.style.pointerEvents = "none";
+  applyElementStyles(canvas, { pointerEvents: "none" });
   const target = document.elementFromPoint(clientPoint.x, clientPoint.y);
-  canvas.style.pointerEvents = previousPointerEvents;
+  applyElementStyles(canvas, { pointerEvents: previousPointerEvents || "" });
   if (!target) {
     return false;
   }
@@ -6133,10 +6141,13 @@ function getEmbedRenderToken(stroke) {
   ].join("|");
 }
 function sanitizeHTMLToDomSafe(content) {
-  const template = document.createElement("template");
-  template.innerHTML = String(content || "");
-  template.content.querySelectorAll("script, iframe, object, embed, link[rel='import']").forEach((node) => node.remove());
-  template.content.querySelectorAll("*").forEach((element) => {
+  const parsed = new DOMParser().parseFromString(String(content || ""), "text/html");
+  const fragment = document.createDocumentFragment();
+  Array.from(parsed.body.childNodes).forEach((node) => {
+    fragment.appendChild(document.importNode(node, true));
+  });
+  fragment.querySelectorAll("script, iframe, object, embed, link[rel='import']").forEach((node) => node.remove());
+  fragment.querySelectorAll("*").forEach((element) => {
     for (const attribute of Array.from(element.attributes || [])) {
       const name = attribute.name.toLowerCase();
       const value = attribute.value || "";
@@ -6145,7 +6156,7 @@ function sanitizeHTMLToDomSafe(content) {
       }
     }
   });
-  return template.content.cloneNode(true);
+  return fragment;
 }
 function createEmptyDrawingData(file) {
   return {
