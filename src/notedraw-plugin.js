@@ -64,7 +64,575 @@ var SETTINGS_EXTRA_CODE_ASSETS = [
   { path: "extras/code-1.jpg", label: "\u7ED9\u6211\u4E70\u5496\u5561 / Buy me a coffee" },
   { path: "extras/code-2.png", label: "\u652F\u6301\u7EE7\u7EED\u7EF4\u62A4 / Support this tool" }
 ];
+var LANGUAGE_AUTO = "auto";
+var LANGUAGE_OPTIONS = [
+  { value: LANGUAGE_AUTO, label: "Auto" },
+  { value: "zh", label: "简体中文" },
+  { value: "zh-TW", label: "繁體中文" },
+  { value: "en", label: "English" },
+  { value: "ug", label: "ئۇيغۇرچە" },
+  { value: "ru", label: "Русский" },
+  { value: "ar", label: "العربية" },
+  { value: "es", label: "Español" },
+  { value: "fr", label: "Français" },
+  { value: "de", label: "Deutsch" },
+  { value: "ja", label: "日本語" },
+  { value: "ko", label: "한국어" },
+  { value: "tr", label: "Türkçe" }
+];
+var I18N = {
+  en: {
+    toggleCommand: "Toggle preview edit and drawing mode",
+    openNoteOrWebviewFirst: "Open a note or webview first.",
+    failedSaveDrawing: "Failed to save drawing data.",
+    failedImportFile: "Failed to import file.",
+    editTextDraw: "Edit text / draw",
+    editTextDrawHidden: "Edit text / draw (drawings hidden)",
+    editWebviewDraw: "Edit webview / draw",
+    selectDrawings: "Select drawings",
+    pen: "Pen",
+    watercolorBrush: "Watercolor brush",
+    floatingText: "Floating text",
+    undoLastDrawing: "Undo last drawing",
+    redoDrawing: "Redo drawing",
+    deleteSelectedDrawing: "Delete selected drawing",
+    penSettings: "Pen settings",
+    advancedColor: "Advanced color",
+    penWidth: "Pen width",
+    penOpacity: "Pen opacity",
+    textGroup: "Text",
+    textPlain: "Text",
+    title: "Title",
+    code: "Code",
+    button: "Button",
+    fileTag: "File tag",
+    importGroup: "Import",
+    image: "Image",
+    video: "Video",
+    file: "File",
+    previewGroup: "Preview",
+    markdown: "MD",
+    html: "HTML",
+    note: "Note",
+    bold: "Bold",
+    italic: "Italic",
+    underline: "Underline",
+    inlineCode: "Inline code",
+    keyboardTag: "Keyboard tag",
+    superscript: "Superscript",
+    subscript: "Subscript",
+    codeBlock: "Code block",
+    highlight: "Highlight",
+    insertBreak: "Insert line break",
+    textColor: "Text color",
+    highlightColor: "Highlight color",
+    textSize: "Text size",
+    size: "Size",
+    movePanel: "Move panel",
+    useColor: "Use color {color}",
+    settingsLanguage: "Language",
+    settingsLanguageDesc: "Plugin UI language. Auto follows Obsidian when possible.",
+    languageAuto: "Auto",
+    defaultPenColor: "Default pen color",
+    defaultPenColorDesc: "Initial color for new pen strokes.",
+    defaultPenWidth: "Default pen width",
+    defaultPenWidthDesc: "Initial pen width.",
+    defaultPenOpacity: "Default pen opacity",
+    defaultPenOpacityDesc: "Initial pen opacity.",
+    defaultWatercolorColor: "Default watercolor color",
+    defaultWatercolorColorDesc: "Initial color for watercolor strokes.",
+    defaultWatercolorWidth: "Default watercolor width",
+    defaultWatercolorWidthDesc: "Initial watercolor width.",
+    defaultWatercolorOpacity: "Default watercolor opacity",
+    defaultWatercolorOpacityDesc: "Initial watercolor opacity.",
+    toolbarTopOffset: "Toolbar top offset",
+    toolbarTopOffsetDesc: "Extra pixels below the Obsidian header.",
+    debugLog: "Debug log",
+    debugLogDesc: "Write text-save diagnostics to the plugin folder only while troubleshooting.",
+    supportTitle: "Buy me a coffee",
+    supportSubtitle: "If this tool helps, tips are appreciated."
+  },
+  zh: {
+    toggleCommand: "切换阅读编辑和涂鸦模式",
+    openNoteOrWebviewFirst: "请先打开笔记或网页视图。",
+    failedSaveDrawing: "涂鸦数据保存失败。",
+    failedImportFile: "导入文件失败。",
+    editTextDraw: "编辑文字 / 涂鸦",
+    editTextDrawHidden: "编辑文字 / 涂鸦（涂鸦已隐藏）",
+    editWebviewDraw: "编辑网页 / 涂鸦",
+    selectDrawings: "选择元素",
+    pen: "笔",
+    watercolorBrush: "水彩笔",
+    floatingText: "悬浮文字",
+    undoLastDrawing: "撤销上一步涂鸦",
+    redoDrawing: "重做涂鸦",
+    deleteSelectedDrawing: "删除选中元素",
+    penSettings: "画笔设置",
+    advancedColor: "高级颜色",
+    penWidth: "笔宽",
+    penOpacity: "笔透明度",
+    textGroup: "文字",
+    textPlain: "普通文字",
+    title: "标题",
+    code: "代码",
+    button: "按钮",
+    fileTag: "文件标签",
+    importGroup: "导入",
+    image: "图片",
+    video: "视频",
+    file: "文件",
+    previewGroup: "预览",
+    markdown: "MD",
+    html: "HTML",
+    note: "笔记",
+    bold: "加粗",
+    italic: "倾斜",
+    underline: "下划线",
+    inlineCode: "行内代码",
+    keyboardTag: "键盘标签",
+    superscript: "上标",
+    subscript: "下标",
+    codeBlock: "代码块",
+    highlight: "高亮",
+    insertBreak: "换行",
+    textColor: "文字颜色",
+    highlightColor: "高亮颜色",
+    textSize: "字号",
+    size: "字号",
+    movePanel: "移动面板",
+    useColor: "使用颜色 {color}",
+    settingsLanguage: "语言",
+    settingsLanguageDesc: "插件界面语言。自动模式会尽量跟随 Obsidian。",
+    languageAuto: "自动",
+    defaultPenColor: "默认笔颜色",
+    defaultPenColorDesc: "新笔画的初始颜色。",
+    defaultPenWidth: "默认笔宽",
+    defaultPenWidthDesc: "初始笔宽。",
+    defaultPenOpacity: "默认笔透明度",
+    defaultPenOpacityDesc: "初始笔透明度。",
+    defaultWatercolorColor: "默认水彩颜色",
+    defaultWatercolorColorDesc: "新水彩笔画的初始颜色。",
+    defaultWatercolorWidth: "默认水彩笔宽",
+    defaultWatercolorWidthDesc: "初始水彩笔宽。",
+    defaultWatercolorOpacity: "默认水彩透明度",
+    defaultWatercolorOpacityDesc: "初始水彩透明度。",
+    toolbarTopOffset: "工具栏顶部偏移",
+    toolbarTopOffsetDesc: "距离 Obsidian 顶部栏的额外像素。",
+    debugLog: "调试日志",
+    debugLogDesc: "仅排查问题时，把文字保存诊断写入插件文件夹。",
+    supportTitle: "给我买咖啡",
+    supportSubtitle: "如果这个插件帮到你，可以扫码打赏支持继续维护。"
+  },
+  "zh-TW": {
+    toggleCommand: "切換閱讀編輯和塗鴉模式",
+    openNoteOrWebviewFirst: "請先開啟筆記或網頁視圖。",
+    failedSaveDrawing: "塗鴉資料儲存失敗。",
+    failedImportFile: "匯入檔案失敗。",
+    editTextDraw: "編輯文字 / 塗鴉",
+    editTextDrawHidden: "編輯文字 / 塗鴉（塗鴉已隱藏）",
+    editWebviewDraw: "編輯網頁 / 塗鴉",
+    selectDrawings: "選擇元素",
+    pen: "筆",
+    watercolorBrush: "水彩筆",
+    floatingText: "浮動文字",
+    undoLastDrawing: "復原上一筆",
+    redoDrawing: "重做塗鴉",
+    deleteSelectedDrawing: "刪除選取元素",
+    penSettings: "畫筆設定",
+    advancedColor: "進階顏色",
+    penWidth: "筆寬",
+    penOpacity: "筆透明度",
+    textGroup: "文字",
+    textPlain: "普通文字",
+    title: "標題",
+    code: "程式碼",
+    button: "按鈕",
+    fileTag: "檔案標籤",
+    importGroup: "匯入",
+    image: "圖片",
+    video: "影片",
+    file: "檔案",
+    previewGroup: "預覽",
+    markdown: "MD",
+    html: "HTML",
+    note: "筆記",
+    bold: "粗體",
+    italic: "斜體",
+    underline: "底線",
+    inlineCode: "行內程式碼",
+    keyboardTag: "鍵盤標籤",
+    superscript: "上標",
+    subscript: "下標",
+    codeBlock: "程式碼區塊",
+    highlight: "醒目提示",
+    insertBreak: "換行",
+    textColor: "文字顏色",
+    highlightColor: "醒目顏色",
+    textSize: "字級",
+    size: "字級",
+    movePanel: "移動面板",
+    useColor: "使用顏色 {color}",
+    settingsLanguage: "語言",
+    settingsLanguageDesc: "插件介面語言。自動模式會盡量跟隨 Obsidian。",
+    languageAuto: "自動",
+    defaultPenColor: "預設筆色",
+    defaultPenColorDesc: "新筆畫的初始顏色。",
+    defaultPenWidth: "預設筆寬",
+    defaultPenWidthDesc: "初始筆寬。",
+    defaultPenOpacity: "預設筆透明度",
+    defaultPenOpacityDesc: "初始筆透明度。",
+    defaultWatercolorColor: "預設水彩顏色",
+    defaultWatercolorColorDesc: "新水彩筆畫的初始顏色。",
+    defaultWatercolorWidth: "預設水彩筆寬",
+    defaultWatercolorWidthDesc: "初始水彩筆寬。",
+    defaultWatercolorOpacity: "預設水彩透明度",
+    defaultWatercolorOpacityDesc: "初始水彩透明度。",
+    toolbarTopOffset: "工具列頂部偏移",
+    toolbarTopOffsetDesc: "距離 Obsidian 頂部列的額外像素。",
+    debugLog: "除錯日誌",
+    debugLogDesc: "僅排查問題時，將文字儲存診斷寫入插件資料夾。",
+    supportTitle: "請我喝咖啡",
+    supportSubtitle: "如果這個插件幫到你，可以掃碼打賞支持繼續維護。"
+  },
+  ug: {
+    toggleCommand: "ئوقۇش تەھرىر ۋە سىزىش ھالىتىنى ئالماشتۇرۇش",
+    openNoteOrWebviewFirst: "ئاۋۋال خاتىرە ياكى تور كۆزنەكىنى ئېچىڭ.",
+    failedSaveDrawing: "سىزىش سانلىق مەلۇماتىنى ساقلاش مەغلۇپ بولدى.",
+    failedImportFile: "ھۆججەت كىرگۈزۈش مەغلۇپ بولدى.",
+    editTextDraw: "تېكىست تەھرىرلەش / سىزىش",
+    editTextDrawHidden: "تېكىست تەھرىرلەش / سىزىش (سىزىش يوشۇرۇلغان)",
+    editWebviewDraw: "تور بەتنى تەھرىرلەش / سىزىش",
+    selectDrawings: "ئېلېمېنت تاللاش",
+    pen: "قەلەم",
+    watercolorBrush: "سۇ بوياق قەلەم",
+    floatingText: "لەيلەپ تۇرغان تېكىست",
+    undoLastDrawing: "ئاخىرقى سىزىشنى قايتۇرۇش",
+    redoDrawing: "قايتا قىلىش",
+    deleteSelectedDrawing: "تاللانغاننى ئۆچۈرۈش",
+    penSettings: "قەلەم تەڭشىكى",
+    advancedColor: "تەپسىلىي رەڭ",
+    penWidth: "قەلەم كەڭلىكى",
+    penOpacity: "قەلەم سۈزۈكلۈكى",
+    textGroup: "تېكىست",
+    textPlain: "تېكىست",
+    title: "ماۋزۇ",
+    code: "كود",
+    button: "كۇنۇپكا",
+    fileTag: "ھۆججەت بەلگىسى",
+    importGroup: "كىرگۈزۈش",
+    image: "رەسىم",
+    video: "سىن",
+    file: "ھۆججەت",
+    previewGroup: "ئالدىن كۆرۈش",
+    markdown: "MD",
+    html: "HTML",
+    note: "خاتىرە",
+    bold: "توم",
+    italic: "قىيپاش",
+    underline: "ئاستى سىزىق",
+    inlineCode: "قۇر ئىچى كود",
+    keyboardTag: "كىرگۈزگۈچ بەلگىسى",
+    superscript: "ئۈستكى بەلگە",
+    subscript: "ئاستى بەلگە",
+    codeBlock: "كود بۆلىكى",
+    highlight: "يورۇتۇش",
+    insertBreak: "قۇر ئالماشتۇرۇش",
+    textColor: "تېكىست رەڭگى",
+    highlightColor: "يورۇتۇش رەڭگى",
+    textSize: "خەت چوڭلۇقى",
+    size: "چوڭلۇق",
+    movePanel: "تاختىنى يۆتكەش",
+    useColor: "{color} رەڭنى ئىشلىتىش",
+    settingsLanguage: "تىل",
+    settingsLanguageDesc: "قىستۇرما كۆرۈنمە يۈزى تىلى. ئاپتوماتىك ھالەت Obsidian غا ئەگىشىدۇ.",
+    languageAuto: "ئاپتوماتىك",
+    defaultPenColor: "كۆڭۈلدىكى قەلەم رەڭگى",
+    defaultPenColorDesc: "يېڭى قەلەم سىزىقىنىڭ دەسلەپكى رەڭگى.",
+    defaultPenWidth: "كۆڭۈلدىكى قەلەم كەڭلىكى",
+    defaultPenWidthDesc: "دەسلەپكى قەلەم كەڭلىكى.",
+    defaultPenOpacity: "كۆڭۈلدىكى قەلەم سۈزۈكلۈكى",
+    defaultPenOpacityDesc: "دەسلەپكى قەلەم سۈزۈكلۈكى.",
+    defaultWatercolorColor: "كۆڭۈلدىكى سۇ بوياق رەڭگى",
+    defaultWatercolorColorDesc: "يېڭى سۇ بوياق سىزىقىنىڭ دەسلەپكى رەڭگى.",
+    defaultWatercolorWidth: "كۆڭۈلدىكى سۇ بوياق كەڭلىكى",
+    defaultWatercolorWidthDesc: "دەسلەپكى سۇ بوياق كەڭلىكى.",
+    defaultWatercolorOpacity: "كۆڭۈلدىكى سۇ بوياق سۈزۈكلۈكى",
+    defaultWatercolorOpacityDesc: "دەسلەپكى سۇ بوياق سۈزۈكلۈكى.",
+    toolbarTopOffset: "قورال بالداق ئۈستى ئارىلىقى",
+    toolbarTopOffsetDesc: "Obsidian باش قىسمىدىن قوشۇمچە پىكسېل.",
+    debugLog: "سازلاش خاتىرىسى",
+    debugLogDesc: "پەقەت مەسىلە تەكشۈرگەندە تېكىست ساقلاش دىئاگنوزىنى قىستۇرما قىسقۇچىغا يازىدۇ.",
+    supportTitle: "ماڭا قەھۋە ئېلىپ بېرىڭ",
+    supportSubtitle: "بۇ قىستۇرما پايدىلىق بولسا، داۋاملىق قوللاشقا ياردەم قىلالايسىز."
+  },
+  ru: {
+    toggleCommand: "Переключить редактирование предпросмотра и рисование",
+    openNoteOrWebviewFirst: "Сначала откройте заметку или webview.",
+    failedSaveDrawing: "Не удалось сохранить данные рисунка.",
+    failedImportFile: "Не удалось импортировать файл.",
+    editTextDraw: "Редактировать текст / рисовать",
+    editTextDrawHidden: "Редактировать текст / рисовать (рисунки скрыты)",
+    editWebviewDraw: "Редактировать webview / рисовать",
+    selectDrawings: "Выбрать элементы",
+    pen: "Перо",
+    watercolorBrush: "Акварельная кисть",
+    floatingText: "Плавающий текст",
+    undoLastDrawing: "Отменить последний рисунок",
+    redoDrawing: "Повторить рисунок",
+    deleteSelectedDrawing: "Удалить выбранное",
+    penSettings: "Настройки пера",
+    advancedColor: "Расширенный цвет",
+    penWidth: "Толщина пера",
+    penOpacity: "Прозрачность пера",
+    textGroup: "Текст",
+    textPlain: "Текст",
+    title: "Заголовок",
+    code: "Код",
+    button: "Кнопка",
+    fileTag: "Метка файла",
+    importGroup: "Импорт",
+    image: "Изображение",
+    video: "Видео",
+    file: "Файл",
+    previewGroup: "Предпросмотр",
+    markdown: "MD",
+    html: "HTML",
+    note: "Заметка",
+    bold: "Жирный",
+    italic: "Курсив",
+    underline: "Подчеркивание",
+    inlineCode: "Встроенный код",
+    keyboardTag: "Тег клавиатуры",
+    superscript: "Верхний индекс",
+    subscript: "Нижний индекс",
+    codeBlock: "Блок кода",
+    highlight: "Выделение",
+    insertBreak: "Перенос строки",
+    textColor: "Цвет текста",
+    highlightColor: "Цвет выделения",
+    textSize: "Размер текста",
+    size: "Размер",
+    movePanel: "Переместить панель",
+    useColor: "Использовать цвет {color}",
+    settingsLanguage: "Язык",
+    settingsLanguageDesc: "Язык интерфейса плагина. Авто по возможности следует Obsidian.",
+    languageAuto: "Авто",
+    defaultPenColor: "Цвет пера по умолчанию",
+    defaultPenColorDesc: "Начальный цвет новых штрихов пера.",
+    defaultPenWidth: "Толщина пера по умолчанию",
+    defaultPenWidthDesc: "Начальная толщина пера.",
+    defaultPenOpacity: "Прозрачность пера по умолчанию",
+    defaultPenOpacityDesc: "Начальная прозрачность пера.",
+    defaultWatercolorColor: "Цвет акварели по умолчанию",
+    defaultWatercolorColorDesc: "Начальный цвет акварельных штрихов.",
+    defaultWatercolorWidth: "Толщина акварели по умолчанию",
+    defaultWatercolorWidthDesc: "Начальная толщина акварели.",
+    defaultWatercolorOpacity: "Прозрачность акварели по умолчанию",
+    defaultWatercolorOpacityDesc: "Начальная прозрачность акварели.",
+    toolbarTopOffset: "Смещение панели сверху",
+    toolbarTopOffsetDesc: "Дополнительные пиксели ниже заголовка Obsidian.",
+    debugLog: "Журнал отладки",
+    debugLogDesc: "Записывать диагностику сохранения текста в папку плагина только при отладке.",
+    supportTitle: "Купить мне кофе",
+    supportSubtitle: "Если инструмент помогает, можно поддержать разработку."
+  }
+};
+Object.assign(I18N, {
+  ar: Object.assign({}, I18N.en, {
+    toggleCommand: "تبديل وضع تحرير المعاينة والرسم",
+    openNoteOrWebviewFirst: "افتح ملاحظة أو عرض ويب أولا.",
+    failedSaveDrawing: "فشل حفظ بيانات الرسم.",
+    failedImportFile: "فشل استيراد الملف.",
+    editTextDraw: "تحرير النص / الرسم",
+    editTextDrawHidden: "تحرير النص / الرسم (الرسومات مخفية)",
+    editWebviewDraw: "تحرير عرض الويب / الرسم",
+    selectDrawings: "تحديد العناصر",
+    pen: "قلم",
+    watercolorBrush: "فرشاة مائية",
+    floatingText: "نص عائم",
+    undoLastDrawing: "تراجع عن آخر رسم",
+    redoDrawing: "إعادة الرسم",
+    deleteSelectedDrawing: "حذف المحدد",
+    penSettings: "إعدادات القلم",
+    textGroup: "نص",
+    importGroup: "استيراد",
+    image: "صورة",
+    video: "فيديو",
+    file: "ملف",
+    previewGroup: "معاينة",
+    bold: "غامق",
+    italic: "مائل",
+    underline: "تحته خط",
+    highlight: "تمييز",
+    movePanel: "تحريك اللوحة",
+    settingsLanguage: "اللغة",
+    languageAuto: "تلقائي"
+  }),
+  es: Object.assign({}, I18N.en, {
+    toggleCommand: "Cambiar edición de vista previa y dibujo",
+    openNoteOrWebviewFirst: "Abre primero una nota o webview.",
+    failedSaveDrawing: "No se pudieron guardar los datos de dibujo.",
+    failedImportFile: "No se pudo importar el archivo.",
+    editTextDraw: "Editar texto / dibujar",
+    editTextDrawHidden: "Editar texto / dibujar (dibujos ocultos)",
+    editWebviewDraw: "Editar webview / dibujar",
+    selectDrawings: "Seleccionar elementos",
+    pen: "Pluma",
+    watercolorBrush: "Pincel acuarela",
+    floatingText: "Texto flotante",
+    undoLastDrawing: "Deshacer último dibujo",
+    redoDrawing: "Rehacer dibujo",
+    deleteSelectedDrawing: "Eliminar seleccionado",
+    penSettings: "Ajustes de pluma",
+    advancedColor: "Color avanzado",
+    textGroup: "Texto",
+    importGroup: "Importar",
+    previewGroup: "Vista previa",
+    bold: "Negrita",
+    italic: "Cursiva",
+    underline: "Subrayado",
+    movePanel: "Mover panel",
+    settingsLanguage: "Idioma",
+    languageAuto: "Auto"
+  }),
+  fr: Object.assign({}, I18N.en, {
+    toggleCommand: "Basculer édition de l'aperçu et dessin",
+    openNoteOrWebviewFirst: "Ouvrez d'abord une note ou une webview.",
+    failedSaveDrawing: "Échec de l'enregistrement du dessin.",
+    failedImportFile: "Échec de l'import du fichier.",
+    editTextDraw: "Modifier le texte / dessiner",
+    editTextDrawHidden: "Modifier le texte / dessiner (dessins masqués)",
+    editWebviewDraw: "Modifier la webview / dessiner",
+    selectDrawings: "Sélectionner les éléments",
+    pen: "Stylo",
+    watercolorBrush: "Pinceau aquarelle",
+    floatingText: "Texte flottant",
+    undoLastDrawing: "Annuler le dernier dessin",
+    redoDrawing: "Rétablir le dessin",
+    deleteSelectedDrawing: "Supprimer la sélection",
+    penSettings: "Réglages du stylo",
+    advancedColor: "Couleur avancée",
+    textGroup: "Texte",
+    importGroup: "Importer",
+    previewGroup: "Aperçu",
+    bold: "Gras",
+    italic: "Italique",
+    underline: "Souligné",
+    movePanel: "Déplacer le panneau",
+    settingsLanguage: "Langue",
+    languageAuto: "Auto"
+  }),
+  de: Object.assign({}, I18N.en, {
+    toggleCommand: "Vorschau-Bearbeitung und Zeichnen umschalten",
+    openNoteOrWebviewFirst: "Öffne zuerst eine Notiz oder Webview.",
+    failedSaveDrawing: "Zeichnungsdaten konnten nicht gespeichert werden.",
+    failedImportFile: "Datei konnte nicht importiert werden.",
+    editTextDraw: "Text bearbeiten / zeichnen",
+    editTextDrawHidden: "Text bearbeiten / zeichnen (Zeichnungen ausgeblendet)",
+    editWebviewDraw: "Webview bearbeiten / zeichnen",
+    selectDrawings: "Elemente auswählen",
+    pen: "Stift",
+    watercolorBrush: "Aquarellpinsel",
+    floatingText: "Schwebender Text",
+    undoLastDrawing: "Letzte Zeichnung rückgängig",
+    redoDrawing: "Zeichnung wiederholen",
+    deleteSelectedDrawing: "Auswahl löschen",
+    penSettings: "Stifteinstellungen",
+    advancedColor: "Erweiterte Farbe",
+    textGroup: "Text",
+    importGroup: "Import",
+    previewGroup: "Vorschau",
+    bold: "Fett",
+    italic: "Kursiv",
+    underline: "Unterstrichen",
+    movePanel: "Panel verschieben",
+    settingsLanguage: "Sprache",
+    languageAuto: "Auto"
+  }),
+  ja: Object.assign({}, I18N.en, {
+    toggleCommand: "プレビュー編集と描画モードを切り替え",
+    openNoteOrWebviewFirst: "先にノートまたは webview を開いてください。",
+    failedSaveDrawing: "描画データの保存に失敗しました。",
+    failedImportFile: "ファイルのインポートに失敗しました。",
+    editTextDraw: "文字編集 / 描画",
+    editTextDrawHidden: "文字編集 / 描画（描画は非表示）",
+    editWebviewDraw: "webview 編集 / 描画",
+    selectDrawings: "要素を選択",
+    pen: "ペン",
+    watercolorBrush: "水彩ブラシ",
+    floatingText: "フローティング文字",
+    undoLastDrawing: "最後の描画を元に戻す",
+    redoDrawing: "描画をやり直す",
+    deleteSelectedDrawing: "選択を削除",
+    penSettings: "ペン設定",
+    advancedColor: "詳細カラー",
+    textGroup: "文字",
+    importGroup: "インポート",
+    previewGroup: "プレビュー",
+    bold: "太字",
+    italic: "斜体",
+    underline: "下線",
+    movePanel: "パネルを移動",
+    settingsLanguage: "言語",
+    languageAuto: "自動"
+  }),
+  ko: Object.assign({}, I18N.en, {
+    toggleCommand: "미리보기 편집 및 그리기 모드 전환",
+    openNoteOrWebviewFirst: "먼저 노트 또는 webview를 여세요.",
+    failedSaveDrawing: "그리기 데이터를 저장하지 못했습니다.",
+    failedImportFile: "파일을 가져오지 못했습니다.",
+    editTextDraw: "텍스트 편집 / 그리기",
+    editTextDrawHidden: "텍스트 편집 / 그리기(그림 숨김)",
+    editWebviewDraw: "webview 편집 / 그리기",
+    selectDrawings: "요소 선택",
+    pen: "펜",
+    watercolorBrush: "수채화 브러시",
+    floatingText: "플로팅 텍스트",
+    undoLastDrawing: "마지막 그리기 취소",
+    redoDrawing: "그리기 다시 실행",
+    deleteSelectedDrawing: "선택 삭제",
+    penSettings: "펜 설정",
+    advancedColor: "고급 색상",
+    textGroup: "텍스트",
+    importGroup: "가져오기",
+    previewGroup: "미리보기",
+    bold: "굵게",
+    italic: "기울임",
+    underline: "밑줄",
+    movePanel: "패널 이동",
+    settingsLanguage: "언어",
+    languageAuto: "자동"
+  }),
+  tr: Object.assign({}, I18N.en, {
+    toggleCommand: "Önizleme düzenleme ve çizim modunu değiştir",
+    openNoteOrWebviewFirst: "Önce bir not veya webview açın.",
+    failedSaveDrawing: "Çizim verileri kaydedilemedi.",
+    failedImportFile: "Dosya içe aktarılamadı.",
+    editTextDraw: "Metni düzenle / çiz",
+    editTextDrawHidden: "Metni düzenle / çiz (çizimler gizli)",
+    editWebviewDraw: "Webview düzenle / çiz",
+    selectDrawings: "Ögeleri seç",
+    pen: "Kalem",
+    watercolorBrush: "Sulu boya fırçası",
+    floatingText: "Yüzen metin",
+    undoLastDrawing: "Son çizimi geri al",
+    redoDrawing: "Çizimi yinele",
+    deleteSelectedDrawing: "Seçileni sil",
+    penSettings: "Kalem ayarları",
+    advancedColor: "Gelişmiş renk",
+    textGroup: "Metin",
+    importGroup: "İçe aktar",
+    previewGroup: "Önizleme",
+    bold: "Kalın",
+    italic: "İtalik",
+    underline: "Altı çizili",
+    movePanel: "Paneli taşı",
+    settingsLanguage: "Dil",
+    languageAuto: "Otomatik"
+  })
+});
 var DEFAULT_SETTINGS = {
+  language: LANGUAGE_AUTO,
   defaultPenColor: "#e53935",
   defaultPenWidth: 3,
   defaultPenOpacity: DEFAULT_PEN_OPACITY,
@@ -152,7 +720,8 @@ var WEBVIEW_BLOCKED_EDIT_SELECTOR = [
 ].join(",");
 var NoteDrawPlugin = class extends Plugin {
   async onload() {
-    this.settings = { ...DEFAULT_SETTINGS, ...await this.loadData() || {} };
+    const savedSettings = await this.loadData();
+    this.settings = sanitizeSettings({ ...DEFAULT_SETTINGS, ...(savedSettings || {}) });
     this.controllers = /* @__PURE__ */ new WeakMap();
     this.sourceControllers = /* @__PURE__ */ new Map();
     this.webviewControllers = /* @__PURE__ */ new Map();
@@ -168,7 +737,7 @@ var NoteDrawPlugin = class extends Plugin {
     cleanupAllDrawingHeaderButtons();
     this.addCommand({
       id: "toggle-notedraw",
-      name: "Toggle preview edit and drawing mode",
+      name: this.t("toggleCommand"),
       callback: () => this.toggleActiveController()
     });
     this.addSettingTab(new NoteDrawSettingTab(this.app, this));
@@ -242,6 +811,23 @@ var NoteDrawPlugin = class extends Plugin {
     await this.saveData(this.settings);
     for (const controller of this.getAllControllers()) {
       controller.applySettings();
+      controller.refreshLocalizedLabels?.();
+    }
+    this.refreshLocalizedButtons();
+  }
+  t(key, vars = {}) {
+    return translateNoteDraw(this, key, vars);
+  }
+  setAccessibleLabel(element, key, vars = {}) {
+    setAccessibleLabel(element, this.t(key, vars));
+  }
+  refreshLocalizedButtons() {
+    for (const state of this.headerActions.values()) {
+      const controller = state.button?._noteDrawController || state.controller;
+      this.setAccessibleLabel(state.button, controller?.surfaceType === "webview" ? "editWebviewDraw" : "editTextDraw");
+    }
+    for (const controller of this.webviewControllers.values()) {
+      this.setAccessibleLabel(controller.button, "editWebviewDraw");
     }
   }
   getAllControllers() {
@@ -287,7 +873,7 @@ var NoteDrawPlugin = class extends Plugin {
   }
   createPublicApi() {
     return {
-      version: "3.1.6",
+      version: "3.1.11",
       getActiveController: () => this.getActiveController(),
       readDrawings: async (file) => this.readDrawings(file),
       writeDrawings: async (file, data) => this.writeDrawings(file, normalizeDrawingData(data, file)),
@@ -344,7 +930,7 @@ var NoteDrawPlugin = class extends Plugin {
   toggleActiveController() {
     const controller = this.getActiveController();
     if (!controller) {
-      new Notice("Open a note or webview first.");
+      new Notice(this.t("openNoteOrWebviewFirst"));
       return;
     }
     controller.toggle().catch((error) => {
@@ -469,7 +1055,7 @@ var NoteDrawPlugin = class extends Plugin {
       state.pointerUpHandler = (event) => this.resolveHeaderController(view, state)?.onButtonPointerUp(event);
       let button = null;
       if (typeof view?.addAction === "function") {
-        button = view.addAction("wand-sparkles", "Edit text / draw", state.clickHandler);
+        button = view.addAction("wand-sparkles", this.t("editTextDraw"), state.clickHandler);
       }
       if (!button) {
         const actions = view?.containerEl?.querySelector(".view-actions");
@@ -497,8 +1083,7 @@ var NoteDrawPlugin = class extends Plugin {
     state.button._noteDrawController = state.controller || controller;
     state.button.classList.add("notedraw-header-button");
     state.button.classList.toggle("notedraw-webview-button", state.button._noteDrawController?.surfaceType === "webview");
-    state.button.setAttribute("aria-label", "Edit text / draw");
-    state.button.setAttribute("title", "Edit text / draw");
+    this.setAccessibleLabel(state.button, state.button._noteDrawController?.surfaceType === "webview" ? "editWebviewDraw" : "editTextDraw");
     state.button.classList.toggle("is-active", Boolean(state.button._noteDrawController?.active));
     this.cleanupHeaderButtons(view, state.button);
     return state.button;
@@ -517,8 +1102,7 @@ var NoteDrawPlugin = class extends Plugin {
       button.classList.add("view-action");
     }
     setIcon(button, "wand-sparkles");
-    button.setAttribute("aria-label", "Edit webview / draw");
-    button.setAttribute("title", "Edit webview / draw");
+    this.setAccessibleLabel(button, "editWebviewDraw");
     button.addEventListener("click", (event) => controller.onButtonClick(event));
     button.addEventListener("pointerdown", () => controller.onButtonPointerDown());
     button.addEventListener("pointerup", () => controller.onButtonPointerUp());
@@ -714,7 +1298,7 @@ var NoteDrawPlugin = class extends Plugin {
       compactDrawingData(data);
       this.writeDrawings(file, data).catch((error) => {
         console.error(`[${PLUGIN_ID}] Failed to save drawing file`, error);
-        new Notice("Failed to save drawing data.");
+        new Notice(this.t("failedSaveDrawing"));
       });
     }, 500);
     this.saveTimers.set(path, timer);
@@ -959,7 +1543,7 @@ var NoteDrawPlugin = class extends Plugin {
     }
     const baselineText = state.baselineText;
     const latestText = state.latestText;
-    if (normalizeRenderedText(baselineText) === normalizeRenderedText(latestText)) {
+    if (normalizeEditableSourceText(baselineText) === normalizeEditableSourceText(latestText)) {
       element.removeClass("notedraw-saving");
       return;
     }
@@ -1028,7 +1612,7 @@ var NoteDrawPlugin = class extends Plugin {
     } finally {
       state.saving = false;
     }
-    if (state.pending || normalizeRenderedText(state.baselineText) !== normalizeRenderedText(state.latestText)) {
+    if (state.pending || normalizeEditableSourceText(state.baselineText) !== normalizeEditableSourceText(state.latestText)) {
       if (state.saveBlocked) {
         element.removeClass("notedraw-saving");
         return;
@@ -1044,8 +1628,7 @@ var NoteDrawPlugin = class extends Plugin {
   }
   async saveTextBlock(file, originalText, editedText, sourceInfo, target) {
     const normalizedOriginal = normalizeRenderedText(originalText);
-    const normalizedEdited = normalizeRenderedText(editedText);
-    if (!normalizedOriginal || normalizedOriginal === normalizedEdited) {
+    if (!normalizedOriginal || normalizeEditableSourceText(originalText) === normalizeEditableSourceText(editedText)) {
       return { changed: true, target };
     }
     const source = await this.app.vault.read(file);
@@ -1085,6 +1668,13 @@ var PreviewDrawingController = class {
     };
     this.currentStroke = null;
     this.currentEditor = null;
+    this.currentTextRange = null;
+    this.formatToolbar = null;
+    this.formatToolbarManualPosition = null;
+    this.formatToolbarDrag = null;
+    this.formatColorInput = null;
+    this.formatHighlightInput = null;
+    this.formatSizeSelect = null;
     this.brushMode = BRUSH_PEN;
     this.brushSettings = {
       [BRUSH_PEN]: {
@@ -1171,6 +1761,9 @@ var PreviewDrawingController = class {
     this.onButtonPointerDown = this.onButtonPointerDown.bind(this);
     this.onButtonPointerUp = this.onButtonPointerUp.bind(this);
     this.onDocumentPointerDown = this.onDocumentPointerDown.bind(this);
+    this.onDocumentSelectionChange = this.onDocumentSelectionChange.bind(this);
+    this.onFormatToolbarDragMove = this.onFormatToolbarDragMove.bind(this);
+    this.onFormatToolbarDragEnd = this.onFormatToolbarDragEnd.bind(this);
   }
   async mount() {
     cleanupDrawingUi(this.previewEl);
@@ -1181,23 +1774,23 @@ var PreviewDrawingController = class {
     this.button = this.createHeaderButton();
     this.toolbar = this.previewEl.createDiv({ cls: "notedraw-toolbar" });
     this.selectButton = this.toolbar.createEl("button", {
-      attr: { type: "button", title: "Select drawings" }
+      attr: { type: "button", title: this.plugin.t("selectDrawings") }
     });
     setIcon(this.selectButton, "mouse-pointer-2");
     this.selectButton.addEventListener("click", () => this.toggleSelectMode());
     this.penButton = this.toolbar.createEl("button", {
-      attr: { type: "button", title: "Pen" }
+      attr: { type: "button", title: this.plugin.t("pen") }
     });
     setIcon(this.penButton, "pen-line");
     this.penButton.addEventListener("click", () => this.setBrushMode(BRUSH_PEN));
     this.watercolorButton = this.toolbar.createEl("button", {
-      attr: { type: "button", title: "Watercolor brush" }
+      attr: { type: "button", title: this.plugin.t("watercolorBrush") }
     });
     setIcon(this.watercolorButton, "paintbrush");
     this.watercolorButton.addEventListener("click", () => this.setBrushMode(BRUSH_WATERCOLOR));
     if (this.surfaceType !== "source") {
       this.textButton = this.toolbar.createEl("button", {
-        attr: { type: "button", title: "Floating text" }
+        attr: { type: "button", title: this.plugin.t("floatingText") }
       });
       setIcon(this.textButton, "type");
       this.textButton.addEventListener("click", (event) => {
@@ -1210,22 +1803,22 @@ var PreviewDrawingController = class {
       });
     }
     this.undoButton = this.toolbar.createEl("button", {
-      attr: { type: "button", title: "Undo last drawing" }
+      attr: { type: "button", title: this.plugin.t("undoLastDrawing") }
     });
     setIcon(this.undoButton, "undo-2");
     this.undoButton.addEventListener("click", () => this.undoLastStroke());
     this.redoButton = this.toolbar.createEl("button", {
-      attr: { type: "button", title: "Redo drawing" }
+      attr: { type: "button", title: this.plugin.t("redoDrawing") }
     });
     setIcon(this.redoButton, "redo-2");
     this.redoButton.addEventListener("click", () => this.redoLastStroke());
     this.deleteButton = this.toolbar.createEl("button", {
-      attr: { type: "button", title: "Delete selected drawing" }
+      attr: { type: "button", title: this.plugin.t("deleteSelectedDrawing") }
     });
     setIcon(this.deleteButton, "trash-2");
     this.deleteButton.addEventListener("click", () => this.deleteSelectedStroke());
     this.paletteButton = this.toolbar.createEl("button", {
-      attr: { type: "button", title: "Pen settings" }
+      attr: { type: "button", title: this.plugin.t("penSettings") }
     });
     setIcon(this.paletteButton, "palette");
     this.paletteButton.addEventListener("click", (event) => {
@@ -1243,13 +1836,16 @@ var PreviewDrawingController = class {
       this.textPanel = this.previewEl.createDiv({ cls: "notedraw-text-panel" });
       this.createTextPanel();
     }
+    if (this.allowTextEdit && this.surfaceType !== "webview") {
+      this.createFormatToolbar();
+    }
     this.colorInput = this.palettePanel.createEl("input", {
       cls: "notedraw-advanced-color",
       attr: {
         type: "color",
         value: this.penColor,
-        title: "Advanced color",
-        "aria-label": "Advanced color"
+        title: this.plugin.t("advancedColor"),
+        "aria-label": this.plugin.t("advancedColor")
       }
     });
     this.colorInput.addEventListener("input", () => {
@@ -1275,7 +1871,7 @@ var PreviewDrawingController = class {
       }
       this.insertImportedAsset(file, pending.point).catch((error) => {
         console.error(`[${PLUGIN_ID}] Failed to import asset`, error);
-        new Notice("Failed to import file.");
+        new Notice(this.plugin.t("failedImportFile"));
       });
     });
     this.widthInput = this.createPaletteInput("circle", "width", {
@@ -1284,7 +1880,7 @@ var PreviewDrawingController = class {
       min: String(MIN_BRUSH_WIDTH),
       max: String(MAX_BRUSH_WIDTH),
       step: "0.5",
-      title: "Pen width"
+      title: this.plugin.t("penWidth")
     });
     this.widthInput.addEventListener("input", () => {
       this.currentBrushSettings().width = clamp(Number(this.widthInput.value), MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH);
@@ -1297,7 +1893,7 @@ var PreviewDrawingController = class {
       min: "0",
       max: "1",
       step: "0.02",
-      title: "Pen opacity"
+      title: this.plugin.t("penOpacity")
     });
     this.opacityInput.addEventListener("input", () => {
       this.currentBrushSettings().opacity = clamp(Number(this.opacityInput.value), 0, 1);
@@ -1314,7 +1910,10 @@ var PreviewDrawingController = class {
     this.canvas.addEventListener("dblclick", this.onCanvasDoubleClick);
     this.canvas.addEventListener("wheel", this.onWheel, { passive: true });
     window.addEventListener("resize", this.onResize);
+    window.visualViewport?.addEventListener("resize", this.onResize);
+    window.visualViewport?.addEventListener("scroll", this.onResize);
     document.addEventListener("pointerdown", this.onDocumentPointerDown, true);
+    document.addEventListener("selectionchange", this.onDocumentSelectionChange);
     if (typeof ResizeObserver !== "undefined") {
       this.resizeObserver = new ResizeObserver(this.onResize);
       this.resizeObserver.observe(this.previewEl);
@@ -1327,6 +1926,7 @@ var PreviewDrawingController = class {
     this.scrollEventTarget?.addEventListener("scroll", this.onScroll, { passive: true });
     this.updateToolButtons();
     this.syncPaletteInputs();
+    this.refreshLocalizedLabels();
   }
   applySettings() {
     const settings = sanitizeSettings(this.plugin?.settings || {});
@@ -1345,6 +1945,48 @@ var PreviewDrawingController = class {
     this.updateToolButtons?.();
     this.positionToolbar?.();
     this.render?.();
+  }
+  refreshLocalizedLabels() {
+    this.plugin.setAccessibleLabel(this.button, this.surfaceType === "webview" ? "editWebviewDraw" : this.drawingsVisible ? "editTextDraw" : "editTextDrawHidden");
+    this.plugin.setAccessibleLabel(this.selectButton, "selectDrawings");
+    this.plugin.setAccessibleLabel(this.penButton, "pen");
+    this.plugin.setAccessibleLabel(this.watercolorButton, "watercolorBrush");
+    this.plugin.setAccessibleLabel(this.textButton, "floatingText");
+    this.plugin.setAccessibleLabel(this.undoButton, "undoLastDrawing");
+    this.plugin.setAccessibleLabel(this.redoButton, "redoDrawing");
+    this.plugin.setAccessibleLabel(this.deleteButton, "deleteSelectedDrawing");
+    this.plugin.setAccessibleLabel(this.paletteButton, "penSettings");
+    this.plugin.setAccessibleLabel(this.colorInput, "advancedColor");
+    this.plugin.setAccessibleLabel(this.advancedColorButton, "advancedColor");
+    this.colorSwatchButtons?.forEach((button, index) => {
+      const color = COMMON_COLORS[index];
+      if (color) {
+        button.setAttribute("aria-label", this.plugin.t("useColor", { color }));
+      }
+    });
+    this.widthInput?.setAttribute("title", this.plugin.t("penWidth"));
+    this.opacityInput?.setAttribute("title", this.plugin.t("penOpacity"));
+    if (this.textPanel) {
+      const wasOpen = this.textPanelOpen;
+      this.textPanel.empty();
+      this.createTextPanel();
+      this.textPanelOpen = wasOpen;
+      this.previewEl.toggleClass("is-text-panel-open", this.textPanelOpen);
+      this.syncTextPanelButtons();
+    }
+    if (this.formatToolbar) {
+      this.formatToolbar.querySelectorAll("[data-note-draw-title-key]").forEach((element) => {
+        this.plugin.setAccessibleLabel(element, element.dataset.noteDrawTitleKey);
+      });
+      this.plugin.setAccessibleLabel(this.formatToolbar.querySelector(".notedraw-format-move-button"), "movePanel");
+      this.plugin.setAccessibleLabel(this.formatColorInput, "textColor");
+      this.plugin.setAccessibleLabel(this.formatHighlightInput, "highlightColor");
+      this.plugin.setAccessibleLabel(this.formatSizeSelect, "textSize");
+      const firstOption = this.formatSizeSelect?.querySelector?.('option[value=""]');
+      if (firstOption) {
+        firstOption.textContent = this.plugin.t("size");
+      }
+    }
   }
   createPaletteInput(icon, cls, attr) {
     const row = this.palettePanel.createDiv({ cls: "notedraw-palette-row" });
@@ -1415,7 +2057,11 @@ var PreviewDrawingController = class {
     this.scrollEventTarget = null;
     this.layoutMeasureEl = null;
     window.removeEventListener("resize", this.onResize);
+    window.visualViewport?.removeEventListener("resize", this.onResize);
+    window.visualViewport?.removeEventListener("scroll", this.onResize);
     document.removeEventListener("pointerdown", this.onDocumentPointerDown, true);
+    document.removeEventListener("selectionchange", this.onDocumentSelectionChange);
+    this.stopFormatToolbarDrag();
     this.canvas?.removeEventListener("pointerdown", this.onPointerDown);
     this.canvas?.removeEventListener("pointermove", this.onPointerMove);
     this.canvas?.removeEventListener("pointerup", this.onPointerUp);
@@ -1427,6 +2073,7 @@ var PreviewDrawingController = class {
     this.toolbar?.remove();
     this.palettePanel?.remove();
     this.textPanel?.remove();
+    this.formatToolbar?.remove();
     this.hiddenFileInput?.remove();
     this.embedLayer?.remove();
     this.embedNodes.clear();
@@ -1443,6 +2090,7 @@ var PreviewDrawingController = class {
     this.previewEl.removeClass("is-notedraw-source-shell");
     this.previewEl.removeClass("is-notedraw-webview-shell");
     this.previewEl.removeClass("is-resizing-selection");
+    this.previewEl.removeClass("is-native-text-editing");
     if (this.previewEl._noteDrawController === this) {
       delete this.previewEl._noteDrawController;
     }
@@ -1499,6 +2147,7 @@ var PreviewDrawingController = class {
       this.resizeFrameId = null;
       this.resizeCanvas();
       this.updateFloatingControlsPosition();
+      this.positionFormatToolbar();
       this.render();
     });
   }
@@ -1515,6 +2164,7 @@ var PreviewDrawingController = class {
     this.positionFrameId = window.requestAnimationFrame(() => {
       this.positionFrameId = null;
       this.updateFloatingControlsPosition();
+      this.positionFormatToolbar();
     });
   }
   cancelPositionFrame() {
@@ -1626,44 +2276,45 @@ var PreviewDrawingController = class {
   createTextPanel() {
     const groups = [
       {
-        label: "Text",
+        labelKey: "textGroup",
         items: [
-          { id: "plain", label: "Text", icon: "type" },
-          { id: "title", label: "Title", icon: "type" },
-          { id: "code", label: "Code", icon: "code-2" },
-          { id: "button", label: "Button", icon: "square" },
-          { id: "file", label: "File tag", icon: "file-text" }
+          { id: "plain", labelKey: "textPlain", icon: "type" },
+          { id: "title", labelKey: "title", icon: "type" },
+          { id: "code", labelKey: "code", icon: "code-2" },
+          { id: "button", labelKey: "button", icon: "square" },
+          { id: "file", labelKey: "fileTag", icon: "file-text" }
         ]
       },
       {
-        label: "Import",
+        labelKey: "importGroup",
         items: [
-          { id: "image", label: "Image", icon: "image" },
-          { id: "video", label: "Video", icon: "film" },
-          { id: "attachment", label: "File", icon: "paperclip" }
+          { id: "image", labelKey: "image", icon: "image" },
+          { id: "video", labelKey: "video", icon: "film" },
+          { id: "attachment", labelKey: "file", icon: "paperclip" }
         ]
       },
       {
-        label: "Preview",
+        labelKey: "previewGroup",
         items: [
-          { id: "markdown", label: "MD", icon: "pilcrow" },
-          { id: "html", label: "HTML", icon: "code" },
-          { id: "note", label: "Note", icon: "file-text" }
+          { id: "markdown", labelKey: "markdown", icon: "pilcrow" },
+          { id: "html", labelKey: "html", icon: "code" },
+          { id: "note", labelKey: "note", icon: "file-text" }
         ]
       }
     ];
     for (const group of groups) {
       const groupEl = this.textPanel.createDiv({ cls: "notedraw-text-group" });
-      groupEl.createDiv({ cls: "notedraw-text-group-label", text: group.label });
+      groupEl.createDiv({ cls: "notedraw-text-group-label", text: this.plugin.t(group.labelKey) });
       const gridEl = groupEl.createDiv({ cls: "notedraw-text-grid" });
       for (const item of group.items) {
+        const label = this.plugin.t(item.labelKey);
         const button = gridEl.createEl("button", {
           cls: "notedraw-text-option",
-          attr: { type: "button", title: item.label }
+          attr: { type: "button", title: label, "aria-label": label }
         });
         button.dataset.noteDrawTextPreset = item.id;
         setIcon(button, item.icon);
-        button.createSpan({ text: item.label });
+        button.createSpan({ text: label });
         button.addEventListener("click", (event) => {
           event.preventDefault();
           event.stopPropagation();
@@ -1680,6 +2331,299 @@ var PreviewDrawingController = class {
     this.textPanel?.querySelectorAll(".notedraw-text-option").forEach((button) => {
       button.classList.toggle("is-active", button.dataset.noteDrawTextPreset === this.textPreset);
     });
+  }
+  createFormatToolbar() {
+    this.formatToolbar = this.previewEl.createDiv({ cls: "notedraw-format-toolbar" });
+    this.formatToolbar.addEventListener("mousedown", (event) => {
+      if (event.target?.closest?.("button")) {
+        event.preventDefault();
+      }
+    });
+    this.createFormatMoveButton();
+    this.createFormatButton("bold", "bold", "bold", () => this.applyTextInlineFormat("strong"));
+    this.createFormatButton("italic", "italic", "italic", () => this.applyTextInlineFormat("em"));
+    this.createFormatButton("underline", "underline", "underline", () => this.applyTextInlineFormat("u"));
+    this.createFormatButton("code-2", "inlineCode", "code", () => this.applyTextInlineFormat("code"));
+    this.createFormatButton("keyboard", "keyboardTag", "kbd", () => this.applyTextInlineFormat("kbd"));
+    this.createFormatButton("superscript", "superscript", "sup", () => this.applyTextInlineFormat("sup"));
+    this.createFormatButton("subscript", "subscript", "sub", () => this.applyTextInlineFormat("sub"));
+    this.createFormatButton("square-code", "codeBlock", "block-code", () => this.applyTextBlockFormat("code"));
+    this.createFormatButton("highlighter", "highlight", "mark", () => this.applyTextInlineFormat("mark", { backgroundColor: this.formatHighlightInput?.value || "#fff59d" }));
+    this.createFormatButton("wrap-text", "insertBreak", "br", () => this.insertTextBreak());
+    this.formatColorInput = this.formatToolbar.createEl("input", {
+      cls: "notedraw-format-color",
+      attr: {
+        type: "color",
+        value: "#e53935",
+        title: this.plugin.t("textColor"),
+        "aria-label": this.plugin.t("textColor")
+      }
+    });
+    this.formatColorInput.addEventListener("input", () => this.applyTextInlineFormat("span", { color: this.formatColorInput.value }));
+    this.formatHighlightInput = this.formatToolbar.createEl("input", {
+      cls: "notedraw-format-color",
+      attr: {
+        type: "color",
+        value: "#fff59d",
+        title: this.plugin.t("highlightColor"),
+        "aria-label": this.plugin.t("highlightColor")
+      }
+    });
+    this.formatHighlightInput.addEventListener("input", () => this.applyTextInlineFormat("mark", { backgroundColor: this.formatHighlightInput.value }));
+    this.formatSizeSelect = this.formatToolbar.createEl("select", {
+      cls: "notedraw-format-size",
+      attr: { title: this.plugin.t("textSize"), "aria-label": this.plugin.t("textSize") }
+    });
+    [
+      ["", this.plugin.t("size")],
+      ["0.85em", "S"],
+      ["1em", "M"],
+      ["1.25em", "L"],
+      ["1.5em", "XL"],
+      ["2em", "XXL"]
+    ].forEach(([value, label]) => {
+      this.formatSizeSelect.createEl("option", { text: label, attr: { value } });
+    });
+    this.formatSizeSelect.addEventListener("change", () => {
+      const size = this.formatSizeSelect.value;
+      if (size) {
+        this.applyTextInlineFormat("span", { fontSize: size });
+      }
+      this.formatSizeSelect.value = "";
+    });
+  }
+  createFormatMoveButton() {
+    const button = this.formatToolbar.createEl("button", {
+      cls: "notedraw-format-button notedraw-format-move-button",
+      attr: { type: "button", title: this.plugin.t("movePanel"), "aria-label": this.plugin.t("movePanel") }
+    });
+    setIcon(button, "move");
+    button.addEventListener("mousedown", (event) => event.preventDefault());
+    button.addEventListener("pointerdown", (event) => this.startFormatToolbarDrag(event));
+    return button;
+  }
+  createFormatButton(icon, titleKey, id, action) {
+    const title = this.plugin.t(titleKey);
+    const button = this.formatToolbar.createEl("button", {
+      cls: "notedraw-format-button",
+      attr: { type: "button", title, "aria-label": title }
+    });
+    button.dataset.noteDrawTitleKey = titleKey;
+    button.dataset.noteDrawFormat = id;
+    setIcon(button, icon);
+    button.addEventListener("mousedown", (event) => event.preventDefault());
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      action();
+    });
+    return button;
+  }
+  onDocumentSelectionChange() {
+    if (!this.currentEditor || !this.formatToolbar) {
+      return;
+    }
+    const selection = window.getSelection?.();
+    if (!selection || !selection.rangeCount) {
+      return;
+    }
+    const range = selection.getRangeAt(0);
+    if (!this.currentEditor.contains(range.commonAncestorContainer)) {
+      return;
+    }
+    this.currentTextRange = range.cloneRange();
+    this.positionFormatToolbar();
+  }
+  positionFormatToolbar() {
+    if (!this.formatToolbar || !this.currentEditor) {
+      return;
+    }
+    const selection = window.getSelection?.();
+    const range = selection?.rangeCount ? selection.getRangeAt(0) : this.currentTextRange;
+    const rect = range ? rangeLineRect(range) || this.currentEditor.getBoundingClientRect() : this.currentEditor.getBoundingClientRect();
+    const toolbarRect = this.formatToolbar.getBoundingClientRect();
+    const width = Math.max(180, toolbarRect.width || 280);
+    const height = Math.max(34, toolbarRect.height || 34);
+    const viewport = window.visualViewport;
+    const viewportTop = viewport?.offsetTop || 0;
+    const viewportLeft = viewport?.offsetLeft || 0;
+    const viewportHeight = Math.max(120, viewport?.height || window.innerHeight || 120);
+    const viewportWidth = Math.max(160, viewport?.width || window.innerWidth || 160);
+    const minTop = viewportTop + 8;
+    const maxTop = Math.max(minTop, viewportTop + viewportHeight - height - 8);
+    const gap = 14;
+    const preferredLeft = rect.left + rect.width / 2 - width / 2;
+    const left = clamp(Math.round(preferredLeft), viewportLeft + 8, Math.max(viewportLeft + 8, viewportLeft + viewportWidth - width - 8));
+    if (this.formatToolbarManualPosition) {
+      const top = clamp(Math.round(this.formatToolbarManualPosition.top), minTop, maxTop);
+      const manualLeft = clamp(Math.round(this.formatToolbarManualPosition.left), viewportLeft + 8, Math.max(viewportLeft + 8, viewportLeft + viewportWidth - width - 8));
+      this.formatToolbarManualPosition = { top, left: manualLeft };
+      this.formatToolbar.style.setProperty("--notedraw-format-top", `${top}px`);
+      this.formatToolbar.style.setProperty("--notedraw-format-left", `${manualLeft}px`);
+      return;
+    }
+    const above = rect.top - height - gap;
+    const below = rect.bottom + gap;
+    const top = above >= minTop ? above : below <= maxTop ? below : clamp(Math.round(above), minTop, maxTop);
+    this.formatToolbar.style.setProperty("--notedraw-format-top", `${top}px`);
+    this.formatToolbar.style.setProperty("--notedraw-format-left", `${left}px`);
+  }
+  startFormatToolbarDrag(event) {
+    if (!this.formatToolbar) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = this.formatToolbar.getBoundingClientRect();
+    this.formatToolbarDrag = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      startTop: rect.top,
+      startLeft: rect.left
+    };
+    this.formatToolbarManualPosition = { top: rect.top, left: rect.left };
+    this.formatToolbar.addClass("is-moving");
+    document.addEventListener("pointermove", this.onFormatToolbarDragMove, true);
+    document.addEventListener("pointerup", this.onFormatToolbarDragEnd, true);
+    document.addEventListener("pointercancel", this.onFormatToolbarDragEnd, true);
+  }
+  onFormatToolbarDragMove(event) {
+    if (!this.formatToolbarDrag || !this.formatToolbar || event.pointerId !== this.formatToolbarDrag.pointerId) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    const toolbarRect = this.formatToolbar.getBoundingClientRect();
+    const viewport = window.visualViewport;
+    const viewportTop = viewport?.offsetTop || 0;
+    const viewportLeft = viewport?.offsetLeft || 0;
+    const viewportHeight = Math.max(120, viewport?.height || window.innerHeight || 120);
+    const viewportWidth = Math.max(160, viewport?.width || window.innerWidth || 160);
+    const top = clamp(
+      this.formatToolbarDrag.startTop + event.clientY - this.formatToolbarDrag.startY,
+      viewportTop + 8,
+      Math.max(viewportTop + 8, viewportTop + viewportHeight - toolbarRect.height - 8)
+    );
+    const left = clamp(
+      this.formatToolbarDrag.startLeft + event.clientX - this.formatToolbarDrag.startX,
+      viewportLeft + 8,
+      Math.max(viewportLeft + 8, viewportLeft + viewportWidth - toolbarRect.width - 8)
+    );
+    this.formatToolbarManualPosition = { top, left };
+    this.formatToolbar.style.setProperty("--notedraw-format-top", `${Math.round(top)}px`);
+    this.formatToolbar.style.setProperty("--notedraw-format-left", `${Math.round(left)}px`);
+  }
+  onFormatToolbarDragEnd(event) {
+    if (this.formatToolbarDrag && event?.pointerId !== this.formatToolbarDrag.pointerId) {
+      return;
+    }
+    event?.preventDefault?.();
+    event?.stopPropagation?.();
+    this.stopFormatToolbarDrag();
+  }
+  stopFormatToolbarDrag() {
+    this.formatToolbarDrag = null;
+    this.formatToolbar?.removeClass("is-moving");
+    document.removeEventListener("pointermove", this.onFormatToolbarDragMove, true);
+    document.removeEventListener("pointerup", this.onFormatToolbarDragEnd, true);
+    document.removeEventListener("pointercancel", this.onFormatToolbarDragEnd, true);
+  }
+  restoreTextRange() {
+    if (!this.currentEditor || !this.currentTextRange) {
+      return false;
+    }
+    const selection = window.getSelection?.();
+    if (!selection) {
+      return false;
+    }
+    selection.removeAllRanges();
+    selection.addRange(this.currentTextRange);
+    return true;
+  }
+  applyTextInlineFormat(tagName, styles = {}) {
+    if (!this.currentEditor || !this.restoreTextRange()) {
+      return;
+    }
+    const selection = window.getSelection?.();
+    if (!selection?.rangeCount) {
+      return;
+    }
+    const range = selection.getRangeAt(0);
+    if (!this.currentEditor.contains(range.commonAncestorContainer) || range.collapsed) {
+      return;
+    }
+    const wrapper = document.createElement(tagName);
+    applyInlineFormatStyles(wrapper, styles);
+    const fragment = range.extractContents();
+    wrapper.appendChild(fragment);
+    range.insertNode(wrapper);
+    selectNodeContents(wrapper);
+    this.currentTextRange = window.getSelection()?.rangeCount ? window.getSelection().getRangeAt(0).cloneRange() : null;
+    this.queueCurrentTextSave();
+    this.positionFormatToolbar();
+  }
+  applyTextBlockFormat(kind) {
+    if (!this.currentEditor || !this.restoreTextRange()) {
+      return;
+    }
+    const selection = window.getSelection?.();
+    if (!selection?.rangeCount) {
+      return;
+    }
+    const range = selection.getRangeAt(0);
+    if (!this.currentEditor.contains(range.commonAncestorContainer)) {
+      return;
+    }
+    const text = selection.toString() || "";
+    if (kind === "code") {
+      const pre = document.createElement("pre");
+      const code = document.createElement("code");
+      code.textContent = text || "code";
+      pre.appendChild(code);
+      range.deleteContents();
+      range.insertNode(pre);
+      selectNodeContents(code);
+      this.currentTextRange = window.getSelection()?.rangeCount ? window.getSelection().getRangeAt(0).cloneRange() : null;
+      this.queueCurrentTextSave();
+      this.positionFormatToolbar();
+    }
+  }
+  insertTextBreak() {
+    if (!this.currentEditor || !this.restoreTextRange()) {
+      return;
+    }
+    const selection = window.getSelection?.();
+    if (!selection?.rangeCount) {
+      return;
+    }
+    const range = selection.getRangeAt(0);
+    if (!this.currentEditor.contains(range.commonAncestorContainer)) {
+      return;
+    }
+    range.deleteContents();
+    const br = document.createElement("br");
+    range.insertNode(br);
+    range.setStartAfter(br);
+    range.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    this.currentTextRange = range.cloneRange();
+    this.queueCurrentTextSave();
+    this.positionFormatToolbar();
+  }
+  queueCurrentTextSave(immediate = true) {
+    const element = this.currentEditor;
+    if (!element || this.surfaceType === "webview") {
+      return;
+    }
+    const original = element.dataset.noteDrawOriginal || "";
+    const editedSource = serializeEditableSource(element);
+    if (immediate) {
+      this.plugin.scheduleTextSaveNow(this.file, original, editedSource, element);
+    } else {
+      this.plugin.scheduleTextSave(this.file, original, editedSource, element);
+    }
   }
   toggleTextPanel() {
     if (this.surfaceType === "source") {
@@ -1708,7 +2652,7 @@ var PreviewDrawingController = class {
         attr: {
           type: "button",
           title: color,
-          "aria-label": `Use color ${color}`
+          "aria-label": this.plugin.t("useColor", { color })
         }
       });
       button.style.setProperty("--notedraw-swatch-color", color);
@@ -1723,8 +2667,8 @@ var PreviewDrawingController = class {
       cls: "notedraw-color-advanced",
       attr: {
         type: "button",
-        title: "Advanced color",
-        "aria-label": "Advanced color"
+        title: this.plugin.t("advancedColor"),
+        "aria-label": this.plugin.t("advancedColor")
       }
     });
     setIcon(this.advancedColorButton, "sliders-horizontal");
@@ -1800,15 +2744,25 @@ var PreviewDrawingController = class {
     }
   }
   onDocumentPointerDown(event) {
-    if (!this.paletteOpen && !this.textPanelOpen) {
+    if (!this.paletteOpen && !this.textPanelOpen && !this.currentEditor) {
       return;
     }
     const target = event.target;
-    if (this.palettePanel?.contains(target) || this.paletteButton?.contains(target) || this.textPanel?.contains(target) || this.textButton?.contains(target)) {
+    if (
+      this.palettePanel?.contains(target) ||
+      this.paletteButton?.contains(target) ||
+      this.textPanel?.contains(target) ||
+      this.textButton?.contains(target) ||
+      this.formatToolbar?.contains(target) ||
+      this.currentEditor?.contains(target)
+    ) {
       return;
     }
     this.setPaletteOpen(false);
     this.setTextPanelOpen(false);
+    if (this.currentEditor) {
+      this.endTextEdit();
+    }
   }
   onButtonPointerDown() {
     this.clearButtonLongPress();
@@ -1840,9 +2794,9 @@ var PreviewDrawingController = class {
   toggleDrawingsVisible() {
     this.drawingsVisible = !this.drawingsVisible;
     this.previewEl.toggleClass("is-drawing-hidden", !this.drawingsVisible);
-    this.button?.setAttribute(
-      "title",
-      this.drawingsVisible ? "Edit text / draw" : "Edit text / draw (drawings hidden)"
+    this.plugin.setAccessibleLabel(
+      this.button,
+      this.surfaceType === "webview" ? "editWebviewDraw" : this.drawingsVisible ? "editTextDraw" : "editTextDrawHidden"
     );
   }
   resizeCanvas() {
@@ -1889,6 +2843,16 @@ var PreviewDrawingController = class {
     const resizeHandle = this.findSelectionHandleAt(point);
     if (resizeHandle) {
       this.startSelectedStrokeResize(event, point, resizeHandle);
+      return;
+    }
+    if (editable && this.toolMode !== TOOL_SELECT && this.toolMode !== TOOL_TEXT) {
+      this.currentStroke = null;
+      this.pointerDown = false;
+      this.pointerStartEditable = null;
+      this.clearSelectedStrokes();
+      this.startTextEdit(editable, { x: event.clientX, y: event.clientY });
+      event.preventDefault();
+      event.stopPropagation();
       return;
     }
     if (this.getSelectedStrokeIndexes().length && !this.selectedStrokeFrameContains(point) && hitStrokeIndex < 0) {
@@ -3328,10 +4292,13 @@ var PreviewDrawingController = class {
     if (this.currentEditor === element) {
       element.focus();
       placeCaretInEditable(element, clientPoint);
+      this.currentTextRange = window.getSelection?.()?.rangeCount ? window.getSelection().getRangeAt(0).cloneRange() : null;
+      this.positionFormatToolbar();
       return;
     }
     this.endTextEdit();
     this.currentEditor = element;
+    this.formatToolbarManualPosition = null;
     element.dataset.noteDrawOriginal = element.innerText;
     const saveToVault = this.surfaceType !== "webview";
     if (saveToVault) {
@@ -3340,8 +4307,12 @@ var PreviewDrawingController = class {
     element.contentEditable = "true";
     element.spellcheck = true;
     element.addClass("notedraw-editing");
+    this.previewEl.addClass("is-native-text-editing");
+    this.formatToolbar?.addClass("is-visible");
     element.focus();
     placeCaretInEditable(element, clientPoint);
+    this.currentTextRange = window.getSelection?.()?.rangeCount ? window.getSelection().getRangeAt(0).cloneRange() : null;
+    this.positionFormatToolbar();
     const onInput = () => {
       if (!saveToVault) {
         return;
@@ -3349,9 +4320,10 @@ var PreviewDrawingController = class {
       this.plugin.scheduleTextSave(
         this.file,
         element.dataset.noteDrawOriginal || "",
-        element.innerText,
+        serializeEditableSource(element),
         element
       );
+      this.positionFormatToolbar();
     };
     const onKeyDown = (event) => {
       if (event.key === "Escape") {
@@ -3361,8 +4333,29 @@ var PreviewDrawingController = class {
         event.preventDefault();
         this.endTextEdit();
       }
+      if (event.metaKey || event.ctrlKey) {
+        const key = event.key.toLowerCase();
+        if (key === "b") {
+          event.preventDefault();
+          this.applyTextInlineFormat("strong");
+        } else if (key === "i") {
+          event.preventDefault();
+          this.applyTextInlineFormat("em");
+        } else if (key === "u") {
+          event.preventDefault();
+          this.applyTextInlineFormat("u");
+        }
+      }
     };
-    const onBlur = () => this.endTextEdit();
+    const onBlur = () => {
+      window.setTimeout(() => {
+        const active = document.activeElement;
+        if (this.currentEditor !== element || element.contains(active) || this.formatToolbar?.contains(active)) {
+          return;
+        }
+        this.endTextEdit();
+      }, 0);
+    };
     element._noteDrawCleanup = () => {
       element.removeEventListener("input", onInput);
       element.removeEventListener("keydown", onKeyDown);
@@ -3400,10 +4393,10 @@ var PreviewDrawingController = class {
       return;
     }
     const original = element.dataset.noteDrawOriginal || "";
-    const edited = element.innerText;
+    const edited = this.surfaceType === "webview" ? element.innerText : serializeEditableSource(element);
     if (this.surfaceType === "webview") {
       this.commitWebviewTextEdit(element, original, edited);
-    } else if (normalizeRenderedText(original) !== normalizeRenderedText(edited)) {
+    } else if (normalizeEditableSourceText(original) !== normalizeEditableSourceText(edited)) {
       this.plugin.scheduleTextSaveNow(this.file, original, edited, element);
     }
     element._noteDrawCleanup?.();
@@ -3411,6 +4404,11 @@ var PreviewDrawingController = class {
     delete element.dataset.noteDrawOriginal;
     element.contentEditable = "false";
     element.removeClass("notedraw-editing");
+    this.previewEl.removeClass("is-native-text-editing");
+    this.formatToolbar?.removeClass("is-visible");
+    this.stopFormatToolbarDrag();
+    this.currentTextRange = null;
+    this.formatToolbarManualPosition = null;
     this.currentEditor = null;
   }
   commitWebviewTextEdit(element, originalText, editedText) {
@@ -3518,35 +4516,45 @@ var NoteDrawSettingTab = class extends PluginSettingTab {
   renderSettings() {
     const { containerEl } = this;
     const settings = sanitizeSettings(this.plugin.settings);
-    new Setting(containerEl).setName("Default pen color").setDesc("Initial color for new pen strokes.").addColorPicker((component) => component.setValue(settings.defaultPenColor).onChange(async (value) => {
+    new Setting(containerEl).setName(this.plugin.t("settingsLanguage")).setDesc(this.plugin.t("settingsLanguageDesc")).addDropdown((component) => {
+      for (const option of LANGUAGE_OPTIONS) {
+        component.addOption(option.value, option.value === LANGUAGE_AUTO ? `${this.plugin.t("languageAuto")} (${languageNativeName(detectNoteDrawLanguage(this.plugin.app))})` : option.label);
+      }
+      component.setValue(settings.language).onChange(async (value) => {
+        this.plugin.settings.language = value;
+        await this.plugin.saveSettings();
+        this.display();
+      });
+    });
+    new Setting(containerEl).setName(this.plugin.t("defaultPenColor")).setDesc(this.plugin.t("defaultPenColorDesc")).addColorPicker((component) => component.setValue(settings.defaultPenColor).onChange(async (value) => {
       this.plugin.settings.defaultPenColor = value;
       await this.plugin.saveSettings();
     }));
-    new Setting(containerEl).setName("Default pen width").setDesc("Initial pen width.").addSlider((component) => component.setLimits(MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH, 0.5).setValue(settings.defaultPenWidth).setDynamicTooltip().onChange(async (value) => {
+    new Setting(containerEl).setName(this.plugin.t("defaultPenWidth")).setDesc(this.plugin.t("defaultPenWidthDesc")).addSlider((component) => component.setLimits(MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH, 0.5).setValue(settings.defaultPenWidth).setDynamicTooltip().onChange(async (value) => {
       this.plugin.settings.defaultPenWidth = value;
       await this.plugin.saveSettings();
     }));
-    new Setting(containerEl).setName("Default pen opacity").setDesc("Initial pen opacity.").addSlider((component) => component.setLimits(0, 1, 0.02).setValue(settings.defaultPenOpacity).setDynamicTooltip().onChange(async (value) => {
+    new Setting(containerEl).setName(this.plugin.t("defaultPenOpacity")).setDesc(this.plugin.t("defaultPenOpacityDesc")).addSlider((component) => component.setLimits(0, 1, 0.02).setValue(settings.defaultPenOpacity).setDynamicTooltip().onChange(async (value) => {
       this.plugin.settings.defaultPenOpacity = value;
       await this.plugin.saveSettings();
     }));
-    new Setting(containerEl).setName("Default watercolor color").setDesc("Initial color for watercolor strokes.").addColorPicker((component) => component.setValue(settings.defaultWatercolorColor).onChange(async (value) => {
+    new Setting(containerEl).setName(this.plugin.t("defaultWatercolorColor")).setDesc(this.plugin.t("defaultWatercolorColorDesc")).addColorPicker((component) => component.setValue(settings.defaultWatercolorColor).onChange(async (value) => {
       this.plugin.settings.defaultWatercolorColor = value;
       await this.plugin.saveSettings();
     }));
-    new Setting(containerEl).setName("Default watercolor width").setDesc("Initial watercolor width.").addSlider((component) => component.setLimits(MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH, 0.5).setValue(settings.defaultWatercolorWidth).setDynamicTooltip().onChange(async (value) => {
+    new Setting(containerEl).setName(this.plugin.t("defaultWatercolorWidth")).setDesc(this.plugin.t("defaultWatercolorWidthDesc")).addSlider((component) => component.setLimits(MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH, 0.5).setValue(settings.defaultWatercolorWidth).setDynamicTooltip().onChange(async (value) => {
       this.plugin.settings.defaultWatercolorWidth = value;
       await this.plugin.saveSettings();
     }));
-    new Setting(containerEl).setName("Default watercolor opacity").setDesc("Initial watercolor opacity.").addSlider((component) => component.setLimits(0, 1, 0.02).setValue(settings.defaultWatercolorOpacity).setDynamicTooltip().onChange(async (value) => {
+    new Setting(containerEl).setName(this.plugin.t("defaultWatercolorOpacity")).setDesc(this.plugin.t("defaultWatercolorOpacityDesc")).addSlider((component) => component.setLimits(0, 1, 0.02).setValue(settings.defaultWatercolorOpacity).setDynamicTooltip().onChange(async (value) => {
       this.plugin.settings.defaultWatercolorOpacity = value;
       await this.plugin.saveSettings();
     }));
-    new Setting(containerEl).setName("Toolbar top offset").setDesc("Extra pixels below the Obsidian header.").addSlider((component) => component.setLimits(0, 48, 1).setValue(settings.toolbarTopOffset).setDynamicTooltip().onChange(async (value) => {
+    new Setting(containerEl).setName(this.plugin.t("toolbarTopOffset")).setDesc(this.plugin.t("toolbarTopOffsetDesc")).addSlider((component) => component.setLimits(0, 48, 1).setValue(settings.toolbarTopOffset).setDynamicTooltip().onChange(async (value) => {
       this.plugin.settings.toolbarTopOffset = value;
       await this.plugin.saveSettings();
     }));
-    new Setting(containerEl).setName("Debug log").setDesc("Write text-save diagnostics to the plugin folder only while troubleshooting.").addToggle((component) => component.setValue(settings.enableDebugLog).onChange(async (value) => {
+    new Setting(containerEl).setName(this.plugin.t("debugLog")).setDesc(this.plugin.t("debugLogDesc")).addToggle((component) => component.setValue(settings.enableDebugLog).onChange(async (value) => {
       this.plugin.settings.enableDebugLog = value;
       await this.plugin.saveSettings();
     }));
@@ -3564,11 +4572,11 @@ var NoteDrawSettingTab = class extends PluginSettingTab {
     }
     containerEl.createDiv({
       cls: "notedraw-settings-codes-title",
-      text: "\u7ED9\u6211\u4E70\u5496\u5561 / Buy me a coffee"
+      text: this.plugin.t("supportTitle")
     });
     containerEl.createDiv({
       cls: "notedraw-settings-codes-subtitle",
-      text: "\u5982\u679C\u8FD9\u4E2A\u63D2\u4EF6\u5E2E\u5230\u4F60\uFF0C\u53EF\u4EE5\u626B\u7801\u6253\u8D4F\u652F\u6301\u7EE7\u7EED\u7EF4\u62A4 / If this tool helps, tips are appreciated."
+      text: this.plugin.t("supportSubtitle")
     });
     const gridEl = containerEl.createDiv({ cls: "notedraw-settings-codes-grid" });
     for (const item of codeItems) {
@@ -3625,6 +4633,7 @@ function findWebviewEditableTarget(target, previewEl) {
 function sanitizeSettings(settings) {
   const input = settings || {};
   return {
+    language: normalizeLanguageCode(input.language ?? DEFAULT_SETTINGS.language),
     defaultPenColor: isCssColor(input.defaultPenColor) ? input.defaultPenColor : DEFAULT_SETTINGS.defaultPenColor,
     defaultPenWidth: clamp(Number(input.defaultPenWidth ?? DEFAULT_SETTINGS.defaultPenWidth), MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH),
     defaultPenOpacity: clamp(Number(input.defaultPenOpacity ?? DEFAULT_SETTINGS.defaultPenOpacity), 0, 1),
@@ -3634,6 +4643,70 @@ function sanitizeSettings(settings) {
     toolbarTopOffset: clamp(Number(input.toolbarTopOffset ?? DEFAULT_SETTINGS.toolbarTopOffset), 0, 48),
     enableDebugLog: Boolean(input.enableDebugLog)
   };
+}
+function translateNoteDraw(plugin, key, vars = {}) {
+  const language = resolveNoteDrawLanguage(plugin);
+  const template = I18N[language]?.[key] ?? I18N.en[key] ?? key;
+  return String(template).replace(/\{(\w+)\}/g, (_, name) => vars?.[name] ?? "");
+}
+function resolveNoteDrawLanguage(plugin) {
+  const language = normalizeLanguageCode(plugin?.settings?.language ?? DEFAULT_SETTINGS.language);
+  if (language !== LANGUAGE_AUTO) {
+    return language;
+  }
+  return detectNoteDrawLanguage(plugin?.app);
+}
+function detectNoteDrawLanguage(app) {
+  const localStorage = typeof window !== "undefined" ? window.localStorage : null;
+  const navigatorLanguage = typeof navigator !== "undefined" ? navigator.language : "";
+  const candidates = [
+    app?.vault?.getConfig?.("language"),
+    app?.vault?.getConfig?.("locale"),
+    app?.appId,
+    localStorage?.getItem?.("language"),
+    localStorage?.getItem?.("locale"),
+    localStorage?.getItem?.("appLanguage"),
+    localStorage?.getItem?.("obsidian-language"),
+    navigatorLanguage
+  ];
+  for (const candidate of candidates) {
+    const language = normalizeLanguageCode(candidate, false);
+    if (language && language !== LANGUAGE_AUTO) {
+      return language;
+    }
+  }
+  return "en";
+}
+function normalizeLanguageCode(value, allowAuto = true) {
+  const text = String(value || "").trim();
+  if (!text) {
+    return allowAuto ? LANGUAGE_AUTO : "";
+  }
+  const lower = text.replace("_", "-").toLowerCase();
+  if (allowAuto && lower === LANGUAGE_AUTO) {
+    return LANGUAGE_AUTO;
+  }
+  if (lower.startsWith("zh-tw") || lower.startsWith("zh-hk") || lower.includes("hant")) {
+    return "zh-TW";
+  }
+  if (lower.startsWith("zh")) {
+    return "zh";
+  }
+  if (lower.startsWith("ug") || lower.startsWith("uig")) {
+    return "ug";
+  }
+  const primary = lower.split("-")[0];
+  return I18N[primary] ? primary : allowAuto ? LANGUAGE_AUTO : "";
+}
+function languageNativeName(language) {
+  return LANGUAGE_OPTIONS.find((option) => option.value === language)?.label || LANGUAGE_OPTIONS.find((option) => option.value === "en")?.label || "English";
+}
+function setAccessibleLabel(element, label) {
+  if (!element || !label) {
+    return;
+  }
+  element.setAttribute("title", label);
+  element.setAttribute("aria-label", label);
 }
 function isCssColor(value) {
   return typeof value === "string" && /^#[0-9a-fA-F]{6}$/.test(value);
@@ -3661,6 +4734,9 @@ function isSourceTextTarget(target, previewEl) {
 }
 function normalizeRenderedText(value) {
   return String(value || "").replace(/\u00a0/g, " ").replace(/\r\n/g, "\n").split("\n").map((line) => line.trim()).filter(Boolean).join("\n").trim();
+}
+function normalizeEditableSourceText(value) {
+  return String(value || "").replace(/\u00a0/g, " ").replace(/\r\n/g, "\n").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 function placeCaretInEditable(element, clientPoint) {
   const selection = window.getSelection?.();
@@ -3747,6 +4823,29 @@ function nearestTextRangeFromPoint(element, clientPoint) {
 function isUsableRect(rect) {
   return rect && Number.isFinite(rect.left) && Number.isFinite(rect.top) && rect.width > 0 && rect.height > 0;
 }
+function rangeLineRect(range) {
+  if (!range) {
+    return null;
+  }
+  const rects = Array.from(range.getClientRects?.() || []).filter(isUsableRect);
+  if (rects.length) {
+    return rects[rects.length - 1];
+  }
+  const rect = range.getBoundingClientRect?.();
+  if (rect && Number.isFinite(rect.left) && Number.isFinite(rect.top) && rect.height > 0) {
+    return rect;
+  }
+  return null;
+}
+function rangesOverlap(aStart, aEnd, bStart, bEnd) {
+  return aStart < bEnd && aEnd > bStart;
+}
+function distanceFromRange(aStart, aEnd, bStart, bEnd) {
+  if (rangesOverlap(aStart, aEnd, bStart, bEnd)) {
+    return 0;
+  }
+  return aEnd <= bStart ? bStart - aEnd : aStart - bEnd;
+}
 function scoreRectDistance(rect, point) {
   const xDistance = point.x < rect.left ? rect.left - point.x : point.x > rect.right ? point.x - rect.right : 0;
   const yDistance = point.y < rect.top ? rect.top - point.y : point.y > rect.bottom ? point.y - rect.bottom : 0;
@@ -3762,9 +4861,134 @@ function rangeAtEditableEnd(element) {
   range.collapse(false);
   return range;
 }
+function applyInlineFormatStyles(element, styles = {}) {
+  if (styles.color && isCssColor(styles.color)) {
+    element.style.color = styles.color;
+  }
+  if (styles.backgroundColor && isCssColor(styles.backgroundColor)) {
+    element.style.backgroundColor = styles.backgroundColor;
+  }
+  if (styles.fontSize && isSafeCssSize(styles.fontSize)) {
+    element.style.fontSize = styles.fontSize;
+  }
+}
+function selectNodeContents(node) {
+  const selection = window.getSelection?.();
+  if (!selection) {
+    return;
+  }
+  const range = document.createRange();
+  range.selectNodeContents(node);
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+function serializeEditableSource(element) {
+  return serializeEditableChildren(element).replace(/\u00a0/g, " ").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+function serializeEditableChildren(node) {
+  return Array.from(node.childNodes || []).map((child) => serializeEditableNode(child)).join("");
+}
+function serializeEditableNode(node) {
+  if (node.nodeType === Node.TEXT_NODE) {
+    return node.nodeValue || "";
+  }
+  if (node.nodeType !== Node.ELEMENT_NODE) {
+    return "";
+  }
+  const element = node;
+  const tag = element.tagName.toLowerCase();
+  if (tag === "br") {
+    return "<br>";
+  }
+  if (tag === "pre") {
+    const code = element.querySelector("code");
+    const text = code ? code.textContent || "" : element.textContent || "";
+    return `\n\`\`\`\n${text.replace(/\n+$/g, "")}\n\`\`\`\n`;
+  }
+  const inner = serializeEditableChildren(element);
+  if (!inner && !["span", "mark"].includes(tag)) {
+    return "";
+  }
+  if (tag === "strong" || tag === "b") {
+    return wrapInlineMarkdown(inner, "**");
+  }
+  if (tag === "em" || tag === "i") {
+    return wrapInlineMarkdown(inner, "*");
+  }
+  if (tag === "u") {
+    return `<u>${inner}</u>`;
+  }
+  if (tag === "code") {
+    return inlineCodeMarkdown(element.textContent || inner);
+  }
+  if (tag === "mark") {
+    const background = normalizeCssColor(element.style.backgroundColor);
+    return background ? `<mark style="background-color: ${background};">${inner}</mark>` : `==${inner}==`;
+  }
+  if (tag === "span") {
+    const styleText = serializeInlineStyle(element);
+    return styleText ? `<span style="${styleText}">${inner}</span>` : inner;
+  }
+  if (tag === "kbd" || tag === "sup" || tag === "sub" || tag === "small") {
+    return `<${tag}>${inner}</${tag}>`;
+  }
+  if (tag === "div" || tag === "p") {
+    return `${inner}\n`;
+  }
+  if (tag === "li") {
+    return inner;
+  }
+  return inner;
+}
+function wrapInlineMarkdown(text, marker) {
+  const value = String(text || "");
+  return value.trim() ? `${marker}${value}${marker}` : value;
+}
+function inlineCodeMarkdown(text) {
+  const value = String(text || "");
+  const longest = Math.max(0, ...Array.from(value.matchAll(/`+/g)).map((match) => match[0].length));
+  const fence = "`".repeat(longest + 1 || 1);
+  return `${fence}${value}${fence}`;
+}
+function serializeInlineStyle(element) {
+  const styles = [];
+  const color = normalizeCssColor(element.style.color);
+  const background = normalizeCssColor(element.style.backgroundColor);
+  const fontSize = isSafeCssSize(element.style.fontSize) ? element.style.fontSize : "";
+  const fontFamily = /monospace/i.test(element.style.fontFamily || "") ? "monospace" : "";
+  if (color) {
+    styles.push(`color: ${color}`);
+  }
+  if (background) {
+    styles.push(`background-color: ${background}`);
+  }
+  if (fontSize) {
+    styles.push(`font-size: ${fontSize}`);
+  }
+  if (fontFamily) {
+    styles.push(`font-family: ${fontFamily}`);
+  }
+  return styles.join("; ");
+}
+function normalizeCssColor(value) {
+  const text = String(value || "").trim();
+  if (isCssColor(text)) {
+    return text;
+  }
+  const rgb = text.match(/^rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
+  if (!rgb) {
+    return "";
+  }
+  const toHex = (part) => clamp(Math.round(Number(part)), 0, 255).toString(16).padStart(2, "0");
+  return `#${toHex(rgb[1])}${toHex(rgb[2])}${toHex(rgb[3])}`;
+}
+function isSafeCssSize(value) {
+  return /^(0?\.?\d+|\d+(?:\.\d+)?)(em|rem|px|%)$/i.test(String(value || "").trim());
+}
 function normalizeMarkdownBlock(value) {
   let text = String(value || "").trim();
-  text = text.replace(/^\s*[-*+]\s+\[[ xX]\]\s+/gm, "").replace(/^#{1,6}\s+/gm, "").replace(/^\s{0,3}>\s?/gm, "").replace(/^\s*[-*+]\s+/gm, "").replace(/^\s*\d+[.)]\s+/gm, "").replace(/\*\*([^*]+)\*\*/g, "$1").replace(/\*([^*]+)\*/g, "$1").replace(/__([^_]+)__/g, "$1").replace(/_([^_]+)_/g, "$1").replace(/`([^`]+)`/g, "$1").replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, "$2").replace(/\[\[([^\]]+)\]\]/g, "$1").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
+  text = text.replace(/<br\s*\/?>/gi, "\n").replace(/<\/(p|div|li|h[1-6])>/gi, "\n").replace(/<pre[^>]*><code[^>]*>([\s\S]*?)<\/code><\/pre>/gi, "$1").replace(/<\/?(span|u|mark|kbd|sup|sub|small|strong|b|em|i|code)[^>]*>/gi, "").replace(/<[^>]+>/g, "");
+  text = text.replace(/^\s*[-*+]\s+\[[ xX]\]\s+/gm, "").replace(/^#{1,6}\s+/gm, "").replace(/^\s{0,3}>\s?/gm, "").replace(/^\s*[-*+]\s+/gm, "").replace(/^\s*\d+[.)]\s+/gm, "").replace(/\*\*([^*]+)\*\*/g, "$1").replace(/\*([^*]+)\*/g, "$1").replace(/__([^_]+)__/g, "$1").replace(/_([^_]+)_/g, "$1").replace(/==([^=]+)==/g, "$1").replace(/`([^`]+)`/g, "$1").replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, "$2").replace(/\[\[([^\]]+)\]\]/g, "$1").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
   return normalizeRenderedText(text);
 }
 function collectMarkdownBlocks(source) {
@@ -4197,8 +5421,8 @@ function cleanupAllDrawingHeaderButtons() {
   document.querySelectorAll(".notedraw-header-button, .notedraw-webview-button").forEach((button) => button.remove());
 }
 function cleanupDrawingUi(preview) {
-  preview.querySelectorAll(".notedraw-button, .notedraw-fallback-button, .notedraw-webview-button, .notedraw-toolbar, .notedraw-palette-panel, .notedraw-text-panel, .notedraw-embed-layer, .notedraw-file-input, .notedraw-canvas").forEach((element) => element.remove());
-  preview.classList.remove("notedraw-shell", "is-drawing-active", "is-drawing-hidden", "is-select-mode", "is-palette-open", "is-text-panel-open", "is-watercolor-mode", "is-selecting-strokes", "is-resizing-selection", "is-notedraw-webview-shell");
+  preview.querySelectorAll(".notedraw-button, .notedraw-fallback-button, .notedraw-webview-button, .notedraw-toolbar, .notedraw-palette-panel, .notedraw-text-panel, .notedraw-format-toolbar, .notedraw-embed-layer, .notedraw-file-input, .notedraw-canvas").forEach((element) => element.remove());
+  preview.classList.remove("notedraw-shell", "is-drawing-active", "is-drawing-hidden", "is-select-mode", "is-palette-open", "is-text-panel-open", "is-watercolor-mode", "is-selecting-strokes", "is-resizing-selection", "is-native-text-editing", "is-notedraw-webview-shell");
 }
 function isWebviewSyncMutation(mutation) {
   if (!mutation) {
@@ -5245,7 +6469,7 @@ function pickNearestBlock(candidates, sourceLine) {
 }
 function formatReplacementBlock(originalBlock, editedText) {
   const original = String(originalBlock || "");
-  const edited = normalizeRenderedText(editedText);
+  const edited = normalizeEditableSourceText(editedText);
   const firstLine = original.split(/\r?\n/)[0] || "";
   const heading = firstLine.match(/^(#{1,6}\s+)/);
   if (heading) {

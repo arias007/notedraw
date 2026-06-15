@@ -321,6 +321,111 @@
   cursor: cell;
 }
 
+.notedraw-shell.is-native-text-editing .notedraw-canvas {
+  pointer-events: none;
+}
+
+.notedraw-shell .notedraw-editing {
+  outline: 1px solid color-mix(in srgb, var(--interactive-accent) 52%, transparent);
+  outline-offset: 2px;
+  border-radius: 4px;
+  caret-color: var(--interactive-accent);
+  user-select: text;
+}
+
+.notedraw-format-toolbar {
+  position: fixed;
+  z-index: 1003;
+  top: var(--notedraw-format-top, 72px);
+  left: var(--notedraw-format-left, 8px);
+  display: none;
+  align-items: center;
+  gap: 3px;
+  max-width: calc(100vw - 16px);
+  padding: 4px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--background-primary) 94%, var(--background-secondary));
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.16);
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+.notedraw-format-toolbar.is-visible {
+  display: inline-flex;
+}
+
+.notedraw-format-toolbar button,
+.notedraw-format-toolbar input,
+.notedraw-format-toolbar select {
+  flex: 0 0 auto;
+}
+
+.notedraw-format-toolbar button {
+  width: 26px;
+  height: 26px;
+  min-width: 26px;
+  box-sizing: border-box;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: var(--text-muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.notedraw-format-toolbar button:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+.notedraw-format-toolbar.is-moving {
+  cursor: grabbing;
+}
+
+.notedraw-format-move-button {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+  touch-action: none;
+  cursor: grab;
+}
+
+.notedraw-format-toolbar.is-moving .notedraw-format-move-button {
+  cursor: grabbing;
+}
+
+.notedraw-format-toolbar button svg,
+.notedraw-format-toolbar button .svg-icon {
+  width: 17px;
+  height: 17px;
+  min-width: 17px;
+  min-height: 17px;
+  stroke-width: 1.8;
+}
+
+.notedraw-format-color {
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  padding: 0;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 999px;
+  background: transparent;
+}
+
+.notedraw-format-size {
+  height: 26px;
+  max-width: 58px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  background: var(--background-primary);
+  font-size: 12px;
+}
+
 .notedraw-palette-panel {
   position: fixed;
   z-index: 1002;

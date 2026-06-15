@@ -102,7 +102,575 @@ var require_notedraw_plugin = __commonJS({
       { path: "extras/code-1.jpg", label: "\u7ED9\u6211\u4E70\u5496\u5561 / Buy me a coffee" },
       { path: "extras/code-2.png", label: "\u652F\u6301\u7EE7\u7EED\u7EF4\u62A4 / Support this tool" }
     ];
+    var LANGUAGE_AUTO = "auto";
+    var LANGUAGE_OPTIONS = [
+      { value: LANGUAGE_AUTO, label: "Auto" },
+      { value: "zh", label: "\u7B80\u4F53\u4E2D\u6587" },
+      { value: "zh-TW", label: "\u7E41\u9AD4\u4E2D\u6587" },
+      { value: "en", label: "English" },
+      { value: "ug", label: "\u0626\u06C7\u064A\u063A\u06C7\u0631\u0686\u06D5" },
+      { value: "ru", label: "\u0420\u0443\u0441\u0441\u043A\u0438\u0439" },
+      { value: "ar", label: "\u0627\u0644\u0639\u0631\u0628\u064A\u0629" },
+      { value: "es", label: "Espa\xF1ol" },
+      { value: "fr", label: "Fran\xE7ais" },
+      { value: "de", label: "Deutsch" },
+      { value: "ja", label: "\u65E5\u672C\u8A9E" },
+      { value: "ko", label: "\uD55C\uAD6D\uC5B4" },
+      { value: "tr", label: "T\xFCrk\xE7e" }
+    ];
+    var I18N = {
+      en: {
+        toggleCommand: "Toggle preview edit and drawing mode",
+        openNoteOrWebviewFirst: "Open a note or webview first.",
+        failedSaveDrawing: "Failed to save drawing data.",
+        failedImportFile: "Failed to import file.",
+        editTextDraw: "Edit text / draw",
+        editTextDrawHidden: "Edit text / draw (drawings hidden)",
+        editWebviewDraw: "Edit webview / draw",
+        selectDrawings: "Select drawings",
+        pen: "Pen",
+        watercolorBrush: "Watercolor brush",
+        floatingText: "Floating text",
+        undoLastDrawing: "Undo last drawing",
+        redoDrawing: "Redo drawing",
+        deleteSelectedDrawing: "Delete selected drawing",
+        penSettings: "Pen settings",
+        advancedColor: "Advanced color",
+        penWidth: "Pen width",
+        penOpacity: "Pen opacity",
+        textGroup: "Text",
+        textPlain: "Text",
+        title: "Title",
+        code: "Code",
+        button: "Button",
+        fileTag: "File tag",
+        importGroup: "Import",
+        image: "Image",
+        video: "Video",
+        file: "File",
+        previewGroup: "Preview",
+        markdown: "MD",
+        html: "HTML",
+        note: "Note",
+        bold: "Bold",
+        italic: "Italic",
+        underline: "Underline",
+        inlineCode: "Inline code",
+        keyboardTag: "Keyboard tag",
+        superscript: "Superscript",
+        subscript: "Subscript",
+        codeBlock: "Code block",
+        highlight: "Highlight",
+        insertBreak: "Insert line break",
+        textColor: "Text color",
+        highlightColor: "Highlight color",
+        textSize: "Text size",
+        size: "Size",
+        movePanel: "Move panel",
+        useColor: "Use color {color}",
+        settingsLanguage: "Language",
+        settingsLanguageDesc: "Plugin UI language. Auto follows Obsidian when possible.",
+        languageAuto: "Auto",
+        defaultPenColor: "Default pen color",
+        defaultPenColorDesc: "Initial color for new pen strokes.",
+        defaultPenWidth: "Default pen width",
+        defaultPenWidthDesc: "Initial pen width.",
+        defaultPenOpacity: "Default pen opacity",
+        defaultPenOpacityDesc: "Initial pen opacity.",
+        defaultWatercolorColor: "Default watercolor color",
+        defaultWatercolorColorDesc: "Initial color for watercolor strokes.",
+        defaultWatercolorWidth: "Default watercolor width",
+        defaultWatercolorWidthDesc: "Initial watercolor width.",
+        defaultWatercolorOpacity: "Default watercolor opacity",
+        defaultWatercolorOpacityDesc: "Initial watercolor opacity.",
+        toolbarTopOffset: "Toolbar top offset",
+        toolbarTopOffsetDesc: "Extra pixels below the Obsidian header.",
+        debugLog: "Debug log",
+        debugLogDesc: "Write text-save diagnostics to the plugin folder only while troubleshooting.",
+        supportTitle: "Buy me a coffee",
+        supportSubtitle: "If this tool helps, tips are appreciated."
+      },
+      zh: {
+        toggleCommand: "\u5207\u6362\u9605\u8BFB\u7F16\u8F91\u548C\u6D82\u9E26\u6A21\u5F0F",
+        openNoteOrWebviewFirst: "\u8BF7\u5148\u6253\u5F00\u7B14\u8BB0\u6216\u7F51\u9875\u89C6\u56FE\u3002",
+        failedSaveDrawing: "\u6D82\u9E26\u6570\u636E\u4FDD\u5B58\u5931\u8D25\u3002",
+        failedImportFile: "\u5BFC\u5165\u6587\u4EF6\u5931\u8D25\u3002",
+        editTextDraw: "\u7F16\u8F91\u6587\u5B57 / \u6D82\u9E26",
+        editTextDrawHidden: "\u7F16\u8F91\u6587\u5B57 / \u6D82\u9E26\uFF08\u6D82\u9E26\u5DF2\u9690\u85CF\uFF09",
+        editWebviewDraw: "\u7F16\u8F91\u7F51\u9875 / \u6D82\u9E26",
+        selectDrawings: "\u9009\u62E9\u5143\u7D20",
+        pen: "\u7B14",
+        watercolorBrush: "\u6C34\u5F69\u7B14",
+        floatingText: "\u60AC\u6D6E\u6587\u5B57",
+        undoLastDrawing: "\u64A4\u9500\u4E0A\u4E00\u6B65\u6D82\u9E26",
+        redoDrawing: "\u91CD\u505A\u6D82\u9E26",
+        deleteSelectedDrawing: "\u5220\u9664\u9009\u4E2D\u5143\u7D20",
+        penSettings: "\u753B\u7B14\u8BBE\u7F6E",
+        advancedColor: "\u9AD8\u7EA7\u989C\u8272",
+        penWidth: "\u7B14\u5BBD",
+        penOpacity: "\u7B14\u900F\u660E\u5EA6",
+        textGroup: "\u6587\u5B57",
+        textPlain: "\u666E\u901A\u6587\u5B57",
+        title: "\u6807\u9898",
+        code: "\u4EE3\u7801",
+        button: "\u6309\u94AE",
+        fileTag: "\u6587\u4EF6\u6807\u7B7E",
+        importGroup: "\u5BFC\u5165",
+        image: "\u56FE\u7247",
+        video: "\u89C6\u9891",
+        file: "\u6587\u4EF6",
+        previewGroup: "\u9884\u89C8",
+        markdown: "MD",
+        html: "HTML",
+        note: "\u7B14\u8BB0",
+        bold: "\u52A0\u7C97",
+        italic: "\u503E\u659C",
+        underline: "\u4E0B\u5212\u7EBF",
+        inlineCode: "\u884C\u5185\u4EE3\u7801",
+        keyboardTag: "\u952E\u76D8\u6807\u7B7E",
+        superscript: "\u4E0A\u6807",
+        subscript: "\u4E0B\u6807",
+        codeBlock: "\u4EE3\u7801\u5757",
+        highlight: "\u9AD8\u4EAE",
+        insertBreak: "\u6362\u884C",
+        textColor: "\u6587\u5B57\u989C\u8272",
+        highlightColor: "\u9AD8\u4EAE\u989C\u8272",
+        textSize: "\u5B57\u53F7",
+        size: "\u5B57\u53F7",
+        movePanel: "\u79FB\u52A8\u9762\u677F",
+        useColor: "\u4F7F\u7528\u989C\u8272 {color}",
+        settingsLanguage: "\u8BED\u8A00",
+        settingsLanguageDesc: "\u63D2\u4EF6\u754C\u9762\u8BED\u8A00\u3002\u81EA\u52A8\u6A21\u5F0F\u4F1A\u5C3D\u91CF\u8DDF\u968F Obsidian\u3002",
+        languageAuto: "\u81EA\u52A8",
+        defaultPenColor: "\u9ED8\u8BA4\u7B14\u989C\u8272",
+        defaultPenColorDesc: "\u65B0\u7B14\u753B\u7684\u521D\u59CB\u989C\u8272\u3002",
+        defaultPenWidth: "\u9ED8\u8BA4\u7B14\u5BBD",
+        defaultPenWidthDesc: "\u521D\u59CB\u7B14\u5BBD\u3002",
+        defaultPenOpacity: "\u9ED8\u8BA4\u7B14\u900F\u660E\u5EA6",
+        defaultPenOpacityDesc: "\u521D\u59CB\u7B14\u900F\u660E\u5EA6\u3002",
+        defaultWatercolorColor: "\u9ED8\u8BA4\u6C34\u5F69\u989C\u8272",
+        defaultWatercolorColorDesc: "\u65B0\u6C34\u5F69\u7B14\u753B\u7684\u521D\u59CB\u989C\u8272\u3002",
+        defaultWatercolorWidth: "\u9ED8\u8BA4\u6C34\u5F69\u7B14\u5BBD",
+        defaultWatercolorWidthDesc: "\u521D\u59CB\u6C34\u5F69\u7B14\u5BBD\u3002",
+        defaultWatercolorOpacity: "\u9ED8\u8BA4\u6C34\u5F69\u900F\u660E\u5EA6",
+        defaultWatercolorOpacityDesc: "\u521D\u59CB\u6C34\u5F69\u900F\u660E\u5EA6\u3002",
+        toolbarTopOffset: "\u5DE5\u5177\u680F\u9876\u90E8\u504F\u79FB",
+        toolbarTopOffsetDesc: "\u8DDD\u79BB Obsidian \u9876\u90E8\u680F\u7684\u989D\u5916\u50CF\u7D20\u3002",
+        debugLog: "\u8C03\u8BD5\u65E5\u5FD7",
+        debugLogDesc: "\u4EC5\u6392\u67E5\u95EE\u9898\u65F6\uFF0C\u628A\u6587\u5B57\u4FDD\u5B58\u8BCA\u65AD\u5199\u5165\u63D2\u4EF6\u6587\u4EF6\u5939\u3002",
+        supportTitle: "\u7ED9\u6211\u4E70\u5496\u5561",
+        supportSubtitle: "\u5982\u679C\u8FD9\u4E2A\u63D2\u4EF6\u5E2E\u5230\u4F60\uFF0C\u53EF\u4EE5\u626B\u7801\u6253\u8D4F\u652F\u6301\u7EE7\u7EED\u7EF4\u62A4\u3002"
+      },
+      "zh-TW": {
+        toggleCommand: "\u5207\u63DB\u95B1\u8B80\u7DE8\u8F2F\u548C\u5857\u9D09\u6A21\u5F0F",
+        openNoteOrWebviewFirst: "\u8ACB\u5148\u958B\u555F\u7B46\u8A18\u6216\u7DB2\u9801\u8996\u5716\u3002",
+        failedSaveDrawing: "\u5857\u9D09\u8CC7\u6599\u5132\u5B58\u5931\u6557\u3002",
+        failedImportFile: "\u532F\u5165\u6A94\u6848\u5931\u6557\u3002",
+        editTextDraw: "\u7DE8\u8F2F\u6587\u5B57 / \u5857\u9D09",
+        editTextDrawHidden: "\u7DE8\u8F2F\u6587\u5B57 / \u5857\u9D09\uFF08\u5857\u9D09\u5DF2\u96B1\u85CF\uFF09",
+        editWebviewDraw: "\u7DE8\u8F2F\u7DB2\u9801 / \u5857\u9D09",
+        selectDrawings: "\u9078\u64C7\u5143\u7D20",
+        pen: "\u7B46",
+        watercolorBrush: "\u6C34\u5F69\u7B46",
+        floatingText: "\u6D6E\u52D5\u6587\u5B57",
+        undoLastDrawing: "\u5FA9\u539F\u4E0A\u4E00\u7B46",
+        redoDrawing: "\u91CD\u505A\u5857\u9D09",
+        deleteSelectedDrawing: "\u522A\u9664\u9078\u53D6\u5143\u7D20",
+        penSettings: "\u756B\u7B46\u8A2D\u5B9A",
+        advancedColor: "\u9032\u968E\u984F\u8272",
+        penWidth: "\u7B46\u5BEC",
+        penOpacity: "\u7B46\u900F\u660E\u5EA6",
+        textGroup: "\u6587\u5B57",
+        textPlain: "\u666E\u901A\u6587\u5B57",
+        title: "\u6A19\u984C",
+        code: "\u7A0B\u5F0F\u78BC",
+        button: "\u6309\u9215",
+        fileTag: "\u6A94\u6848\u6A19\u7C64",
+        importGroup: "\u532F\u5165",
+        image: "\u5716\u7247",
+        video: "\u5F71\u7247",
+        file: "\u6A94\u6848",
+        previewGroup: "\u9810\u89BD",
+        markdown: "MD",
+        html: "HTML",
+        note: "\u7B46\u8A18",
+        bold: "\u7C97\u9AD4",
+        italic: "\u659C\u9AD4",
+        underline: "\u5E95\u7DDA",
+        inlineCode: "\u884C\u5167\u7A0B\u5F0F\u78BC",
+        keyboardTag: "\u9375\u76E4\u6A19\u7C64",
+        superscript: "\u4E0A\u6A19",
+        subscript: "\u4E0B\u6A19",
+        codeBlock: "\u7A0B\u5F0F\u78BC\u5340\u584A",
+        highlight: "\u9192\u76EE\u63D0\u793A",
+        insertBreak: "\u63DB\u884C",
+        textColor: "\u6587\u5B57\u984F\u8272",
+        highlightColor: "\u9192\u76EE\u984F\u8272",
+        textSize: "\u5B57\u7D1A",
+        size: "\u5B57\u7D1A",
+        movePanel: "\u79FB\u52D5\u9762\u677F",
+        useColor: "\u4F7F\u7528\u984F\u8272 {color}",
+        settingsLanguage: "\u8A9E\u8A00",
+        settingsLanguageDesc: "\u63D2\u4EF6\u4ECB\u9762\u8A9E\u8A00\u3002\u81EA\u52D5\u6A21\u5F0F\u6703\u76E1\u91CF\u8DDF\u96A8 Obsidian\u3002",
+        languageAuto: "\u81EA\u52D5",
+        defaultPenColor: "\u9810\u8A2D\u7B46\u8272",
+        defaultPenColorDesc: "\u65B0\u7B46\u756B\u7684\u521D\u59CB\u984F\u8272\u3002",
+        defaultPenWidth: "\u9810\u8A2D\u7B46\u5BEC",
+        defaultPenWidthDesc: "\u521D\u59CB\u7B46\u5BEC\u3002",
+        defaultPenOpacity: "\u9810\u8A2D\u7B46\u900F\u660E\u5EA6",
+        defaultPenOpacityDesc: "\u521D\u59CB\u7B46\u900F\u660E\u5EA6\u3002",
+        defaultWatercolorColor: "\u9810\u8A2D\u6C34\u5F69\u984F\u8272",
+        defaultWatercolorColorDesc: "\u65B0\u6C34\u5F69\u7B46\u756B\u7684\u521D\u59CB\u984F\u8272\u3002",
+        defaultWatercolorWidth: "\u9810\u8A2D\u6C34\u5F69\u7B46\u5BEC",
+        defaultWatercolorWidthDesc: "\u521D\u59CB\u6C34\u5F69\u7B46\u5BEC\u3002",
+        defaultWatercolorOpacity: "\u9810\u8A2D\u6C34\u5F69\u900F\u660E\u5EA6",
+        defaultWatercolorOpacityDesc: "\u521D\u59CB\u6C34\u5F69\u900F\u660E\u5EA6\u3002",
+        toolbarTopOffset: "\u5DE5\u5177\u5217\u9802\u90E8\u504F\u79FB",
+        toolbarTopOffsetDesc: "\u8DDD\u96E2 Obsidian \u9802\u90E8\u5217\u7684\u984D\u5916\u50CF\u7D20\u3002",
+        debugLog: "\u9664\u932F\u65E5\u8A8C",
+        debugLogDesc: "\u50C5\u6392\u67E5\u554F\u984C\u6642\uFF0C\u5C07\u6587\u5B57\u5132\u5B58\u8A3A\u65B7\u5BEB\u5165\u63D2\u4EF6\u8CC7\u6599\u593E\u3002",
+        supportTitle: "\u8ACB\u6211\u559D\u5496\u5561",
+        supportSubtitle: "\u5982\u679C\u9019\u500B\u63D2\u4EF6\u5E6B\u5230\u4F60\uFF0C\u53EF\u4EE5\u6383\u78BC\u6253\u8CDE\u652F\u6301\u7E7C\u7E8C\u7DAD\u8B77\u3002"
+      },
+      ug: {
+        toggleCommand: "\u0626\u0648\u0642\u06C7\u0634 \u062A\u06D5\u06BE\u0631\u0649\u0631 \u06CB\u06D5 \u0633\u0649\u0632\u0649\u0634 \u06BE\u0627\u0644\u0649\u062A\u0649\u0646\u0649 \u0626\u0627\u0644\u0645\u0627\u0634\u062A\u06C7\u0631\u06C7\u0634",
+        openNoteOrWebviewFirst: "\u0626\u0627\u06CB\u06CB\u0627\u0644 \u062E\u0627\u062A\u0649\u0631\u06D5 \u064A\u0627\u0643\u0649 \u062A\u0648\u0631 \u0643\u06C6\u0632\u0646\u06D5\u0643\u0649\u0646\u0649 \u0626\u06D0\u0686\u0649\u06AD.",
+        failedSaveDrawing: "\u0633\u0649\u0632\u0649\u0634 \u0633\u0627\u0646\u0644\u0649\u0642 \u0645\u06D5\u0644\u06C7\u0645\u0627\u062A\u0649\u0646\u0649 \u0633\u0627\u0642\u0644\u0627\u0634 \u0645\u06D5\u063A\u0644\u06C7\u067E \u0628\u0648\u0644\u062F\u0649.",
+        failedImportFile: "\u06BE\u06C6\u062C\u062C\u06D5\u062A \u0643\u0649\u0631\u06AF\u06C8\u0632\u06C8\u0634 \u0645\u06D5\u063A\u0644\u06C7\u067E \u0628\u0648\u0644\u062F\u0649.",
+        editTextDraw: "\u062A\u06D0\u0643\u0649\u0633\u062A \u062A\u06D5\u06BE\u0631\u0649\u0631\u0644\u06D5\u0634 / \u0633\u0649\u0632\u0649\u0634",
+        editTextDrawHidden: "\u062A\u06D0\u0643\u0649\u0633\u062A \u062A\u06D5\u06BE\u0631\u0649\u0631\u0644\u06D5\u0634 / \u0633\u0649\u0632\u0649\u0634 (\u0633\u0649\u0632\u0649\u0634 \u064A\u0648\u0634\u06C7\u0631\u06C7\u0644\u063A\u0627\u0646)",
+        editWebviewDraw: "\u062A\u0648\u0631 \u0628\u06D5\u062A\u0646\u0649 \u062A\u06D5\u06BE\u0631\u0649\u0631\u0644\u06D5\u0634 / \u0633\u0649\u0632\u0649\u0634",
+        selectDrawings: "\u0626\u06D0\u0644\u06D0\u0645\u06D0\u0646\u062A \u062A\u0627\u0644\u0644\u0627\u0634",
+        pen: "\u0642\u06D5\u0644\u06D5\u0645",
+        watercolorBrush: "\u0633\u06C7 \u0628\u0648\u064A\u0627\u0642 \u0642\u06D5\u0644\u06D5\u0645",
+        floatingText: "\u0644\u06D5\u064A\u0644\u06D5\u067E \u062A\u06C7\u0631\u063A\u0627\u0646 \u062A\u06D0\u0643\u0649\u0633\u062A",
+        undoLastDrawing: "\u0626\u0627\u062E\u0649\u0631\u0642\u0649 \u0633\u0649\u0632\u0649\u0634\u0646\u0649 \u0642\u0627\u064A\u062A\u06C7\u0631\u06C7\u0634",
+        redoDrawing: "\u0642\u0627\u064A\u062A\u0627 \u0642\u0649\u0644\u0649\u0634",
+        deleteSelectedDrawing: "\u062A\u0627\u0644\u0644\u0627\u0646\u063A\u0627\u0646\u0646\u0649 \u0626\u06C6\u0686\u06C8\u0631\u06C8\u0634",
+        penSettings: "\u0642\u06D5\u0644\u06D5\u0645 \u062A\u06D5\u06AD\u0634\u0649\u0643\u0649",
+        advancedColor: "\u062A\u06D5\u067E\u0633\u0649\u0644\u0649\u064A \u0631\u06D5\u06AD",
+        penWidth: "\u0642\u06D5\u0644\u06D5\u0645 \u0643\u06D5\u06AD\u0644\u0649\u0643\u0649",
+        penOpacity: "\u0642\u06D5\u0644\u06D5\u0645 \u0633\u06C8\u0632\u06C8\u0643\u0644\u06C8\u0643\u0649",
+        textGroup: "\u062A\u06D0\u0643\u0649\u0633\u062A",
+        textPlain: "\u062A\u06D0\u0643\u0649\u0633\u062A",
+        title: "\u0645\u0627\u06CB\u0632\u06C7",
+        code: "\u0643\u0648\u062F",
+        button: "\u0643\u06C7\u0646\u06C7\u067E\u0643\u0627",
+        fileTag: "\u06BE\u06C6\u062C\u062C\u06D5\u062A \u0628\u06D5\u0644\u06AF\u0649\u0633\u0649",
+        importGroup: "\u0643\u0649\u0631\u06AF\u06C8\u0632\u06C8\u0634",
+        image: "\u0631\u06D5\u0633\u0649\u0645",
+        video: "\u0633\u0649\u0646",
+        file: "\u06BE\u06C6\u062C\u062C\u06D5\u062A",
+        previewGroup: "\u0626\u0627\u0644\u062F\u0649\u0646 \u0643\u06C6\u0631\u06C8\u0634",
+        markdown: "MD",
+        html: "HTML",
+        note: "\u062E\u0627\u062A\u0649\u0631\u06D5",
+        bold: "\u062A\u0648\u0645",
+        italic: "\u0642\u0649\u064A\u067E\u0627\u0634",
+        underline: "\u0626\u0627\u0633\u062A\u0649 \u0633\u0649\u0632\u0649\u0642",
+        inlineCode: "\u0642\u06C7\u0631 \u0626\u0649\u0686\u0649 \u0643\u0648\u062F",
+        keyboardTag: "\u0643\u0649\u0631\u06AF\u06C8\u0632\u06AF\u06C8\u0686 \u0628\u06D5\u0644\u06AF\u0649\u0633\u0649",
+        superscript: "\u0626\u06C8\u0633\u062A\u0643\u0649 \u0628\u06D5\u0644\u06AF\u06D5",
+        subscript: "\u0626\u0627\u0633\u062A\u0649 \u0628\u06D5\u0644\u06AF\u06D5",
+        codeBlock: "\u0643\u0648\u062F \u0628\u06C6\u0644\u0649\u0643\u0649",
+        highlight: "\u064A\u0648\u0631\u06C7\u062A\u06C7\u0634",
+        insertBreak: "\u0642\u06C7\u0631 \u0626\u0627\u0644\u0645\u0627\u0634\u062A\u06C7\u0631\u06C7\u0634",
+        textColor: "\u062A\u06D0\u0643\u0649\u0633\u062A \u0631\u06D5\u06AD\u06AF\u0649",
+        highlightColor: "\u064A\u0648\u0631\u06C7\u062A\u06C7\u0634 \u0631\u06D5\u06AD\u06AF\u0649",
+        textSize: "\u062E\u06D5\u062A \u0686\u0648\u06AD\u0644\u06C7\u0642\u0649",
+        size: "\u0686\u0648\u06AD\u0644\u06C7\u0642",
+        movePanel: "\u062A\u0627\u062E\u062A\u0649\u0646\u0649 \u064A\u06C6\u062A\u0643\u06D5\u0634",
+        useColor: "{color} \u0631\u06D5\u06AD\u0646\u0649 \u0626\u0649\u0634\u0644\u0649\u062A\u0649\u0634",
+        settingsLanguage: "\u062A\u0649\u0644",
+        settingsLanguageDesc: "\u0642\u0649\u0633\u062A\u06C7\u0631\u0645\u0627 \u0643\u06C6\u0631\u06C8\u0646\u0645\u06D5 \u064A\u06C8\u0632\u0649 \u062A\u0649\u0644\u0649. \u0626\u0627\u067E\u062A\u0648\u0645\u0627\u062A\u0649\u0643 \u06BE\u0627\u0644\u06D5\u062A Obsidian \u063A\u0627 \u0626\u06D5\u06AF\u0649\u0634\u0649\u062F\u06C7.",
+        languageAuto: "\u0626\u0627\u067E\u062A\u0648\u0645\u0627\u062A\u0649\u0643",
+        defaultPenColor: "\u0643\u06C6\u06AD\u06C8\u0644\u062F\u0649\u0643\u0649 \u0642\u06D5\u0644\u06D5\u0645 \u0631\u06D5\u06AD\u06AF\u0649",
+        defaultPenColorDesc: "\u064A\u06D0\u06AD\u0649 \u0642\u06D5\u0644\u06D5\u0645 \u0633\u0649\u0632\u0649\u0642\u0649\u0646\u0649\u06AD \u062F\u06D5\u0633\u0644\u06D5\u067E\u0643\u0649 \u0631\u06D5\u06AD\u06AF\u0649.",
+        defaultPenWidth: "\u0643\u06C6\u06AD\u06C8\u0644\u062F\u0649\u0643\u0649 \u0642\u06D5\u0644\u06D5\u0645 \u0643\u06D5\u06AD\u0644\u0649\u0643\u0649",
+        defaultPenWidthDesc: "\u062F\u06D5\u0633\u0644\u06D5\u067E\u0643\u0649 \u0642\u06D5\u0644\u06D5\u0645 \u0643\u06D5\u06AD\u0644\u0649\u0643\u0649.",
+        defaultPenOpacity: "\u0643\u06C6\u06AD\u06C8\u0644\u062F\u0649\u0643\u0649 \u0642\u06D5\u0644\u06D5\u0645 \u0633\u06C8\u0632\u06C8\u0643\u0644\u06C8\u0643\u0649",
+        defaultPenOpacityDesc: "\u062F\u06D5\u0633\u0644\u06D5\u067E\u0643\u0649 \u0642\u06D5\u0644\u06D5\u0645 \u0633\u06C8\u0632\u06C8\u0643\u0644\u06C8\u0643\u0649.",
+        defaultWatercolorColor: "\u0643\u06C6\u06AD\u06C8\u0644\u062F\u0649\u0643\u0649 \u0633\u06C7 \u0628\u0648\u064A\u0627\u0642 \u0631\u06D5\u06AD\u06AF\u0649",
+        defaultWatercolorColorDesc: "\u064A\u06D0\u06AD\u0649 \u0633\u06C7 \u0628\u0648\u064A\u0627\u0642 \u0633\u0649\u0632\u0649\u0642\u0649\u0646\u0649\u06AD \u062F\u06D5\u0633\u0644\u06D5\u067E\u0643\u0649 \u0631\u06D5\u06AD\u06AF\u0649.",
+        defaultWatercolorWidth: "\u0643\u06C6\u06AD\u06C8\u0644\u062F\u0649\u0643\u0649 \u0633\u06C7 \u0628\u0648\u064A\u0627\u0642 \u0643\u06D5\u06AD\u0644\u0649\u0643\u0649",
+        defaultWatercolorWidthDesc: "\u062F\u06D5\u0633\u0644\u06D5\u067E\u0643\u0649 \u0633\u06C7 \u0628\u0648\u064A\u0627\u0642 \u0643\u06D5\u06AD\u0644\u0649\u0643\u0649.",
+        defaultWatercolorOpacity: "\u0643\u06C6\u06AD\u06C8\u0644\u062F\u0649\u0643\u0649 \u0633\u06C7 \u0628\u0648\u064A\u0627\u0642 \u0633\u06C8\u0632\u06C8\u0643\u0644\u06C8\u0643\u0649",
+        defaultWatercolorOpacityDesc: "\u062F\u06D5\u0633\u0644\u06D5\u067E\u0643\u0649 \u0633\u06C7 \u0628\u0648\u064A\u0627\u0642 \u0633\u06C8\u0632\u06C8\u0643\u0644\u06C8\u0643\u0649.",
+        toolbarTopOffset: "\u0642\u0648\u0631\u0627\u0644 \u0628\u0627\u0644\u062F\u0627\u0642 \u0626\u06C8\u0633\u062A\u0649 \u0626\u0627\u0631\u0649\u0644\u0649\u0642\u0649",
+        toolbarTopOffsetDesc: "Obsidian \u0628\u0627\u0634 \u0642\u0649\u0633\u0645\u0649\u062F\u0649\u0646 \u0642\u0648\u0634\u06C7\u0645\u0686\u06D5 \u067E\u0649\u0643\u0633\u06D0\u0644.",
+        debugLog: "\u0633\u0627\u0632\u0644\u0627\u0634 \u062E\u0627\u062A\u0649\u0631\u0649\u0633\u0649",
+        debugLogDesc: "\u067E\u06D5\u0642\u06D5\u062A \u0645\u06D5\u0633\u0649\u0644\u06D5 \u062A\u06D5\u0643\u0634\u06C8\u0631\u06AF\u06D5\u0646\u062F\u06D5 \u062A\u06D0\u0643\u0649\u0633\u062A \u0633\u0627\u0642\u0644\u0627\u0634 \u062F\u0649\u0626\u0627\u06AF\u0646\u0648\u0632\u0649\u0646\u0649 \u0642\u0649\u0633\u062A\u06C7\u0631\u0645\u0627 \u0642\u0649\u0633\u0642\u06C7\u0686\u0649\u063A\u0627 \u064A\u0627\u0632\u0649\u062F\u06C7.",
+        supportTitle: "\u0645\u0627\u06AD\u0627 \u0642\u06D5\u06BE\u06CB\u06D5 \u0626\u06D0\u0644\u0649\u067E \u0628\u06D0\u0631\u0649\u06AD",
+        supportSubtitle: "\u0628\u06C7 \u0642\u0649\u0633\u062A\u06C7\u0631\u0645\u0627 \u067E\u0627\u064A\u062F\u0649\u0644\u0649\u0642 \u0628\u0648\u0644\u0633\u0627\u060C \u062F\u0627\u06CB\u0627\u0645\u0644\u0649\u0642 \u0642\u0648\u0644\u0644\u0627\u0634\u0642\u0627 \u064A\u0627\u0631\u062F\u06D5\u0645 \u0642\u0649\u0644\u0627\u0644\u0627\u064A\u0633\u0649\u0632."
+      },
+      ru: {
+        toggleCommand: "\u041F\u0435\u0440\u0435\u043A\u043B\u044E\u0447\u0438\u0442\u044C \u0440\u0435\u0434\u0430\u043A\u0442\u0438\u0440\u043E\u0432\u0430\u043D\u0438\u0435 \u043F\u0440\u0435\u0434\u043F\u0440\u043E\u0441\u043C\u043E\u0442\u0440\u0430 \u0438 \u0440\u0438\u0441\u043E\u0432\u0430\u043D\u0438\u0435",
+        openNoteOrWebviewFirst: "\u0421\u043D\u0430\u0447\u0430\u043B\u0430 \u043E\u0442\u043A\u0440\u043E\u0439\u0442\u0435 \u0437\u0430\u043C\u0435\u0442\u043A\u0443 \u0438\u043B\u0438 webview.",
+        failedSaveDrawing: "\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0441\u043E\u0445\u0440\u0430\u043D\u0438\u0442\u044C \u0434\u0430\u043D\u043D\u044B\u0435 \u0440\u0438\u0441\u0443\u043D\u043A\u0430.",
+        failedImportFile: "\u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0438\u043C\u043F\u043E\u0440\u0442\u0438\u0440\u043E\u0432\u0430\u0442\u044C \u0444\u0430\u0439\u043B.",
+        editTextDraw: "\u0420\u0435\u0434\u0430\u043A\u0442\u0438\u0440\u043E\u0432\u0430\u0442\u044C \u0442\u0435\u043A\u0441\u0442 / \u0440\u0438\u0441\u043E\u0432\u0430\u0442\u044C",
+        editTextDrawHidden: "\u0420\u0435\u0434\u0430\u043A\u0442\u0438\u0440\u043E\u0432\u0430\u0442\u044C \u0442\u0435\u043A\u0441\u0442 / \u0440\u0438\u0441\u043E\u0432\u0430\u0442\u044C (\u0440\u0438\u0441\u0443\u043D\u043A\u0438 \u0441\u043A\u0440\u044B\u0442\u044B)",
+        editWebviewDraw: "\u0420\u0435\u0434\u0430\u043A\u0442\u0438\u0440\u043E\u0432\u0430\u0442\u044C webview / \u0440\u0438\u0441\u043E\u0432\u0430\u0442\u044C",
+        selectDrawings: "\u0412\u044B\u0431\u0440\u0430\u0442\u044C \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u044B",
+        pen: "\u041F\u0435\u0440\u043E",
+        watercolorBrush: "\u0410\u043A\u0432\u0430\u0440\u0435\u043B\u044C\u043D\u0430\u044F \u043A\u0438\u0441\u0442\u044C",
+        floatingText: "\u041F\u043B\u0430\u0432\u0430\u044E\u0449\u0438\u0439 \u0442\u0435\u043A\u0441\u0442",
+        undoLastDrawing: "\u041E\u0442\u043C\u0435\u043D\u0438\u0442\u044C \u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0438\u0439 \u0440\u0438\u0441\u0443\u043D\u043E\u043A",
+        redoDrawing: "\u041F\u043E\u0432\u0442\u043E\u0440\u0438\u0442\u044C \u0440\u0438\u0441\u0443\u043D\u043E\u043A",
+        deleteSelectedDrawing: "\u0423\u0434\u0430\u043B\u0438\u0442\u044C \u0432\u044B\u0431\u0440\u0430\u043D\u043D\u043E\u0435",
+        penSettings: "\u041D\u0430\u0441\u0442\u0440\u043E\u0439\u043A\u0438 \u043F\u0435\u0440\u0430",
+        advancedColor: "\u0420\u0430\u0441\u0448\u0438\u0440\u0435\u043D\u043D\u044B\u0439 \u0446\u0432\u0435\u0442",
+        penWidth: "\u0422\u043E\u043B\u0449\u0438\u043D\u0430 \u043F\u0435\u0440\u0430",
+        penOpacity: "\u041F\u0440\u043E\u0437\u0440\u0430\u0447\u043D\u043E\u0441\u0442\u044C \u043F\u0435\u0440\u0430",
+        textGroup: "\u0422\u0435\u043A\u0441\u0442",
+        textPlain: "\u0422\u0435\u043A\u0441\u0442",
+        title: "\u0417\u0430\u0433\u043E\u043B\u043E\u0432\u043E\u043A",
+        code: "\u041A\u043E\u0434",
+        button: "\u041A\u043D\u043E\u043F\u043A\u0430",
+        fileTag: "\u041C\u0435\u0442\u043A\u0430 \u0444\u0430\u0439\u043B\u0430",
+        importGroup: "\u0418\u043C\u043F\u043E\u0440\u0442",
+        image: "\u0418\u0437\u043E\u0431\u0440\u0430\u0436\u0435\u043D\u0438\u0435",
+        video: "\u0412\u0438\u0434\u0435\u043E",
+        file: "\u0424\u0430\u0439\u043B",
+        previewGroup: "\u041F\u0440\u0435\u0434\u043F\u0440\u043E\u0441\u043C\u043E\u0442\u0440",
+        markdown: "MD",
+        html: "HTML",
+        note: "\u0417\u0430\u043C\u0435\u0442\u043A\u0430",
+        bold: "\u0416\u0438\u0440\u043D\u044B\u0439",
+        italic: "\u041A\u0443\u0440\u0441\u0438\u0432",
+        underline: "\u041F\u043E\u0434\u0447\u0435\u0440\u043A\u0438\u0432\u0430\u043D\u0438\u0435",
+        inlineCode: "\u0412\u0441\u0442\u0440\u043E\u0435\u043D\u043D\u044B\u0439 \u043A\u043E\u0434",
+        keyboardTag: "\u0422\u0435\u0433 \u043A\u043B\u0430\u0432\u0438\u0430\u0442\u0443\u0440\u044B",
+        superscript: "\u0412\u0435\u0440\u0445\u043D\u0438\u0439 \u0438\u043D\u0434\u0435\u043A\u0441",
+        subscript: "\u041D\u0438\u0436\u043D\u0438\u0439 \u0438\u043D\u0434\u0435\u043A\u0441",
+        codeBlock: "\u0411\u043B\u043E\u043A \u043A\u043E\u0434\u0430",
+        highlight: "\u0412\u044B\u0434\u0435\u043B\u0435\u043D\u0438\u0435",
+        insertBreak: "\u041F\u0435\u0440\u0435\u043D\u043E\u0441 \u0441\u0442\u0440\u043E\u043A\u0438",
+        textColor: "\u0426\u0432\u0435\u0442 \u0442\u0435\u043A\u0441\u0442\u0430",
+        highlightColor: "\u0426\u0432\u0435\u0442 \u0432\u044B\u0434\u0435\u043B\u0435\u043D\u0438\u044F",
+        textSize: "\u0420\u0430\u0437\u043C\u0435\u0440 \u0442\u0435\u043A\u0441\u0442\u0430",
+        size: "\u0420\u0430\u0437\u043C\u0435\u0440",
+        movePanel: "\u041F\u0435\u0440\u0435\u043C\u0435\u0441\u0442\u0438\u0442\u044C \u043F\u0430\u043D\u0435\u043B\u044C",
+        useColor: "\u0418\u0441\u043F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u044C \u0446\u0432\u0435\u0442 {color}",
+        settingsLanguage: "\u042F\u0437\u044B\u043A",
+        settingsLanguageDesc: "\u042F\u0437\u044B\u043A \u0438\u043D\u0442\u0435\u0440\u0444\u0435\u0439\u0441\u0430 \u043F\u043B\u0430\u0433\u0438\u043D\u0430. \u0410\u0432\u0442\u043E \u043F\u043E \u0432\u043E\u0437\u043C\u043E\u0436\u043D\u043E\u0441\u0442\u0438 \u0441\u043B\u0435\u0434\u0443\u0435\u0442 Obsidian.",
+        languageAuto: "\u0410\u0432\u0442\u043E",
+        defaultPenColor: "\u0426\u0432\u0435\u0442 \u043F\u0435\u0440\u0430 \u043F\u043E \u0443\u043C\u043E\u043B\u0447\u0430\u043D\u0438\u044E",
+        defaultPenColorDesc: "\u041D\u0430\u0447\u0430\u043B\u044C\u043D\u044B\u0439 \u0446\u0432\u0435\u0442 \u043D\u043E\u0432\u044B\u0445 \u0448\u0442\u0440\u0438\u0445\u043E\u0432 \u043F\u0435\u0440\u0430.",
+        defaultPenWidth: "\u0422\u043E\u043B\u0449\u0438\u043D\u0430 \u043F\u0435\u0440\u0430 \u043F\u043E \u0443\u043C\u043E\u043B\u0447\u0430\u043D\u0438\u044E",
+        defaultPenWidthDesc: "\u041D\u0430\u0447\u0430\u043B\u044C\u043D\u0430\u044F \u0442\u043E\u043B\u0449\u0438\u043D\u0430 \u043F\u0435\u0440\u0430.",
+        defaultPenOpacity: "\u041F\u0440\u043E\u0437\u0440\u0430\u0447\u043D\u043E\u0441\u0442\u044C \u043F\u0435\u0440\u0430 \u043F\u043E \u0443\u043C\u043E\u043B\u0447\u0430\u043D\u0438\u044E",
+        defaultPenOpacityDesc: "\u041D\u0430\u0447\u0430\u043B\u044C\u043D\u0430\u044F \u043F\u0440\u043E\u0437\u0440\u0430\u0447\u043D\u043E\u0441\u0442\u044C \u043F\u0435\u0440\u0430.",
+        defaultWatercolorColor: "\u0426\u0432\u0435\u0442 \u0430\u043A\u0432\u0430\u0440\u0435\u043B\u0438 \u043F\u043E \u0443\u043C\u043E\u043B\u0447\u0430\u043D\u0438\u044E",
+        defaultWatercolorColorDesc: "\u041D\u0430\u0447\u0430\u043B\u044C\u043D\u044B\u0439 \u0446\u0432\u0435\u0442 \u0430\u043A\u0432\u0430\u0440\u0435\u043B\u044C\u043D\u044B\u0445 \u0448\u0442\u0440\u0438\u0445\u043E\u0432.",
+        defaultWatercolorWidth: "\u0422\u043E\u043B\u0449\u0438\u043D\u0430 \u0430\u043A\u0432\u0430\u0440\u0435\u043B\u0438 \u043F\u043E \u0443\u043C\u043E\u043B\u0447\u0430\u043D\u0438\u044E",
+        defaultWatercolorWidthDesc: "\u041D\u0430\u0447\u0430\u043B\u044C\u043D\u0430\u044F \u0442\u043E\u043B\u0449\u0438\u043D\u0430 \u0430\u043A\u0432\u0430\u0440\u0435\u043B\u0438.",
+        defaultWatercolorOpacity: "\u041F\u0440\u043E\u0437\u0440\u0430\u0447\u043D\u043E\u0441\u0442\u044C \u0430\u043A\u0432\u0430\u0440\u0435\u043B\u0438 \u043F\u043E \u0443\u043C\u043E\u043B\u0447\u0430\u043D\u0438\u044E",
+        defaultWatercolorOpacityDesc: "\u041D\u0430\u0447\u0430\u043B\u044C\u043D\u0430\u044F \u043F\u0440\u043E\u0437\u0440\u0430\u0447\u043D\u043E\u0441\u0442\u044C \u0430\u043A\u0432\u0430\u0440\u0435\u043B\u0438.",
+        toolbarTopOffset: "\u0421\u043C\u0435\u0449\u0435\u043D\u0438\u0435 \u043F\u0430\u043D\u0435\u043B\u0438 \u0441\u0432\u0435\u0440\u0445\u0443",
+        toolbarTopOffsetDesc: "\u0414\u043E\u043F\u043E\u043B\u043D\u0438\u0442\u0435\u043B\u044C\u043D\u044B\u0435 \u043F\u0438\u043A\u0441\u0435\u043B\u0438 \u043D\u0438\u0436\u0435 \u0437\u0430\u0433\u043E\u043B\u043E\u0432\u043A\u0430 Obsidian.",
+        debugLog: "\u0416\u0443\u0440\u043D\u0430\u043B \u043E\u0442\u043B\u0430\u0434\u043A\u0438",
+        debugLogDesc: "\u0417\u0430\u043F\u0438\u0441\u044B\u0432\u0430\u0442\u044C \u0434\u0438\u0430\u0433\u043D\u043E\u0441\u0442\u0438\u043A\u0443 \u0441\u043E\u0445\u0440\u0430\u043D\u0435\u043D\u0438\u044F \u0442\u0435\u043A\u0441\u0442\u0430 \u0432 \u043F\u0430\u043F\u043A\u0443 \u043F\u043B\u0430\u0433\u0438\u043D\u0430 \u0442\u043E\u043B\u044C\u043A\u043E \u043F\u0440\u0438 \u043E\u0442\u043B\u0430\u0434\u043A\u0435.",
+        supportTitle: "\u041A\u0443\u043F\u0438\u0442\u044C \u043C\u043D\u0435 \u043A\u043E\u0444\u0435",
+        supportSubtitle: "\u0415\u0441\u043B\u0438 \u0438\u043D\u0441\u0442\u0440\u0443\u043C\u0435\u043D\u0442 \u043F\u043E\u043C\u043E\u0433\u0430\u0435\u0442, \u043C\u043E\u0436\u043D\u043E \u043F\u043E\u0434\u0434\u0435\u0440\u0436\u0430\u0442\u044C \u0440\u0430\u0437\u0440\u0430\u0431\u043E\u0442\u043A\u0443."
+      }
+    };
+    Object.assign(I18N, {
+      ar: Object.assign({}, I18N.en, {
+        toggleCommand: "\u062A\u0628\u062F\u064A\u0644 \u0648\u0636\u0639 \u062A\u062D\u0631\u064A\u0631 \u0627\u0644\u0645\u0639\u0627\u064A\u0646\u0629 \u0648\u0627\u0644\u0631\u0633\u0645",
+        openNoteOrWebviewFirst: "\u0627\u0641\u062A\u062D \u0645\u0644\u0627\u062D\u0638\u0629 \u0623\u0648 \u0639\u0631\u0636 \u0648\u064A\u0628 \u0623\u0648\u0644\u0627.",
+        failedSaveDrawing: "\u0641\u0634\u0644 \u062D\u0641\u0638 \u0628\u064A\u0627\u0646\u0627\u062A \u0627\u0644\u0631\u0633\u0645.",
+        failedImportFile: "\u0641\u0634\u0644 \u0627\u0633\u062A\u064A\u0631\u0627\u062F \u0627\u0644\u0645\u0644\u0641.",
+        editTextDraw: "\u062A\u062D\u0631\u064A\u0631 \u0627\u0644\u0646\u0635 / \u0627\u0644\u0631\u0633\u0645",
+        editTextDrawHidden: "\u062A\u062D\u0631\u064A\u0631 \u0627\u0644\u0646\u0635 / \u0627\u0644\u0631\u0633\u0645 (\u0627\u0644\u0631\u0633\u0648\u0645\u0627\u062A \u0645\u062E\u0641\u064A\u0629)",
+        editWebviewDraw: "\u062A\u062D\u0631\u064A\u0631 \u0639\u0631\u0636 \u0627\u0644\u0648\u064A\u0628 / \u0627\u0644\u0631\u0633\u0645",
+        selectDrawings: "\u062A\u062D\u062F\u064A\u062F \u0627\u0644\u0639\u0646\u0627\u0635\u0631",
+        pen: "\u0642\u0644\u0645",
+        watercolorBrush: "\u0641\u0631\u0634\u0627\u0629 \u0645\u0627\u0626\u064A\u0629",
+        floatingText: "\u0646\u0635 \u0639\u0627\u0626\u0645",
+        undoLastDrawing: "\u062A\u0631\u0627\u062C\u0639 \u0639\u0646 \u0622\u062E\u0631 \u0631\u0633\u0645",
+        redoDrawing: "\u0625\u0639\u0627\u062F\u0629 \u0627\u0644\u0631\u0633\u0645",
+        deleteSelectedDrawing: "\u062D\u0630\u0641 \u0627\u0644\u0645\u062D\u062F\u062F",
+        penSettings: "\u0625\u0639\u062F\u0627\u062F\u0627\u062A \u0627\u0644\u0642\u0644\u0645",
+        textGroup: "\u0646\u0635",
+        importGroup: "\u0627\u0633\u062A\u064A\u0631\u0627\u062F",
+        image: "\u0635\u0648\u0631\u0629",
+        video: "\u0641\u064A\u062F\u064A\u0648",
+        file: "\u0645\u0644\u0641",
+        previewGroup: "\u0645\u0639\u0627\u064A\u0646\u0629",
+        bold: "\u063A\u0627\u0645\u0642",
+        italic: "\u0645\u0627\u0626\u0644",
+        underline: "\u062A\u062D\u062A\u0647 \u062E\u0637",
+        highlight: "\u062A\u0645\u064A\u064A\u0632",
+        movePanel: "\u062A\u062D\u0631\u064A\u0643 \u0627\u0644\u0644\u0648\u062D\u0629",
+        settingsLanguage: "\u0627\u0644\u0644\u063A\u0629",
+        languageAuto: "\u062A\u0644\u0642\u0627\u0626\u064A"
+      }),
+      es: Object.assign({}, I18N.en, {
+        toggleCommand: "Cambiar edici\xF3n de vista previa y dibujo",
+        openNoteOrWebviewFirst: "Abre primero una nota o webview.",
+        failedSaveDrawing: "No se pudieron guardar los datos de dibujo.",
+        failedImportFile: "No se pudo importar el archivo.",
+        editTextDraw: "Editar texto / dibujar",
+        editTextDrawHidden: "Editar texto / dibujar (dibujos ocultos)",
+        editWebviewDraw: "Editar webview / dibujar",
+        selectDrawings: "Seleccionar elementos",
+        pen: "Pluma",
+        watercolorBrush: "Pincel acuarela",
+        floatingText: "Texto flotante",
+        undoLastDrawing: "Deshacer \xFAltimo dibujo",
+        redoDrawing: "Rehacer dibujo",
+        deleteSelectedDrawing: "Eliminar seleccionado",
+        penSettings: "Ajustes de pluma",
+        advancedColor: "Color avanzado",
+        textGroup: "Texto",
+        importGroup: "Importar",
+        previewGroup: "Vista previa",
+        bold: "Negrita",
+        italic: "Cursiva",
+        underline: "Subrayado",
+        movePanel: "Mover panel",
+        settingsLanguage: "Idioma",
+        languageAuto: "Auto"
+      }),
+      fr: Object.assign({}, I18N.en, {
+        toggleCommand: "Basculer \xE9dition de l'aper\xE7u et dessin",
+        openNoteOrWebviewFirst: "Ouvrez d'abord une note ou une webview.",
+        failedSaveDrawing: "\xC9chec de l'enregistrement du dessin.",
+        failedImportFile: "\xC9chec de l'import du fichier.",
+        editTextDraw: "Modifier le texte / dessiner",
+        editTextDrawHidden: "Modifier le texte / dessiner (dessins masqu\xE9s)",
+        editWebviewDraw: "Modifier la webview / dessiner",
+        selectDrawings: "S\xE9lectionner les \xE9l\xE9ments",
+        pen: "Stylo",
+        watercolorBrush: "Pinceau aquarelle",
+        floatingText: "Texte flottant",
+        undoLastDrawing: "Annuler le dernier dessin",
+        redoDrawing: "R\xE9tablir le dessin",
+        deleteSelectedDrawing: "Supprimer la s\xE9lection",
+        penSettings: "R\xE9glages du stylo",
+        advancedColor: "Couleur avanc\xE9e",
+        textGroup: "Texte",
+        importGroup: "Importer",
+        previewGroup: "Aper\xE7u",
+        bold: "Gras",
+        italic: "Italique",
+        underline: "Soulign\xE9",
+        movePanel: "D\xE9placer le panneau",
+        settingsLanguage: "Langue",
+        languageAuto: "Auto"
+      }),
+      de: Object.assign({}, I18N.en, {
+        toggleCommand: "Vorschau-Bearbeitung und Zeichnen umschalten",
+        openNoteOrWebviewFirst: "\xD6ffne zuerst eine Notiz oder Webview.",
+        failedSaveDrawing: "Zeichnungsdaten konnten nicht gespeichert werden.",
+        failedImportFile: "Datei konnte nicht importiert werden.",
+        editTextDraw: "Text bearbeiten / zeichnen",
+        editTextDrawHidden: "Text bearbeiten / zeichnen (Zeichnungen ausgeblendet)",
+        editWebviewDraw: "Webview bearbeiten / zeichnen",
+        selectDrawings: "Elemente ausw\xE4hlen",
+        pen: "Stift",
+        watercolorBrush: "Aquarellpinsel",
+        floatingText: "Schwebender Text",
+        undoLastDrawing: "Letzte Zeichnung r\xFCckg\xE4ngig",
+        redoDrawing: "Zeichnung wiederholen",
+        deleteSelectedDrawing: "Auswahl l\xF6schen",
+        penSettings: "Stifteinstellungen",
+        advancedColor: "Erweiterte Farbe",
+        textGroup: "Text",
+        importGroup: "Import",
+        previewGroup: "Vorschau",
+        bold: "Fett",
+        italic: "Kursiv",
+        underline: "Unterstrichen",
+        movePanel: "Panel verschieben",
+        settingsLanguage: "Sprache",
+        languageAuto: "Auto"
+      }),
+      ja: Object.assign({}, I18N.en, {
+        toggleCommand: "\u30D7\u30EC\u30D3\u30E5\u30FC\u7DE8\u96C6\u3068\u63CF\u753B\u30E2\u30FC\u30C9\u3092\u5207\u308A\u66FF\u3048",
+        openNoteOrWebviewFirst: "\u5148\u306B\u30CE\u30FC\u30C8\u307E\u305F\u306F webview \u3092\u958B\u3044\u3066\u304F\u3060\u3055\u3044\u3002",
+        failedSaveDrawing: "\u63CF\u753B\u30C7\u30FC\u30BF\u306E\u4FDD\u5B58\u306B\u5931\u6557\u3057\u307E\u3057\u305F\u3002",
+        failedImportFile: "\u30D5\u30A1\u30A4\u30EB\u306E\u30A4\u30F3\u30DD\u30FC\u30C8\u306B\u5931\u6557\u3057\u307E\u3057\u305F\u3002",
+        editTextDraw: "\u6587\u5B57\u7DE8\u96C6 / \u63CF\u753B",
+        editTextDrawHidden: "\u6587\u5B57\u7DE8\u96C6 / \u63CF\u753B\uFF08\u63CF\u753B\u306F\u975E\u8868\u793A\uFF09",
+        editWebviewDraw: "webview \u7DE8\u96C6 / \u63CF\u753B",
+        selectDrawings: "\u8981\u7D20\u3092\u9078\u629E",
+        pen: "\u30DA\u30F3",
+        watercolorBrush: "\u6C34\u5F69\u30D6\u30E9\u30B7",
+        floatingText: "\u30D5\u30ED\u30FC\u30C6\u30A3\u30F3\u30B0\u6587\u5B57",
+        undoLastDrawing: "\u6700\u5F8C\u306E\u63CF\u753B\u3092\u5143\u306B\u623B\u3059",
+        redoDrawing: "\u63CF\u753B\u3092\u3084\u308A\u76F4\u3059",
+        deleteSelectedDrawing: "\u9078\u629E\u3092\u524A\u9664",
+        penSettings: "\u30DA\u30F3\u8A2D\u5B9A",
+        advancedColor: "\u8A73\u7D30\u30AB\u30E9\u30FC",
+        textGroup: "\u6587\u5B57",
+        importGroup: "\u30A4\u30F3\u30DD\u30FC\u30C8",
+        previewGroup: "\u30D7\u30EC\u30D3\u30E5\u30FC",
+        bold: "\u592A\u5B57",
+        italic: "\u659C\u4F53",
+        underline: "\u4E0B\u7DDA",
+        movePanel: "\u30D1\u30CD\u30EB\u3092\u79FB\u52D5",
+        settingsLanguage: "\u8A00\u8A9E",
+        languageAuto: "\u81EA\u52D5"
+      }),
+      ko: Object.assign({}, I18N.en, {
+        toggleCommand: "\uBBF8\uB9AC\uBCF4\uAE30 \uD3B8\uC9D1 \uBC0F \uADF8\uB9AC\uAE30 \uBAA8\uB4DC \uC804\uD658",
+        openNoteOrWebviewFirst: "\uBA3C\uC800 \uB178\uD2B8 \uB610\uB294 webview\uB97C \uC5EC\uC138\uC694.",
+        failedSaveDrawing: "\uADF8\uB9AC\uAE30 \uB370\uC774\uD130\uB97C \uC800\uC7A5\uD558\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4.",
+        failedImportFile: "\uD30C\uC77C\uC744 \uAC00\uC838\uC624\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4.",
+        editTextDraw: "\uD14D\uC2A4\uD2B8 \uD3B8\uC9D1 / \uADF8\uB9AC\uAE30",
+        editTextDrawHidden: "\uD14D\uC2A4\uD2B8 \uD3B8\uC9D1 / \uADF8\uB9AC\uAE30(\uADF8\uB9BC \uC228\uAE40)",
+        editWebviewDraw: "webview \uD3B8\uC9D1 / \uADF8\uB9AC\uAE30",
+        selectDrawings: "\uC694\uC18C \uC120\uD0DD",
+        pen: "\uD39C",
+        watercolorBrush: "\uC218\uCC44\uD654 \uBE0C\uB7EC\uC2DC",
+        floatingText: "\uD50C\uB85C\uD305 \uD14D\uC2A4\uD2B8",
+        undoLastDrawing: "\uB9C8\uC9C0\uB9C9 \uADF8\uB9AC\uAE30 \uCDE8\uC18C",
+        redoDrawing: "\uADF8\uB9AC\uAE30 \uB2E4\uC2DC \uC2E4\uD589",
+        deleteSelectedDrawing: "\uC120\uD0DD \uC0AD\uC81C",
+        penSettings: "\uD39C \uC124\uC815",
+        advancedColor: "\uACE0\uAE09 \uC0C9\uC0C1",
+        textGroup: "\uD14D\uC2A4\uD2B8",
+        importGroup: "\uAC00\uC838\uC624\uAE30",
+        previewGroup: "\uBBF8\uB9AC\uBCF4\uAE30",
+        bold: "\uAD75\uAC8C",
+        italic: "\uAE30\uC6B8\uC784",
+        underline: "\uBC11\uC904",
+        movePanel: "\uD328\uB110 \uC774\uB3D9",
+        settingsLanguage: "\uC5B8\uC5B4",
+        languageAuto: "\uC790\uB3D9"
+      }),
+      tr: Object.assign({}, I18N.en, {
+        toggleCommand: "\xD6nizleme d\xFCzenleme ve \xE7izim modunu de\u011Fi\u015Ftir",
+        openNoteOrWebviewFirst: "\xD6nce bir not veya webview a\xE7\u0131n.",
+        failedSaveDrawing: "\xC7izim verileri kaydedilemedi.",
+        failedImportFile: "Dosya i\xE7e aktar\u0131lamad\u0131.",
+        editTextDraw: "Metni d\xFCzenle / \xE7iz",
+        editTextDrawHidden: "Metni d\xFCzenle / \xE7iz (\xE7izimler gizli)",
+        editWebviewDraw: "Webview d\xFCzenle / \xE7iz",
+        selectDrawings: "\xD6geleri se\xE7",
+        pen: "Kalem",
+        watercolorBrush: "Sulu boya f\u0131r\xE7as\u0131",
+        floatingText: "Y\xFCzen metin",
+        undoLastDrawing: "Son \xE7izimi geri al",
+        redoDrawing: "\xC7izimi yinele",
+        deleteSelectedDrawing: "Se\xE7ileni sil",
+        penSettings: "Kalem ayarlar\u0131",
+        advancedColor: "Geli\u015Fmi\u015F renk",
+        textGroup: "Metin",
+        importGroup: "\u0130\xE7e aktar",
+        previewGroup: "\xD6nizleme",
+        bold: "Kal\u0131n",
+        italic: "\u0130talik",
+        underline: "Alt\u0131 \xE7izili",
+        movePanel: "Paneli ta\u015F\u0131",
+        settingsLanguage: "Dil",
+        languageAuto: "Otomatik"
+      })
+    });
     var DEFAULT_SETTINGS = {
+      language: LANGUAGE_AUTO,
       defaultPenColor: "#e53935",
       defaultPenWidth: 3,
       defaultPenOpacity: DEFAULT_PEN_OPACITY,
@@ -190,7 +758,8 @@ var require_notedraw_plugin = __commonJS({
     ].join(",");
     var NoteDrawPlugin2 = class extends Plugin {
       async onload() {
-        this.settings = { ...DEFAULT_SETTINGS, ...await this.loadData() || {} };
+        const savedSettings = await this.loadData();
+        this.settings = sanitizeSettings({ ...DEFAULT_SETTINGS, ...savedSettings || {} });
         this.controllers = /* @__PURE__ */ new WeakMap();
         this.sourceControllers = /* @__PURE__ */ new Map();
         this.webviewControllers = /* @__PURE__ */ new Map();
@@ -206,7 +775,7 @@ var require_notedraw_plugin = __commonJS({
         cleanupAllDrawingHeaderButtons();
         this.addCommand({
           id: "toggle-notedraw",
-          name: "Toggle preview edit and drawing mode",
+          name: this.t("toggleCommand"),
           callback: () => this.toggleActiveController()
         });
         this.addSettingTab(new NoteDrawSettingTab(this.app, this));
@@ -280,6 +849,23 @@ var require_notedraw_plugin = __commonJS({
         await this.saveData(this.settings);
         for (const controller of this.getAllControllers()) {
           controller.applySettings();
+          controller.refreshLocalizedLabels?.();
+        }
+        this.refreshLocalizedButtons();
+      }
+      t(key, vars = {}) {
+        return translateNoteDraw(this, key, vars);
+      }
+      setAccessibleLabel(element, key, vars = {}) {
+        setAccessibleLabel(element, this.t(key, vars));
+      }
+      refreshLocalizedButtons() {
+        for (const state of this.headerActions.values()) {
+          const controller = state.button?._noteDrawController || state.controller;
+          this.setAccessibleLabel(state.button, controller?.surfaceType === "webview" ? "editWebviewDraw" : "editTextDraw");
+        }
+        for (const controller of this.webviewControllers.values()) {
+          this.setAccessibleLabel(controller.button, "editWebviewDraw");
         }
       }
       getAllControllers() {
@@ -325,7 +911,7 @@ var require_notedraw_plugin = __commonJS({
       }
       createPublicApi() {
         return {
-          version: "3.1.6",
+          version: "3.1.11",
           getActiveController: () => this.getActiveController(),
           readDrawings: async (file) => this.readDrawings(file),
           writeDrawings: async (file, data) => this.writeDrawings(file, normalizeDrawingData(data, file)),
@@ -382,7 +968,7 @@ var require_notedraw_plugin = __commonJS({
       toggleActiveController() {
         const controller = this.getActiveController();
         if (!controller) {
-          new Notice("Open a note or webview first.");
+          new Notice(this.t("openNoteOrWebviewFirst"));
           return;
         }
         controller.toggle().catch((error) => {
@@ -507,7 +1093,7 @@ var require_notedraw_plugin = __commonJS({
           state.pointerUpHandler = (event) => this.resolveHeaderController(view, state)?.onButtonPointerUp(event);
           let button = null;
           if (typeof view?.addAction === "function") {
-            button = view.addAction("wand-sparkles", "Edit text / draw", state.clickHandler);
+            button = view.addAction("wand-sparkles", this.t("editTextDraw"), state.clickHandler);
           }
           if (!button) {
             const actions = view?.containerEl?.querySelector(".view-actions");
@@ -535,8 +1121,7 @@ var require_notedraw_plugin = __commonJS({
         state.button._noteDrawController = state.controller || controller;
         state.button.classList.add("notedraw-header-button");
         state.button.classList.toggle("notedraw-webview-button", state.button._noteDrawController?.surfaceType === "webview");
-        state.button.setAttribute("aria-label", "Edit text / draw");
-        state.button.setAttribute("title", "Edit text / draw");
+        this.setAccessibleLabel(state.button, state.button._noteDrawController?.surfaceType === "webview" ? "editWebviewDraw" : "editTextDraw");
         state.button.classList.toggle("is-active", Boolean(state.button._noteDrawController?.active));
         this.cleanupHeaderButtons(view, state.button);
         return state.button;
@@ -555,8 +1140,7 @@ var require_notedraw_plugin = __commonJS({
           button.classList.add("view-action");
         }
         setIcon(button, "wand-sparkles");
-        button.setAttribute("aria-label", "Edit webview / draw");
-        button.setAttribute("title", "Edit webview / draw");
+        this.setAccessibleLabel(button, "editWebviewDraw");
         button.addEventListener("click", (event) => controller.onButtonClick(event));
         button.addEventListener("pointerdown", () => controller.onButtonPointerDown());
         button.addEventListener("pointerup", () => controller.onButtonPointerUp());
@@ -752,7 +1336,7 @@ var require_notedraw_plugin = __commonJS({
           compactDrawingData(data);
           this.writeDrawings(file, data).catch((error) => {
             console.error(`[${PLUGIN_ID}] Failed to save drawing file`, error);
-            new Notice("Failed to save drawing data.");
+            new Notice(this.t("failedSaveDrawing"));
           });
         }, 500);
         this.saveTimers.set(path, timer);
@@ -997,7 +1581,7 @@ var require_notedraw_plugin = __commonJS({
         }
         const baselineText = state.baselineText;
         const latestText = state.latestText;
-        if (normalizeRenderedText(baselineText) === normalizeRenderedText(latestText)) {
+        if (normalizeEditableSourceText(baselineText) === normalizeEditableSourceText(latestText)) {
           element.removeClass("notedraw-saving");
           return;
         }
@@ -1066,7 +1650,7 @@ var require_notedraw_plugin = __commonJS({
         } finally {
           state.saving = false;
         }
-        if (state.pending || normalizeRenderedText(state.baselineText) !== normalizeRenderedText(state.latestText)) {
+        if (state.pending || normalizeEditableSourceText(state.baselineText) !== normalizeEditableSourceText(state.latestText)) {
           if (state.saveBlocked) {
             element.removeClass("notedraw-saving");
             return;
@@ -1082,8 +1666,7 @@ var require_notedraw_plugin = __commonJS({
       }
       async saveTextBlock(file, originalText, editedText, sourceInfo, target) {
         const normalizedOriginal = normalizeRenderedText(originalText);
-        const normalizedEdited = normalizeRenderedText(editedText);
-        if (!normalizedOriginal || normalizedOriginal === normalizedEdited) {
+        if (!normalizedOriginal || normalizeEditableSourceText(originalText) === normalizeEditableSourceText(editedText)) {
           return { changed: true, target };
         }
         const source = await this.app.vault.read(file);
@@ -1123,6 +1706,13 @@ var require_notedraw_plugin = __commonJS({
         };
         this.currentStroke = null;
         this.currentEditor = null;
+        this.currentTextRange = null;
+        this.formatToolbar = null;
+        this.formatToolbarManualPosition = null;
+        this.formatToolbarDrag = null;
+        this.formatColorInput = null;
+        this.formatHighlightInput = null;
+        this.formatSizeSelect = null;
         this.brushMode = BRUSH_PEN;
         this.brushSettings = {
           [BRUSH_PEN]: {
@@ -1209,6 +1799,9 @@ var require_notedraw_plugin = __commonJS({
         this.onButtonPointerDown = this.onButtonPointerDown.bind(this);
         this.onButtonPointerUp = this.onButtonPointerUp.bind(this);
         this.onDocumentPointerDown = this.onDocumentPointerDown.bind(this);
+        this.onDocumentSelectionChange = this.onDocumentSelectionChange.bind(this);
+        this.onFormatToolbarDragMove = this.onFormatToolbarDragMove.bind(this);
+        this.onFormatToolbarDragEnd = this.onFormatToolbarDragEnd.bind(this);
       }
       async mount() {
         cleanupDrawingUi(this.previewEl);
@@ -1219,23 +1812,23 @@ var require_notedraw_plugin = __commonJS({
         this.button = this.createHeaderButton();
         this.toolbar = this.previewEl.createDiv({ cls: "notedraw-toolbar" });
         this.selectButton = this.toolbar.createEl("button", {
-          attr: { type: "button", title: "Select drawings" }
+          attr: { type: "button", title: this.plugin.t("selectDrawings") }
         });
         setIcon(this.selectButton, "mouse-pointer-2");
         this.selectButton.addEventListener("click", () => this.toggleSelectMode());
         this.penButton = this.toolbar.createEl("button", {
-          attr: { type: "button", title: "Pen" }
+          attr: { type: "button", title: this.plugin.t("pen") }
         });
         setIcon(this.penButton, "pen-line");
         this.penButton.addEventListener("click", () => this.setBrushMode(BRUSH_PEN));
         this.watercolorButton = this.toolbar.createEl("button", {
-          attr: { type: "button", title: "Watercolor brush" }
+          attr: { type: "button", title: this.plugin.t("watercolorBrush") }
         });
         setIcon(this.watercolorButton, "paintbrush");
         this.watercolorButton.addEventListener("click", () => this.setBrushMode(BRUSH_WATERCOLOR));
         if (this.surfaceType !== "source") {
           this.textButton = this.toolbar.createEl("button", {
-            attr: { type: "button", title: "Floating text" }
+            attr: { type: "button", title: this.plugin.t("floatingText") }
           });
           setIcon(this.textButton, "type");
           this.textButton.addEventListener("click", (event) => {
@@ -1248,22 +1841,22 @@ var require_notedraw_plugin = __commonJS({
           });
         }
         this.undoButton = this.toolbar.createEl("button", {
-          attr: { type: "button", title: "Undo last drawing" }
+          attr: { type: "button", title: this.plugin.t("undoLastDrawing") }
         });
         setIcon(this.undoButton, "undo-2");
         this.undoButton.addEventListener("click", () => this.undoLastStroke());
         this.redoButton = this.toolbar.createEl("button", {
-          attr: { type: "button", title: "Redo drawing" }
+          attr: { type: "button", title: this.plugin.t("redoDrawing") }
         });
         setIcon(this.redoButton, "redo-2");
         this.redoButton.addEventListener("click", () => this.redoLastStroke());
         this.deleteButton = this.toolbar.createEl("button", {
-          attr: { type: "button", title: "Delete selected drawing" }
+          attr: { type: "button", title: this.plugin.t("deleteSelectedDrawing") }
         });
         setIcon(this.deleteButton, "trash-2");
         this.deleteButton.addEventListener("click", () => this.deleteSelectedStroke());
         this.paletteButton = this.toolbar.createEl("button", {
-          attr: { type: "button", title: "Pen settings" }
+          attr: { type: "button", title: this.plugin.t("penSettings") }
         });
         setIcon(this.paletteButton, "palette");
         this.paletteButton.addEventListener("click", (event) => {
@@ -1281,13 +1874,16 @@ var require_notedraw_plugin = __commonJS({
           this.textPanel = this.previewEl.createDiv({ cls: "notedraw-text-panel" });
           this.createTextPanel();
         }
+        if (this.allowTextEdit && this.surfaceType !== "webview") {
+          this.createFormatToolbar();
+        }
         this.colorInput = this.palettePanel.createEl("input", {
           cls: "notedraw-advanced-color",
           attr: {
             type: "color",
             value: this.penColor,
-            title: "Advanced color",
-            "aria-label": "Advanced color"
+            title: this.plugin.t("advancedColor"),
+            "aria-label": this.plugin.t("advancedColor")
           }
         });
         this.colorInput.addEventListener("input", () => {
@@ -1313,7 +1909,7 @@ var require_notedraw_plugin = __commonJS({
           }
           this.insertImportedAsset(file, pending.point).catch((error) => {
             console.error(`[${PLUGIN_ID}] Failed to import asset`, error);
-            new Notice("Failed to import file.");
+            new Notice(this.plugin.t("failedImportFile"));
           });
         });
         this.widthInput = this.createPaletteInput("circle", "width", {
@@ -1322,7 +1918,7 @@ var require_notedraw_plugin = __commonJS({
           min: String(MIN_BRUSH_WIDTH),
           max: String(MAX_BRUSH_WIDTH),
           step: "0.5",
-          title: "Pen width"
+          title: this.plugin.t("penWidth")
         });
         this.widthInput.addEventListener("input", () => {
           this.currentBrushSettings().width = clamp(Number(this.widthInput.value), MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH);
@@ -1335,7 +1931,7 @@ var require_notedraw_plugin = __commonJS({
           min: "0",
           max: "1",
           step: "0.02",
-          title: "Pen opacity"
+          title: this.plugin.t("penOpacity")
         });
         this.opacityInput.addEventListener("input", () => {
           this.currentBrushSettings().opacity = clamp(Number(this.opacityInput.value), 0, 1);
@@ -1352,7 +1948,10 @@ var require_notedraw_plugin = __commonJS({
         this.canvas.addEventListener("dblclick", this.onCanvasDoubleClick);
         this.canvas.addEventListener("wheel", this.onWheel, { passive: true });
         window.addEventListener("resize", this.onResize);
+        window.visualViewport?.addEventListener("resize", this.onResize);
+        window.visualViewport?.addEventListener("scroll", this.onResize);
         document.addEventListener("pointerdown", this.onDocumentPointerDown, true);
+        document.addEventListener("selectionchange", this.onDocumentSelectionChange);
         if (typeof ResizeObserver !== "undefined") {
           this.resizeObserver = new ResizeObserver(this.onResize);
           this.resizeObserver.observe(this.previewEl);
@@ -1365,6 +1964,7 @@ var require_notedraw_plugin = __commonJS({
         this.scrollEventTarget?.addEventListener("scroll", this.onScroll, { passive: true });
         this.updateToolButtons();
         this.syncPaletteInputs();
+        this.refreshLocalizedLabels();
       }
       applySettings() {
         const settings = sanitizeSettings(this.plugin?.settings || {});
@@ -1383,6 +1983,48 @@ var require_notedraw_plugin = __commonJS({
         this.updateToolButtons?.();
         this.positionToolbar?.();
         this.render?.();
+      }
+      refreshLocalizedLabels() {
+        this.plugin.setAccessibleLabel(this.button, this.surfaceType === "webview" ? "editWebviewDraw" : this.drawingsVisible ? "editTextDraw" : "editTextDrawHidden");
+        this.plugin.setAccessibleLabel(this.selectButton, "selectDrawings");
+        this.plugin.setAccessibleLabel(this.penButton, "pen");
+        this.plugin.setAccessibleLabel(this.watercolorButton, "watercolorBrush");
+        this.plugin.setAccessibleLabel(this.textButton, "floatingText");
+        this.plugin.setAccessibleLabel(this.undoButton, "undoLastDrawing");
+        this.plugin.setAccessibleLabel(this.redoButton, "redoDrawing");
+        this.plugin.setAccessibleLabel(this.deleteButton, "deleteSelectedDrawing");
+        this.plugin.setAccessibleLabel(this.paletteButton, "penSettings");
+        this.plugin.setAccessibleLabel(this.colorInput, "advancedColor");
+        this.plugin.setAccessibleLabel(this.advancedColorButton, "advancedColor");
+        this.colorSwatchButtons?.forEach((button, index) => {
+          const color = COMMON_COLORS[index];
+          if (color) {
+            button.setAttribute("aria-label", this.plugin.t("useColor", { color }));
+          }
+        });
+        this.widthInput?.setAttribute("title", this.plugin.t("penWidth"));
+        this.opacityInput?.setAttribute("title", this.plugin.t("penOpacity"));
+        if (this.textPanel) {
+          const wasOpen = this.textPanelOpen;
+          this.textPanel.empty();
+          this.createTextPanel();
+          this.textPanelOpen = wasOpen;
+          this.previewEl.toggleClass("is-text-panel-open", this.textPanelOpen);
+          this.syncTextPanelButtons();
+        }
+        if (this.formatToolbar) {
+          this.formatToolbar.querySelectorAll("[data-note-draw-title-key]").forEach((element) => {
+            this.plugin.setAccessibleLabel(element, element.dataset.noteDrawTitleKey);
+          });
+          this.plugin.setAccessibleLabel(this.formatToolbar.querySelector(".notedraw-format-move-button"), "movePanel");
+          this.plugin.setAccessibleLabel(this.formatColorInput, "textColor");
+          this.plugin.setAccessibleLabel(this.formatHighlightInput, "highlightColor");
+          this.plugin.setAccessibleLabel(this.formatSizeSelect, "textSize");
+          const firstOption = this.formatSizeSelect?.querySelector?.('option[value=""]');
+          if (firstOption) {
+            firstOption.textContent = this.plugin.t("size");
+          }
+        }
       }
       createPaletteInput(icon, cls, attr) {
         const row = this.palettePanel.createDiv({ cls: "notedraw-palette-row" });
@@ -1453,7 +2095,11 @@ var require_notedraw_plugin = __commonJS({
         this.scrollEventTarget = null;
         this.layoutMeasureEl = null;
         window.removeEventListener("resize", this.onResize);
+        window.visualViewport?.removeEventListener("resize", this.onResize);
+        window.visualViewport?.removeEventListener("scroll", this.onResize);
         document.removeEventListener("pointerdown", this.onDocumentPointerDown, true);
+        document.removeEventListener("selectionchange", this.onDocumentSelectionChange);
+        this.stopFormatToolbarDrag();
         this.canvas?.removeEventListener("pointerdown", this.onPointerDown);
         this.canvas?.removeEventListener("pointermove", this.onPointerMove);
         this.canvas?.removeEventListener("pointerup", this.onPointerUp);
@@ -1465,6 +2111,7 @@ var require_notedraw_plugin = __commonJS({
         this.toolbar?.remove();
         this.palettePanel?.remove();
         this.textPanel?.remove();
+        this.formatToolbar?.remove();
         this.hiddenFileInput?.remove();
         this.embedLayer?.remove();
         this.embedNodes.clear();
@@ -1481,6 +2128,7 @@ var require_notedraw_plugin = __commonJS({
         this.previewEl.removeClass("is-notedraw-source-shell");
         this.previewEl.removeClass("is-notedraw-webview-shell");
         this.previewEl.removeClass("is-resizing-selection");
+        this.previewEl.removeClass("is-native-text-editing");
         if (this.previewEl._noteDrawController === this) {
           delete this.previewEl._noteDrawController;
         }
@@ -1537,6 +2185,7 @@ var require_notedraw_plugin = __commonJS({
           this.resizeFrameId = null;
           this.resizeCanvas();
           this.updateFloatingControlsPosition();
+          this.positionFormatToolbar();
           this.render();
         });
       }
@@ -1553,6 +2202,7 @@ var require_notedraw_plugin = __commonJS({
         this.positionFrameId = window.requestAnimationFrame(() => {
           this.positionFrameId = null;
           this.updateFloatingControlsPosition();
+          this.positionFormatToolbar();
         });
       }
       cancelPositionFrame() {
@@ -1664,44 +2314,45 @@ var require_notedraw_plugin = __commonJS({
       createTextPanel() {
         const groups = [
           {
-            label: "Text",
+            labelKey: "textGroup",
             items: [
-              { id: "plain", label: "Text", icon: "type" },
-              { id: "title", label: "Title", icon: "type" },
-              { id: "code", label: "Code", icon: "code-2" },
-              { id: "button", label: "Button", icon: "square" },
-              { id: "file", label: "File tag", icon: "file-text" }
+              { id: "plain", labelKey: "textPlain", icon: "type" },
+              { id: "title", labelKey: "title", icon: "type" },
+              { id: "code", labelKey: "code", icon: "code-2" },
+              { id: "button", labelKey: "button", icon: "square" },
+              { id: "file", labelKey: "fileTag", icon: "file-text" }
             ]
           },
           {
-            label: "Import",
+            labelKey: "importGroup",
             items: [
-              { id: "image", label: "Image", icon: "image" },
-              { id: "video", label: "Video", icon: "film" },
-              { id: "attachment", label: "File", icon: "paperclip" }
+              { id: "image", labelKey: "image", icon: "image" },
+              { id: "video", labelKey: "video", icon: "film" },
+              { id: "attachment", labelKey: "file", icon: "paperclip" }
             ]
           },
           {
-            label: "Preview",
+            labelKey: "previewGroup",
             items: [
-              { id: "markdown", label: "MD", icon: "pilcrow" },
-              { id: "html", label: "HTML", icon: "code" },
-              { id: "note", label: "Note", icon: "file-text" }
+              { id: "markdown", labelKey: "markdown", icon: "pilcrow" },
+              { id: "html", labelKey: "html", icon: "code" },
+              { id: "note", labelKey: "note", icon: "file-text" }
             ]
           }
         ];
         for (const group of groups) {
           const groupEl = this.textPanel.createDiv({ cls: "notedraw-text-group" });
-          groupEl.createDiv({ cls: "notedraw-text-group-label", text: group.label });
+          groupEl.createDiv({ cls: "notedraw-text-group-label", text: this.plugin.t(group.labelKey) });
           const gridEl = groupEl.createDiv({ cls: "notedraw-text-grid" });
           for (const item of group.items) {
+            const label = this.plugin.t(item.labelKey);
             const button = gridEl.createEl("button", {
               cls: "notedraw-text-option",
-              attr: { type: "button", title: item.label }
+              attr: { type: "button", title: label, "aria-label": label }
             });
             button.dataset.noteDrawTextPreset = item.id;
             setIcon(button, item.icon);
-            button.createSpan({ text: item.label });
+            button.createSpan({ text: label });
             button.addEventListener("click", (event) => {
               event.preventDefault();
               event.stopPropagation();
@@ -1718,6 +2369,299 @@ var require_notedraw_plugin = __commonJS({
         this.textPanel?.querySelectorAll(".notedraw-text-option").forEach((button) => {
           button.classList.toggle("is-active", button.dataset.noteDrawTextPreset === this.textPreset);
         });
+      }
+      createFormatToolbar() {
+        this.formatToolbar = this.previewEl.createDiv({ cls: "notedraw-format-toolbar" });
+        this.formatToolbar.addEventListener("mousedown", (event) => {
+          if (event.target?.closest?.("button")) {
+            event.preventDefault();
+          }
+        });
+        this.createFormatMoveButton();
+        this.createFormatButton("bold", "bold", "bold", () => this.applyTextInlineFormat("strong"));
+        this.createFormatButton("italic", "italic", "italic", () => this.applyTextInlineFormat("em"));
+        this.createFormatButton("underline", "underline", "underline", () => this.applyTextInlineFormat("u"));
+        this.createFormatButton("code-2", "inlineCode", "code", () => this.applyTextInlineFormat("code"));
+        this.createFormatButton("keyboard", "keyboardTag", "kbd", () => this.applyTextInlineFormat("kbd"));
+        this.createFormatButton("superscript", "superscript", "sup", () => this.applyTextInlineFormat("sup"));
+        this.createFormatButton("subscript", "subscript", "sub", () => this.applyTextInlineFormat("sub"));
+        this.createFormatButton("square-code", "codeBlock", "block-code", () => this.applyTextBlockFormat("code"));
+        this.createFormatButton("highlighter", "highlight", "mark", () => this.applyTextInlineFormat("mark", { backgroundColor: this.formatHighlightInput?.value || "#fff59d" }));
+        this.createFormatButton("wrap-text", "insertBreak", "br", () => this.insertTextBreak());
+        this.formatColorInput = this.formatToolbar.createEl("input", {
+          cls: "notedraw-format-color",
+          attr: {
+            type: "color",
+            value: "#e53935",
+            title: this.plugin.t("textColor"),
+            "aria-label": this.plugin.t("textColor")
+          }
+        });
+        this.formatColorInput.addEventListener("input", () => this.applyTextInlineFormat("span", { color: this.formatColorInput.value }));
+        this.formatHighlightInput = this.formatToolbar.createEl("input", {
+          cls: "notedraw-format-color",
+          attr: {
+            type: "color",
+            value: "#fff59d",
+            title: this.plugin.t("highlightColor"),
+            "aria-label": this.plugin.t("highlightColor")
+          }
+        });
+        this.formatHighlightInput.addEventListener("input", () => this.applyTextInlineFormat("mark", { backgroundColor: this.formatHighlightInput.value }));
+        this.formatSizeSelect = this.formatToolbar.createEl("select", {
+          cls: "notedraw-format-size",
+          attr: { title: this.plugin.t("textSize"), "aria-label": this.plugin.t("textSize") }
+        });
+        [
+          ["", this.plugin.t("size")],
+          ["0.85em", "S"],
+          ["1em", "M"],
+          ["1.25em", "L"],
+          ["1.5em", "XL"],
+          ["2em", "XXL"]
+        ].forEach(([value, label]) => {
+          this.formatSizeSelect.createEl("option", { text: label, attr: { value } });
+        });
+        this.formatSizeSelect.addEventListener("change", () => {
+          const size = this.formatSizeSelect.value;
+          if (size) {
+            this.applyTextInlineFormat("span", { fontSize: size });
+          }
+          this.formatSizeSelect.value = "";
+        });
+      }
+      createFormatMoveButton() {
+        const button = this.formatToolbar.createEl("button", {
+          cls: "notedraw-format-button notedraw-format-move-button",
+          attr: { type: "button", title: this.plugin.t("movePanel"), "aria-label": this.plugin.t("movePanel") }
+        });
+        setIcon(button, "move");
+        button.addEventListener("mousedown", (event) => event.preventDefault());
+        button.addEventListener("pointerdown", (event) => this.startFormatToolbarDrag(event));
+        return button;
+      }
+      createFormatButton(icon, titleKey, id, action) {
+        const title = this.plugin.t(titleKey);
+        const button = this.formatToolbar.createEl("button", {
+          cls: "notedraw-format-button",
+          attr: { type: "button", title, "aria-label": title }
+        });
+        button.dataset.noteDrawTitleKey = titleKey;
+        button.dataset.noteDrawFormat = id;
+        setIcon(button, icon);
+        button.addEventListener("mousedown", (event) => event.preventDefault());
+        button.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          action();
+        });
+        return button;
+      }
+      onDocumentSelectionChange() {
+        if (!this.currentEditor || !this.formatToolbar) {
+          return;
+        }
+        const selection = window.getSelection?.();
+        if (!selection || !selection.rangeCount) {
+          return;
+        }
+        const range = selection.getRangeAt(0);
+        if (!this.currentEditor.contains(range.commonAncestorContainer)) {
+          return;
+        }
+        this.currentTextRange = range.cloneRange();
+        this.positionFormatToolbar();
+      }
+      positionFormatToolbar() {
+        if (!this.formatToolbar || !this.currentEditor) {
+          return;
+        }
+        const selection = window.getSelection?.();
+        const range = selection?.rangeCount ? selection.getRangeAt(0) : this.currentTextRange;
+        const rect = range ? rangeLineRect(range) || this.currentEditor.getBoundingClientRect() : this.currentEditor.getBoundingClientRect();
+        const toolbarRect = this.formatToolbar.getBoundingClientRect();
+        const width = Math.max(180, toolbarRect.width || 280);
+        const height = Math.max(34, toolbarRect.height || 34);
+        const viewport = window.visualViewport;
+        const viewportTop = viewport?.offsetTop || 0;
+        const viewportLeft = viewport?.offsetLeft || 0;
+        const viewportHeight = Math.max(120, viewport?.height || window.innerHeight || 120);
+        const viewportWidth = Math.max(160, viewport?.width || window.innerWidth || 160);
+        const minTop = viewportTop + 8;
+        const maxTop = Math.max(minTop, viewportTop + viewportHeight - height - 8);
+        const gap = 14;
+        const preferredLeft = rect.left + rect.width / 2 - width / 2;
+        const left = clamp(Math.round(preferredLeft), viewportLeft + 8, Math.max(viewportLeft + 8, viewportLeft + viewportWidth - width - 8));
+        if (this.formatToolbarManualPosition) {
+          const top2 = clamp(Math.round(this.formatToolbarManualPosition.top), minTop, maxTop);
+          const manualLeft = clamp(Math.round(this.formatToolbarManualPosition.left), viewportLeft + 8, Math.max(viewportLeft + 8, viewportLeft + viewportWidth - width - 8));
+          this.formatToolbarManualPosition = { top: top2, left: manualLeft };
+          this.formatToolbar.style.setProperty("--notedraw-format-top", `${top2}px`);
+          this.formatToolbar.style.setProperty("--notedraw-format-left", `${manualLeft}px`);
+          return;
+        }
+        const above = rect.top - height - gap;
+        const below = rect.bottom + gap;
+        const top = above >= minTop ? above : below <= maxTop ? below : clamp(Math.round(above), minTop, maxTop);
+        this.formatToolbar.style.setProperty("--notedraw-format-top", `${top}px`);
+        this.formatToolbar.style.setProperty("--notedraw-format-left", `${left}px`);
+      }
+      startFormatToolbarDrag(event) {
+        if (!this.formatToolbar) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        const rect = this.formatToolbar.getBoundingClientRect();
+        this.formatToolbarDrag = {
+          pointerId: event.pointerId,
+          startX: event.clientX,
+          startY: event.clientY,
+          startTop: rect.top,
+          startLeft: rect.left
+        };
+        this.formatToolbarManualPosition = { top: rect.top, left: rect.left };
+        this.formatToolbar.addClass("is-moving");
+        document.addEventListener("pointermove", this.onFormatToolbarDragMove, true);
+        document.addEventListener("pointerup", this.onFormatToolbarDragEnd, true);
+        document.addEventListener("pointercancel", this.onFormatToolbarDragEnd, true);
+      }
+      onFormatToolbarDragMove(event) {
+        if (!this.formatToolbarDrag || !this.formatToolbar || event.pointerId !== this.formatToolbarDrag.pointerId) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        const toolbarRect = this.formatToolbar.getBoundingClientRect();
+        const viewport = window.visualViewport;
+        const viewportTop = viewport?.offsetTop || 0;
+        const viewportLeft = viewport?.offsetLeft || 0;
+        const viewportHeight = Math.max(120, viewport?.height || window.innerHeight || 120);
+        const viewportWidth = Math.max(160, viewport?.width || window.innerWidth || 160);
+        const top = clamp(
+          this.formatToolbarDrag.startTop + event.clientY - this.formatToolbarDrag.startY,
+          viewportTop + 8,
+          Math.max(viewportTop + 8, viewportTop + viewportHeight - toolbarRect.height - 8)
+        );
+        const left = clamp(
+          this.formatToolbarDrag.startLeft + event.clientX - this.formatToolbarDrag.startX,
+          viewportLeft + 8,
+          Math.max(viewportLeft + 8, viewportLeft + viewportWidth - toolbarRect.width - 8)
+        );
+        this.formatToolbarManualPosition = { top, left };
+        this.formatToolbar.style.setProperty("--notedraw-format-top", `${Math.round(top)}px`);
+        this.formatToolbar.style.setProperty("--notedraw-format-left", `${Math.round(left)}px`);
+      }
+      onFormatToolbarDragEnd(event) {
+        if (this.formatToolbarDrag && event?.pointerId !== this.formatToolbarDrag.pointerId) {
+          return;
+        }
+        event?.preventDefault?.();
+        event?.stopPropagation?.();
+        this.stopFormatToolbarDrag();
+      }
+      stopFormatToolbarDrag() {
+        this.formatToolbarDrag = null;
+        this.formatToolbar?.removeClass("is-moving");
+        document.removeEventListener("pointermove", this.onFormatToolbarDragMove, true);
+        document.removeEventListener("pointerup", this.onFormatToolbarDragEnd, true);
+        document.removeEventListener("pointercancel", this.onFormatToolbarDragEnd, true);
+      }
+      restoreTextRange() {
+        if (!this.currentEditor || !this.currentTextRange) {
+          return false;
+        }
+        const selection = window.getSelection?.();
+        if (!selection) {
+          return false;
+        }
+        selection.removeAllRanges();
+        selection.addRange(this.currentTextRange);
+        return true;
+      }
+      applyTextInlineFormat(tagName, styles = {}) {
+        if (!this.currentEditor || !this.restoreTextRange()) {
+          return;
+        }
+        const selection = window.getSelection?.();
+        if (!selection?.rangeCount) {
+          return;
+        }
+        const range = selection.getRangeAt(0);
+        if (!this.currentEditor.contains(range.commonAncestorContainer) || range.collapsed) {
+          return;
+        }
+        const wrapper = document.createElement(tagName);
+        applyInlineFormatStyles(wrapper, styles);
+        const fragment = range.extractContents();
+        wrapper.appendChild(fragment);
+        range.insertNode(wrapper);
+        selectNodeContents(wrapper);
+        this.currentTextRange = window.getSelection()?.rangeCount ? window.getSelection().getRangeAt(0).cloneRange() : null;
+        this.queueCurrentTextSave();
+        this.positionFormatToolbar();
+      }
+      applyTextBlockFormat(kind) {
+        if (!this.currentEditor || !this.restoreTextRange()) {
+          return;
+        }
+        const selection = window.getSelection?.();
+        if (!selection?.rangeCount) {
+          return;
+        }
+        const range = selection.getRangeAt(0);
+        if (!this.currentEditor.contains(range.commonAncestorContainer)) {
+          return;
+        }
+        const text = selection.toString() || "";
+        if (kind === "code") {
+          const pre = document.createElement("pre");
+          const code = document.createElement("code");
+          code.textContent = text || "code";
+          pre.appendChild(code);
+          range.deleteContents();
+          range.insertNode(pre);
+          selectNodeContents(code);
+          this.currentTextRange = window.getSelection()?.rangeCount ? window.getSelection().getRangeAt(0).cloneRange() : null;
+          this.queueCurrentTextSave();
+          this.positionFormatToolbar();
+        }
+      }
+      insertTextBreak() {
+        if (!this.currentEditor || !this.restoreTextRange()) {
+          return;
+        }
+        const selection = window.getSelection?.();
+        if (!selection?.rangeCount) {
+          return;
+        }
+        const range = selection.getRangeAt(0);
+        if (!this.currentEditor.contains(range.commonAncestorContainer)) {
+          return;
+        }
+        range.deleteContents();
+        const br = document.createElement("br");
+        range.insertNode(br);
+        range.setStartAfter(br);
+        range.collapse(true);
+        selection.removeAllRanges();
+        selection.addRange(range);
+        this.currentTextRange = range.cloneRange();
+        this.queueCurrentTextSave();
+        this.positionFormatToolbar();
+      }
+      queueCurrentTextSave(immediate = true) {
+        const element = this.currentEditor;
+        if (!element || this.surfaceType === "webview") {
+          return;
+        }
+        const original = element.dataset.noteDrawOriginal || "";
+        const editedSource = serializeEditableSource(element);
+        if (immediate) {
+          this.plugin.scheduleTextSaveNow(this.file, original, editedSource, element);
+        } else {
+          this.plugin.scheduleTextSave(this.file, original, editedSource, element);
+        }
       }
       toggleTextPanel() {
         if (this.surfaceType === "source") {
@@ -1746,7 +2690,7 @@ var require_notedraw_plugin = __commonJS({
             attr: {
               type: "button",
               title: color,
-              "aria-label": `Use color ${color}`
+              "aria-label": this.plugin.t("useColor", { color })
             }
           });
           button.style.setProperty("--notedraw-swatch-color", color);
@@ -1761,8 +2705,8 @@ var require_notedraw_plugin = __commonJS({
           cls: "notedraw-color-advanced",
           attr: {
             type: "button",
-            title: "Advanced color",
-            "aria-label": "Advanced color"
+            title: this.plugin.t("advancedColor"),
+            "aria-label": this.plugin.t("advancedColor")
           }
         });
         setIcon(this.advancedColorButton, "sliders-horizontal");
@@ -1838,15 +2782,18 @@ var require_notedraw_plugin = __commonJS({
         }
       }
       onDocumentPointerDown(event) {
-        if (!this.paletteOpen && !this.textPanelOpen) {
+        if (!this.paletteOpen && !this.textPanelOpen && !this.currentEditor) {
           return;
         }
         const target = event.target;
-        if (this.palettePanel?.contains(target) || this.paletteButton?.contains(target) || this.textPanel?.contains(target) || this.textButton?.contains(target)) {
+        if (this.palettePanel?.contains(target) || this.paletteButton?.contains(target) || this.textPanel?.contains(target) || this.textButton?.contains(target) || this.formatToolbar?.contains(target) || this.currentEditor?.contains(target)) {
           return;
         }
         this.setPaletteOpen(false);
         this.setTextPanelOpen(false);
+        if (this.currentEditor) {
+          this.endTextEdit();
+        }
       }
       onButtonPointerDown() {
         this.clearButtonLongPress();
@@ -1878,9 +2825,9 @@ var require_notedraw_plugin = __commonJS({
       toggleDrawingsVisible() {
         this.drawingsVisible = !this.drawingsVisible;
         this.previewEl.toggleClass("is-drawing-hidden", !this.drawingsVisible);
-        this.button?.setAttribute(
-          "title",
-          this.drawingsVisible ? "Edit text / draw" : "Edit text / draw (drawings hidden)"
+        this.plugin.setAccessibleLabel(
+          this.button,
+          this.surfaceType === "webview" ? "editWebviewDraw" : this.drawingsVisible ? "editTextDraw" : "editTextDrawHidden"
         );
       }
       resizeCanvas() {
@@ -1927,6 +2874,16 @@ var require_notedraw_plugin = __commonJS({
         const resizeHandle = this.findSelectionHandleAt(point);
         if (resizeHandle) {
           this.startSelectedStrokeResize(event, point, resizeHandle);
+          return;
+        }
+        if (editable && this.toolMode !== TOOL_SELECT && this.toolMode !== TOOL_TEXT) {
+          this.currentStroke = null;
+          this.pointerDown = false;
+          this.pointerStartEditable = null;
+          this.clearSelectedStrokes();
+          this.startTextEdit(editable, { x: event.clientX, y: event.clientY });
+          event.preventDefault();
+          event.stopPropagation();
           return;
         }
         if (this.getSelectedStrokeIndexes().length && !this.selectedStrokeFrameContains(point) && hitStrokeIndex < 0) {
@@ -3366,10 +4323,13 @@ var require_notedraw_plugin = __commonJS({
         if (this.currentEditor === element) {
           element.focus();
           placeCaretInEditable(element, clientPoint);
+          this.currentTextRange = window.getSelection?.()?.rangeCount ? window.getSelection().getRangeAt(0).cloneRange() : null;
+          this.positionFormatToolbar();
           return;
         }
         this.endTextEdit();
         this.currentEditor = element;
+        this.formatToolbarManualPosition = null;
         element.dataset.noteDrawOriginal = element.innerText;
         const saveToVault = this.surfaceType !== "webview";
         if (saveToVault) {
@@ -3378,8 +4338,12 @@ var require_notedraw_plugin = __commonJS({
         element.contentEditable = "true";
         element.spellcheck = true;
         element.addClass("notedraw-editing");
+        this.previewEl.addClass("is-native-text-editing");
+        this.formatToolbar?.addClass("is-visible");
         element.focus();
         placeCaretInEditable(element, clientPoint);
+        this.currentTextRange = window.getSelection?.()?.rangeCount ? window.getSelection().getRangeAt(0).cloneRange() : null;
+        this.positionFormatToolbar();
         const onInput = () => {
           if (!saveToVault) {
             return;
@@ -3387,9 +4351,10 @@ var require_notedraw_plugin = __commonJS({
           this.plugin.scheduleTextSave(
             this.file,
             element.dataset.noteDrawOriginal || "",
-            element.innerText,
+            serializeEditableSource(element),
             element
           );
+          this.positionFormatToolbar();
         };
         const onKeyDown = (event) => {
           if (event.key === "Escape") {
@@ -3399,8 +4364,29 @@ var require_notedraw_plugin = __commonJS({
             event.preventDefault();
             this.endTextEdit();
           }
+          if (event.metaKey || event.ctrlKey) {
+            const key = event.key.toLowerCase();
+            if (key === "b") {
+              event.preventDefault();
+              this.applyTextInlineFormat("strong");
+            } else if (key === "i") {
+              event.preventDefault();
+              this.applyTextInlineFormat("em");
+            } else if (key === "u") {
+              event.preventDefault();
+              this.applyTextInlineFormat("u");
+            }
+          }
         };
-        const onBlur = () => this.endTextEdit();
+        const onBlur = () => {
+          window.setTimeout(() => {
+            const active = document.activeElement;
+            if (this.currentEditor !== element || element.contains(active) || this.formatToolbar?.contains(active)) {
+              return;
+            }
+            this.endTextEdit();
+          }, 0);
+        };
         element._noteDrawCleanup = () => {
           element.removeEventListener("input", onInput);
           element.removeEventListener("keydown", onKeyDown);
@@ -3438,10 +4424,10 @@ var require_notedraw_plugin = __commonJS({
           return;
         }
         const original = element.dataset.noteDrawOriginal || "";
-        const edited = element.innerText;
+        const edited = this.surfaceType === "webview" ? element.innerText : serializeEditableSource(element);
         if (this.surfaceType === "webview") {
           this.commitWebviewTextEdit(element, original, edited);
-        } else if (normalizeRenderedText(original) !== normalizeRenderedText(edited)) {
+        } else if (normalizeEditableSourceText(original) !== normalizeEditableSourceText(edited)) {
           this.plugin.scheduleTextSaveNow(this.file, original, edited, element);
         }
         element._noteDrawCleanup?.();
@@ -3449,6 +4435,11 @@ var require_notedraw_plugin = __commonJS({
         delete element.dataset.noteDrawOriginal;
         element.contentEditable = "false";
         element.removeClass("notedraw-editing");
+        this.previewEl.removeClass("is-native-text-editing");
+        this.formatToolbar?.removeClass("is-visible");
+        this.stopFormatToolbarDrag();
+        this.currentTextRange = null;
+        this.formatToolbarManualPosition = null;
         this.currentEditor = null;
       }
       commitWebviewTextEdit(element, originalText, editedText) {
@@ -3556,35 +4547,45 @@ var require_notedraw_plugin = __commonJS({
       renderSettings() {
         const { containerEl } = this;
         const settings = sanitizeSettings(this.plugin.settings);
-        new Setting(containerEl).setName("Default pen color").setDesc("Initial color for new pen strokes.").addColorPicker((component) => component.setValue(settings.defaultPenColor).onChange(async (value) => {
+        new Setting(containerEl).setName(this.plugin.t("settingsLanguage")).setDesc(this.plugin.t("settingsLanguageDesc")).addDropdown((component) => {
+          for (const option of LANGUAGE_OPTIONS) {
+            component.addOption(option.value, option.value === LANGUAGE_AUTO ? `${this.plugin.t("languageAuto")} (${languageNativeName(detectNoteDrawLanguage(this.plugin.app))})` : option.label);
+          }
+          component.setValue(settings.language).onChange(async (value) => {
+            this.plugin.settings.language = value;
+            await this.plugin.saveSettings();
+            this.display();
+          });
+        });
+        new Setting(containerEl).setName(this.plugin.t("defaultPenColor")).setDesc(this.plugin.t("defaultPenColorDesc")).addColorPicker((component) => component.setValue(settings.defaultPenColor).onChange(async (value) => {
           this.plugin.settings.defaultPenColor = value;
           await this.plugin.saveSettings();
         }));
-        new Setting(containerEl).setName("Default pen width").setDesc("Initial pen width.").addSlider((component) => component.setLimits(MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH, 0.5).setValue(settings.defaultPenWidth).setDynamicTooltip().onChange(async (value) => {
+        new Setting(containerEl).setName(this.plugin.t("defaultPenWidth")).setDesc(this.plugin.t("defaultPenWidthDesc")).addSlider((component) => component.setLimits(MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH, 0.5).setValue(settings.defaultPenWidth).setDynamicTooltip().onChange(async (value) => {
           this.plugin.settings.defaultPenWidth = value;
           await this.plugin.saveSettings();
         }));
-        new Setting(containerEl).setName("Default pen opacity").setDesc("Initial pen opacity.").addSlider((component) => component.setLimits(0, 1, 0.02).setValue(settings.defaultPenOpacity).setDynamicTooltip().onChange(async (value) => {
+        new Setting(containerEl).setName(this.plugin.t("defaultPenOpacity")).setDesc(this.plugin.t("defaultPenOpacityDesc")).addSlider((component) => component.setLimits(0, 1, 0.02).setValue(settings.defaultPenOpacity).setDynamicTooltip().onChange(async (value) => {
           this.plugin.settings.defaultPenOpacity = value;
           await this.plugin.saveSettings();
         }));
-        new Setting(containerEl).setName("Default watercolor color").setDesc("Initial color for watercolor strokes.").addColorPicker((component) => component.setValue(settings.defaultWatercolorColor).onChange(async (value) => {
+        new Setting(containerEl).setName(this.plugin.t("defaultWatercolorColor")).setDesc(this.plugin.t("defaultWatercolorColorDesc")).addColorPicker((component) => component.setValue(settings.defaultWatercolorColor).onChange(async (value) => {
           this.plugin.settings.defaultWatercolorColor = value;
           await this.plugin.saveSettings();
         }));
-        new Setting(containerEl).setName("Default watercolor width").setDesc("Initial watercolor width.").addSlider((component) => component.setLimits(MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH, 0.5).setValue(settings.defaultWatercolorWidth).setDynamicTooltip().onChange(async (value) => {
+        new Setting(containerEl).setName(this.plugin.t("defaultWatercolorWidth")).setDesc(this.plugin.t("defaultWatercolorWidthDesc")).addSlider((component) => component.setLimits(MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH, 0.5).setValue(settings.defaultWatercolorWidth).setDynamicTooltip().onChange(async (value) => {
           this.plugin.settings.defaultWatercolorWidth = value;
           await this.plugin.saveSettings();
         }));
-        new Setting(containerEl).setName("Default watercolor opacity").setDesc("Initial watercolor opacity.").addSlider((component) => component.setLimits(0, 1, 0.02).setValue(settings.defaultWatercolorOpacity).setDynamicTooltip().onChange(async (value) => {
+        new Setting(containerEl).setName(this.plugin.t("defaultWatercolorOpacity")).setDesc(this.plugin.t("defaultWatercolorOpacityDesc")).addSlider((component) => component.setLimits(0, 1, 0.02).setValue(settings.defaultWatercolorOpacity).setDynamicTooltip().onChange(async (value) => {
           this.plugin.settings.defaultWatercolorOpacity = value;
           await this.plugin.saveSettings();
         }));
-        new Setting(containerEl).setName("Toolbar top offset").setDesc("Extra pixels below the Obsidian header.").addSlider((component) => component.setLimits(0, 48, 1).setValue(settings.toolbarTopOffset).setDynamicTooltip().onChange(async (value) => {
+        new Setting(containerEl).setName(this.plugin.t("toolbarTopOffset")).setDesc(this.plugin.t("toolbarTopOffsetDesc")).addSlider((component) => component.setLimits(0, 48, 1).setValue(settings.toolbarTopOffset).setDynamicTooltip().onChange(async (value) => {
           this.plugin.settings.toolbarTopOffset = value;
           await this.plugin.saveSettings();
         }));
-        new Setting(containerEl).setName("Debug log").setDesc("Write text-save diagnostics to the plugin folder only while troubleshooting.").addToggle((component) => component.setValue(settings.enableDebugLog).onChange(async (value) => {
+        new Setting(containerEl).setName(this.plugin.t("debugLog")).setDesc(this.plugin.t("debugLogDesc")).addToggle((component) => component.setValue(settings.enableDebugLog).onChange(async (value) => {
           this.plugin.settings.enableDebugLog = value;
           await this.plugin.saveSettings();
         }));
@@ -3602,11 +4603,11 @@ var require_notedraw_plugin = __commonJS({
         }
         containerEl.createDiv({
           cls: "notedraw-settings-codes-title",
-          text: "\u7ED9\u6211\u4E70\u5496\u5561 / Buy me a coffee"
+          text: this.plugin.t("supportTitle")
         });
         containerEl.createDiv({
           cls: "notedraw-settings-codes-subtitle",
-          text: "\u5982\u679C\u8FD9\u4E2A\u63D2\u4EF6\u5E2E\u5230\u4F60\uFF0C\u53EF\u4EE5\u626B\u7801\u6253\u8D4F\u652F\u6301\u7EE7\u7EED\u7EF4\u62A4 / If this tool helps, tips are appreciated."
+          text: this.plugin.t("supportSubtitle")
         });
         const gridEl = containerEl.createDiv({ cls: "notedraw-settings-codes-grid" });
         for (const item of codeItems) {
@@ -3663,6 +4664,7 @@ var require_notedraw_plugin = __commonJS({
     function sanitizeSettings(settings) {
       const input = settings || {};
       return {
+        language: normalizeLanguageCode(input.language ?? DEFAULT_SETTINGS.language),
         defaultPenColor: isCssColor(input.defaultPenColor) ? input.defaultPenColor : DEFAULT_SETTINGS.defaultPenColor,
         defaultPenWidth: clamp(Number(input.defaultPenWidth ?? DEFAULT_SETTINGS.defaultPenWidth), MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH),
         defaultPenOpacity: clamp(Number(input.defaultPenOpacity ?? DEFAULT_SETTINGS.defaultPenOpacity), 0, 1),
@@ -3672,6 +4674,70 @@ var require_notedraw_plugin = __commonJS({
         toolbarTopOffset: clamp(Number(input.toolbarTopOffset ?? DEFAULT_SETTINGS.toolbarTopOffset), 0, 48),
         enableDebugLog: Boolean(input.enableDebugLog)
       };
+    }
+    function translateNoteDraw(plugin, key, vars = {}) {
+      const language = resolveNoteDrawLanguage(plugin);
+      const template = I18N[language]?.[key] ?? I18N.en[key] ?? key;
+      return String(template).replace(/\{(\w+)\}/g, (_, name) => vars?.[name] ?? "");
+    }
+    function resolveNoteDrawLanguage(plugin) {
+      const language = normalizeLanguageCode(plugin?.settings?.language ?? DEFAULT_SETTINGS.language);
+      if (language !== LANGUAGE_AUTO) {
+        return language;
+      }
+      return detectNoteDrawLanguage(plugin?.app);
+    }
+    function detectNoteDrawLanguage(app) {
+      const localStorage = typeof window !== "undefined" ? window.localStorage : null;
+      const navigatorLanguage = typeof navigator !== "undefined" ? navigator.language : "";
+      const candidates = [
+        app?.vault?.getConfig?.("language"),
+        app?.vault?.getConfig?.("locale"),
+        app?.appId,
+        localStorage?.getItem?.("language"),
+        localStorage?.getItem?.("locale"),
+        localStorage?.getItem?.("appLanguage"),
+        localStorage?.getItem?.("obsidian-language"),
+        navigatorLanguage
+      ];
+      for (const candidate of candidates) {
+        const language = normalizeLanguageCode(candidate, false);
+        if (language && language !== LANGUAGE_AUTO) {
+          return language;
+        }
+      }
+      return "en";
+    }
+    function normalizeLanguageCode(value, allowAuto = true) {
+      const text = String(value || "").trim();
+      if (!text) {
+        return allowAuto ? LANGUAGE_AUTO : "";
+      }
+      const lower = text.replace("_", "-").toLowerCase();
+      if (allowAuto && lower === LANGUAGE_AUTO) {
+        return LANGUAGE_AUTO;
+      }
+      if (lower.startsWith("zh-tw") || lower.startsWith("zh-hk") || lower.includes("hant")) {
+        return "zh-TW";
+      }
+      if (lower.startsWith("zh")) {
+        return "zh";
+      }
+      if (lower.startsWith("ug") || lower.startsWith("uig")) {
+        return "ug";
+      }
+      const primary = lower.split("-")[0];
+      return I18N[primary] ? primary : allowAuto ? LANGUAGE_AUTO : "";
+    }
+    function languageNativeName(language) {
+      return LANGUAGE_OPTIONS.find((option) => option.value === language)?.label || LANGUAGE_OPTIONS.find((option) => option.value === "en")?.label || "English";
+    }
+    function setAccessibleLabel(element, label) {
+      if (!element || !label) {
+        return;
+      }
+      element.setAttribute("title", label);
+      element.setAttribute("aria-label", label);
     }
     function isCssColor(value) {
       return typeof value === "string" && /^#[0-9a-fA-F]{6}$/.test(value);
@@ -3699,6 +4765,9 @@ var require_notedraw_plugin = __commonJS({
     }
     function normalizeRenderedText(value) {
       return String(value || "").replace(/\u00a0/g, " ").replace(/\r\n/g, "\n").split("\n").map((line) => line.trim()).filter(Boolean).join("\n").trim();
+    }
+    function normalizeEditableSourceText(value) {
+      return String(value || "").replace(/\u00a0/g, " ").replace(/\r\n/g, "\n").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
     }
     function placeCaretInEditable(element, clientPoint) {
       const selection = window.getSelection?.();
@@ -3785,6 +4854,20 @@ var require_notedraw_plugin = __commonJS({
     function isUsableRect(rect) {
       return rect && Number.isFinite(rect.left) && Number.isFinite(rect.top) && rect.width > 0 && rect.height > 0;
     }
+    function rangeLineRect(range) {
+      if (!range) {
+        return null;
+      }
+      const rects = Array.from(range.getClientRects?.() || []).filter(isUsableRect);
+      if (rects.length) {
+        return rects[rects.length - 1];
+      }
+      const rect = range.getBoundingClientRect?.();
+      if (rect && Number.isFinite(rect.left) && Number.isFinite(rect.top) && rect.height > 0) {
+        return rect;
+      }
+      return null;
+    }
     function scoreRectDistance(rect, point) {
       const xDistance = point.x < rect.left ? rect.left - point.x : point.x > rect.right ? point.x - rect.right : 0;
       const yDistance = point.y < rect.top ? rect.top - point.y : point.y > rect.bottom ? point.y - rect.bottom : 0;
@@ -3800,9 +4883,139 @@ var require_notedraw_plugin = __commonJS({
       range.collapse(false);
       return range;
     }
+    function applyInlineFormatStyles(element, styles = {}) {
+      if (styles.color && isCssColor(styles.color)) {
+        element.style.color = styles.color;
+      }
+      if (styles.backgroundColor && isCssColor(styles.backgroundColor)) {
+        element.style.backgroundColor = styles.backgroundColor;
+      }
+      if (styles.fontSize && isSafeCssSize(styles.fontSize)) {
+        element.style.fontSize = styles.fontSize;
+      }
+    }
+    function selectNodeContents(node) {
+      const selection = window.getSelection?.();
+      if (!selection) {
+        return;
+      }
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+    function serializeEditableSource(element) {
+      return serializeEditableChildren(element).replace(/\u00a0/g, " ").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+    }
+    function serializeEditableChildren(node) {
+      return Array.from(node.childNodes || []).map((child) => serializeEditableNode(child)).join("");
+    }
+    function serializeEditableNode(node) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        return node.nodeValue || "";
+      }
+      if (node.nodeType !== Node.ELEMENT_NODE) {
+        return "";
+      }
+      const element = node;
+      const tag = element.tagName.toLowerCase();
+      if (tag === "br") {
+        return "<br>";
+      }
+      if (tag === "pre") {
+        const code = element.querySelector("code");
+        const text = code ? code.textContent || "" : element.textContent || "";
+        return `
+\`\`\`
+${text.replace(/\n+$/g, "")}
+\`\`\`
+`;
+      }
+      const inner = serializeEditableChildren(element);
+      if (!inner && !["span", "mark"].includes(tag)) {
+        return "";
+      }
+      if (tag === "strong" || tag === "b") {
+        return wrapInlineMarkdown(inner, "**");
+      }
+      if (tag === "em" || tag === "i") {
+        return wrapInlineMarkdown(inner, "*");
+      }
+      if (tag === "u") {
+        return `<u>${inner}</u>`;
+      }
+      if (tag === "code") {
+        return inlineCodeMarkdown(element.textContent || inner);
+      }
+      if (tag === "mark") {
+        const background = normalizeCssColor(element.style.backgroundColor);
+        return background ? `<mark style="background-color: ${background};">${inner}</mark>` : `==${inner}==`;
+      }
+      if (tag === "span") {
+        const styleText = serializeInlineStyle(element);
+        return styleText ? `<span style="${styleText}">${inner}</span>` : inner;
+      }
+      if (tag === "kbd" || tag === "sup" || tag === "sub" || tag === "small") {
+        return `<${tag}>${inner}</${tag}>`;
+      }
+      if (tag === "div" || tag === "p") {
+        return `${inner}
+`;
+      }
+      if (tag === "li") {
+        return inner;
+      }
+      return inner;
+    }
+    function wrapInlineMarkdown(text, marker) {
+      const value = String(text || "");
+      return value.trim() ? `${marker}${value}${marker}` : value;
+    }
+    function inlineCodeMarkdown(text) {
+      const value = String(text || "");
+      const longest = Math.max(0, ...Array.from(value.matchAll(/`+/g)).map((match) => match[0].length));
+      const fence = "`".repeat(longest + 1 || 1);
+      return `${fence}${value}${fence}`;
+    }
+    function serializeInlineStyle(element) {
+      const styles = [];
+      const color = normalizeCssColor(element.style.color);
+      const background = normalizeCssColor(element.style.backgroundColor);
+      const fontSize = isSafeCssSize(element.style.fontSize) ? element.style.fontSize : "";
+      const fontFamily = /monospace/i.test(element.style.fontFamily || "") ? "monospace" : "";
+      if (color) {
+        styles.push(`color: ${color}`);
+      }
+      if (background) {
+        styles.push(`background-color: ${background}`);
+      }
+      if (fontSize) {
+        styles.push(`font-size: ${fontSize}`);
+      }
+      if (fontFamily) {
+        styles.push(`font-family: ${fontFamily}`);
+      }
+      return styles.join("; ");
+    }
+    function normalizeCssColor(value) {
+      const text = String(value || "").trim();
+      if (isCssColor(text)) {
+        return text;
+      }
+      const rgb = text.match(/^rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
+      if (!rgb) {
+        return "";
+      }
+      const toHex = (part) => clamp(Math.round(Number(part)), 0, 255).toString(16).padStart(2, "0");
+      return `#${toHex(rgb[1])}${toHex(rgb[2])}${toHex(rgb[3])}`;
+    }
+    function isSafeCssSize(value) {
+      return /^(0?\.?\d+|\d+(?:\.\d+)?)(em|rem|px|%)$/i.test(String(value || "").trim());
+    }
     function normalizeMarkdownBlock(value) {
       let text = String(value || "").trim();
-      text = text.replace(/^\s*[-*+]\s+\[[ xX]\]\s+/gm, "").replace(/^#{1,6}\s+/gm, "").replace(/^\s{0,3}>\s?/gm, "").replace(/^\s*[-*+]\s+/gm, "").replace(/^\s*\d+[.)]\s+/gm, "").replace(/\*\*([^*]+)\*\*/g, "$1").replace(/\*([^*]+)\*/g, "$1").replace(/__([^_]+)__/g, "$1").replace(/_([^_]+)_/g, "$1").replace(/`([^`]+)`/g, "$1").replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, "$2").replace(/\[\[([^\]]+)\]\]/g, "$1").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
+      text = text.replace(/<br\s*\/?>/gi, "\n").replace(/<\/(p|div|li|h[1-6])>/gi, "\n").replace(/<pre[^>]*><code[^>]*>([\s\S]*?)<\/code><\/pre>/gi, "$1").replace(/<\/?(span|u|mark|kbd|sup|sub|small|strong|b|em|i|code)[^>]*>/gi, "").replace(/<[^>]+>/g, "");
+      text = text.replace(/^\s*[-*+]\s+\[[ xX]\]\s+/gm, "").replace(/^#{1,6}\s+/gm, "").replace(/^\s{0,3}>\s?/gm, "").replace(/^\s*[-*+]\s+/gm, "").replace(/^\s*\d+[.)]\s+/gm, "").replace(/\*\*([^*]+)\*\*/g, "$1").replace(/\*([^*]+)\*/g, "$1").replace(/__([^_]+)__/g, "$1").replace(/_([^_]+)_/g, "$1").replace(/==([^=]+)==/g, "$1").replace(/`([^`]+)`/g, "$1").replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, "$2").replace(/\[\[([^\]]+)\]\]/g, "$1").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
       return normalizeRenderedText(text);
     }
     function collectMarkdownBlocks(source) {
@@ -4235,8 +5448,8 @@ var require_notedraw_plugin = __commonJS({
       document.querySelectorAll(".notedraw-header-button, .notedraw-webview-button").forEach((button) => button.remove());
     }
     function cleanupDrawingUi(preview) {
-      preview.querySelectorAll(".notedraw-button, .notedraw-fallback-button, .notedraw-webview-button, .notedraw-toolbar, .notedraw-palette-panel, .notedraw-text-panel, .notedraw-embed-layer, .notedraw-file-input, .notedraw-canvas").forEach((element) => element.remove());
-      preview.classList.remove("notedraw-shell", "is-drawing-active", "is-drawing-hidden", "is-select-mode", "is-palette-open", "is-text-panel-open", "is-watercolor-mode", "is-selecting-strokes", "is-resizing-selection", "is-notedraw-webview-shell");
+      preview.querySelectorAll(".notedraw-button, .notedraw-fallback-button, .notedraw-webview-button, .notedraw-toolbar, .notedraw-palette-panel, .notedraw-text-panel, .notedraw-format-toolbar, .notedraw-embed-layer, .notedraw-file-input, .notedraw-canvas").forEach((element) => element.remove());
+      preview.classList.remove("notedraw-shell", "is-drawing-active", "is-drawing-hidden", "is-select-mode", "is-palette-open", "is-text-panel-open", "is-watercolor-mode", "is-selecting-strokes", "is-resizing-selection", "is-native-text-editing", "is-notedraw-webview-shell");
     }
     function isWebviewSyncMutation(mutation) {
       if (!mutation) {
@@ -5283,7 +6496,7 @@ var require_notedraw_plugin = __commonJS({
     }
     function formatReplacementBlock(originalBlock, editedText) {
       const original = String(originalBlock || "");
-      const edited = normalizeRenderedText(editedText);
+      const edited = normalizeEditableSourceText(editedText);
       const firstLine = original.split(/\r?\n/)[0] || "";
       const heading = firstLine.match(/^(#{1,6}\s+)/);
       if (heading) {
