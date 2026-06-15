@@ -2,7 +2,7 @@
 
 NoteDraw is a plugin for editing rendered note text and drawing directly on notes.
 
-It is built as a note-surface layer: the same drawing and text-edit logic can be reused on Obsidian reading view, source view, and future Obsidian web surfaces.
+It is built as a surface layer: the same drawing and text-edit logic works on Obsidian reading view, source view, embedded note previews, and supported webview surfaces.
 
 ## Features
 
@@ -26,6 +26,8 @@ It is built as a note-surface layer: the same drawing and text-edit logic can be
 - Drawing data stored outside Markdown so notes stay clean.
 - Public API for scripts, other plugins, and AI agents.
 - Drawings made inside embedded note previews are stored against the embedded note path, so opening that note shows the same layer.
+- Webview surfaces get independent drawing files, so annotations do not bleed between pages.
+- Imported images, videos, files, Markdown, and HTML can be placed as floating NoteDraw elements.
 
 ## Storage
 

@@ -6,6 +6,11 @@
   position: relative;
 }
 
+.notedraw-shell.is-notedraw-webview-shell {
+  position: relative;
+  min-height: 180px;
+}
+
 .notedraw-header-button.is-active {
   color: var(--interactive-accent);
   background: var(--background-modifier-hover);
@@ -22,6 +27,23 @@
   right: 12px;
 }
 
+.notedraw-webview-button {
+  z-index: 1000;
+  background: color-mix(in srgb, var(--background-primary) 86%, transparent);
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.14);
+}
+
+.notedraw-webview-inline-button {
+  flex: 0 0 auto;
+  margin-inline-start: 2px;
+}
+
+.notedraw-webview-inline-button svg,
+.notedraw-webview-inline-button .svg-icon {
+  width: 18px;
+  height: 18px;
+}
+
 .notedraw-canvas {
   position: absolute;
   z-index: 60;
@@ -34,6 +56,114 @@
   pointer-events: none;
   touch-action: none;
   user-select: none;
+}
+
+.notedraw-embed-layer {
+  position: absolute;
+  z-index: 55;
+  top: 0;
+  left: 0;
+  right: auto;
+  bottom: auto;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  user-select: none;
+}
+
+.notedraw-shell.is-drawing-hidden .notedraw-embed-layer {
+  opacity: 0;
+}
+
+.notedraw-embed {
+  position: absolute;
+  box-sizing: border-box;
+  overflow: hidden;
+  pointer-events: auto;
+  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 82%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--background-primary) 92%, transparent);
+  box-shadow: 0 2px 9px rgba(0, 0, 0, 0.12);
+}
+
+.notedraw-embed.is-selected {
+  border-color: color-mix(in srgb, var(--color-yellow) 72%, var(--interactive-accent));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--color-yellow) 55%, transparent),
+    0 2px 9px rgba(0, 0, 0, 0.16);
+}
+
+.notedraw-embed img,
+.notedraw-embed video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+
+.notedraw-embed.is-rich-text {
+  padding: 10px 12px;
+  overflow: hidden;
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+  line-height: 1.35;
+}
+
+.notedraw-embed.is-rich-text > *:first-child {
+  margin-top: 0;
+}
+
+.notedraw-embed.is-rich-text > *:last-child {
+  margin-bottom: 0;
+}
+
+.notedraw-file-card {
+  height: 100%;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 9px;
+  align-items: center;
+  padding: 10px;
+  box-sizing: border-box;
+}
+
+.notedraw-file-icon {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  color: var(--text-muted);
+  background: var(--background-secondary);
+}
+
+.notedraw-file-body {
+  min-width: 0;
+}
+
+.notedraw-file-name {
+  overflow: hidden;
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notedraw-file-meta {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.notedraw-file-input {
+  position: fixed;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .notedraw-shell.is-drawing-active .notedraw-canvas {
@@ -69,24 +199,22 @@
 }
 
 .notedraw-floating-text-input {
-  position: fixed;
-  z-index: 1003;
-  min-width: 64px;
+  position: absolute;
+  z-index: 90;
+  min-width: 120px;
   max-width: min(520px, calc(100vw - 48px));
-  min-height: 26px;
-  padding: 0 2px 2px;
+  min-height: 32px;
+  padding: 3px 5px;
   box-sizing: border-box;
-  border: 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--interactive-accent) 72%, transparent);
-  border-radius: 0;
+  border: 1px dashed var(--interactive-accent);
+  border-radius: 4px;
   outline: none;
   color: var(--text-normal);
-  background: transparent;
-  box-shadow: none;
+  background: color-mix(in srgb, var(--background-primary) 84%, transparent);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
   resize: none;
   overflow: hidden;
   line-height: 1.25;
-  caret-color: var(--interactive-accent);
 }
 
 .notedraw-saving {
@@ -286,13 +414,8 @@
   border-color: color-mix(in srgb, var(--interactive-accent) 35%, var(--background-modifier-border));
 }
 
-.notedraw-shell.is-notedraw-source-shell .notedraw-text-panel,
-.notedraw-shell.is-notedraw-source-shell.is-drawing-active.is-text-panel-open .notedraw-text-panel {
+.notedraw-shell.is-notedraw-source-shell .notedraw-text-panel {
   display: none;
-}
-
-.notedraw-canvas.notedraw-canvas-pass-through {
-  pointer-events: none;
 }
 
 .notedraw-palette-row {
@@ -308,8 +431,8 @@
 
 .notedraw-color-grid {
   display: grid;
-  grid-template-columns: repeat(6, 24px);
-  gap: 5px;
+  grid-template-columns: repeat(5, 24px);
+  gap: 6px;
   align-items: center;
 }
 
