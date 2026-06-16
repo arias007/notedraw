@@ -329,6 +329,10 @@
   cursor: crosshair;
 }
 
+.notedraw-shell.is-edit-md-mode .notedraw-canvas {
+  cursor: text;
+}
+
 .notedraw-shell.is-selecting-strokes .notedraw-canvas {
   cursor: cell;
 }

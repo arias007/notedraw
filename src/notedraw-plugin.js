@@ -37,6 +37,7 @@ var MAX_BRUSH_WIDTH = 32;
 var DEFAULT_PEN_OPACITY = 1;
 var TOOL_DRAW = "draw";
 var TOOL_SELECT = "select";
+var TOOL_EDIT_MD = "edit-md";
 var TOOL_TEXT = "text";
 var TOOL_EMBED = "embed";
 var BRUSH_PEN = "pen";
@@ -85,6 +86,7 @@ var I18N = {
     editTextDrawHidden: "Edit text / draw (drawings hidden)",
     editWebviewDraw: "Edit webview / draw",
     selectDrawings: "Select drawings",
+    editMarkdownTool: "Edit MD",
     pen: "Pen",
     watercolorBrush: "Watercolor brush",
     floatingText: "Floating text",
@@ -178,6 +180,7 @@ var I18N = {
     editTextDrawHidden: "编辑文字 / 涂鸦（涂鸦已隐藏）",
     editWebviewDraw: "编辑网页 / 涂鸦",
     selectDrawings: "选择元素",
+    editMarkdownTool: "编辑 MD",
     pen: "笔",
     watercolorBrush: "水彩笔",
     floatingText: "悬浮文字",
@@ -271,6 +274,7 @@ var I18N = {
     editTextDrawHidden: "編輯文字 / 塗鴉（塗鴉已隱藏）",
     editWebviewDraw: "編輯網頁 / 塗鴉",
     selectDrawings: "選擇元素",
+    editMarkdownTool: "編輯 MD",
     pen: "筆",
     watercolorBrush: "水彩筆",
     floatingText: "浮動文字",
@@ -364,6 +368,7 @@ var I18N = {
     editTextDrawHidden: "تېكىست تەھرىرلەش / سىزىش (سىزىش يوشۇرۇلغان)",
     editWebviewDraw: "تور بەتنى تەھرىرلەش / سىزىش",
     selectDrawings: "ئېلېمېنت تاللاش",
+    editMarkdownTool: "MD تەھرىرلەش",
     pen: "قەلەم",
     watercolorBrush: "سۇ بوياق قەلەم",
     floatingText: "لەيلەپ تۇرغان تېكىست",
@@ -457,6 +462,7 @@ var I18N = {
     editTextDrawHidden: "Редактировать текст / рисовать (рисунки скрыты)",
     editWebviewDraw: "Редактировать webview / рисовать",
     selectDrawings: "Выбрать элементы",
+    editMarkdownTool: "Редактировать MD",
     pen: "Перо",
     watercolorBrush: "Акварельная кисть",
     floatingText: "Плавающий текст",
@@ -552,6 +558,7 @@ Object.assign(I18N, {
     editTextDrawHidden: "تحرير النص / الرسم (الرسومات مخفية)",
     editWebviewDraw: "تحرير عرض الويب / الرسم",
     selectDrawings: "تحديد العناصر",
+    editMarkdownTool: "تحرير MD",
     pen: "قلم",
     watercolorBrush: "فرشاة مائية",
     floatingText: "نص عائم",
@@ -592,6 +599,7 @@ Object.assign(I18N, {
     editTextDrawHidden: "Editar texto / dibujar (dibujos ocultos)",
     editWebviewDraw: "Editar webview / dibujar",
     selectDrawings: "Seleccionar elementos",
+    editMarkdownTool: "Editar MD",
     pen: "Pluma",
     watercolorBrush: "Pincel acuarela",
     floatingText: "Texto flotante",
@@ -629,6 +637,7 @@ Object.assign(I18N, {
     editTextDrawHidden: "Modifier le texte / dessiner (dessins masqués)",
     editWebviewDraw: "Modifier la webview / dessiner",
     selectDrawings: "Sélectionner les éléments",
+    editMarkdownTool: "Modifier MD",
     pen: "Stylo",
     watercolorBrush: "Pinceau aquarelle",
     floatingText: "Texte flottant",
@@ -666,6 +675,7 @@ Object.assign(I18N, {
     editTextDrawHidden: "Text bearbeiten / zeichnen (Zeichnungen ausgeblendet)",
     editWebviewDraw: "Webview bearbeiten / zeichnen",
     selectDrawings: "Elemente auswählen",
+    editMarkdownTool: "MD bearbeiten",
     pen: "Stift",
     watercolorBrush: "Aquarellpinsel",
     floatingText: "Schwebender Text",
@@ -703,6 +713,7 @@ Object.assign(I18N, {
     editTextDrawHidden: "文字編集 / 描画（描画は非表示）",
     editWebviewDraw: "webview 編集 / 描画",
     selectDrawings: "要素を選択",
+    editMarkdownTool: "MD 編集",
     pen: "ペン",
     watercolorBrush: "水彩ブラシ",
     floatingText: "フローティング文字",
@@ -740,6 +751,7 @@ Object.assign(I18N, {
     editTextDrawHidden: "텍스트 편집 / 그리기(그림 숨김)",
     editWebviewDraw: "webview 편집 / 그리기",
     selectDrawings: "요소 선택",
+    editMarkdownTool: "MD 편집",
     pen: "펜",
     watercolorBrush: "수채화 브러시",
     floatingText: "플로팅 텍스트",
@@ -777,6 +789,7 @@ Object.assign(I18N, {
     editTextDrawHidden: "Metni düzenle / çiz (çizimler gizli)",
     editWebviewDraw: "Webview düzenle / çiz",
     selectDrawings: "Ögeleri seç",
+    editMarkdownTool: "MD düzenle",
     pen: "Kalem",
     watercolorBrush: "Sulu boya fırçası",
     floatingText: "Yüzen metin",
@@ -1050,7 +1063,7 @@ var NoteDrawPlugin = class extends Plugin {
   }
   createPublicApi() {
     return {
-      version: "3.1.19",
+      version: "3.1.20",
       getActiveController: () => this.getActiveController(),
       readDrawings: async (file) => this.readDrawings(file),
       writeDrawings: async (file, data) => this.writeDrawings(file, normalizeDrawingData(data, file)),
@@ -1965,6 +1978,11 @@ var PreviewDrawingController = class {
     });
     setIcon(this.selectButton, "mouse-pointer-2");
     this.selectButton.addEventListener("click", () => this.toggleSelectMode());
+    this.editMarkdownButton = this.toolbar.createEl("button", {
+      attr: { type: "button", title: this.plugin.t("editMarkdownTool") }
+    });
+    setIcon(this.editMarkdownButton, "file-pen-line");
+    this.editMarkdownButton.addEventListener("click", () => this.setEditMarkdownMode());
     this.penButton = this.toolbar.createEl("button", {
       attr: { type: "button", title: this.plugin.t("pen") }
     });
@@ -2011,7 +2029,7 @@ var PreviewDrawingController = class {
     this.paletteButton.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      if (this.toolMode === TOOL_SELECT) {
+      if (this.toolMode === TOOL_SELECT || this.toolMode === TOOL_EDIT_MD) {
         this.setPaletteOpen(false);
         return;
       }
@@ -2138,6 +2156,7 @@ var PreviewDrawingController = class {
   refreshLocalizedLabels() {
     this.plugin.setAccessibleLabel(this.button, this.surfaceType === "webview" ? "editWebviewDraw" : this.drawingsVisible ? "editTextDraw" : "editTextDrawHidden");
     this.plugin.setAccessibleLabel(this.selectButton, "selectDrawings");
+    this.plugin.setAccessibleLabel(this.editMarkdownButton, "editMarkdownTool");
     this.plugin.setAccessibleLabel(this.penButton, "pen");
     this.plugin.setAccessibleLabel(this.watercolorButton, "watercolorBrush");
     this.plugin.setAccessibleLabel(this.textButton, "floatingText");
@@ -2288,6 +2307,7 @@ var PreviewDrawingController = class {
     this.previewEl.removeClass("is-text-panel-open");
     this.previewEl.removeClass("is-selection-menu-open");
     this.previewEl.removeClass("is-watercolor-mode");
+    this.previewEl.removeClass("is-edit-md-mode");
     this.previewEl.removeClass("is-notedraw-source-shell");
     this.previewEl.removeClass("is-notedraw-webview-shell");
     this.previewEl.removeClass("is-resizing-selection");
@@ -2442,6 +2462,20 @@ var PreviewDrawingController = class {
     this.updateToolButtons();
     this.render();
   }
+  setEditMarkdownMode() {
+    this.toolMode = TOOL_EDIT_MD;
+    this.previewEl.removeClass("is-select-mode");
+    this.hideSelectionMenu();
+    this.clearSelectedStrokes();
+    this.setPaletteOpen(false);
+    this.setTextPanelOpen(false);
+    this.endFloatingTextInput(false);
+    this.endTextEdit();
+    this.cancelCurrentStroke();
+    this.cancelSelectionDrag(true);
+    this.updateToolButtons();
+    this.render();
+  }
   currentBrushSettings() {
     if (!this.brushSettings[this.brushMode]) {
       this.brushMode = BRUSH_PEN;
@@ -2473,11 +2507,13 @@ var PreviewDrawingController = class {
     const watercolorActive = this.toolMode === TOOL_DRAW && this.brushMode === BRUSH_WATERCOLOR;
     this.applyBrushButtonState(this.penButton, this.brushSettings?.[BRUSH_PEN], penActive);
     this.applyBrushButtonState(this.watercolorButton, this.brushSettings?.[BRUSH_WATERCOLOR], watercolorActive);
+    this.editMarkdownButton?.classList.toggle("is-active", this.toolMode === TOOL_EDIT_MD);
     this.textButton?.classList.toggle("is-active", this.toolMode === TOOL_TEXT || this.textPanelOpen);
     this.textButton?.toggleAttribute("hidden", this.surfaceType === "source");
     this.selectButton?.classList.toggle("is-active", this.toolMode === TOOL_SELECT);
-    this.paletteButton?.toggleAttribute("disabled", this.toolMode === TOOL_SELECT);
+    this.paletteButton?.toggleAttribute("disabled", this.toolMode === TOOL_SELECT || this.toolMode === TOOL_EDIT_MD);
     this.previewEl.toggleClass("is-watercolor-mode", this.toolMode === TOOL_DRAW && this.brushMode === BRUSH_WATERCOLOR);
+    this.previewEl.toggleClass("is-edit-md-mode", this.toolMode === TOOL_EDIT_MD);
   }
   createTextPanel() {
     const groups = [
@@ -3068,7 +3104,7 @@ var PreviewDrawingController = class {
     this.render();
   }
   togglePalettePanel() {
-    if (this.toolMode === TOOL_SELECT) {
+    if (this.toolMode === TOOL_SELECT || this.toolMode === TOOL_EDIT_MD) {
       this.setPaletteOpen(false);
       return;
     }
@@ -3182,13 +3218,32 @@ var PreviewDrawingController = class {
       }
     }
     const target = this.elementBelowCanvas(event.clientX, event.clientY);
-    const editable = this.allowTextEdit ? findEditableTarget(target, this.previewEl) : null;
-    const sourceTextTarget = this.surfaceType === "source" && this.toolMode !== TOOL_SELECT && isSourceTextTarget(target, this.previewEl);
+    const canEditMarkdownText = this.toolMode === TOOL_EDIT_MD;
+    const editable = this.allowTextEdit && canEditMarkdownText ? findEditableTarget(target, this.previewEl) : null;
+    const sourceTextTarget = this.surfaceType === "source" && canEditMarkdownText && isSourceTextTarget(target, this.previewEl);
     const point = this.eventToPoint(event);
     const hitStrokeIndex = this.findStrokeAt(point);
     const resizeHandle = this.findSelectionHandleAt(point);
     if (resizeHandle) {
       this.startSelectedStrokeResize(event, point, resizeHandle);
+      return;
+    }
+    if (canEditMarkdownText) {
+      this.currentStroke = null;
+      this.pointerDown = false;
+      this.pointerStartEditable = null;
+      this.clearSelectedStrokes();
+      if (editable) {
+        this.startTextEdit(editable, { x: event.clientX, y: event.clientY });
+      } else if (sourceTextTarget) {
+        this.endTextEdit();
+        this.focusSourceEditorAt({ x: event.clientX, y: event.clientY });
+      } else {
+        this.endTextEdit();
+        this.render();
+      }
+      event.preventDefault();
+      event.stopPropagation();
       return;
     }
     if (this.toolMode === TOOL_SELECT && hitStrokeIndex >= 0) {
@@ -3209,16 +3264,6 @@ var PreviewDrawingController = class {
         this.setSelectedStrokes(hitStrokeIndex);
       }
       this.startSelectedStrokeDrag(event, point, hitStrokeIndex);
-      return;
-    }
-    if (editable && this.toolMode !== TOOL_SELECT && this.toolMode !== TOOL_TEXT) {
-      this.currentStroke = null;
-      this.pointerDown = false;
-      this.pointerStartEditable = null;
-      this.clearSelectedStrokes();
-      this.startTextEdit(editable, { x: event.clientX, y: event.clientY });
-      event.preventDefault();
-      event.stopPropagation();
       return;
     }
     if (this.getSelectedStrokeIndexes().length && !this.selectedStrokeFrameContains(point) && hitStrokeIndex < 0) {
@@ -3398,6 +3443,7 @@ var PreviewDrawingController = class {
     this.pointerDown = false;
     const movedDistance = this.pointerStartClient ? pointerDistance(this.pointerStartClient, { x: event.clientX, y: event.clientY }) : 0;
     const editable = this.pointerStartEditable;
+    const canEditMarkdownText = this.toolMode === TOOL_EDIT_MD;
     if (this.toolMode === TOOL_TEXT && !this.currentStroke) {
       const point = this.pointerStartPoint || this.eventToPoint(event);
       if (movedDistance <= SELECT_TAP_DISTANCE && !this.didMove) {
@@ -3414,9 +3460,9 @@ var PreviewDrawingController = class {
     if (!this.didMove || movedDistance <= SELECT_TAP_DISTANCE || this.currentStroke.points.length < 2) {
       const point = this.pointerStartPoint || this.eventToPoint(event);
       this.currentStroke = null;
-      if (editable) {
+      if (editable && canEditMarkdownText) {
         this.startTextEdit(editable, this.pointerStartClient || { x: event.clientX, y: event.clientY });
-      } else if (this.pointerStartSourceText) {
+      } else if (this.pointerStartSourceText && canEditMarkdownText) {
         this.focusSourceEditorAt(this.pointerStartClient || { x: event.clientX, y: event.clientY });
         this.clearSelectedStrokes();
       } else if (this.toolMode === TOOL_TEXT) {
@@ -6010,7 +6056,7 @@ function cleanupAllDrawingHeaderButtons() {
 }
 function cleanupDrawingUi(preview) {
   preview.querySelectorAll(".notedraw-button, .notedraw-fallback-button, .notedraw-webview-button, .notedraw-toolbar, .notedraw-palette-panel, .notedraw-text-panel, .notedraw-selection-menu, .notedraw-format-toolbar, .notedraw-embed-layer, .notedraw-file-input, .notedraw-canvas").forEach((element) => element.remove());
-  preview.classList.remove("notedraw-shell", "is-drawing-active", "is-drawing-hidden", "is-select-mode", "is-palette-open", "is-text-panel-open", "is-selection-menu-open", "is-watercolor-mode", "is-selecting-strokes", "is-resizing-selection", "is-native-text-editing", "is-notedraw-webview-shell");
+  preview.classList.remove("notedraw-shell", "is-drawing-active", "is-drawing-hidden", "is-select-mode", "is-palette-open", "is-text-panel-open", "is-selection-menu-open", "is-watercolor-mode", "is-edit-md-mode", "is-selecting-strokes", "is-resizing-selection", "is-native-text-editing", "is-notedraw-webview-shell");
 }
 function isWebviewSyncMutation(mutation) {
   if (!mutation) {
