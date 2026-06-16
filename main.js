@@ -1072,7 +1072,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
   }
   createPublicApi() {
     return {
-      version: "3.1.18",
+      version: "3.1.19",
       getActiveController: () => this.getActiveController(),
       readDrawings: async (file) => this.readDrawings(file),
       writeDrawings: async (file, data) => this.writeDrawings(file, normalizeDrawingData(data, file)),
@@ -5092,7 +5092,6 @@ var NoteDrawSettingTab = class extends import_obsidian.PluginSettingTab {
     super(app, plugin);
     this.plugin = plugin;
   }
-  // eslint-disable-next-line deprecation/deprecation -- Imperative settings rendering keeps the shipped settings page stable on the target Obsidian versions.
   display() {
     const { containerEl } = this;
     containerEl.empty();

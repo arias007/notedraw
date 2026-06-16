@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any, no-empty, no-unused-expressions -- This file is the Obsidian runtime entrypoint for a dynamic JS bundle; the review warnings are expected from Obsidian's typed-unaware APIs and DOM guards, so runtime verification and release checks cover the real risks instead. */
 import {
   MarkdownRenderer,
   MarkdownView,
@@ -1051,7 +1050,7 @@ var NoteDrawPlugin = class extends Plugin {
   }
   createPublicApi() {
     return {
-      version: "3.1.18",
+      version: "3.1.19",
       getActiveController: () => this.getActiveController(),
       readDrawings: async (file) => this.readDrawings(file),
       writeDrawings: async (file, data) => this.writeDrawings(file, normalizeDrawingData(data, file)),
@@ -5079,7 +5078,6 @@ var NoteDrawSettingTab = class extends PluginSettingTab {
     super(app, plugin);
     this.plugin = plugin;
   }
-  // eslint-disable-next-line deprecation/deprecation -- Imperative settings rendering keeps the shipped settings page stable on the target Obsidian versions.
   display() {
     const { containerEl } = this;
     containerEl.empty();
@@ -5099,7 +5097,6 @@ var NoteDrawSettingTab = class extends PluginSettingTab {
       component.setValue(settings.language).onChange(async (value) => {
         this.plugin.noteDrawSettings.language = value;
         await this.plugin.saveSettings();
-        // eslint-disable-next-line deprecation/deprecation -- Re-render the existing imperative settings page after language changes.
         this.display();
       });
     });
