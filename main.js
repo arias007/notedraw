@@ -1102,7 +1102,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
   }
   createPublicApi() {
     return {
-      version: "3.1.22",
+      version: "3.1.23",
       getActiveController: () => this.getActiveController(),
       readDrawings: async (file) => this.readDrawings(file),
       writeDrawings: async (file, data) => this.writeDrawings(file, normalizeDrawingData(data, file)),
@@ -5174,70 +5174,108 @@ var NoteDrawSettingTab = class extends import_obsidian.PluginSettingTab {
     super(app, plugin);
     this.plugin = plugin;
   }
-  display() {
-    const { containerEl } = this;
-    containerEl.empty();
-    containerEl.createEl("h2", { text: "NoteDraw" });
-    this.renderSettings();
-    const codesContainer = containerEl.createDiv({ cls: "notedraw-settings-codes" });
-    this.renderExtraCodes(codesContainer);
-  }
-  renderSettings() {
-    const { containerEl } = this;
+  getSettingDefinitions() {
     const settings = sanitizeSettings(this.plugin.noteDrawSettings);
-    this.renderSectionTitle("settingsSectionInterface");
-    new import_obsidian.Setting(containerEl).setName(this.plugin.t("settingsLanguage")).setDesc(this.plugin.t("settingsLanguageDesc")).addDropdown((component) => {
-      for (const option of LANGUAGE_OPTIONS) {
-        component.addOption(option.value, option.value === LANGUAGE_AUTO ? `${this.plugin.t("languageAuto")} (${languageNativeName(detectNoteDrawLanguage(this.plugin.app))})` : option.label);
-      }
-      component.setValue(settings.language).onChange(async (value) => {
-        this.plugin.noteDrawSettings.language = value;
-        await this.plugin.saveSettings();
-        this.display();
-      });
-    });
-    this.renderSectionTitle("settingsSectionPen");
-    new import_obsidian.Setting(containerEl).setName(this.plugin.t("defaultPenColor")).setDesc(this.plugin.t("defaultPenColorDesc")).addColorPicker((component) => component.setValue(settings.defaultPenColor).onChange(async (value) => {
-      this.plugin.noteDrawSettings.defaultPenColor = value;
-      await this.plugin.saveSettings();
-    }));
-    new import_obsidian.Setting(containerEl).setName(this.plugin.t("defaultPenWidth")).setDesc(this.plugin.t("defaultPenWidthDesc")).addSlider((component) => component.setLimits(MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH, 0.5).setValue(settings.defaultPenWidth).onChange(async (value) => {
-      this.plugin.noteDrawSettings.defaultPenWidth = value;
-      await this.plugin.saveSettings();
-    }));
-    new import_obsidian.Setting(containerEl).setName(this.plugin.t("defaultPenOpacity")).setDesc(this.plugin.t("defaultPenOpacityDesc")).addSlider((component) => component.setLimits(0, 1, 0.02).setValue(settings.defaultPenOpacity).onChange(async (value) => {
-      this.plugin.noteDrawSettings.defaultPenOpacity = value;
-      await this.plugin.saveSettings();
-    }));
-    this.renderSectionTitle("settingsSectionWatercolor");
-    new import_obsidian.Setting(containerEl).setName(this.plugin.t("defaultWatercolorColor")).setDesc(this.plugin.t("defaultWatercolorColorDesc")).addColorPicker((component) => component.setValue(settings.defaultWatercolorColor).onChange(async (value) => {
-      this.plugin.noteDrawSettings.defaultWatercolorColor = value;
-      await this.plugin.saveSettings();
-    }));
-    new import_obsidian.Setting(containerEl).setName(this.plugin.t("defaultWatercolorWidth")).setDesc(this.plugin.t("defaultWatercolorWidthDesc")).addSlider((component) => component.setLimits(MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH, 0.5).setValue(settings.defaultWatercolorWidth).onChange(async (value) => {
-      this.plugin.noteDrawSettings.defaultWatercolorWidth = value;
-      await this.plugin.saveSettings();
-    }));
-    new import_obsidian.Setting(containerEl).setName(this.plugin.t("defaultWatercolorOpacity")).setDesc(this.plugin.t("defaultWatercolorOpacityDesc")).addSlider((component) => component.setLimits(0, 1, 0.02).setValue(settings.defaultWatercolorOpacity).onChange(async (value) => {
-      this.plugin.noteDrawSettings.defaultWatercolorOpacity = value;
-      await this.plugin.saveSettings();
-    }));
-    this.renderSectionTitle("settingsSectionLayout");
-    new import_obsidian.Setting(containerEl).setName(this.plugin.t("toolbarTopOffset")).setDesc(this.plugin.t("toolbarTopOffsetDesc")).addSlider((component) => component.setLimits(0, 48, 1).setValue(settings.toolbarTopOffset).onChange(async (value) => {
-      this.plugin.noteDrawSettings.toolbarTopOffset = value;
-      await this.plugin.saveSettings();
-    }));
-    this.renderSectionTitle("settingsSectionDiagnostics");
-    new import_obsidian.Setting(containerEl).setName(this.plugin.t("debugLog")).setDesc(this.plugin.t("debugLogDesc")).addToggle((component) => component.setValue(settings.enableDebugLog).onChange(async (value) => {
-      this.plugin.noteDrawSettings.enableDebugLog = value;
-      await this.plugin.saveSettings();
-    }));
+    return [
+      this.createSectionDefinition("settingsSectionInterface"),
+      this.createSettingDefinition("settingsLanguage", "settingsLanguageDesc", (setting) => {
+        setting.addDropdown((component) => {
+          for (const option of LANGUAGE_OPTIONS) {
+            component.addOption(option.value, option.value === LANGUAGE_AUTO ? `${this.plugin.t("languageAuto")} (${languageNativeName(detectNoteDrawLanguage(this.plugin.app))})` : option.label);
+          }
+          component.setValue(settings.language).onChange(async (value) => {
+            this.plugin.noteDrawSettings.language = value;
+            await this.plugin.saveSettings();
+            this.update();
+          });
+        });
+      }),
+      this.createSectionDefinition("settingsSectionPen"),
+      this.createSettingDefinition("defaultPenColor", "defaultPenColorDesc", (setting) => {
+        setting.addColorPicker((component) => component.setValue(settings.defaultPenColor).onChange(async (value) => {
+          this.plugin.noteDrawSettings.defaultPenColor = value;
+          await this.plugin.saveSettings();
+        }));
+      }),
+      this.createSettingDefinition("defaultPenWidth", "defaultPenWidthDesc", (setting) => {
+        setting.addSlider((component) => component.setLimits(MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH, 0.5).setValue(settings.defaultPenWidth).onChange(async (value) => {
+          this.plugin.noteDrawSettings.defaultPenWidth = value;
+          await this.plugin.saveSettings();
+        }));
+      }),
+      this.createSettingDefinition("defaultPenOpacity", "defaultPenOpacityDesc", (setting) => {
+        setting.addSlider((component) => component.setLimits(0, 1, 0.02).setValue(settings.defaultPenOpacity).onChange(async (value) => {
+          this.plugin.noteDrawSettings.defaultPenOpacity = value;
+          await this.plugin.saveSettings();
+        }));
+      }),
+      this.createSectionDefinition("settingsSectionWatercolor"),
+      this.createSettingDefinition("defaultWatercolorColor", "defaultWatercolorColorDesc", (setting) => {
+        setting.addColorPicker((component) => component.setValue(settings.defaultWatercolorColor).onChange(async (value) => {
+          this.plugin.noteDrawSettings.defaultWatercolorColor = value;
+          await this.plugin.saveSettings();
+        }));
+      }),
+      this.createSettingDefinition("defaultWatercolorWidth", "defaultWatercolorWidthDesc", (setting) => {
+        setting.addSlider((component) => component.setLimits(MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH, 0.5).setValue(settings.defaultWatercolorWidth).onChange(async (value) => {
+          this.plugin.noteDrawSettings.defaultWatercolorWidth = value;
+          await this.plugin.saveSettings();
+        }));
+      }),
+      this.createSettingDefinition("defaultWatercolorOpacity", "defaultWatercolorOpacityDesc", (setting) => {
+        setting.addSlider((component) => component.setLimits(0, 1, 0.02).setValue(settings.defaultWatercolorOpacity).onChange(async (value) => {
+          this.plugin.noteDrawSettings.defaultWatercolorOpacity = value;
+          await this.plugin.saveSettings();
+        }));
+      }),
+      this.createSectionDefinition("settingsSectionLayout"),
+      this.createSettingDefinition("toolbarTopOffset", "toolbarTopOffsetDesc", (setting) => {
+        setting.addSlider((component) => component.setLimits(0, 48, 1).setValue(settings.toolbarTopOffset).onChange(async (value) => {
+          this.plugin.noteDrawSettings.toolbarTopOffset = value;
+          await this.plugin.saveSettings();
+        }));
+      }),
+      this.createSectionDefinition("settingsSectionDiagnostics"),
+      this.createSettingDefinition("debugLog", "debugLogDesc", (setting) => {
+        setting.addToggle((component) => component.setValue(settings.enableDebugLog).onChange(async (value) => {
+          this.plugin.noteDrawSettings.enableDebugLog = value;
+          await this.plugin.saveSettings();
+        }));
+      }),
+      this.createCodesDefinition()
+    ];
   }
-  renderSectionTitle(key) {
-    this.containerEl.createDiv({
-      cls: "notedraw-settings-section-title",
-      text: this.plugin.t(key)
-    });
+  createSectionDefinition(key) {
+    return {
+      name: this.plugin.t(key),
+      searchable: false,
+      render: (setting) => {
+        setting.settingEl.empty();
+        setting.settingEl.addClass("notedraw-settings-section-title");
+        setting.settingEl.setText(this.plugin.t(key));
+      }
+    };
+  }
+  createSettingDefinition(nameKey, descKey, renderControl) {
+    return {
+      name: this.plugin.t(nameKey),
+      desc: this.plugin.t(descKey),
+      render: (setting) => {
+        setting.setName(this.plugin.t(nameKey)).setDesc(this.plugin.t(descKey));
+        renderControl(setting);
+      }
+    };
+  }
+  createCodesDefinition() {
+    return {
+      name: this.plugin.t("supportTitle"),
+      desc: this.plugin.t("supportSubtitle"),
+      render: (setting) => {
+        setting.settingEl.empty();
+        const codesContainer = setting.settingEl.createDiv({ cls: "notedraw-settings-codes" });
+        void this.renderExtraCodes(codesContainer);
+      }
+    };
   }
   async renderExtraCodes(containerEl) {
     const codeItems = (await Promise.all(
@@ -6942,9 +6980,6 @@ function arrayBufferToDataUrl(buffer, mime) {
 }
 function arrayBufferToBase64(buffer) {
   const bytes = new Uint8Array(buffer);
-  if (typeof Buffer !== "undefined") {
-    return Buffer.from(bytes).toString("base64");
-  }
   const chunkSize = 32768;
   let binary = "";
   for (let index = 0; index < bytes.length; index += chunkSize) {
