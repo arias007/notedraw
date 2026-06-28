@@ -1177,7 +1177,7 @@ var NoteDrawPlugin = class extends Plugin {
   }
   createPublicApi() {
     return {
-      version: "3.1.29",
+      version: "3.1.30",
       getActiveController: () => this.getActiveController(),
       readDrawings: async (file) => this.readDrawings(file),
       writeDrawings: async (file, data) => this.writeDrawings(file, normalizeDrawingData(data, file)),
@@ -1353,10 +1353,10 @@ var NoteDrawPlugin = class extends Plugin {
         controller: null,
         controllers: /* @__PURE__ */ new Set()
       };
-      state.clickHandler = (event) => this.resolveHeaderController(view, state)?.onButtonClick(event);
-      state.pointerDownHandler = (event) => this.resolveHeaderController(view, state)?.onButtonPointerDown(event);
-      state.pointerUpHandler = (event) => this.resolveHeaderController(view, state)?.onButtonPointerUp(event);
-      state.touchEndHandler = (event) => this.resolveHeaderController(view, state)?.onButtonTouchEnd(event);
+      state.clickHandler = (event) => this.resolveHeaderController(view, state, { preferPreviewOnAppleTouch: true })?.onButtonClick(event);
+      state.pointerDownHandler = (event) => this.resolveHeaderController(view, state, { preferPreviewOnAppleTouch: false })?.onButtonPointerDown(event);
+      state.pointerUpHandler = (event) => this.resolveHeaderController(view, state, { preferPreviewOnAppleTouch: false })?.onButtonPointerUp(event);
+      state.touchEndHandler = (event) => this.resolveHeaderController(view, state, { preferPreviewOnAppleTouch: true })?.onButtonTouchEnd(event);
       let button = null;
       if (typeof view?.addAction === "function") {
         button = view.addAction("wand-sparkles", this.t("editTextDraw"), state.clickHandler);
@@ -1454,8 +1454,8 @@ var NoteDrawPlugin = class extends Plugin {
       this.cleanupHeaderButtons(controller.view);
     }
   }
-  resolveHeaderController(view, state) {
-    const controller = this.pickHeaderController(view, state);
+  resolveHeaderController(view, state, options = {}) {
+    const controller = this.pickHeaderController(view, state, null, options);
     if (controller) {
       state.controller = controller;
       state.button._noteDrawController = controller;
@@ -1464,11 +1464,39 @@ var NoteDrawPlugin = class extends Plugin {
     }
     return controller;
   }
-  pickHeaderController(view, state, preferred = null) {
+  pickHeaderController(view, state, preferred = null, options = {}) {
     const controllers = Array.from(state.controllers || []).filter((controller) => controller?.previewEl?.isConnected && controller.view === view && controller.surfaceType !== "webview");
+    if (options.preferPreviewOnAppleTouch && isAppleMobileRuntime()) {
+      const previewController = this.resolveLivePreviewController(view, controllers);
+      if (previewController) {
+        return previewController;
+      }
+    }
     const currentMode = isSourceMode(view) ? "source" : "preview";
     const preferredLive = preferred && controllers.includes(preferred) ? preferred : null;
     return controllers.find((controller) => controller.surfaceType === currentMode) || preferredLive || controllers.find((controller) => controller.active) || controllers[0] || null;
+  }
+  resolveLivePreviewController(view, controllers = []) {
+    const preview = findRootPreviewForView(view);
+    if (!preview || !view?.file) {
+      return null;
+    }
+    const existing = this.controllers.get(preview) || preview._noteDrawController;
+    if (existing?.plugin === this && existing.previewEl?.isConnected && existing.surfaceType === "preview") {
+      return existing;
+    }
+    const registered = controllers.find((controller) => controller.surfaceType === "preview" && controller.previewEl === preview);
+    if (registered) {
+      return registered;
+    }
+    cleanupDrawingUi(preview);
+    const controller = new PreviewDrawingController(this, preview, view, view.file);
+    this.controllers.set(preview, controller);
+    controller.mount().catch((error) => {
+      console.error(`[${PLUGIN_ID}] Failed to mount preview drawing controller`, error);
+    });
+    this.register(() => controller.destroy());
+    return controller;
   }
   cleanupHeaderButtons(view, keepButton = null) {
     view?.containerEl?.querySelectorAll(".notedraw-header-button").forEach((button) => {
@@ -2585,12 +2613,18 @@ var PreviewDrawingController = class {
     const maxTop = Math.max(minTop, window.innerHeight - toolbarHeight - 8);
     const topOffset = sanitizeSettings(this.plugin?.noteDrawSettings || {}).toolbarTopOffset;
     const top = clamp(anchorBottom + topOffset, minTop, maxTop);
-    setNoteDrawCssProps(this.previewEl, {
+    const props = {
       "--notedraw-toolbar-right": `${Math.round(right)}px`,
       "--notedraw-toolbar-top": `${Math.round(top)}px`,
       "--notedraw-palette-top": `${Math.round(top + 42)}px`,
       "--notedraw-text-panel-top": `${Math.round(top + 42)}px`
-    });
+    };
+    setNoteDrawCssProps(this.previewEl, props);
+    if (this.floatingControlsInBody) {
+      for (const element of [this.toolbar, this.palettePanel, this.textPanel, this.selectionMenu, this.formatToolbar]) {
+        setNoteDrawCssProps(element, props);
+      }
+    }
   }
   setBrushMode(mode) {
     if (![BRUSH_PEN, BRUSH_WATERCOLOR].includes(mode)) {
