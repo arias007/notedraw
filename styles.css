@@ -676,16 +676,18 @@
 
 .notedraw-settings-section-title {
   margin: 22px 0 6px;
-  color: var(--text-normal);
-  font-size: var(--font-ui-small);
-  font-weight: 700;
   letter-spacing: 0;
 }
 
+.notedraw-setting-value {
+  min-width: 58px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  text-align: right;
+}
+
 .notedraw-settings-codes {
-  margin-top: 28px;
-  padding-top: 18px;
-  border-top: 1px solid var(--background-modifier-border);
+  width: 100%;
 }
 
 .notedraw-settings-codes-title {
@@ -709,13 +711,13 @@
 }
 
 .notedraw-settings-code {
-  width: 132px;
+  width: 128px;
 }
 
 .notedraw-settings-code-image {
   display: block;
-  width: 132px;
-  height: 132px;
+  width: 128px;
+  height: 128px;
   object-fit: contain;
   border: 1px solid var(--background-modifier-border);
   border-radius: 8px;

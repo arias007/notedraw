@@ -59,6 +59,22 @@ var MAX_PEN_COUNT = 5;
 var MIN_BRUSH_WIDTH = 0.5;
 var MAX_BRUSH_WIDTH = 32;
 var DEFAULT_PEN_OPACITY = 1;
+var MIN_LONG_PRESS_MS = 250;
+var MAX_LONG_PRESS_MS = 1200;
+var MIN_SELECT_TAP_DISTANCE = 3;
+var MAX_SELECT_TAP_DISTANCE = 18;
+var MIN_SELECT_STROKE_PADDING = 2;
+var MAX_SELECT_STROKE_PADDING = 28;
+var MIN_SELECTED_STROKE_ALPHA = 0.12;
+var MAX_SELECTED_STROKE_ALPHA = 1;
+var MIN_DRAWING_INTERPOLATION_STEP_PX = 1;
+var MAX_DRAWING_INTERPOLATION_STEP_PX = 8;
+var MIN_DRAWING_MIN_POINT_DISTANCE_PX = 0.05;
+var MAX_DRAWING_MIN_POINT_DISTANCE_PX = 3;
+var MIN_DRAWING_COMPACT_DISTANCE_PX = 0.1;
+var MAX_DRAWING_COMPACT_DISTANCE_PX = 6;
+var MIN_AUTO_SAVE_DELAY_MS = 120;
+var MAX_AUTO_SAVE_DELAY_MS = 2500;
 var TOOL_DRAW = "draw";
 var TOOL_SELECT = "select";
 var TOOL_EDIT_MD = "edit-md";
@@ -163,8 +179,11 @@ var I18N = {
     settingsSectionInterface: "Interface",
     settingsSectionPen: "Pen",
     settingsSectionWatercolor: "Watercolor",
+    settingsSectionInteraction: "Interaction",
+    settingsSectionPerformance: "Performance",
     settingsSectionLayout: "Layout",
     settingsSectionDiagnostics: "Diagnostics",
+    settingsSectionSupport: "Support",
     settingsLanguage: "Language",
     settingsLanguageDesc: "Plugin UI language. Auto follows Obsidian when possible.",
     languageAuto: "Auto",
@@ -182,6 +201,27 @@ var I18N = {
     defaultWatercolorOpacityDesc: "Initial watercolor opacity.",
     toolbarTopOffset: "Toolbar top offset",
     toolbarTopOffsetDesc: "Extra pixels below the Obsidian header.",
+    longPressMs: "Long press delay",
+    longPressMsDesc: "Delay before long-press actions open secondary controls.",
+    selectTapDistance: "Tap tolerance",
+    selectTapDistanceDesc: "Movement allowed before a tap becomes a drag or stroke.",
+    selectStrokePadding: "Selection hit padding",
+    selectStrokePaddingDesc: "Extra hit area around drawing elements for easier selection.",
+    selectedStrokeAlpha: "Selected element opacity",
+    selectedStrokeAlphaDesc: "Opacity used while selected elements are previewed for editing.",
+    drawingInterpolationStep: "Stroke smoothing",
+    drawingInterpolationStepDesc: "Lower values add more points between samples for smoother lines.",
+    drawingMinPointDistance: "Input sample spacing",
+    drawingMinPointDistanceDesc: "Minimum point distance while drawing. Lower values capture more detail.",
+    drawingCompactDistance: "Save compaction",
+    drawingCompactDistanceDesc: "Point reduction applied during auto-save. Lower values keep more detail.",
+    autoSaveDelayMs: "Auto-save delay",
+    autoSaveDelayMsDesc: "Delay before drawing changes are written to the plugin data folder.",
+    resetBrushDefaults: "Reset brush defaults",
+    resetBrushDefaultsDesc: "Restore pen and watercolor defaults to the bundled values.",
+    resetLayoutDefaults: "Reset layout and interaction",
+    resetLayoutDefaultsDesc: "Restore toolbar, selection, smoothing, and auto-save defaults.",
+    reset: "Reset",
     debugLog: "Debug log",
     debugLogDesc: "Write text-save diagnostics to the plugin folder only while troubleshooting.",
     supportTitle: "Support NoteDraw",
@@ -257,8 +297,11 @@ var I18N = {
     settingsSectionInterface: "\u754C\u9762",
     settingsSectionPen: "\u7B14",
     settingsSectionWatercolor: "\u6C34\u5F69\u7B14",
+    settingsSectionInteraction: "\u4EA4\u4E92",
+    settingsSectionPerformance: "\u6027\u80FD",
     settingsSectionLayout: "\u5E03\u5C40",
     settingsSectionDiagnostics: "\u8BCA\u65AD",
+    settingsSectionSupport: "\u652F\u6301\u4F5C\u8005",
     settingsLanguage: "\u8BED\u8A00",
     settingsLanguageDesc: "\u63D2\u4EF6\u754C\u9762\u8BED\u8A00\u3002\u81EA\u52A8\u6A21\u5F0F\u4F1A\u5C3D\u91CF\u8DDF\u968F Obsidian\u3002",
     languageAuto: "\u81EA\u52A8",
@@ -276,6 +319,27 @@ var I18N = {
     defaultWatercolorOpacityDesc: "\u521D\u59CB\u6C34\u5F69\u900F\u660E\u5EA6\u3002",
     toolbarTopOffset: "\u5DE5\u5177\u680F\u9876\u90E8\u504F\u79FB",
     toolbarTopOffsetDesc: "\u8DDD\u79BB Obsidian \u9876\u90E8\u680F\u7684\u989D\u5916\u50CF\u7D20\u3002",
+    longPressMs: "\u957F\u6309\u5EF6\u8FDF",
+    longPressMsDesc: "\u957F\u6309\u6253\u5F00\u4E8C\u7EA7\u63A7\u5236\u7684\u7B49\u5F85\u65F6\u95F4\u3002",
+    selectTapDistance: "\u70B9\u51FB\u5BB9\u5DEE",
+    selectTapDistanceDesc: "\u79FB\u52A8\u591A\u5C11\u50CF\u7D20\u540E\u4ECE\u70B9\u51FB\u53D8\u4E3A\u62D6\u52A8\u6216\u6D82\u9E26\u3002",
+    selectStrokePadding: "\u9009\u62E9\u547D\u4E2D\u8303\u56F4",
+    selectStrokePaddingDesc: "\u5143\u7D20\u5468\u56F4\u989D\u5916\u53EF\u70B9\u8303\u56F4\uFF0C\u8D8A\u5927\u8D8A\u5BB9\u6613\u9009\u4E2D\u3002",
+    selectedStrokeAlpha: "\u9009\u4E2D\u5143\u7D20\u900F\u660E\u5EA6",
+    selectedStrokeAlphaDesc: "\u5143\u7D20\u88AB\u9009\u4E2D\u7F16\u8F91\u65F6\u7684\u9884\u89C8\u900F\u660E\u5EA6\u3002",
+    drawingInterpolationStep: "\u7B14\u753B\u5E73\u6ED1",
+    drawingInterpolationStepDesc: "\u6570\u503C\u8D8A\u5C0F\uFF0C\u91C7\u6837\u70B9\u4E4B\u95F4\u8865\u70B9\u8D8A\u591A\uFF0C\u7EBF\u6761\u8D8A\u987A\u3002",
+    drawingMinPointDistance: "\u8F93\u5165\u91C7\u6837\u95F4\u8DDD",
+    drawingMinPointDistanceDesc: "\u6D82\u9E26\u65F6\u4FDD\u7559\u65B0\u70B9\u7684\u6700\u5C0F\u8DDD\u79BB\uFF0C\u8D8A\u5C0F\u8D8A\u7EC6\u817B\u3002",
+    drawingCompactDistance: "\u4FDD\u5B58\u538B\u7F29",
+    drawingCompactDistanceDesc: "\u81EA\u52A8\u4FDD\u5B58\u65F6\u7684\u70B9\u4F4D\u538B\u7F29\u5F3A\u5EA6\uFF0C\u8D8A\u5C0F\u8D8A\u4FDD\u7559\u7EC6\u8282\u3002",
+    autoSaveDelayMs: "\u81EA\u52A8\u4FDD\u5B58\u5EF6\u8FDF",
+    autoSaveDelayMsDesc: "\u6D82\u9E26\u6539\u53D8\u540E\u5199\u5165\u63D2\u4EF6\u6570\u636E\u6587\u4EF6\u5939\u524D\u7684\u7B49\u5F85\u65F6\u95F4\u3002",
+    resetBrushDefaults: "\u91CD\u7F6E\u753B\u7B14\u9ED8\u8BA4\u503C",
+    resetBrushDefaultsDesc: "\u6062\u590D\u7B14\u548C\u6C34\u5F69\u7B14\u7684\u5185\u7F6E\u9ED8\u8BA4\u989C\u8272\u3001\u5927\u5C0F\u548C\u900F\u660E\u5EA6\u3002",
+    resetLayoutDefaults: "\u91CD\u7F6E\u5E03\u5C40\u548C\u4EA4\u4E92",
+    resetLayoutDefaultsDesc: "\u6062\u590D\u5DE5\u5177\u680F\u3001\u9009\u62E9\u3001\u5E73\u6ED1\u548C\u81EA\u52A8\u4FDD\u5B58\u7684\u9ED8\u8BA4\u503C\u3002",
+    reset: "\u91CD\u7F6E",
     debugLog: "\u8C03\u8BD5\u65E5\u5FD7",
     debugLogDesc: "\u4EC5\u6392\u67E5\u95EE\u9898\u65F6\uFF0C\u628A\u6587\u5B57\u4FDD\u5B58\u8BCA\u65AD\u5199\u5165\u63D2\u4EF6\u6587\u4EF6\u5939\u3002",
     supportTitle: "\u652F\u6301 NoteDraw / \u53CC\u7801",
@@ -351,8 +415,11 @@ var I18N = {
     settingsSectionInterface: "\u4ECB\u9762",
     settingsSectionPen: "\u7B46",
     settingsSectionWatercolor: "\u6C34\u5F69\u7B46",
+    settingsSectionInteraction: "\u4E92\u52D5",
+    settingsSectionPerformance: "\u6548\u80FD",
     settingsSectionLayout: "\u4F48\u5C40",
     settingsSectionDiagnostics: "\u8A3A\u65B7",
+    settingsSectionSupport: "\u652F\u6301\u4F5C\u8005",
     settingsLanguage: "\u8A9E\u8A00",
     settingsLanguageDesc: "\u63D2\u4EF6\u4ECB\u9762\u8A9E\u8A00\u3002\u81EA\u52D5\u6A21\u5F0F\u6703\u76E1\u91CF\u8DDF\u96A8 Obsidian\u3002",
     languageAuto: "\u81EA\u52D5",
@@ -370,6 +437,27 @@ var I18N = {
     defaultWatercolorOpacityDesc: "\u521D\u59CB\u6C34\u5F69\u900F\u660E\u5EA6\u3002",
     toolbarTopOffset: "\u5DE5\u5177\u5217\u9802\u90E8\u504F\u79FB",
     toolbarTopOffsetDesc: "\u8DDD\u96E2 Obsidian \u9802\u90E8\u5217\u7684\u984D\u5916\u50CF\u7D20\u3002",
+    longPressMs: "\u9577\u6309\u5EF6\u9072",
+    longPressMsDesc: "\u9577\u6309\u958B\u555F\u6B21\u7D1A\u63A7\u5236\u7684\u7B49\u5F85\u6642\u9593\u3002",
+    selectTapDistance: "\u9EDE\u64CA\u5BB9\u5DEE",
+    selectTapDistanceDesc: "\u79FB\u52D5\u591A\u5C11\u50CF\u7D20\u5F8C\u5F9E\u9EDE\u64CA\u8B8A\u6210\u62D6\u52D5\u6216\u5857\u9D09\u3002",
+    selectStrokePadding: "\u9078\u53D6\u547D\u4E2D\u7BC4\u570D",
+    selectStrokePaddingDesc: "\u5143\u7D20\u5468\u570D\u984D\u5916\u53EF\u9EDE\u7BC4\u570D\uFF0C\u8D8A\u5927\u8D8A\u5BB9\u6613\u9078\u4E2D\u3002",
+    selectedStrokeAlpha: "\u9078\u4E2D\u5143\u7D20\u900F\u660E\u5EA6",
+    selectedStrokeAlphaDesc: "\u5143\u7D20\u88AB\u9078\u4E2D\u7DE8\u8F2F\u6642\u7684\u9810\u89BD\u900F\u660E\u5EA6\u3002",
+    drawingInterpolationStep: "\u7B46\u756B\u5E73\u6ED1",
+    drawingInterpolationStepDesc: "\u6578\u503C\u8D8A\u5C0F\uFF0C\u63A1\u6A23\u9EDE\u4E4B\u9593\u88DC\u9EDE\u8D8A\u591A\uFF0C\u7DDA\u689D\u8D8A\u9806\u3002",
+    drawingMinPointDistance: "\u8F38\u5165\u63A1\u6A23\u9593\u8DDD",
+    drawingMinPointDistanceDesc: "\u5857\u9D09\u6642\u4FDD\u7559\u65B0\u9EDE\u7684\u6700\u5C0F\u8DDD\u96E2\uFF0C\u8D8A\u5C0F\u8D8A\u7D30\u81A9\u3002",
+    drawingCompactDistance: "\u5132\u5B58\u58D3\u7E2E",
+    drawingCompactDistanceDesc: "\u81EA\u52D5\u5132\u5B58\u6642\u7684\u9EDE\u4F4D\u58D3\u7E2E\u5F37\u5EA6\uFF0C\u8D8A\u5C0F\u8D8A\u4FDD\u7559\u7D30\u7BC0\u3002",
+    autoSaveDelayMs: "\u81EA\u52D5\u5132\u5B58\u5EF6\u9072",
+    autoSaveDelayMsDesc: "\u5857\u9D09\u6539\u8B8A\u5F8C\u5BEB\u5165\u63D2\u4EF6\u8CC7\u6599\u593E\u524D\u7684\u7B49\u5F85\u6642\u9593\u3002",
+    resetBrushDefaults: "\u91CD\u7F6E\u756B\u7B46\u9810\u8A2D\u503C",
+    resetBrushDefaultsDesc: "\u6062\u5FA9\u7B46\u548C\u6C34\u5F69\u7B46\u7684\u5167\u5EFA\u9810\u8A2D\u984F\u8272\u3001\u5927\u5C0F\u548C\u900F\u660E\u5EA6\u3002",
+    resetLayoutDefaults: "\u91CD\u7F6E\u4F48\u5C40\u548C\u4E92\u52D5",
+    resetLayoutDefaultsDesc: "\u6062\u5FA9\u5DE5\u5177\u5217\u3001\u9078\u53D6\u3001\u5E73\u6ED1\u548C\u81EA\u52D5\u5132\u5B58\u7684\u9810\u8A2D\u503C\u3002",
+    reset: "\u91CD\u7F6E",
     debugLog: "\u9664\u932F\u65E5\u8A8C",
     debugLogDesc: "\u50C5\u6392\u67E5\u554F\u984C\u6642\uFF0C\u5C07\u6587\u5B57\u5132\u5B58\u8A3A\u65B7\u5BEB\u5165\u63D2\u4EF6\u8CC7\u6599\u593E\u3002",
     supportTitle: "\u652F\u6301 NoteDraw / \u96D9\u78BC",
@@ -852,6 +940,14 @@ var DEFAULT_SETTINGS = {
   defaultWatercolorWidth: 9,
   defaultWatercolorOpacity: 0.45,
   toolbarTopOffset: 6,
+  longPressMs: LONG_PRESS_MS,
+  selectTapDistance: SELECT_TAP_DISTANCE,
+  selectStrokePadding: SELECT_STROKE_PADDING,
+  selectedStrokeAlpha: SELECTED_STROKE_ALPHA,
+  drawingInterpolationStep: DRAWING_INTERPOLATION_STEP_PX,
+  drawingMinPointDistance: DRAWING_MIN_POINT_DISTANCE_PX,
+  drawingCompactDistance: DRAWING_COMPACT_DISTANCE_PX,
+  autoSaveDelayMs: 500,
   enableDebugLog: false
 };
 var EDITABLE_SELECTOR = [
@@ -1103,7 +1199,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
   }
   createPublicApi() {
     return {
-      version: "3.1.23",
+      version: "3.1.28",
       getActiveController: () => this.getActiveController(),
       readDrawings: async (file) => this.readDrawings(file),
       writeDrawings: async (file, data) => this.writeDrawings(file, normalizeDrawingData(data, file)),
@@ -1529,12 +1625,12 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     }
     const timer = window.setTimeout(() => {
       this.saveTimers.delete(path);
-      compactDrawingData(data);
+      compactDrawingData(data, this.noteDrawSettings?.drawingCompactDistance ?? DEFAULT_SETTINGS.drawingCompactDistance);
       this.writeDrawings(file, data).catch((error) => {
         console.error(`[${PLUGIN_ID}] Failed to save drawing file`, error);
         new import_obsidian.Notice(this.t("failedSaveDrawing"));
       });
-    }, 500);
+    }, this.noteDrawSettings?.autoSaveDelayMs ?? DEFAULT_SETTINGS.autoSaveDelayMs);
     this.saveTimers.set(path, timer);
   }
   async writeDrawings(file, data) {
@@ -1893,6 +1989,7 @@ var PreviewDrawingController = class {
     this.file = file;
     this.allowTextEdit = options.allowTextEdit !== false;
     this.surfaceType = options.surfaceType || "preview";
+    this.runtimeSettings = sanitizeSettings(this.plugin?.noteDrawSettings || {});
     this.active = false;
     this.drawingData = {
       version: 1,
@@ -2180,6 +2277,7 @@ var PreviewDrawingController = class {
   }
   applySettings() {
     const settings = sanitizeSettings(this.plugin?.noteDrawSettings || {});
+    this.runtimeSettings = settings;
     if (this.brushSettings?.[BRUSH_PEN]) {
       this.brushSettings[BRUSH_PEN].color = settings.defaultPenColor;
       this.brushSettings[BRUSH_PEN].width = settings.defaultPenWidth;
@@ -2255,6 +2353,24 @@ var PreviewDrawingController = class {
       cls: `notedraw-${cls}`,
       attr
     });
+  }
+  longPressDelayMs() {
+    return this.runtimeSettings?.longPressMs ?? DEFAULT_SETTINGS.longPressMs;
+  }
+  tapDistancePx() {
+    return this.runtimeSettings?.selectTapDistance ?? DEFAULT_SETTINGS.selectTapDistance;
+  }
+  selectionHitPaddingPx() {
+    return this.runtimeSettings?.selectStrokePadding ?? DEFAULT_SETTINGS.selectStrokePadding;
+  }
+  selectedStrokeAlpha() {
+    return this.runtimeSettings?.selectedStrokeAlpha ?? DEFAULT_SETTINGS.selectedStrokeAlpha;
+  }
+  interpolationStepPx() {
+    return this.runtimeSettings?.drawingInterpolationStep ?? DEFAULT_SETTINGS.drawingInterpolationStep;
+  }
+  minPointDistancePx() {
+    return this.runtimeSettings?.drawingMinPointDistance ?? DEFAULT_SETTINGS.drawingMinPointDistance;
   }
   createHeaderButton() {
     return this.plugin.installHeaderButton(this);
@@ -2733,7 +2849,7 @@ var PreviewDrawingController = class {
       this.showSelectionMenu(this.selectionLongPressState.client);
       this.clearSelectionLongPress();
       this.render();
-    }, LONG_PRESS_MS);
+    }, this.longPressDelayMs());
   }
   clearSelectionLongPress() {
     if (this.selectionLongPressTimer) {
@@ -3212,7 +3328,7 @@ var PreviewDrawingController = class {
     this.buttonLongPressTimer = window.setTimeout(() => {
       this.buttonLongPressed = true;
       this.toggleDrawingsVisible();
-    }, LONG_PRESS_MS);
+    }, this.longPressDelayMs());
   }
   onButtonPointerUp() {
     this.clearButtonLongPress();
@@ -3446,7 +3562,7 @@ var PreviewDrawingController = class {
     }
     if (this.toolMode === TOOL_TEXT && !this.currentStroke) {
       const movedDistance = this.pointerStartClient ? pointerDistance(this.pointerStartClient, { x: event.clientX, y: event.clientY }) : 0;
-      this.didMove = movedDistance > SELECT_TAP_DISTANCE;
+      this.didMove = movedDistance > this.tapDistancePx();
       event.preventDefault();
       event.stopPropagation();
       return;
@@ -3509,7 +3625,7 @@ var PreviewDrawingController = class {
     const canEditMarkdownText = this.toolMode === TOOL_EDIT_MD;
     if (this.toolMode === TOOL_TEXT && !this.currentStroke) {
       const point = this.pointerStartPoint || this.eventToPoint(event);
-      if (movedDistance <= SELECT_TAP_DISTANCE && !this.didMove) {
+      if (movedDistance <= this.tapDistancePx() && !this.didMove) {
         this.handleTextToolTap(point);
       }
       this.finishPointerInteraction(event);
@@ -3520,7 +3636,7 @@ var PreviewDrawingController = class {
       return;
     }
     this.addPointerSamples(event);
-    if (!this.didMove || movedDistance <= SELECT_TAP_DISTANCE || this.currentStroke.points.length < 2) {
+    if (!this.didMove || movedDistance <= this.tapDistancePx() || this.currentStroke.points.length < 2) {
       const point = this.pointerStartPoint || this.eventToPoint(event);
       this.currentStroke = null;
       if (editable && canEditMarkdownText) {
@@ -3606,7 +3722,7 @@ var PreviewDrawingController = class {
       this.canvasWidth(),
       this.canvasHeight()
     );
-    return distance <= SELECT_TAP_DISTANCE * 2;
+    return distance <= this.tapDistancePx() * 2;
   }
   openFloatingTextInput(point, index = -1) {
     this.endFloatingTextInput(false);
@@ -3945,7 +4061,7 @@ var PreviewDrawingController = class {
   finishSelectionDrag(event) {
     const point = this.eventToPoint(event);
     const movedDistance = this.pointerStartClient ? pointerDistance(this.pointerStartClient, { x: event.clientX, y: event.clientY }) : 0;
-    if (movedDistance <= SELECT_TAP_DISTANCE || !this.selectionStartPoint || !this.selectionCurrentPoint) {
+    if (movedDistance <= this.tapDistancePx() || !this.selectionStartPoint || !this.selectionCurrentPoint) {
       this.setSelectedStrokes(this.findStrokeAt(point));
     } else {
       this.setSelectedStrokes(this.findStrokesInSelection(this.selectionStartPoint, this.selectionCurrentPoint));
@@ -4030,7 +4146,7 @@ var PreviewDrawingController = class {
       this.canvasWidth(),
       this.canvasHeight()
     );
-    if (movedDistance > SELECT_TAP_DISTANCE) {
+    if (movedDistance > this.tapDistancePx()) {
       this.dragStrokeMoved = true;
       this.clearSelectionLongPress();
     }
@@ -4148,7 +4264,7 @@ var PreviewDrawingController = class {
       this.canvasWidth(),
       this.canvasHeight()
     );
-    if (movedDistance > SELECT_TAP_DISTANCE) {
+    if (movedDistance > this.tapDistancePx()) {
       this.resizeSelectionMoved = true;
     }
     this.applySelectedStrokeResize(point);
@@ -4268,7 +4384,7 @@ var PreviewDrawingController = class {
       if (this.pointerStartClient && pointerDistance(this.pointerStartClient, {
         x: sample.clientX,
         y: sample.clientY
-      }) > SELECT_TAP_DISTANCE) {
+      }) > this.tapDistancePx()) {
         this.didMove = true;
       }
       this.addStrokePoint(this.eventToPoint(sample));
@@ -4281,10 +4397,10 @@ var PreviewDrawingController = class {
     const points = this.currentStroke.points;
     const from = points[points.length - 1];
     const distance = pointDistanceOnCanvas(from, point, this.canvasWidth(), this.canvasHeight());
-    if (distance <= DRAWING_MIN_POINT_DISTANCE_PX) {
+    if (distance <= this.minPointDistancePx()) {
       return;
     }
-    const steps = Math.max(1, Math.ceil(distance / DRAWING_INTERPOLATION_STEP_PX));
+    const steps = Math.max(1, Math.ceil(distance / this.interpolationStepPx()));
     for (let index = 1; index <= steps; index += 1) {
       const ratio = index / steps;
       points.push({
@@ -4346,7 +4462,7 @@ var PreviewDrawingController = class {
     }
     for (const [index, stroke] of this.drawingData.strokes.entries()) {
       if (this.isStrokeSelected(index)) {
-        this.drawStroke(stroke, SELECTED_STROKE_ALPHA);
+        this.drawStroke(stroke, this.selectedStrokeAlpha());
       }
     }
     this.drawSelection();
@@ -4683,7 +4799,7 @@ var PreviewDrawingController = class {
     if (!bounds) {
       return;
     }
-    const padding = Math.max(SELECT_STROKE_PADDING, this.getSelectedStrokeMaxWidth() + 4);
+    const padding = Math.max(this.selectionHitPaddingPx(), this.getSelectedStrokeMaxWidth() + 4);
     const x = bounds.minX - padding;
     const y = bounds.minY - padding;
     const width = bounds.maxX - bounds.minX + padding * 2;
@@ -4735,7 +4851,8 @@ var PreviewDrawingController = class {
     const height = this.canvasHeight();
     for (let index = this.drawingData.strokes.length - 1; index >= 0; index -= 1) {
       const stroke = this.drawingData.strokes[index];
-      const threshold = Math.max(SELECT_STROKE_PADDING, (stroke.width || this.penWidth) / 2 + SELECT_STROKE_PADDING);
+      const padding = this.selectionHitPaddingPx();
+      const threshold = Math.max(padding, (stroke.width || this.penWidth) / 2 + padding);
       if (strokeHitTest(stroke, hitPoint, width, height, threshold)) {
         return index;
       }
@@ -4938,7 +5055,7 @@ var PreviewDrawingController = class {
     if (!bounds) {
       return null;
     }
-    const padding = Math.max(SELECT_STROKE_PADDING, this.getSelectedStrokeMaxWidth() + 4);
+    const padding = Math.max(this.selectionHitPaddingPx(), this.getSelectedStrokeMaxWidth() + 4);
     return {
       x: bounds.minX - padding,
       y: bounds.minY - padding,
@@ -5187,6 +5304,14 @@ var NoteDrawSettingTab = class extends import_obsidian.PluginSettingTab {
     super(app, plugin);
     this.plugin = plugin;
   }
+  display() {
+    const { containerEl } = this;
+    containerEl.empty();
+    for (const definition of this.getSettingDefinitions()) {
+      const setting = new import_obsidian.Setting(containerEl);
+      definition.render(setting);
+    }
+  }
   getSettingDefinitions() {
     const settings = sanitizeSettings(this.plugin.noteDrawSettings);
     return [
@@ -5199,7 +5324,7 @@ var NoteDrawSettingTab = class extends import_obsidian.PluginSettingTab {
           component.setValue(settings.language).onChange(async (value) => {
             this.plugin.noteDrawSettings.language = value;
             await this.plugin.saveSettings();
-            this.update();
+            this.display();
           });
         });
       }),
@@ -5211,16 +5336,30 @@ var NoteDrawSettingTab = class extends import_obsidian.PluginSettingTab {
         }));
       }),
       this.createSettingDefinition("defaultPenWidth", "defaultPenWidthDesc", (setting) => {
-        setting.addSlider((component) => component.setLimits(MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH, 0.5).setValue(settings.defaultPenWidth).onChange(async (value) => {
-          this.plugin.noteDrawSettings.defaultPenWidth = value;
-          await this.plugin.saveSettings();
-        }));
+        this.addSliderWithValue(setting, {
+          value: settings.defaultPenWidth,
+          min: MIN_BRUSH_WIDTH,
+          max: MAX_BRUSH_WIDTH,
+          step: 0.5,
+          format: (value) => `${formatSettingNumber(value)} px`,
+          onChange: async (value) => {
+            this.plugin.noteDrawSettings.defaultPenWidth = value;
+            await this.plugin.saveSettings();
+          }
+        });
       }),
       this.createSettingDefinition("defaultPenOpacity", "defaultPenOpacityDesc", (setting) => {
-        setting.addSlider((component) => component.setLimits(0, 1, 0.02).setValue(settings.defaultPenOpacity).onChange(async (value) => {
-          this.plugin.noteDrawSettings.defaultPenOpacity = value;
-          await this.plugin.saveSettings();
-        }));
+        this.addSliderWithValue(setting, {
+          value: settings.defaultPenOpacity,
+          min: 0,
+          max: 1,
+          step: 0.02,
+          format: (value) => `${Math.round(value * 100)}%`,
+          onChange: async (value) => {
+            this.plugin.noteDrawSettings.defaultPenOpacity = value;
+            await this.plugin.saveSettings();
+          }
+        });
       }),
       this.createSectionDefinition("settingsSectionWatercolor"),
       this.createSettingDefinition("defaultWatercolorColor", "defaultWatercolorColorDesc", (setting) => {
@@ -5230,22 +5369,180 @@ var NoteDrawSettingTab = class extends import_obsidian.PluginSettingTab {
         }));
       }),
       this.createSettingDefinition("defaultWatercolorWidth", "defaultWatercolorWidthDesc", (setting) => {
-        setting.addSlider((component) => component.setLimits(MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH, 0.5).setValue(settings.defaultWatercolorWidth).onChange(async (value) => {
-          this.plugin.noteDrawSettings.defaultWatercolorWidth = value;
-          await this.plugin.saveSettings();
-        }));
+        this.addSliderWithValue(setting, {
+          value: settings.defaultWatercolorWidth,
+          min: MIN_BRUSH_WIDTH,
+          max: MAX_BRUSH_WIDTH,
+          step: 0.5,
+          format: (value) => `${formatSettingNumber(value)} px`,
+          onChange: async (value) => {
+            this.plugin.noteDrawSettings.defaultWatercolorWidth = value;
+            await this.plugin.saveSettings();
+          }
+        });
       }),
       this.createSettingDefinition("defaultWatercolorOpacity", "defaultWatercolorOpacityDesc", (setting) => {
-        setting.addSlider((component) => component.setLimits(0, 1, 0.02).setValue(settings.defaultWatercolorOpacity).onChange(async (value) => {
-          this.plugin.noteDrawSettings.defaultWatercolorOpacity = value;
+        this.addSliderWithValue(setting, {
+          value: settings.defaultWatercolorOpacity,
+          min: 0,
+          max: 1,
+          step: 0.02,
+          format: (value) => `${Math.round(value * 100)}%`,
+          onChange: async (value) => {
+            this.plugin.noteDrawSettings.defaultWatercolorOpacity = value;
+            await this.plugin.saveSettings();
+          }
+        });
+      }),
+      this.createSettingDefinition("resetBrushDefaults", "resetBrushDefaultsDesc", (setting) => {
+        setting.addButton((component) => component.setButtonText(this.plugin.t("reset")).onClick(async () => {
+          Object.assign(this.plugin.noteDrawSettings, {
+            defaultPenColor: DEFAULT_SETTINGS.defaultPenColor,
+            defaultPenWidth: DEFAULT_SETTINGS.defaultPenWidth,
+            defaultPenOpacity: DEFAULT_SETTINGS.defaultPenOpacity,
+            defaultWatercolorColor: DEFAULT_SETTINGS.defaultWatercolorColor,
+            defaultWatercolorWidth: DEFAULT_SETTINGS.defaultWatercolorWidth,
+            defaultWatercolorOpacity: DEFAULT_SETTINGS.defaultWatercolorOpacity
+          });
           await this.plugin.saveSettings();
+          this.display();
         }));
+      }),
+      this.createSectionDefinition("settingsSectionInteraction"),
+      this.createSettingDefinition("longPressMs", "longPressMsDesc", (setting) => {
+        this.addSliderWithValue(setting, {
+          value: settings.longPressMs,
+          min: MIN_LONG_PRESS_MS,
+          max: MAX_LONG_PRESS_MS,
+          step: 25,
+          format: (value) => `${Math.round(value)} ms`,
+          onChange: async (value) => {
+            this.plugin.noteDrawSettings.longPressMs = value;
+            await this.plugin.saveSettings();
+          }
+        });
+      }),
+      this.createSettingDefinition("selectTapDistance", "selectTapDistanceDesc", (setting) => {
+        this.addSliderWithValue(setting, {
+          value: settings.selectTapDistance,
+          min: MIN_SELECT_TAP_DISTANCE,
+          max: MAX_SELECT_TAP_DISTANCE,
+          step: 1,
+          format: (value) => `${Math.round(value)} px`,
+          onChange: async (value) => {
+            this.plugin.noteDrawSettings.selectTapDistance = value;
+            await this.plugin.saveSettings();
+          }
+        });
+      }),
+      this.createSettingDefinition("selectStrokePadding", "selectStrokePaddingDesc", (setting) => {
+        this.addSliderWithValue(setting, {
+          value: settings.selectStrokePadding,
+          min: MIN_SELECT_STROKE_PADDING,
+          max: MAX_SELECT_STROKE_PADDING,
+          step: 1,
+          format: (value) => `${Math.round(value)} px`,
+          onChange: async (value) => {
+            this.plugin.noteDrawSettings.selectStrokePadding = value;
+            await this.plugin.saveSettings();
+          }
+        });
+      }),
+      this.createSettingDefinition("selectedStrokeAlpha", "selectedStrokeAlphaDesc", (setting) => {
+        this.addSliderWithValue(setting, {
+          value: settings.selectedStrokeAlpha,
+          min: MIN_SELECTED_STROKE_ALPHA,
+          max: MAX_SELECTED_STROKE_ALPHA,
+          step: 0.02,
+          format: (value) => `${Math.round(value * 100)}%`,
+          onChange: async (value) => {
+            this.plugin.noteDrawSettings.selectedStrokeAlpha = value;
+            await this.plugin.saveSettings();
+          }
+        });
+      }),
+      this.createSectionDefinition("settingsSectionPerformance"),
+      this.createSettingDefinition("drawingInterpolationStep", "drawingInterpolationStepDesc", (setting) => {
+        this.addSliderWithValue(setting, {
+          value: settings.drawingInterpolationStep,
+          min: MIN_DRAWING_INTERPOLATION_STEP_PX,
+          max: MAX_DRAWING_INTERPOLATION_STEP_PX,
+          step: 0.25,
+          format: (value) => `${formatSettingNumber(value)} px`,
+          onChange: async (value) => {
+            this.plugin.noteDrawSettings.drawingInterpolationStep = value;
+            await this.plugin.saveSettings();
+          }
+        });
+      }),
+      this.createSettingDefinition("drawingMinPointDistance", "drawingMinPointDistanceDesc", (setting) => {
+        this.addSliderWithValue(setting, {
+          value: settings.drawingMinPointDistance,
+          min: MIN_DRAWING_MIN_POINT_DISTANCE_PX,
+          max: MAX_DRAWING_MIN_POINT_DISTANCE_PX,
+          step: 0.05,
+          format: (value) => `${formatSettingNumber(value)} px`,
+          onChange: async (value) => {
+            this.plugin.noteDrawSettings.drawingMinPointDistance = value;
+            await this.plugin.saveSettings();
+          }
+        });
+      }),
+      this.createSettingDefinition("drawingCompactDistance", "drawingCompactDistanceDesc", (setting) => {
+        this.addSliderWithValue(setting, {
+          value: settings.drawingCompactDistance,
+          min: MIN_DRAWING_COMPACT_DISTANCE_PX,
+          max: MAX_DRAWING_COMPACT_DISTANCE_PX,
+          step: 0.1,
+          format: (value) => `${formatSettingNumber(value)} px`,
+          onChange: async (value) => {
+            this.plugin.noteDrawSettings.drawingCompactDistance = value;
+            await this.plugin.saveSettings();
+          }
+        });
+      }),
+      this.createSettingDefinition("autoSaveDelayMs", "autoSaveDelayMsDesc", (setting) => {
+        this.addSliderWithValue(setting, {
+          value: settings.autoSaveDelayMs,
+          min: MIN_AUTO_SAVE_DELAY_MS,
+          max: MAX_AUTO_SAVE_DELAY_MS,
+          step: 20,
+          format: (value) => `${Math.round(value)} ms`,
+          onChange: async (value) => {
+            this.plugin.noteDrawSettings.autoSaveDelayMs = value;
+            await this.plugin.saveSettings();
+          }
+        });
       }),
       this.createSectionDefinition("settingsSectionLayout"),
       this.createSettingDefinition("toolbarTopOffset", "toolbarTopOffsetDesc", (setting) => {
-        setting.addSlider((component) => component.setLimits(0, 48, 1).setValue(settings.toolbarTopOffset).onChange(async (value) => {
-          this.plugin.noteDrawSettings.toolbarTopOffset = value;
+        this.addSliderWithValue(setting, {
+          value: settings.toolbarTopOffset,
+          min: 0,
+          max: 48,
+          step: 1,
+          format: (value) => `${Math.round(value)} px`,
+          onChange: async (value) => {
+            this.plugin.noteDrawSettings.toolbarTopOffset = value;
+            await this.plugin.saveSettings();
+          }
+        });
+      }),
+      this.createSettingDefinition("resetLayoutDefaults", "resetLayoutDefaultsDesc", (setting) => {
+        setting.addButton((component) => component.setButtonText(this.plugin.t("reset")).onClick(async () => {
+          Object.assign(this.plugin.noteDrawSettings, {
+            toolbarTopOffset: DEFAULT_SETTINGS.toolbarTopOffset,
+            longPressMs: DEFAULT_SETTINGS.longPressMs,
+            selectTapDistance: DEFAULT_SETTINGS.selectTapDistance,
+            selectStrokePadding: DEFAULT_SETTINGS.selectStrokePadding,
+            selectedStrokeAlpha: DEFAULT_SETTINGS.selectedStrokeAlpha,
+            drawingInterpolationStep: DEFAULT_SETTINGS.drawingInterpolationStep,
+            drawingMinPointDistance: DEFAULT_SETTINGS.drawingMinPointDistance,
+            drawingCompactDistance: DEFAULT_SETTINGS.drawingCompactDistance,
+            autoSaveDelayMs: DEFAULT_SETTINGS.autoSaveDelayMs
+          });
           await this.plugin.saveSettings();
+          this.display();
         }));
       }),
       this.createSectionDefinition("settingsSectionDiagnostics"),
@@ -5255,17 +5552,32 @@ var NoteDrawSettingTab = class extends import_obsidian.PluginSettingTab {
           await this.plugin.saveSettings();
         }));
       }),
+      this.createSectionDefinition("settingsSectionSupport"),
       this.createCodesDefinition()
     ];
+  }
+  addSliderWithValue(setting, options) {
+    let valueEl = null;
+    setting.addSlider((component) => {
+      component.setLimits(options.min, options.max, options.step).setValue(options.value).onChange(async (value) => {
+        if (valueEl) {
+          valueEl.setText(options.format(value));
+        }
+        await options.onChange(value);
+      });
+    });
+    valueEl = setting.controlEl.createSpan({
+      cls: "notedraw-setting-value",
+      text: options.format(options.value)
+    });
   }
   createSectionDefinition(key) {
     return {
       name: this.plugin.t(key),
       searchable: false,
       render: (setting) => {
-        setting.settingEl.empty();
+        setting.setName(this.plugin.t(key)).setHeading();
         setting.settingEl.addClass("notedraw-settings-section-title");
-        setting.settingEl.setText(this.plugin.t(key));
       }
     };
   }
@@ -5373,6 +5685,14 @@ function sanitizeSettings(settings) {
     defaultWatercolorWidth: clamp(Number(input.defaultWatercolorWidth ?? DEFAULT_SETTINGS.defaultWatercolorWidth), MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH),
     defaultWatercolorOpacity: clamp(Number(input.defaultWatercolorOpacity ?? DEFAULT_SETTINGS.defaultWatercolorOpacity), 0, 1),
     toolbarTopOffset: clamp(Number(input.toolbarTopOffset ?? DEFAULT_SETTINGS.toolbarTopOffset), 0, 48),
+    longPressMs: clamp(Number(input.longPressMs ?? DEFAULT_SETTINGS.longPressMs), MIN_LONG_PRESS_MS, MAX_LONG_PRESS_MS),
+    selectTapDistance: clamp(Number(input.selectTapDistance ?? DEFAULT_SETTINGS.selectTapDistance), MIN_SELECT_TAP_DISTANCE, MAX_SELECT_TAP_DISTANCE),
+    selectStrokePadding: clamp(Number(input.selectStrokePadding ?? DEFAULT_SETTINGS.selectStrokePadding), MIN_SELECT_STROKE_PADDING, MAX_SELECT_STROKE_PADDING),
+    selectedStrokeAlpha: clamp(Number(input.selectedStrokeAlpha ?? DEFAULT_SETTINGS.selectedStrokeAlpha), MIN_SELECTED_STROKE_ALPHA, MAX_SELECTED_STROKE_ALPHA),
+    drawingInterpolationStep: clamp(Number(input.drawingInterpolationStep ?? DEFAULT_SETTINGS.drawingInterpolationStep), MIN_DRAWING_INTERPOLATION_STEP_PX, MAX_DRAWING_INTERPOLATION_STEP_PX),
+    drawingMinPointDistance: clamp(Number(input.drawingMinPointDistance ?? DEFAULT_SETTINGS.drawingMinPointDistance), MIN_DRAWING_MIN_POINT_DISTANCE_PX, MAX_DRAWING_MIN_POINT_DISTANCE_PX),
+    drawingCompactDistance: clamp(Number(input.drawingCompactDistance ?? DEFAULT_SETTINGS.drawingCompactDistance), MIN_DRAWING_COMPACT_DISTANCE_PX, MAX_DRAWING_COMPACT_DISTANCE_PX),
+    autoSaveDelayMs: clamp(Number(input.autoSaveDelayMs ?? DEFAULT_SETTINGS.autoSaveDelayMs), MIN_AUTO_SAVE_DELAY_MS, MAX_AUTO_SAVE_DELAY_MS),
     enableDebugLog: Boolean(input.enableDebugLog)
   };
 }
@@ -5380,6 +5700,9 @@ function translateNoteDraw(plugin, key, vars = {}) {
   const language = resolveNoteDrawLanguage(plugin);
   const template = I18N[language]?.[key] ?? I18N.en[key] ?? key;
   return String(template).replace(/\{(\w+)\}/g, (_, name) => vars?.[name] ?? "");
+}
+function formatSettingNumber(value) {
+  return String(Math.round(Number(value || 0) * 100) / 100);
 }
 function resolveNoteDrawLanguage(plugin) {
   const language = normalizeLanguageCode(plugin?.noteDrawSettings?.language ?? DEFAULT_SETTINGS.language);
@@ -5434,10 +5757,6 @@ function languageNativeName(language) {
 function setNoteDrawCssProps(element, props) {
   if (typeof element?.setCssProps === "function") {
     element.setCssProps(props);
-    return;
-  }
-  for (const [key, value] of Object.entries(props)) {
-    element?.style?.setProperty(key, value);
   }
 }
 function setAccessibleLabel(element, label) {
@@ -6481,17 +6800,17 @@ function createTextPreset(preset, text, color) {
   }
   return { kind: TOOL_TEXT, text: normalized, render: TEXT_RENDER_PLAIN, color, fontSize: 18, bold: false, code: false, boxed: false, file: false };
 }
-function compactDrawingData(data) {
+function compactDrawingData(data, compactDistance = DEFAULT_SETTINGS.drawingCompactDistance) {
   if (!Array.isArray(data?.strokes)) {
     return data;
   }
   data.strokes = data.strokes.map((stroke) => ({
     ...stroke,
-    points: compactStrokePoints(stroke.points)
+    points: compactStrokePoints(stroke.points, compactDistance)
   }));
   return data;
 }
-function compactStrokePoints(points) {
+function compactStrokePoints(points, compactDistance = DEFAULT_SETTINGS.drawingCompactDistance) {
   if (!Array.isArray(points) || points.length <= 2) {
     return points || [];
   }
@@ -6500,7 +6819,7 @@ function compactStrokePoints(points) {
     const point = points[index];
     const last = compacted[compacted.length - 1];
     const distance = pointDistanceOnCanvas(last, point, 1, 1) * 1e3;
-    if (distance >= DRAWING_COMPACT_DISTANCE_PX) {
+    if (distance >= compactDistance) {
       compacted.push(point);
     }
   }

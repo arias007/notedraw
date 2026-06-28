@@ -104,8 +104,11 @@ The settings page currently includes:
 - Default watercolor color, width, opacity.
 - UI language.
 - Toolbar top offset.
+- Long-press delay, tap tolerance, selection hit padding, and selected-element opacity.
+- Stroke smoothing, input sampling, save compaction, and auto-save delay.
+- Reset buttons for brush defaults and layout/interaction defaults.
 - Debug log toggle for troubleshooting text targeting.
-- Support QR codes shown from bundled assets with embedded fallback.
+- Two fixed support QR codes shown from bundled assets with embedded fallback.
 
 ## Extension API
 
