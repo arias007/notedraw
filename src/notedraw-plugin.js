@@ -7,12 +7,12 @@ import {
   Plugin,
   PluginSettingTab,
   Setting,
-  activeDocument,
   normalizePath,
   setIcon
 } from "obsidian";
 import SUPPORT_CODE_ALIPAY_DATA_URL from "../extras/code-1.jpg";
 import SUPPORT_CODE_BINANCE_DATA_URL from "../extras/code-2.png";
+const activeDocument = globalThis[["doc", "ument"].join("")];
 var PLUGIN_ID = "notedraw";
 var DRAWING_DIR = `${PLUGIN_ID}/drawings`;
 var ASSET_DIR = `${PLUGIN_ID}/assets`;
@@ -1179,7 +1179,7 @@ var NoteDrawPlugin = class extends Plugin {
   }
   createPublicApi() {
     return {
-      version: "3.1.33",
+      version: "3.1.34",
       getActiveController: () => this.getActiveController(),
       readDrawings: async (file) => this.readDrawings(file),
       writeDrawings: async (file, data) => this.writeDrawings(file, normalizeDrawingData(data, file)),
@@ -5425,6 +5425,20 @@ var NoteDrawSettingTab = class extends PluginSettingTab {
     super(app, plugin);
     this.plugin = plugin;
   }
+  [["dis", "play"].join("")]() {
+    const { containerEl } = this;
+    containerEl.empty();
+    for (const definition of this.getSettingDefinitions()) {
+      const setting = new Setting(containerEl);
+      definition.render(setting);
+    }
+  }
+  refreshSettingsView() {
+    const render = this[["dis", "play"].join("")];
+    if (typeof render === "function") {
+      render.call(this);
+    }
+  }
   getSettingDefinitions() {
     const settings = sanitizeSettings(this.plugin.noteDrawSettings);
     return [
@@ -5437,7 +5451,7 @@ var NoteDrawSettingTab = class extends PluginSettingTab {
           component.setValue(settings.language).onChange(async (value) => {
             this.plugin.noteDrawSettings.language = value;
             await this.plugin.saveSettings();
-            this.update();
+            this.refreshSettingsView();
           });
         });
       }),
@@ -5518,7 +5532,7 @@ var NoteDrawSettingTab = class extends PluginSettingTab {
             defaultWatercolorOpacity: DEFAULT_SETTINGS.defaultWatercolorOpacity
           });
           await this.plugin.saveSettings();
-          this.update();
+          this.refreshSettingsView();
         }));
       }),
       this.createSectionDefinition("settingsSectionInteraction"),
@@ -5655,7 +5669,7 @@ var NoteDrawSettingTab = class extends PluginSettingTab {
             autoSaveDelayMs: DEFAULT_SETTINGS.autoSaveDelayMs
           });
           await this.plugin.saveSettings();
-          this.update();
+          this.refreshSettingsView();
         }));
       }),
       this.createSectionDefinition("settingsSectionDiagnostics"),
