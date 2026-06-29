@@ -1177,7 +1177,7 @@ var NoteDrawPlugin = class extends Plugin {
   }
   createPublicApi() {
     return {
-      version: "3.1.30",
+      version: "3.1.31",
       getActiveController: () => this.getActiveController(),
       readDrawings: async (file) => this.readDrawings(file),
       writeDrawings: async (file, data) => this.writeDrawings(file, normalizeDrawingData(data, file)),
@@ -1214,7 +1214,7 @@ var NoteDrawPlugin = class extends Plugin {
     const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
     const activeContainer = activeView?.containerEl;
     if (activeView instanceof MarkdownView) {
-      const surface = isSourceMode(activeView) ? findSourceSurfaceForView(activeView) || findRootPreviewForView(activeView) : findRootPreviewForView(activeView) || findSourceSurfaceForView(activeView);
+      const surface = findPrimaryMarkdownSurface(activeView);
       const controller = surface ? this.controllers.get(surface) || surface._noteDrawController : null;
       if (controller) {
         return controller;
@@ -1227,7 +1227,7 @@ var NoteDrawPlugin = class extends Plugin {
       }
     }
     const view = this.app.workspace.getActiveViewOfType(MarkdownView);
-    const surface = view ? isSourceMode(view) ? findSourceSurfaceForView(view) || findRootPreviewForView(view) : findRootPreviewForView(view) || findSourceSurfaceForView(view) : null;
+    const surface = view ? findPrimaryMarkdownSurface(view) : null;
     return surface ? this.controllers.get(surface) || surface._noteDrawController : null;
   }
   toggleActiveController() {
@@ -1249,7 +1249,7 @@ var NoteDrawPlugin = class extends Plugin {
         continue;
       }
       const sourceEl = findSourceSurfaceForView(view);
-      const shouldMount = Boolean(sourceEl) && isSourceMode(view);
+      const shouldMount = Boolean(sourceEl) && (isSourceMode(view) || isElementVisibleEnough(sourceEl));
       const existing = this.sourceControllers.get(view);
       if (!shouldMount) {
         if (existing) {
@@ -1353,7 +1353,7 @@ var NoteDrawPlugin = class extends Plugin {
         controller: null,
         controllers: /* @__PURE__ */ new Set()
       };
-      state.clickHandler = (event) => this.resolveHeaderController(view, state, { preferPreviewOnAppleTouch: true })?.onButtonClick(event);
+      state.clickHandler = (event) => this.resolveHeaderController(view, state, { preferPreviewOnAppleTouch: isAppleTouchEvent(event) })?.onButtonClick(event);
       state.pointerDownHandler = (event) => this.resolveHeaderController(view, state, { preferPreviewOnAppleTouch: false })?.onButtonPointerDown(event);
       state.pointerUpHandler = (event) => this.resolveHeaderController(view, state, { preferPreviewOnAppleTouch: false })?.onButtonPointerUp(event);
       state.touchEndHandler = (event) => this.resolveHeaderController(view, state, { preferPreviewOnAppleTouch: true })?.onButtonTouchEnd(event);
@@ -1466,13 +1466,13 @@ var NoteDrawPlugin = class extends Plugin {
   }
   pickHeaderController(view, state, preferred = null, options = {}) {
     const controllers = Array.from(state.controllers || []).filter((controller) => controller?.previewEl?.isConnected && controller.view === view && controller.surfaceType !== "webview");
-    if (options.preferPreviewOnAppleTouch && isAppleMobileRuntime()) {
+    if (options.preferPreviewOnAppleTouch && isAppleMobileRuntime() && isReadingSurfaceVisible(view)) {
       const previewController = this.resolveLivePreviewController(view, controllers);
       if (previewController) {
         return previewController;
       }
     }
-    const currentMode = isSourceMode(view) ? "source" : "preview";
+    const currentMode = currentMarkdownSurfaceType(view);
     const preferredLive = preferred && controllers.includes(preferred) ? preferred : null;
     return controllers.find((controller) => controller.surfaceType === currentMode) || preferredLive || controllers.find((controller) => controller.active) || controllers[0] || null;
   }
@@ -2613,11 +2613,13 @@ var PreviewDrawingController = class {
     const maxTop = Math.max(minTop, window.innerHeight - toolbarHeight - 8);
     const topOffset = sanitizeSettings(this.plugin?.noteDrawSettings || {}).toolbarTopOffset;
     const top = clamp(anchorBottom + topOffset, minTop, maxTop);
+    const canvasTop = this.surfaceType === "preview" ? Math.max(0, Math.round(headerBottom - hostRect.top)) : 0;
     const props = {
       "--notedraw-toolbar-right": `${Math.round(right)}px`,
       "--notedraw-toolbar-top": `${Math.round(top)}px`,
       "--notedraw-palette-top": `${Math.round(top + 42)}px`,
-      "--notedraw-text-panel-top": `${Math.round(top + 42)}px`
+      "--notedraw-text-panel-top": `${Math.round(top + 42)}px`,
+      "--notedraw-canvas-top": `${canvasTop}px`
     };
     setNoteDrawCssProps(this.previewEl, props);
     if (this.floatingControlsInBody) {
@@ -5848,6 +5850,12 @@ function isAppleMobileRuntime() {
   const maxTouchPoints = Number(navigator?.maxTouchPoints || 0);
   return /iPad|iPhone|iPod/.test(platform) || /iPad|iPhone|iPod/.test(userAgent) || platform === "MacIntel" && maxTouchPoints > 1;
 }
+function isAppleTouchEvent(event) {
+  if (!isAppleMobileRuntime()) {
+    return false;
+  }
+  return event?.type?.startsWith?.("touch") || event?.pointerType === "touch";
+}
 function setAccessibleLabel(element, label) {
   if (!element || !label) {
     return;
@@ -6283,7 +6291,40 @@ function collectWorkspaceLeaves(app) {
 }
 function findRootPreviewForView(view) {
   const previews = Array.from(view?.containerEl?.querySelectorAll(".markdown-preview-view") || []);
-  return previews.find((preview) => !isEmbeddedPreview(preview)) || null;
+  return previews.find((preview) => !isEmbeddedPreview(preview) && isElementVisibleEnough(preview)) || previews.find((preview) => !isEmbeddedPreview(preview)) || null;
+}
+function findPrimaryMarkdownSurface(view) {
+  const source = findSourceSurfaceForView(view);
+  const preview = findRootPreviewForView(view);
+  if (isElementVisibleEnough(source)) {
+    return source;
+  }
+  if (isElementVisibleEnough(preview)) {
+    return preview;
+  }
+  return isSourceMode(view) ? source || preview : preview || source;
+}
+function currentMarkdownSurfaceType(view) {
+  const source = findSourceSurfaceForView(view);
+  const preview = findRootPreviewForView(view);
+  if (isElementVisibleEnough(source)) {
+    return "source";
+  }
+  if (isElementVisibleEnough(preview)) {
+    return "preview";
+  }
+  return isSourceMode(view) ? "source" : "preview";
+}
+function isReadingSurfaceVisible(view) {
+  const preview = findRootPreviewForView(view);
+  return isElementVisibleEnough(preview) && !isElementVisibleEnough(findSourceSurfaceForView(view));
+}
+function isElementVisibleEnough(element) {
+  if (!element?.isConnected) {
+    return false;
+  }
+  const rect = element.getBoundingClientRect?.();
+  return Boolean(rect && rect.width > 8 && rect.height > 8 && rect.bottom > 0 && rect.right > 0 && rect.top < window.innerHeight && rect.left < window.innerWidth);
 }
 function findWebviewSurfaces(root) {
   if (!root) {
