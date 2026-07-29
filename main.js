@@ -2582,7 +2582,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.1.51",
+      version: "3.1.52",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -3601,6 +3601,29 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       });
     }
     return { changed: true, target: nextTarget };
+  }
+  async reorderTextBlock(file, movingElement, targetElement, placeAfter = false) {
+    if (!file || !movingElement || !targetElement || movingElement === targetElement) {
+      return false;
+    }
+    const source = await this.app.vault.read(file);
+    const moving = resolveSourceEditTarget(source, getSourceInfo(movingElement), movingElement.innerText);
+    const target = resolveSourceEditTarget(source, getSourceInfo(targetElement), targetElement.innerText);
+    if (!moving || !target || moving.start === target.start || moving.start < target.end && moving.end > target.start) {
+      return false;
+    }
+    const block = source.slice(moving.start, moving.end).trim();
+    const without = `${source.slice(0, moving.start)}${source.slice(moving.end)}`;
+    let insertion = placeAfter ? target.end : target.start;
+    if (moving.start < insertion) {
+      insertion -= moving.end - moving.start;
+    }
+    const before = without.slice(0, insertion).replace(/[ \t]+$/g, "");
+    const after = without.slice(insertion).replace(/^[ \t]+/g, "");
+    const separatorBefore = before && !before.endsWith("\n\n") ? before.endsWith("\n") ? "\n" : "\n\n" : "";
+    const separatorAfter = after && !after.startsWith("\n\n") ? after.startsWith("\n") ? "\n" : "\n\n" : "";
+    await this.app.vault.modify(file, `${before}${separatorBefore}${block}${separatorAfter}${after}`);
+    return true;
   }
 };
 var PreviewDrawingController = class {
@@ -7740,6 +7763,7 @@ var PreviewDrawingController = class {
     element.addEventListener("input", onInput);
     element.addEventListener("keydown", onKeyDown);
     element.addEventListener("blur", onBlur);
+    this.installTextSortHandle(element);
   }
   focusSourceEditorAt(clientPoint) {
     if (!clientPoint || !Number.isFinite(clientPoint.x) || !Number.isFinite(clientPoint.y)) {
@@ -7778,6 +7802,7 @@ var PreviewDrawingController = class {
     element._noteDrawCleanup?.();
     delete element._noteDrawCleanup;
     delete element.dataset.noteDrawOriginal;
+    element.querySelector(":scope > .notedraw-text-sort-handle")?.remove();
     element.contentEditable = "false";
     element.removeClass("notedraw-editing");
     this.previewEl.removeClass("is-native-text-editing");
@@ -7787,6 +7812,63 @@ var PreviewDrawingController = class {
     this.formatToolbarManualPosition = null;
     this.currentEditor = null;
     this.currentEditorFile = null;
+  }
+  installTextSortHandle(element) {
+    if (this.surfaceType !== "preview" || !element || element.querySelector(":scope > .notedraw-text-sort-handle")) {
+      return;
+    }
+    const handle = element.createEl("button", {
+      cls: "notedraw-text-sort-handle",
+      attr: { type: "button", draggable: "true", contenteditable: "false", title: "\u4E0A\u4E0B\u62D6\u52A8\u6392\u5E8F", "aria-label": "\u4E0A\u4E0B\u62D6\u52A8\u6392\u5E8F" }
+    });
+    (0, import_obsidian.setIcon)(handle, "grip-vertical");
+    let dropTarget = null;
+    let placeAfter = false;
+    const clearTarget = () => {
+      dropTarget?.removeClass("notedraw-text-sort-target-before", "notedraw-text-sort-target-after");
+      dropTarget = null;
+    };
+    const onDragOver = (event) => {
+      const target = findEditableTarget(event.target, this.previewEl);
+      if (!target || target === element) {
+        return;
+      }
+      event.preventDefault();
+      clearTarget();
+      dropTarget = target;
+      const rect = target.getBoundingClientRect();
+      placeAfter = event.clientY >= rect.top + rect.height / 2;
+      target.addClass(placeAfter ? "notedraw-text-sort-target-after" : "notedraw-text-sort-target-before");
+    };
+    const onDrop = async (event) => {
+      if (!dropTarget) {
+        return;
+      }
+      event.preventDefault();
+      const target = dropTarget;
+      const after = placeAfter;
+      clearTarget();
+      const file = this.currentEditorFile || this.file;
+      await this.plugin.flushTextSave(element);
+      this.endTextEdit();
+      await this.plugin.reorderTextBlock(file, element, target, after);
+    };
+    const cleanup = element._noteDrawCleanup;
+    element._noteDrawCleanup = () => {
+      cleanup?.();
+      clearTarget();
+      this.previewEl.removeEventListener("dragover", onDragOver);
+      this.previewEl.removeEventListener("drop", onDrop);
+    };
+    handle.addEventListener("dragstart", (event) => {
+      event.dataTransfer?.setData("text/plain", "notedraw-text-block");
+      if (event.dataTransfer) {
+        event.dataTransfer.effectAllowed = "move";
+      }
+    });
+    handle.addEventListener("dragend", clearTarget);
+    this.previewEl.addEventListener("dragover", onDragOver);
+    this.previewEl.addEventListener("drop", onDrop);
   }
   commitWebviewTextEdit(element, originalText, editedText) {
     const normalizedOriginal = normalizeRenderedText2(originalText);
@@ -7843,6 +7925,12 @@ var PreviewDrawingController = class {
     }
   }
   undoLastStroke() {
+    if (this.currentEditor) {
+      this.currentEditor.ownerDocument.execCommand?.("undo");
+      const InputEvent = this.currentEditor.ownerDocument.defaultView?.Event || Event;
+      this.currentEditor.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      return;
+    }
     if (!this.drawingData.strokes.length) {
       return;
     }
@@ -7854,6 +7942,12 @@ var PreviewDrawingController = class {
     this.render();
   }
   redoLastStroke() {
+    if (this.currentEditor) {
+      this.currentEditor.ownerDocument.execCommand?.("redo");
+      const InputEvent = this.currentEditor.ownerDocument.defaultView?.Event || Event;
+      this.currentEditor.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      return;
+    }
     if (!this.redoStack.length) {
       return;
     }
@@ -8604,7 +8698,7 @@ ${text.replace(/\n+$/g, "")}
     return `<${tag}>${inner}</${tag}>`;
   }
   if (tag === "div" || tag === "p") {
-    return `${inner}
+    return `${inner.replace(/<br>$/, "")}
 `;
   }
   if (tag === "li") {
