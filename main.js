@@ -2582,7 +2582,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.1.52",
+      version: "3.2.0",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -2698,6 +2698,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       }
       controller.drawingData = normalizeDrawingData(data, file);
       controller.drawingsLoaded = true;
+      controller.applyDrawingsVisibility(controller.drawingData.visible !== false);
       controller.responsivePointsInitialized = false;
       controller.responsiveLayoutSignature = "";
       controller.responsiveLayoutContext = null;
@@ -3724,7 +3725,6 @@ var PreviewDrawingController = class {
     if (sharedToolbarState) {
       this.brushMode = [BRUSH_PEN, BRUSH_WATERCOLOR].includes(sharedToolbarState.brushMode) ? sharedToolbarState.brushMode : this.brushMode;
       this.toolMode = sharedToolbarState.toolMode || this.toolMode;
-      this.drawingsVisible = sharedToolbarState.drawingsVisible !== false;
       this.paletteOpen = Boolean(sharedToolbarState.paletteOpen);
       this.textPanelOpen = Boolean(sharedToolbarState.textPanelOpen);
       this.textPreset = sharedToolbarState.textPreset || this.textPreset;
@@ -4241,9 +4241,6 @@ var PreviewDrawingController = class {
       return;
     }
     const nextActive = !this.active;
-    if (nextActive && !this.drawingsVisible) {
-      this.setDrawingsVisible(true);
-    }
     this.plugin.setControllerActivation(this, nextActive);
   }
   applyActiveState(active, options = {}) {
@@ -4319,6 +4316,7 @@ var PreviewDrawingController = class {
     this.loadingDrawings = this.plugin.readDrawings(this.file).then((data) => {
       this.drawingData = data;
       this.drawingsLoaded = true;
+      this.applyDrawingsVisibility(data.visible !== false);
       this.invalidateStaticCache();
       this.resizeCanvas();
       this.render();
@@ -4533,7 +4531,6 @@ var PreviewDrawingController = class {
         [BRUSH_WATERCOLOR]: { ...this.brushSettings[BRUSH_WATERCOLOR] }
       },
       toolMode: this.toolMode,
-      drawingsVisible: this.drawingsVisible,
       paletteOpen: this.paletteOpen,
       textPanelOpen: this.textPanelOpen,
       textPreset: this.textPreset
@@ -4550,13 +4547,11 @@ var PreviewDrawingController = class {
       }
     }
     this.toolMode = state.toolMode || this.toolMode;
-    this.drawingsVisible = state.drawingsVisible !== false;
     this.paletteOpen = Boolean(state.paletteOpen) && this.toolMode !== TOOL_SELECT && this.toolMode !== TOOL_EDIT_MD;
     this.textPanelOpen = Boolean(state.textPanelOpen);
     this.textPreset = state.textPreset || this.textPreset;
     this.syncCurrentBrushFields();
     this.previewEl.toggleClass("is-select-mode", this.toolMode === TOOL_SELECT);
-    this.previewEl.toggleClass("is-drawing-hidden", !this.drawingsVisible);
     this.previewEl.toggleClass("is-palette-open", this.paletteOpen);
     this.previewEl.toggleClass("is-text-panel-open", this.textPanelOpen);
     this.syncPaletteInputs();
@@ -5340,13 +5335,18 @@ var PreviewDrawingController = class {
     this.setDrawingsVisible(!this.drawingsVisible);
   }
   setDrawingsVisible(visible) {
+    this.applyDrawingsVisibility(visible);
+    this.drawingData.visible = this.drawingsVisible;
+    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.syncSharedToolbarState();
+  }
+  applyDrawingsVisibility(visible) {
     this.drawingsVisible = Boolean(visible);
     this.previewEl.toggleClass("is-drawing-hidden", !this.drawingsVisible);
     this.plugin.setAccessibleLabel(
       this.button,
       this.surfaceType === "webview" ? "editWebviewDraw" : this.drawingsVisible ? "editTextDraw" : "editTextDrawHidden"
     );
-    this.syncSharedToolbarState();
   }
   getResponsiveContentFrame() {
     return measureResponsiveContentFrame(this.previewEl, this.surfaceType, this.canvasWidth(), this.canvas);
@@ -6177,9 +6177,6 @@ var PreviewDrawingController = class {
   openFloatingTextInput(point, index = -1) {
     this.endFloatingTextInput(true);
     this.endTextEdit();
-    if (!this.drawingsVisible) {
-      this.setDrawingsVisible(true);
-    }
     const existing = index >= 0 ? this.drawingData.strokes[index] : null;
     const brushColor = this.currentBrushSettings().color || this.penColor;
     const preset = isTextLikeStroke(existing) ? existing : createTextPreset(this.textPreset, " ", brushColor);
@@ -6280,9 +6277,6 @@ var PreviewDrawingController = class {
     if (!text) {
       this.endFloatingTextInput(false, state);
       return;
-    }
-    if (!this.drawingsVisible) {
-      this.setDrawingsVisible(true);
     }
     if (state.index >= 0 && isTextLikeStroke(this.drawingData.strokes[state.index])) {
       const stroke = this.drawingData.strokes[state.index];
@@ -6386,9 +6380,6 @@ var PreviewDrawingController = class {
     this.openFloatingTextInput(snappedPoint);
   }
   insertTextPresetAt(point, presetId, text) {
-    if (!this.drawingsVisible) {
-      this.setDrawingsVisible(true);
-    }
     const brush = this.currentBrushSettings();
     const preset = createTextPreset(presetId, text, brush.color || this.penColor);
     const stroke = {
@@ -9512,6 +9503,7 @@ function createEmptyDrawingData(file) {
   return {
     version: 3,
     sourcePath: file.path,
+    visible: true,
     strokes: [],
     webEdits: [],
     updatedAt: null
@@ -9522,6 +9514,7 @@ function normalizeDrawingData(data, file) {
   return {
     version: Math.max(1, Number.isFinite(data?.version) ? data.version : 1),
     sourcePath: file.path,
+    visible: data?.visible !== false,
     strokes: strokes.map(normalizeStroke).map((stroke) => ({
       ...stroke,
       points: compactStrokePoints(stroke.points)

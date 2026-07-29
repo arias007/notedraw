@@ -29,24 +29,31 @@ test("only the active visible surface exposes body-portal controls", async () =>
   assert.match(styles, /\.notedraw-body-control\.notedraw-toolbar\.is-drawing-active\.is-notedraw-controls-visible/);
 });
 
-test("toolbar mode, brush, visibility, panels, and text preset are shared", async () => {
+test("toolbar mode, brush, panels, and text preset are shared", async () => {
   const source = await readFile(sourceUrl, "utf8");
 
-  for (const field of ["brushMode", "toolMode", "drawingsVisible", "paletteOpen", "textPanelOpen", "textPreset"]) {
+  for (const field of ["brushMode", "toolMode", "paletteOpen", "textPanelOpen", "textPreset"]) {
     assert.match(source, new RegExp(`${field}: this\\.${field}`));
   }
   assert.match(source, /brushSettings:\s*\{\s*\[BRUSH_PEN\]: \{ \.\.\.this\.brushSettings\[BRUSH_PEN\] \}/s);
   assert.match(source, /applySharedToolbarState\(state\)/);
   assert.match(source, /this\.toolMode = state\.toolMode \|\| this\.toolMode/);
+  assert.doesNotMatch(source, /drawingsVisible: this\.drawingsVisible/);
+  assert.doesNotMatch(source, /this\.drawingsVisible = state\.drawingsVisible !== false/);
   assert.doesNotMatch(source, /this\.surfaceType === "source"\) \{\s*return false;/);
 });
 
-test("magic wand short press restores drawings while long press only toggles visibility", async () => {
+test("only a magic wand long press changes persistent per-file visibility", async () => {
   const source = await readFile(sourceUrl, "utf8");
 
-  assert.match(source, /const nextActive = !this\.active;\s*if \(nextActive && !this\.drawingsVisible\) \{\s*this\.setDrawingsVisible\(true\)/);
+  assert.match(source, /const nextActive = !this\.active;\s*this\.plugin\.setControllerActivation\(this, nextActive\)/);
+  assert.doesNotMatch(source, /if \(!this\.drawingsVisible\) \{\s*this\.setDrawingsVisible\(true\)/);
   assert.match(source, /this\.buttonLongPressed = true;\s*this\.toggleDrawingsVisible\(\)/);
   assert.match(source, /toggleDrawingsVisible\(\) \{\s*this\.setDrawingsVisible\(!this\.drawingsVisible\)/);
+  assert.match(source, /setDrawingsVisible\(visible\) \{\s*this\.applyDrawingsVisibility\(visible\);\s*this\.drawingData\.visible = this\.drawingsVisible;\s*this\.plugin\.scheduleDrawingSave\(this\.file, this\.drawingData\)/);
+  assert.match(source, /visible: data\?\.visible !== false/);
+  assert.match(source, /this\.applyDrawingsVisibility\(data\.visible !== false\)/);
+  assert.match(source, /controller\.applyDrawingsVisibility\(controller\.drawingData\.visible !== false\)/);
 });
 
 test("element migration waits for a stable note lane instead of transition geometry", async () => {
