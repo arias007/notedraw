@@ -12,8 +12,8 @@ test("embedded Markdown edits resolve and save against the referenced file", asy
   assert.match(source, /resolveRenderedSourcePath\(this\.app, el, ctx\.sourcePath\)/);
   assert.match(source, /element\.dataset\.noteDrawSourcePath = normalizeVaultPath\(sourcePath\)/);
   assert.match(source, /const editsEmbeddedFile = Boolean\(editableFile\?\.path && editableFile\.path !== this\.file\?\.path\)/);
-  assert.match(source, /prepareTextEditState\(this\.currentEditorFile, element\.innerText, element\)/);
-  assert.match(source, /scheduleTextSaveNow\(this\.currentEditorFile \|\| this\.file/);
+  assert.match(source, /prepareTextEditState\(this\.currentEditorFile, element\.innerText, element, this\)/);
+  assert.match(source, /scheduleTextSaveNow\(this\.currentEditorFile \|\| this\.file, original, edited, element, this\)/);
 });
 
 test("the stable v1 API exposes Cancip-friendly capabilities and events", async () => {
@@ -27,15 +27,15 @@ test("the stable v1 API exposes Cancip-friendly capabilities and events", async 
   assert.match(source, /on: \(eventName, listener\) => this\.onApiEvent\(eventName, listener\)/);
 });
 
-test("3.2.0 preserves bottom coordinates and cross-view frames without eager hidden-view refresh", async () => {
+test("3.2.1 preserves bottom coordinates and cross-view frames without eager hidden-view refresh", async () => {
   const [source, manifestText] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(manifestUrl, "utf8")
   ]);
   const manifest = JSON.parse(manifestText);
 
-  assert.equal(manifest.version, "3.2.0");
-  assert.match(source, /version: "3\.2\.0"/);
+  assert.equal(manifest.version, "3.2.1");
+  assert.match(source, /version: "3\.2\.1"/);
   assert.match(source, /if \(!this\.responsivePointsInitialized \|\| signature !== this\.responsiveLayoutSignature\)/);
   assert.match(source, /migratedDrawingData\.version = Math\.max\(3/);
   assert.match(source, /captureElementLayoutForStroke/);
@@ -56,12 +56,17 @@ test("reading text edits avoid placeholder breaks and support undo, redo, and bl
     readFile(stylesUrl, "utf8")
   ]);
 
-  assert.match(source, /inner\.replace\(\/<br>\$\/, ""\)/);
-  assert.match(source, /if \(this\.currentEditor\) \{\s*this\.currentEditor\.ownerDocument\.execCommand\?\.\("undo"\)/);
-  assert.match(source, /this\.currentEditor\.ownerDocument\.execCommand\?\.\("redo"\)/);
+  assert.match(source, /stripGeneratedTerminalBreaks\(serializeEditableChildren\(element\)\)/);
+  assert.match(source, /function stripGeneratedTerminalBreaks\(value\)/);
+  assert.match(source, /await this\.plugin\.undoControllerHistory\(this\)/);
+  assert.match(source, /await this\.plugin\.redoControllerHistory\(this\)/);
+  assert.match(source, /recordMarkdownHistory\(file, before, after/);
+  assert.match(source, /recordDrawingHistory\(before\)/);
   assert.match(source, /installTextSortHandle\(element\)/);
-  assert.match(source, /async reorderTextBlock\(file, movingElement, targetElement, placeAfter = false\)/);
-  assert.match(source, /await this\.plugin\.flushTextSave\(element\);\s*this\.endTextEdit\(\);/);
+  assert.match(source, /async reorderTextBlock\(file, movingElement, targetElement, placeAfter = false, sourceState = \{\}\)/);
+  assert.match(source, /element\.dataset\.noteDrawSortDragging === "true"/);
+  assert.match(source, /const target = dropTarget \|\| findEditableTarget\(event\.target, this\.previewEl\)/);
+  assert.match(source, /await this\.plugin\.flushTextSave\(element\);\s*delete element\.dataset\.noteDrawSortDragging;\s*this\.endTextEdit\(\)/);
   assert.match(styles, /\.notedraw-text-sort-handle \{/);
   assert.match(styles, /\.notedraw-text-sort-target-before \{/);
   assert.match(styles, /\.notedraw-text-sort-target-after \{/);

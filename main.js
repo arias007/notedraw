@@ -2280,6 +2280,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     this.controllers = /* @__PURE__ */ new WeakMap();
     this.liveControllers = /* @__PURE__ */ new Set();
     this.sourceControllers = /* @__PURE__ */ new Map();
+    this.embeddedControllers = /* @__PURE__ */ new Map();
     this.webviewControllers = /* @__PURE__ */ new Map();
     this.headerActions = /* @__PURE__ */ new Map();
     this.saveTimers = /* @__PURE__ */ new Map();
@@ -2288,6 +2289,8 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     this.drawingStateCache = /* @__PURE__ */ new Map();
     this.viewDrawingActive = /* @__PURE__ */ new WeakMap();
     this.viewToolbarState = /* @__PURE__ */ new WeakMap();
+    this.viewEditHistory = /* @__PURE__ */ new WeakMap();
+    this.viewInteractionController = /* @__PURE__ */ new WeakMap();
     this.textSaveStates = /* @__PURE__ */ new WeakMap();
     this.apiListeners = /* @__PURE__ */ new Map();
     this.settingsSaveTimer = null;
@@ -2310,6 +2313,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       this.syncRenderedMarkdownAnnotations();
       this.syncSourceControllers();
       this.syncMarkdownControllerModes();
+      this.syncEmbeddedMarkdownControllers();
       this.syncWebviewControllers();
       for (const controller of this.liveControllers) {
         controller.syncFloatingControlClasses();
@@ -2326,6 +2330,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     this.registerMarkdownPostProcessor((el, ctx) => {
       const renderedSourcePath = resolveRenderedSourcePath(this.app, el, ctx.sourcePath);
       annotateEditableElements(el, ctx, renderedSourcePath);
+      window.setTimeout(() => this.syncEmbeddedMarkdownControllers(), 0);
       const preview = el.closest(".markdown-preview-view");
       if (!preview || isEmbeddedPreview(preview)) {
         return;
@@ -2357,6 +2362,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     }
     this.liveControllers.clear();
     this.sourceControllers.clear();
+    this.embeddedControllers.clear();
     this.webviewControllers.clear();
     for (const state of this.headerActions.values()) {
       state.button?.remove();
@@ -2454,6 +2460,32 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     const key = this.controllerStateKey(controller);
     return key ? this.viewToolbarState.get(key) || null : null;
   }
+  interactionController(controller) {
+    const key = this.controllerStateKey(controller);
+    const preferred = key ? this.viewInteractionController.get(key) : null;
+    if (preferred && !preferred.destroyed && preferred.previewEl?.isConnected && isElementVisibleEnough(preferred.previewEl)) {
+      return preferred;
+    }
+    const fallback = Array.from(this.liveControllers).find((candidate) => {
+      return !candidate.destroyed && !candidate.embeddedSurface && candidate.previewEl?.isConnected && this.controllerStateKey(candidate) === key && isElementVisibleEnough(candidate.previewEl);
+    }) || controller;
+    if (key && fallback) {
+      this.viewInteractionController.set(key, fallback);
+    }
+    return fallback;
+  }
+  setInteractionController(controller) {
+    const key = this.controllerStateKey(controller);
+    if (!key) {
+      return;
+    }
+    this.viewInteractionController.set(key, controller);
+    for (const candidate of this.liveControllers) {
+      if (!candidate.destroyed && this.controllerStateKey(candidate) === key) {
+        candidate.syncFloatingControlClasses();
+      }
+    }
+  }
   setControllerToolbarState(controller, state) {
     const key = this.controllerStateKey(controller);
     if (!key) {
@@ -2469,6 +2501,82 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
         candidate.applySharedToolbarState(next);
       }
     }
+  }
+  controllerHistoryState(controller) {
+    const key = this.controllerStateKey(controller);
+    if (!key) {
+      return null;
+    }
+    let state = this.viewEditHistory.get(key);
+    if (!state) {
+      state = { undo: [], redo: [] };
+      this.viewEditHistory.set(key, state);
+    }
+    return state;
+  }
+  recordControllerHistory(controller, entry, options = {}) {
+    const state = this.controllerHistoryState(controller);
+    if (!state || !entry) {
+      return;
+    }
+    const last = state.undo[state.undo.length - 1];
+    if (options.coalesceKey && last?.coalesceKey === options.coalesceKey && last.kind === entry.kind && last.file?.path === entry.file?.path) {
+      last.after = entry.after;
+    } else {
+      state.undo.push({ ...entry, coalesceKey: options.coalesceKey || null });
+      if (state.undo.length > 100) {
+        state.undo.shift();
+      }
+    }
+    state.redo = [];
+  }
+  async undoControllerHistory(controller) {
+    const state = this.controllerHistoryState(controller);
+    const entry = state?.undo.pop();
+    if (!entry) {
+      return false;
+    }
+    if (!await this.applyControllerHistoryEntry(entry, "before")) {
+      state.undo.push(entry);
+      return false;
+    }
+    state.redo.push(entry);
+    return true;
+  }
+  async redoControllerHistory(controller) {
+    const state = this.controllerHistoryState(controller);
+    const entry = state?.redo.pop();
+    if (!entry) {
+      return false;
+    }
+    if (!await this.applyControllerHistoryEntry(entry, "after")) {
+      state.redo.push(entry);
+      return false;
+    }
+    state.undo.push(entry);
+    return true;
+  }
+  async applyControllerHistoryEntry(entry, direction) {
+    if (entry.kind === "drawing") {
+      const data = cloneDrawingData(entry[direction], entry.file);
+      this.scheduleDrawingSave(entry.file, data);
+      return true;
+    }
+    if (entry.kind === "markdown") {
+      const file = getVaultFileByPath(this.app.vault, entry.file?.path);
+      if (!file) {
+        return false;
+      }
+      const current = await this.app.vault.read(file);
+      const expected = direction === "before" ? entry.after : entry.before;
+      if (current !== String(expected || "")) {
+        return false;
+      }
+      await this.app.vault.modify(file, String(entry[direction] || ""));
+      this.emitApiEvent("markdown-changed", { file: file.path, history: direction });
+      return true;
+    }
+    return false;
   }
   setControllerActivation(controller, active) {
     const key = this.controllerStateKey(controller);
@@ -2582,7 +2690,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.2.0",
+      version: "3.2.1",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -2847,6 +2955,56 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       if (previewVisible && (!previewController || previewController.destroyed || previewController.file?.path !== view.file?.path)) {
         previewController?.destroy();
         previewController = this.resolveLivePreviewController(view);
+      }
+    }
+  }
+  syncEmbeddedMarkdownControllers() {
+    const activeSurfaces = /* @__PURE__ */ new Set();
+    const leaves = this.app.workspace.getLeavesOfType?.("markdown") || [];
+    for (const leaf of leaves) {
+      const view = leaf.view;
+      if (!(view instanceof import_obsidian.MarkdownView) || !view.file || !view.containerEl) {
+        continue;
+      }
+      const surfaces = Array.from(view.containerEl.querySelectorAll(".markdown-embed-content")).filter((surface) => {
+        return surface.isConnected && !surface.closest(".notedraw-embed");
+      });
+      for (const surface of surfaces) {
+        const sourcePath = resolveRenderedSourcePath(this.app, surface, view.file.path);
+        const file = getVaultFileByPath(this.app.vault, sourcePath);
+        if (!file || normalizeVaultPath(file.path) === normalizeVaultPath(view.file.path)) {
+          continue;
+        }
+        activeSurfaces.add(surface);
+        const existing = this.embeddedControllers.get(surface);
+        if (existing?.previewEl === surface && !existing.destroyed) {
+          existing.setFile(file).catch((error) => {
+            console.error(`[${PLUGIN_ID}] Failed to switch embedded drawing controller file`, error);
+          });
+          continue;
+        }
+        existing?.destroy();
+        const mountedOnElement = this.controllers.get(surface) || surface._noteDrawController;
+        if (mountedOnElement?.destroy) {
+          mountedOnElement.destroy();
+        }
+        cleanupDrawingUi(surface);
+        const controller = new PreviewDrawingController(this, surface, view, file, {
+          allowTextEdit: true,
+          surfaceType: "embedded",
+          embeddedSurface: true
+        });
+        this.controllers.set(surface, controller);
+        this.embeddedControllers.set(surface, controller);
+        controller.mount().catch((error) => {
+          console.error(`[${PLUGIN_ID}] Failed to mount embedded drawing controller`, error);
+        });
+      }
+    }
+    for (const [surface, controller] of Array.from(this.embeddedControllers.entries())) {
+      if (!activeSurfaces.has(surface) || !surface.isConnected) {
+        controller.destroy();
+        this.embeddedControllers.delete(surface);
       }
     }
   }
@@ -3380,13 +3538,14 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     }
     return this.app.vault.adapter.getResourcePath(assetPath);
   }
-  prepareTextEditState(file, originalText, element) {
+  prepareTextEditState(file, originalText, element, controller = null) {
     const state = this.getTextSaveState(file, originalText, element);
     state.file = file;
     state.baselineText = originalText;
     state.latestText = originalText;
     state.latestSourceInfo = getSourceInfo(element);
     state.target = null;
+    state.controller = controller || state.controller;
     state.targetPromise = this.resolveTextEditTarget(file, originalText, element).then((target) => {
       state.target = target;
       return target;
@@ -3410,11 +3569,12 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     });
     return target;
   }
-  scheduleTextSave(file, originalText, editedText, element) {
+  scheduleTextSave(file, originalText, editedText, element, controller = null) {
     const state = this.getTextSaveState(file, originalText, element);
     state.file = file;
     state.latestText = editedText;
     state.latestSourceInfo = getSourceInfo(element);
+    state.controller = controller || state.controller;
     state.saveBlocked = false;
     state.saveLogged = false;
     if (!state.target && !state.targetPromise) {
@@ -3435,11 +3595,12 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       this.flushTextSave(element);
     }, TEXT_SAVE_DELAY_MS);
   }
-  scheduleTextSaveNow(file, originalText, editedText, element) {
+  scheduleTextSaveNow(file, originalText, editedText, element, controller = null) {
     const state = this.getTextSaveState(file, originalText, element);
     state.file = file;
     state.latestText = editedText;
     state.latestSourceInfo = getSourceInfo(element);
+    state.controller = controller || state.controller;
     state.saveBlocked = false;
     state.saveLogged = false;
     if (!state.target && !state.targetPromise) {
@@ -3456,7 +3617,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       state.timer = null;
     }
     element.addClass("notedraw-saving");
-    this.flushTextSave(element);
+    return this.flushTextSave(element);
   }
   getTextSaveState(file, originalText, element) {
     let state = this.textSaveStates.get(element);
@@ -3508,6 +3669,9 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
         state.target
       );
       if (result.changed) {
+        if (result.history && state.controller) {
+          state.controller.recordMarkdownHistory(state.file, result.history.before, result.history.after, state);
+        }
         state.baselineText = latestText;
         state.target = result.target || state.target;
         state.warningLogged = false;
@@ -3593,23 +3757,25 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       text: replacement
     }, sourceInfo, editedText);
     if (currentText !== replacement) {
-      await this.app.vault.modify(file, `${source.slice(0, start)}${replacement}${source.slice(end)}`);
+      const nextSource = `${source.slice(0, start)}${replacement}${source.slice(end)}`;
+      await this.app.vault.modify(file, nextSource);
       this.emitApiEvent("markdown-changed", {
         file: file.path,
         start,
         end,
         replacementLength: replacement.length
       });
+      return { changed: true, target: nextTarget, history: { before: source, after: nextSource } };
     }
     return { changed: true, target: nextTarget };
   }
-  async reorderTextBlock(file, movingElement, targetElement, placeAfter = false) {
+  async reorderTextBlock(file, movingElement, targetElement, placeAfter = false, sourceState = {}) {
     if (!file || !movingElement || !targetElement || movingElement === targetElement) {
       return false;
     }
     const source = await this.app.vault.read(file);
-    const moving = resolveSourceEditTarget(source, getSourceInfo(movingElement), movingElement.innerText);
-    const target = resolveSourceEditTarget(source, getSourceInfo(targetElement), targetElement.innerText);
+    const moving = resolveSourceEditTarget(source, sourceState.movingInfo || getSourceInfo(movingElement), sourceState.movingText || movingElement.innerText);
+    const target = resolveSourceEditTarget(source, sourceState.targetInfo || getSourceInfo(targetElement), sourceState.targetText || targetElement.innerText);
     if (!moving || !target || moving.start === target.start || moving.start < target.end && moving.end > target.start) {
       return false;
     }
@@ -3623,8 +3789,9 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     const after = without.slice(insertion).replace(/^[ \t]+/g, "");
     const separatorBefore = before && !before.endsWith("\n\n") ? before.endsWith("\n") ? "\n" : "\n\n" : "";
     const separatorAfter = after && !after.startsWith("\n\n") ? after.startsWith("\n") ? "\n" : "\n\n" : "";
-    await this.app.vault.modify(file, `${before}${separatorBefore}${block}${separatorAfter}${after}`);
-    return true;
+    const nextSource = `${before}${separatorBefore}${block}${separatorAfter}${after}`;
+    await this.app.vault.modify(file, nextSource);
+    return { changed: true, before: source, after: nextSource };
   }
 };
 var PreviewDrawingController = class {
@@ -3635,6 +3802,7 @@ var PreviewDrawingController = class {
     this.file = file;
     this.allowTextEdit = options.allowTextEdit !== false;
     this.surfaceType = options.surfaceType || "preview";
+    this.embeddedSurface = Boolean(options.embeddedSurface);
     this.destroyed = false;
     this.plugin.liveControllers?.add(this);
     this.runtimeSettings = sanitizeSettings(this.plugin?.noteDrawSettings || {});
@@ -3792,6 +3960,7 @@ var PreviewDrawingController = class {
     this.previewEl.addClass("is-notedraw-responsive-layout");
     this.previewEl.toggleClass("is-notedraw-source-shell", this.surfaceType === "source");
     this.previewEl.toggleClass("is-notedraw-webview-shell", this.surfaceType === "webview");
+    this.previewEl.toggleClass("is-notedraw-embedded-shell", this.embeddedSurface);
     this.floatingControlsInBody = shouldUseBodyFloatingControls(this.previewEl, this.surfaceType);
     this.floatingControlsHost = this.floatingControlsInBody ? activeDocument.body : this.previewEl;
     this.previewEl.toggleClass("has-notedraw-body-controls", this.floatingControlsInBody);
@@ -3977,6 +4146,9 @@ var PreviewDrawingController = class {
     this.refreshLocalizedLabels();
     this.applySharedToolbarState(this.plugin.controllerToolbarState(this));
     this.applyActiveState(this.active);
+    await this.ensureDrawingsLoaded();
+    this.resizeCanvas();
+    this.render();
   }
   applySettings() {
     const settings = sanitizeSettings(this.plugin?.noteDrawSettings || {});
@@ -4123,11 +4295,9 @@ var PreviewDrawingController = class {
     this.drawingsLoaded = false;
     this.loadingDrawings = null;
     this.drawingData = createEmptyDrawingData(file);
-    if (this.active) {
-      await this.ensureDrawingsLoaded();
-      this.resizeCanvas();
-      this.render();
-    }
+    await this.ensureDrawingsLoaded();
+    this.resizeCanvas();
+    this.render();
   }
   resetCanvasSurface() {
     this.previewEl.removeClass("has-notedraw-canvas");
@@ -4283,6 +4453,9 @@ var PreviewDrawingController = class {
     const activeLeaf = this.plugin.app.workspace?.activeLeaf;
     const ownerLeaf = this.view?.leaf || findOwningLeaf(this.plugin.app, this.view?.containerEl || this.previewEl);
     if (activeLeaf && ownerLeaf && activeLeaf !== ownerLeaf) {
+      return false;
+    }
+    if (this.plugin.interactionController(this) !== this) {
       return false;
     }
     return isElementVisibleEnough(this.previewEl);
@@ -5130,10 +5303,11 @@ var PreviewDrawingController = class {
     }
     const original = element.dataset.noteDrawOriginal || "";
     const editedSource = serializeEditableSource(element);
+    const file = this.currentEditorFile || this.file;
     if (immediate) {
-      this.plugin.scheduleTextSaveNow(this.file, original, editedSource, element);
+      this.plugin.scheduleTextSaveNow(file, original, editedSource, element, this);
     } else {
-      this.plugin.scheduleTextSave(this.file, original, editedSource, element);
+      this.plugin.scheduleTextSave(file, original, editedSource, element, this);
     }
   }
   toggleTextPanel() {
@@ -5727,6 +5901,7 @@ var PreviewDrawingController = class {
     if (!this.active || event.button !== 0) {
       return;
     }
+    this.plugin.setInteractionController(this);
     if (this.shouldPassThroughHeaderPoint(event)) {
       return;
     }
@@ -6024,6 +6199,7 @@ var PreviewDrawingController = class {
     } else if (this.currentStroke.kind === TOOL_TEXT) {
       this.currentStroke = null;
     } else {
+      const historyBefore = this.captureDrawingHistorySnapshot();
       const responsiveContext = this.getResponsiveLayoutContext();
       this.currentStroke.points = this.currentStroke.points.map((point) => this.captureResponsivePoint(point, responsiveContext));
       this.drawingData.strokes.push(this.currentStroke);
@@ -6032,6 +6208,7 @@ var PreviewDrawingController = class {
       this.redoStack = [];
       this.invalidateStaticCache();
       this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+      this.recordDrawingHistory(historyBefore);
       this.currentStroke = null;
     }
     this.finishPointerInteraction(event);
@@ -6278,6 +6455,7 @@ var PreviewDrawingController = class {
       this.endFloatingTextInput(false, state);
       return;
     }
+    const historyBefore = this.captureDrawingHistorySnapshot();
     if (state.index >= 0 && isTextLikeStroke(this.drawingData.strokes[state.index])) {
       const stroke = this.drawingData.strokes[state.index];
       stroke.text = text;
@@ -6323,6 +6501,7 @@ var PreviewDrawingController = class {
     this.redoStack = [];
     this.invalidateStaticCache();
     this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.recordDrawingHistory(historyBefore);
     this.scheduleLayoutRefresh({ settle: false });
     this.endFloatingTextInput(false, state);
     this.render();
@@ -6380,6 +6559,7 @@ var PreviewDrawingController = class {
     this.openFloatingTextInput(snappedPoint);
   }
   insertTextPresetAt(point, presetId, text) {
+    const historyBefore = this.captureDrawingHistorySnapshot();
     const brush = this.currentBrushSettings();
     const preset = createTextPreset(presetId, text, brush.color || this.penColor);
     const stroke = {
@@ -6410,6 +6590,7 @@ var PreviewDrawingController = class {
     this.redoStack = [];
     this.invalidateStaticCache();
     this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.recordDrawingHistory(historyBefore);
     this.scheduleLayoutRefresh({ settle: false });
     this.render();
   }
@@ -6418,6 +6599,7 @@ var PreviewDrawingController = class {
     if (!asset) {
       return;
     }
+    const historyBefore = this.captureDrawingHistorySnapshot();
     const previewRenderMode = classifyImportedPreviewRender(asset);
     if (previewRenderMode) {
       const isHtmlPreview = previewRenderMode === TEXT_RENDER_HTML;
@@ -6451,6 +6633,7 @@ var PreviewDrawingController = class {
       this.redoStack = [];
       this.invalidateStaticCache();
       this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+      this.recordDrawingHistory(historyBefore);
       this.render();
       return;
     }
@@ -6481,6 +6664,7 @@ var PreviewDrawingController = class {
     this.redoStack = [];
     this.invalidateStaticCache();
     this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.recordDrawingHistory(historyBefore);
     this.render();
   }
   onWheel(event) {
@@ -6648,6 +6832,7 @@ var PreviewDrawingController = class {
       index,
       this.drawingData.strokes[index].points.map((strokePoint) => ({ ...strokePoint }))
     ]));
+    this.dragDrawingHistoryBefore = this.captureDrawingHistorySnapshot();
     this.dragStrokeOriginalBounds = this.getStrokeIndexesNormalizedBounds(movableIndexes);
     this.dragStrokeMoved = false;
     this.dragStrokeHitIndex = hitIndex;
@@ -6722,6 +6907,7 @@ var PreviewDrawingController = class {
       this.lastTextTap = null;
       this.redoStack = [];
       this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+      this.recordDrawingHistory(this.dragDrawingHistoryBefore);
     } else if (!this.dragStrokePreserveSelection && this.getSelectedStrokeIndexes().length > 1 && this.dragStrokeHitIndex >= 0) {
       this.setSelectedStrokes(this.dragStrokeHitIndex);
     } else {
@@ -6757,6 +6943,7 @@ var PreviewDrawingController = class {
     this.dragStrokeMoved = false;
     this.dragStrokeHitIndex = -1;
     this.dragStrokePreserveSelection = false;
+    this.dragDrawingHistoryBefore = null;
     this.pointerStartClient = null;
     this.activePointerId = null;
     this.previewEl.removeClass("is-moving-selection");
@@ -6786,6 +6973,7 @@ var PreviewDrawingController = class {
         points: this.drawingData.strokes[index].points.map((strokePoint) => ({ ...strokePoint }))
       }
     ]));
+    this.resizeDrawingHistoryBefore = this.captureDrawingHistorySnapshot();
     this.resizeSelectionMoved = false;
     this.pointerStartClient = { x: event.clientX, y: event.clientY };
     this.activePointerId = event.pointerId;
@@ -6875,6 +7063,7 @@ var PreviewDrawingController = class {
       this.captureResponsiveAnchorsForIndexes(Array.from(this.resizeSelectionOriginalStrokes?.keys() || []));
       this.redoStack = [];
       this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+      this.recordDrawingHistory(this.resizeDrawingHistoryBefore);
     } else {
       this.cancelSelectedStrokeResize(true);
     }
@@ -6915,6 +7104,7 @@ var PreviewDrawingController = class {
     this.resizeSelectionOriginalBounds = null;
     this.resizeSelectionOriginalStrokes = null;
     this.resizeSelectionMoved = false;
+    this.resizeDrawingHistoryBefore = null;
     this.pointerStartClient = null;
     this.activePointerId = null;
     this.previewEl.removeClass("is-resizing-selection");
@@ -7590,6 +7780,7 @@ var PreviewDrawingController = class {
     if (!selectedIndexes.length) {
       return;
     }
+    const historyBefore = this.captureDrawingHistorySnapshot();
     const strokes = this.drawingData.strokes;
     const selectedStrokes = selectedIndexes.map((index) => strokes[index]).filter(Boolean);
     const selectedSet = new Set(selectedStrokes);
@@ -7614,6 +7805,7 @@ var PreviewDrawingController = class {
     this.redoStack = [];
     this.invalidateStaticCache();
     this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.recordDrawingHistory(historyBefore);
     this.render();
   }
   toggleSelectedStrokeLock() {
@@ -7621,6 +7813,7 @@ var PreviewDrawingController = class {
     if (!indexes.length) {
       return;
     }
+    const historyBefore = this.captureDrawingHistorySnapshot();
     const shouldUnlock = indexes.every((index) => this.drawingData.strokes[index]?.locked);
     for (const index of indexes) {
       const stroke = this.drawingData.strokes[index];
@@ -7632,6 +7825,7 @@ var PreviewDrawingController = class {
     this.redoStack = [];
     this.invalidateStaticCache();
     this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.recordDrawingHistory(historyBefore);
     this.render();
   }
   getSelectedStrokeMaxWidth() {
@@ -7692,7 +7886,7 @@ var PreviewDrawingController = class {
     element.dataset.noteDrawOriginal = element.innerText;
     const saveToVault = this.surfaceType !== "webview";
     if (saveToVault) {
-      this.plugin.prepareTextEditState(this.currentEditorFile, element.innerText, element);
+      this.plugin.prepareTextEditState(this.currentEditorFile, element.innerText, element, this);
     }
     element.contentEditable = "true";
     element.spellcheck = true;
@@ -7711,7 +7905,8 @@ var PreviewDrawingController = class {
         this.currentEditorFile,
         element.dataset.noteDrawOriginal || "",
         serializeEditableSource(element),
-        element
+        element,
+        this
       );
       this.positionFormatToolbar();
     };
@@ -7740,7 +7935,7 @@ var PreviewDrawingController = class {
     const onBlur = () => {
       window.setTimeout(() => {
         const active = activeDocument.activeElement;
-        if (this.currentEditor !== element || element.contains(active) || this.formatToolbar?.contains(active)) {
+        if (this.currentEditor !== element || element.dataset.noteDrawSortDragging === "true" || element.contains(active) || this.formatToolbar?.contains(active)) {
           return;
         }
         this.endTextEdit();
@@ -7788,7 +7983,7 @@ var PreviewDrawingController = class {
     if (this.surfaceType === "webview") {
       this.commitWebviewTextEdit(element, original, edited);
     } else if (normalizeEditableSourceText(original) !== normalizeEditableSourceText(edited)) {
-      this.plugin.scheduleTextSaveNow(this.currentEditorFile || this.file, original, edited, element);
+      this.plugin.scheduleTextSaveNow(this.currentEditorFile || this.file, original, edited, element, this);
     }
     element._noteDrawCleanup?.();
     delete element._noteDrawCleanup;
@@ -7832,17 +8027,32 @@ var PreviewDrawingController = class {
       target.addClass(placeAfter ? "notedraw-text-sort-target-after" : "notedraw-text-sort-target-before");
     };
     const onDrop = async (event) => {
-      if (!dropTarget) {
+      const target = dropTarget || findEditableTarget(event.target, this.previewEl);
+      if (!target || target === element) {
         return;
       }
       event.preventDefault();
-      const target = dropTarget;
       const after = placeAfter;
-      clearTarget();
       const file = this.currentEditorFile || this.file;
+      const targetFile = this.plugin.resolveEditableFile(target, this.file);
+      if (normalizeVaultPath(targetFile?.path) !== normalizeVaultPath(file?.path)) {
+        clearTarget();
+        return;
+      }
+      const sourceState = {
+        movingInfo: getSourceInfo(element),
+        movingText: element.innerText,
+        targetInfo: getSourceInfo(target),
+        targetText: target.innerText
+      };
+      clearTarget();
       await this.plugin.flushTextSave(element);
+      delete element.dataset.noteDrawSortDragging;
       this.endTextEdit();
-      await this.plugin.reorderTextBlock(file, element, target, after);
+      const result = await this.plugin.reorderTextBlock(file, element, target, after, sourceState);
+      if (result?.changed) {
+        this.recordMarkdownHistory(file, result.before, result.after);
+      }
     };
     const cleanup = element._noteDrawCleanup;
     element._noteDrawCleanup = () => {
@@ -7852,12 +8062,16 @@ var PreviewDrawingController = class {
       this.previewEl.removeEventListener("drop", onDrop);
     };
     handle.addEventListener("dragstart", (event) => {
+      element.dataset.noteDrawSortDragging = "true";
       event.dataTransfer?.setData("text/plain", "notedraw-text-block");
       if (event.dataTransfer) {
         event.dataTransfer.effectAllowed = "move";
       }
     });
-    handle.addEventListener("dragend", clearTarget);
+    handle.addEventListener("dragend", () => {
+      delete element.dataset.noteDrawSortDragging;
+      clearTarget();
+    });
     this.previewEl.addEventListener("dragover", onDragOver);
     this.previewEl.addEventListener("drop", onDrop);
   }
@@ -7915,38 +8129,44 @@ var PreviewDrawingController = class {
       used.add(element);
     }
   }
-  undoLastStroke() {
-    if (this.currentEditor) {
-      this.currentEditor.ownerDocument.execCommand?.("undo");
-      const InputEvent = this.currentEditor.ownerDocument.defaultView?.Event || Event;
-      this.currentEditor.dispatchEvent(new InputEvent("input", { bubbles: true }));
+  recordMarkdownHistory(file, before, after, coalesceKey = null) {
+    if (String(before ?? "") === String(after ?? "")) {
       return;
     }
-    if (!this.drawingData.strokes.length) {
+    this.plugin.recordControllerHistory(this, { kind: "markdown", file, before, after }, { coalesceKey });
+  }
+  captureDrawingHistorySnapshot() {
+    return cloneDrawingData(this.drawingData, this.file);
+  }
+  recordDrawingHistory(before) {
+    const after = this.captureDrawingHistorySnapshot();
+    if (JSON.stringify(before) === JSON.stringify(after)) {
       return;
     }
-    const removed = this.drawingData.strokes.pop();
-    this.redoStack.push(removed);
+    this.plugin.recordControllerHistory(this, { kind: "drawing", file: this.file, before, after });
+  }
+  async commitActiveTextEditForHistory() {
+    const element = this.currentEditor;
+    if (!element) {
+      return;
+    }
+    const original = element.dataset.noteDrawOriginal || "";
+    const edited = this.surfaceType === "webview" ? element.innerText : serializeEditableSource(element);
+    if (this.surfaceType !== "webview" && normalizeEditableSourceText(original) !== normalizeEditableSourceText(edited)) {
+      await this.plugin.scheduleTextSaveNow(this.currentEditorFile || this.file, original, edited, element, this);
+    }
+    this.endTextEdit();
+  }
+  async undoLastStroke() {
+    await this.commitActiveTextEditForHistory();
+    await this.plugin.undoControllerHistory(this);
     this.clearSelectedStrokes();
-    this.rebuildElementRelations();
-    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
     this.render();
   }
-  redoLastStroke() {
-    if (this.currentEditor) {
-      this.currentEditor.ownerDocument.execCommand?.("redo");
-      const InputEvent = this.currentEditor.ownerDocument.defaultView?.Event || Event;
-      this.currentEditor.dispatchEvent(new InputEvent("input", { bubbles: true }));
-      return;
-    }
-    if (!this.redoStack.length) {
-      return;
-    }
-    const restored = this.redoStack.pop();
-    this.drawingData.strokes.push(restored);
-    this.setSelectedStrokes(this.drawingData.strokes.length - 1);
-    this.rebuildElementRelations();
-    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+  async redoLastStroke() {
+    await this.commitActiveTextEditForHistory();
+    await this.plugin.redoControllerHistory(this);
+    this.clearSelectedStrokes();
     this.render();
   }
   deleteSelectedStroke() {
@@ -7954,6 +8174,7 @@ var PreviewDrawingController = class {
     if (!indexes.length) {
       return;
     }
+    const historyBefore = this.captureDrawingHistorySnapshot();
     for (const index of indexes.slice().sort((a, b) => b - a)) {
       this.drawingData.strokes.splice(index, 1);
     }
@@ -7961,6 +8182,7 @@ var PreviewDrawingController = class {
     this.redoStack = [];
     this.rebuildElementRelations();
     this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.recordDrawingHistory(historyBefore);
     this.render();
   }
 };
@@ -8635,7 +8857,10 @@ function selectNodeContents(node) {
   selection.addRange(range);
 }
 function serializeEditableSource(element) {
-  return serializeEditableChildren(element).replace(/\u00a0/g, " ").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  return stripGeneratedTerminalBreaks(serializeEditableChildren(element)).replace(/\u00a0/g, " ").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+function stripGeneratedTerminalBreaks(value) {
+  return String(value || "").replace(/(?:<br>\s*)+$/gi, "");
 }
 function serializeEditableChildren(node) {
   return Array.from(node.childNodes || []).map((child) => serializeEditableNode(child)).join("");
@@ -9299,7 +9524,7 @@ function cleanupAllDrawingHeaderButtons() {
 }
 function cleanupDrawingUi(preview) {
   preview.querySelectorAll(".notedraw-button, .notedraw-fallback-button, .notedraw-webview-button, .notedraw-toolbar, .notedraw-palette-panel, .notedraw-text-panel, .notedraw-selection-menu, .notedraw-format-toolbar, .notedraw-embed-layer, .notedraw-file-input, .notedraw-static-canvas, .notedraw-canvas").forEach((element) => element.remove());
-  preview.classList.remove("notedraw-shell", "is-drawing-active", "is-drawing-hidden", "is-select-mode", "is-palette-open", "is-text-panel-open", "is-selection-menu-open", "is-watercolor-mode", "is-edit-md-mode", "is-selecting-strokes", "is-resizing-selection", "is-native-text-editing", "is-notedraw-webview-shell", "is-notedraw-responsive-layout", "is-notedraw-controls-visible", "has-notedraw-body-controls", "has-notedraw-canvas");
+  preview.classList.remove("notedraw-shell", "is-drawing-active", "is-drawing-hidden", "is-select-mode", "is-palette-open", "is-text-panel-open", "is-selection-menu-open", "is-watercolor-mode", "is-edit-md-mode", "is-selecting-strokes", "is-resizing-selection", "is-native-text-editing", "is-notedraw-webview-shell", "is-notedraw-embedded-shell", "is-notedraw-responsive-layout", "is-notedraw-controls-visible", "has-notedraw-body-controls", "has-notedraw-canvas");
 }
 function isMarkdownContentMutation(mutation) {
   if (mutation?.type !== "childList") {
@@ -9546,6 +9771,9 @@ function normalizeDrawingDataForStorage(data, file) {
     };
   });
   return normalized;
+}
+function cloneDrawingData(data, file) {
+  return JSON.parse(JSON.stringify(normalizeDrawingDataForStorage(data, file)));
 }
 function normalizeWebEdits(value) {
   if (!Array.isArray(value)) {

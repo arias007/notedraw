@@ -11,6 +11,23 @@
   min-height: 180px;
 }
 
+.notedraw-shell.is-notedraw-embedded-shell {
+  position: relative;
+  min-height: 48px;
+}
+
+.notedraw-shell.is-notedraw-embedded-shell .notedraw-static-canvas {
+  z-index: 64;
+}
+
+.notedraw-shell.is-notedraw-embedded-shell .notedraw-canvas {
+  z-index: 65;
+}
+
+.notedraw-shell.is-notedraw-embedded-shell .notedraw-embed-layer {
+  z-index: 63;
+}
+
 .notedraw-header-button.is-active {
   color: var(--interactive-accent);
   background: var(--background-modifier-hover);
