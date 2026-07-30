@@ -2723,7 +2723,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.2.7",
+      version: "3.2.8",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -4484,6 +4484,12 @@ var PreviewDrawingController = class {
       return;
     }
     const nextActive = !this.active;
+    if (nextActive) {
+      await this.ensureDrawingsLoaded();
+      if (!this.drawingsVisible) {
+        this.setDrawingsVisible(true);
+      }
+    }
     this.plugin.setControllerActivation(this, nextActive);
   }
   applyActiveState(active, options = {}) {
