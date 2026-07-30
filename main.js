@@ -2723,7 +2723,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.2.5",
+      version: "3.2.6",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -3162,7 +3162,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     (0, import_obsidian.setIcon)(button, "wand-sparkles");
     this.setAccessibleLabel(button, "editWebviewDraw");
     button.addEventListener("click", (event) => controller.onButtonClick(event));
-    button.addEventListener("pointerdown", () => controller.onButtonPointerDown());
+    button.addEventListener("pointerdown", (event) => controller.onButtonPointerDown(event));
     button.addEventListener("pointerup", () => controller.onButtonPointerUp());
     button.addEventListener("pointercancel", () => controller.onButtonPointerUp());
     button.addEventListener("pointerleave", () => controller.onButtonPointerUp());
@@ -5527,11 +5527,16 @@ var PreviewDrawingController = class {
       this.endTextEdit();
     }
   }
-  onButtonPointerDown() {
+  onButtonPointerDown(event) {
+    if (event?.button !== void 0 && event.button !== 0) {
+      return;
+    }
     this.clearButtonLongPress();
     this.buttonLongPressTimer = window.setTimeout(() => {
       this.buttonLongPressed = true;
-      this.toggleDrawingsVisible();
+      this.toggleDrawingsVisiblePersisted().catch((error) => {
+        console.error(`[${PLUGIN_ID}] Failed to toggle NoteDraw visibility`, error);
+      });
     }, this.longPressDelayMs());
   }
   onButtonPointerUp() {
@@ -5580,7 +5585,9 @@ var PreviewDrawingController = class {
     event?.stopPropagation?.();
     this.clearButtonLongPress();
     this.buttonLongPressed = false;
-    this.toggleDrawingsVisible();
+    this.toggleDrawingsVisiblePersisted().catch((error) => {
+      console.error(`[${PLUGIN_ID}] Failed to toggle NoteDraw visibility`, error);
+    });
   }
   clearButtonLongPress() {
     if (this.buttonLongPressTimer) {
@@ -5590,6 +5597,10 @@ var PreviewDrawingController = class {
   }
   toggleDrawingsVisible() {
     this.setDrawingsVisible(!this.drawingsVisible);
+  }
+  async toggleDrawingsVisiblePersisted() {
+    await this.ensureDrawingsLoaded();
+    this.toggleDrawingsVisible();
   }
   setDrawingsVisible(visible) {
     this.applyDrawingsVisibility(visible);

@@ -48,8 +48,9 @@ test("magic wand preserves per-file visibility while long press and right click 
 
   assert.match(source, /const nextActive = !this\.active;\s*this\.plugin\.setControllerActivation\(this, nextActive\)/);
   assert.doesNotMatch(source, /if \(!this\.drawingsVisible\) \{\s*this\.setDrawingsVisible\(true\)/);
-  assert.match(source, /this\.buttonLongPressed = true;\s*this\.toggleDrawingsVisible\(\)/);
-  assert.match(source, /onButtonContextMenu\(event\)[\s\S]*this\.toggleDrawingsVisible\(\)/);
+  assert.match(source, /this\.buttonLongPressed = true;\s*this\.toggleDrawingsVisiblePersisted\(\)/);
+  assert.match(source, /onButtonContextMenu\(event\)[\s\S]*this\.toggleDrawingsVisiblePersisted\(\)/);
+  assert.match(source, /async toggleDrawingsVisiblePersisted\(\) \{\s*await this\.ensureDrawingsLoaded\(\);\s*this\.toggleDrawingsVisible\(\)/);
   assert.match(source, /toggleDrawingsVisible\(\) \{\s*this\.setDrawingsVisible\(!this\.drawingsVisible\)/);
   assert.match(source, /setDrawingsVisible\(visible\) \{\s*this\.applyDrawingsVisibility\(visible\);\s*this\.drawingData\.visible = this\.drawingsVisible;\s*this\.plugin\.scheduleDrawingSave\(this\.file, this\.drawingData\)/);
   assert.match(source, /visible: data\?\.visible !== false/);
