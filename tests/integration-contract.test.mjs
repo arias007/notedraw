@@ -14,6 +14,8 @@ test("embedded Markdown edits resolve and save against the referenced file", asy
   assert.match(source, /const editsEmbeddedFile = Boolean\(editableFile\?\.path && editableFile\.path !== this\.file\?\.path\)/);
   assert.match(source, /prepareTextEditState\(this\.currentEditorFile, element\.innerText, element, this\)/);
   assert.match(source, /scheduleTextSaveNow\(this\.currentEditorFile \|\| this\.file, original, edited, element, this\)/);
+  assert.match(source, /serializeControllerEditableSource\(element, this\.embeddedSurface\)/);
+  assert.match(source, /function stripEmbeddedGeneratedBreaks\(value\)[\s\S]*replace\(\/<br\\s\*\\\/\?>\/gi, "\\n"\)/);
 });
 
 test("the stable v1 API exposes Cancip-friendly capabilities and events", async () => {
@@ -27,15 +29,15 @@ test("the stable v1 API exposes Cancip-friendly capabilities and events", async 
   assert.match(source, /on: \(eventName, listener\) => this\.onApiEvent\(eventName, listener\)/);
 });
 
-test("3.2.2 preserves bottom coordinates and cross-view frames without eager hidden-view refresh", async () => {
+test("3.2.3 preserves bottom coordinates and cross-view frames without eager hidden-view refresh", async () => {
   const [source, manifestText] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(manifestUrl, "utf8")
   ]);
   const manifest = JSON.parse(manifestText);
 
-  assert.equal(manifest.version, "3.2.2");
-  assert.match(source, /version: "3\.2\.2"/);
+  assert.equal(manifest.version, "3.2.3");
+  assert.match(source, /version: "3\.2\.3"/);
   assert.match(source, /if \(!this\.responsivePointsInitialized \|\| signature !== this\.responsiveLayoutSignature\)/);
   assert.match(source, /migratedDrawingData\.version = Math\.max\(3/);
   assert.match(source, /captureElementLayoutForStroke/);
@@ -70,6 +72,9 @@ test("reading text edits avoid placeholder breaks and support undo, redo, and bl
   assert.match(source, /const flushed = await this\.plugin\.flushTextSaveAndWait\(element\)/);
   assert.match(source, /this\.endTextEdit\(\{ save: false \}\);\s*this\.plugin\.discardTextSaveState\(element\)/);
   assert.match(source, /normalizeEditableSourceText\(state\.baselineText\) === normalizeEditableSourceText\(state\.latestText\)/);
+  assert.match(source, /button\.addEventListener\("contextmenu", state\.contextMenuHandler\)/);
+  assert.match(source, /onButtonContextMenu\(event\)[\s\S]*this\.toggleDrawingsVisible\(\)/);
+  assert.match(source, /if \(!this\.drawingsVisible\) \{\s*this\.setDrawingsVisible\(true\);\s*if \(this\.active\) \{\s*return/);
   assert.match(styles, /\.notedraw-text-sort-handle \{/);
   assert.match(styles, /\.notedraw-text-sort-target-before \{/);
   assert.match(styles, /\.notedraw-text-sort-target-after \{/);
@@ -127,7 +132,6 @@ test("floating text editing keeps one anchor and survives multiline IME input", 
   assert.match(source, /this\.openFloatingTextInput\(stroke\.points\[0\], index\)/);
   assert.match(source, /textarea\.addEventListener\("compositionstart"/);
   assert.match(source, /textarea\.addEventListener\("compositionend"/);
-  assert.doesNotMatch(source, /if \(!this\.drawingsVisible\) \{\s*this\.setDrawingsVisible\(true\)/);
   assert.match(source, /fontSize: clamp\(Number\(preset\.fontSize \|\| 18\), 10, 72\)/);
   assert.match(source, /this\.scheduleLayoutRefresh\(\{ settle: false \}\)/);
   assert.match(source, /stroke\.textWidth = this\.floatingTextContentWidth/);

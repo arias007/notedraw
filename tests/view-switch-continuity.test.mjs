@@ -43,12 +43,13 @@ test("toolbar mode, brush, panels, and text preset are shared", async () => {
   assert.doesNotMatch(source, /this\.surfaceType === "source"\) \{\s*return false;/);
 });
 
-test("only a magic wand long press changes persistent per-file visibility", async () => {
+test("magic wand click restores drawings while long press and right click toggle visibility", async () => {
   const source = await readFile(sourceUrl, "utf8");
 
   assert.match(source, /const nextActive = !this\.active;\s*this\.plugin\.setControllerActivation\(this, nextActive\)/);
-  assert.doesNotMatch(source, /if \(!this\.drawingsVisible\) \{\s*this\.setDrawingsVisible\(true\)/);
+  assert.match(source, /if \(!this\.drawingsVisible\) \{\s*this\.setDrawingsVisible\(true\)/);
   assert.match(source, /this\.buttonLongPressed = true;\s*this\.toggleDrawingsVisible\(\)/);
+  assert.match(source, /onButtonContextMenu\(event\)[\s\S]*this\.toggleDrawingsVisible\(\)/);
   assert.match(source, /toggleDrawingsVisible\(\) \{\s*this\.setDrawingsVisible\(!this\.drawingsVisible\)/);
   assert.match(source, /setDrawingsVisible\(visible\) \{\s*this\.applyDrawingsVisibility\(visible\);\s*this\.drawingData\.visible = this\.drawingsVisible;\s*this\.plugin\.scheduleDrawingSave\(this\.file, this\.drawingData\)/);
   assert.match(source, /visible: data\?\.visible !== false/);

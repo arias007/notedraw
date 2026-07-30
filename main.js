@@ -2690,7 +2690,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.2.2",
+      version: "3.2.3",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -3073,6 +3073,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       state.pointerDownHandler = (event) => this.resolveHeaderController(view, state, { preferPreviewOnAppleTouch: false })?.onButtonPointerDown(event);
       state.pointerUpHandler = (event) => this.resolveHeaderController(view, state, { preferPreviewOnAppleTouch: false })?.onButtonPointerUp(event);
       state.touchEndHandler = (event) => this.resolveHeaderController(view, state, { preferPreviewOnAppleTouch: true })?.onButtonTouchEnd(event);
+      state.contextMenuHandler = (event) => this.resolveHeaderController(view, state, { preferPreviewOnAppleTouch: false })?.onButtonContextMenu(event);
       let button = null;
       if (typeof view?.addAction === "function") {
         button = view.addAction("wand-sparkles", this.t("editTextDraw"), state.clickHandler);
@@ -3095,6 +3096,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       button.addEventListener("pointercancel", state.pointerUpHandler);
       button.addEventListener("pointerleave", state.pointerUpHandler);
       button.addEventListener("touchend", state.touchEndHandler, { passive: false });
+      button.addEventListener("contextmenu", state.contextMenuHandler);
       state.button = button;
       this.headerActions.set(view, state);
     }
@@ -3132,6 +3134,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     button.addEventListener("pointercancel", () => controller.onButtonPointerUp());
     button.addEventListener("pointerleave", () => controller.onButtonPointerUp());
     button.addEventListener("touchend", (event) => controller.onButtonTouchEnd(event), { passive: false });
+    button.addEventListener("contextmenu", (event) => controller.onButtonContextMenu(event));
     if (actions) {
       actions.appendChild(button);
     } else {
@@ -5336,7 +5339,7 @@ var PreviewDrawingController = class {
       return;
     }
     const original = element.dataset.noteDrawOriginal || "";
-    const editedSource = serializeEditableSource(element);
+    const editedSource = serializeControllerEditableSource(element, this.embeddedSurface);
     const file = this.currentEditorFile || this.file;
     if (immediate) {
       this.plugin.scheduleTextSaveNow(file, original, editedSource, element, this);
@@ -5529,9 +5532,22 @@ var PreviewDrawingController = class {
       event?.stopPropagation();
       return;
     }
+    if (!this.drawingsVisible) {
+      this.setDrawingsVisible(true);
+      if (this.active) {
+        return;
+      }
+    }
     this.toggle().catch((error) => {
       console.error(`[${PLUGIN_ID}] Failed to toggle NoteDraw`, error);
     });
+  }
+  onButtonContextMenu(event) {
+    event?.preventDefault?.();
+    event?.stopPropagation?.();
+    this.clearButtonLongPress();
+    this.buttonLongPressed = false;
+    this.toggleDrawingsVisible();
   }
   clearButtonLongPress() {
     if (this.buttonLongPressTimer) {
@@ -7938,7 +7954,7 @@ var PreviewDrawingController = class {
       this.plugin.scheduleTextSave(
         this.currentEditorFile,
         element.dataset.noteDrawOriginal || "",
-        serializeEditableSource(element),
+        serializeControllerEditableSource(element, this.embeddedSurface),
         element,
         this
       );
@@ -8013,7 +8029,7 @@ var PreviewDrawingController = class {
       return;
     }
     const original = element.dataset.noteDrawOriginal || "";
-    const edited = this.surfaceType === "webview" ? element.innerText : serializeEditableSource(element);
+    const edited = this.surfaceType === "webview" ? element.innerText : serializeControllerEditableSource(element, this.embeddedSurface);
     if (options.save === false) {
     } else if (this.surfaceType === "webview") {
       this.commitWebviewTextEdit(element, original, edited);
@@ -8192,7 +8208,7 @@ var PreviewDrawingController = class {
       return;
     }
     const original = element.dataset.noteDrawOriginal || "";
-    const edited = this.surfaceType === "webview" ? element.innerText : serializeEditableSource(element);
+    const edited = this.surfaceType === "webview" ? element.innerText : serializeControllerEditableSource(element, this.embeddedSurface);
     if (this.surfaceType !== "webview" && normalizeEditableSourceText(original) !== normalizeEditableSourceText(edited)) {
       await this.plugin.scheduleTextSaveNow(this.currentEditorFile || this.file, original, edited, element, this);
     }
@@ -8899,6 +8915,13 @@ function selectNodeContents(node) {
 }
 function serializeEditableSource(element) {
   return stripGeneratedTerminalBreaks(serializeEditableChildren(element)).replace(/\u00a0/g, " ").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+function serializeControllerEditableSource(element, embeddedSurface = false) {
+  const source = serializeEditableSource(element);
+  return embeddedSurface ? stripEmbeddedGeneratedBreaks(source) : source;
+}
+function stripEmbeddedGeneratedBreaks(value) {
+  return String(value || "").replace(/<br\s*\/?>/gi, "\n").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 function stripGeneratedTerminalBreaks(value) {
   return String(value || "").replace(/(?:<br>\s*)+$/gi, "");
