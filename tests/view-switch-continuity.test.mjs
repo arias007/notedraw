@@ -23,6 +23,7 @@ test("only the active visible surface exposes body-portal controls", async () =>
   ]);
 
   assert.match(source, /controlsShouldBeVisible\(\)/);
+  assert.match(source, /if \(this\.embeddedSurface \|\| !this\.active/);
   assert.match(source, /activeLeaf && ownerLeaf && activeLeaf !== ownerLeaf/);
   assert.match(source, /element\?\.toggleClass\("is-notedraw-controls-visible", visible\)/);
   assert.match(styles, /\.notedraw-body-control:not\(\.is-notedraw-controls-visible\)\s*\{\s*display:\s*none !important;/s);

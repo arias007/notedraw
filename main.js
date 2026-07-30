@@ -2723,7 +2723,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.2.6",
+      version: "3.2.7",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -4523,7 +4523,7 @@ var PreviewDrawingController = class {
     }
   }
   controlsShouldBeVisible() {
-    if (!this.active || this.destroyed || !this.previewEl?.isConnected || isBlockingObsidianOverlayOpen(activeDocument)) {
+    if (this.embeddedSurface || !this.active || this.destroyed || !this.previewEl?.isConnected || isBlockingObsidianOverlayOpen(activeDocument)) {
       return false;
     }
     const activeLeaf = this.plugin.app.workspace?.activeLeaf;
@@ -5356,13 +5356,18 @@ var PreviewDrawingController = class {
       return;
     }
     const range = selection.getRangeAt(0);
-    if (!this.currentEditor.contains(range.commonAncestorContainer) || range.collapsed) {
+    if (!this.currentEditor.contains(range.commonAncestorContainer)) {
       return;
     }
-    const plainText = selection.toString() || range.cloneContents().textContent || "";
+    const clearWholeEditor = range.collapsed;
+    const plainText = clearWholeEditor ? this.currentEditor.innerText || this.currentEditor.textContent || "" : selection.toString() || range.cloneContents().textContent || "";
     const textNode = activeDocument.createTextNode(plainText);
-    range.deleteContents();
-    range.insertNode(textNode);
+    if (clearWholeEditor) {
+      this.currentEditor.replaceChildren(textNode);
+    } else {
+      range.deleteContents();
+      range.insertNode(textNode);
+    }
     const nextRange = activeDocument.createRange();
     nextRange.setStart(textNode, 0);
     nextRange.setEnd(textNode, textNode.nodeValue?.length || 0);
@@ -8117,7 +8122,7 @@ var PreviewDrawingController = class {
       return;
     }
     const original = element.dataset.noteDrawOriginal || "";
-    const edited = this.surfaceType === "webview" ? element.innerText : serializeControllerEditableSource(element, this.currentEditorEmbedded);
+    const edited = this.surfaceType === "webview" ? element.innerText : serializeControllerEditableSource(element, this.currentEditorEmbedded, true);
     if (options.save === false) {
     } else if (this.surfaceType === "webview") {
       this.commitWebviewTextEdit(element, original, edited);
@@ -8297,7 +8302,7 @@ var PreviewDrawingController = class {
       return;
     }
     const original = element.dataset.noteDrawOriginal || "";
-    const edited = this.surfaceType === "webview" ? element.innerText : serializeControllerEditableSource(element, this.currentEditorEmbedded);
+    const edited = this.surfaceType === "webview" ? element.innerText : serializeControllerEditableSource(element, this.currentEditorEmbedded, true);
     if (this.surfaceType !== "webview" && normalizeEditableSourceText(original) !== normalizeEditableSourceText(edited)) {
       await this.plugin.scheduleTextSaveNow(this.currentEditorFile || this.file, original, edited, element, this);
     }
@@ -9005,12 +9010,12 @@ function selectNodeContents(node) {
 function serializeEditableSource(element) {
   return stripGeneratedTerminalBreaks(serializeEditableChildren(element)).replace(/\u00a0/g, " ").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
 }
-function serializeControllerEditableSource(element, embeddedSurface = false) {
+function serializeControllerEditableSource(element, embeddedSurface = false, cleanupTerminalBreak = false) {
   const source = serializeEditableSource(element);
-  return embeddedSurface ? stripEmbeddedGeneratedBreaks(source) : source;
+  return cleanupTerminalBreak ? stripOneTerminalBreakPerLine(source) : source;
 }
-function stripEmbeddedGeneratedBreaks(value) {
-  return String(value || "").replace(/(?:<br\s*\/?>\s*)+/gi, "\n").replace(/[ \t]+\n/g, "\n").replace(/\n{2,}/g, "\n").trim();
+function stripOneTerminalBreakPerLine(value) {
+  return String(value || "").replace(/<br\s*\/?>[ \t]*(?=\n|$)/gim, "").trim();
 }
 function stripGeneratedTerminalBreaks(value) {
   return String(value || "").replace(/(?:<br>\s*)+$/gi, "");

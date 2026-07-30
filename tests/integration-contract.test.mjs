@@ -16,7 +16,7 @@ test("embedded Markdown edits resolve and save against the referenced file", asy
   assert.match(source, /scheduleTextSaveNow\(this\.currentEditorFile \|\| this\.file, original, edited, element, this\)/);
   assert.match(source, /this\.currentEditorEmbedded = this\.embeddedSurface \|\| isEmbeddedEditableElement\(element\) \|\| normalizeVaultPath\(this\.currentEditorFile\?\.path\) !== normalizeVaultPath\(this\.file\?\.path\)/);
   assert.match(source, /serializeControllerEditableSource\(element, this\.currentEditorEmbedded\)/);
-  assert.match(source, /function stripEmbeddedGeneratedBreaks\(value\)[\s\S]*replace\(\/\(\?:<br\\s\*\\\/\?>\\s\*\)\+\/gi, "\\n"\)[\s\S]*replace\(\/\\n\{2,\}\/g, "\\n"\)/);
+  assert.match(source, /function stripOneTerminalBreakPerLine\(value\)[\s\S]*replace\(\/<br\\s\*\\\/\?>\[ \\t\]\*\(\?=\\n\|\$\)\/gim, ""\)/);
 });
 
 test("the stable v1 API exposes Cancip-friendly capabilities and events", async () => {
@@ -30,15 +30,15 @@ test("the stable v1 API exposes Cancip-friendly capabilities and events", async 
   assert.match(source, /on: \(eventName, listener\) => this\.onApiEvent\(eventName, listener\)/);
 });
 
-test("3.2.6 preserves bottom coordinates and cross-view frames without eager hidden-view refresh", async () => {
+test("3.2.7 preserves bottom coordinates and cross-view frames without eager hidden-view refresh", async () => {
   const [source, manifestText] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(manifestUrl, "utf8")
   ]);
   const manifest = JSON.parse(manifestText);
 
-  assert.equal(manifest.version, "3.2.6");
-  assert.match(source, /version: "3\.2\.6"/);
+  assert.equal(manifest.version, "3.2.7");
+  assert.match(source, /version: "3\.2\.7"/);
   assert.match(source, /if \(!this\.responsivePointsInitialized \|\| signature !== this\.responsiveLayoutSignature\)/);
   assert.match(source, /migratedDrawingData\.version = Math\.max\(3/);
   assert.match(source, /captureElementLayoutForStroke/);
@@ -73,6 +73,7 @@ test("reading text edits avoid placeholder breaks and support undo, redo, and bl
   assert.match(source, /const flushed = await this\.plugin\.flushTextSaveAndWait\(element\)/);
   assert.match(source, /this\.endTextEdit\(\{ save: false \}\);\s*this\.plugin\.discardTextSaveState\(element\)/);
   assert.match(source, /normalizeEditableSourceText\(state\.baselineText\) === normalizeEditableSourceText\(state\.latestText\)/);
+  assert.match(source, /this\.currentEditor\.replaceChildren\(textNode\)/);
   assert.match(source, /button\.addEventListener\("contextmenu", state\.contextMenuHandler\)/);
   assert.match(source, /onButtonContextMenu\(event\)[\s\S]*this\.toggleDrawingsVisible\(\)/);
   assert.doesNotMatch(source, /if \(!this\.drawingsVisible\) \{\s*this\.setDrawingsVisible\(true\)/);
