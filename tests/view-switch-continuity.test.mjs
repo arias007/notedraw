@@ -43,11 +43,11 @@ test("toolbar mode, brush, panels, and text preset are shared", async () => {
   assert.doesNotMatch(source, /this\.surfaceType === "source"\) \{\s*return false;/);
 });
 
-test("magic wand click restores drawings while long press and right click toggle visibility", async () => {
+test("magic wand preserves per-file visibility while long press and right click toggle it", async () => {
   const source = await readFile(sourceUrl, "utf8");
 
   assert.match(source, /const nextActive = !this\.active;\s*this\.plugin\.setControllerActivation\(this, nextActive\)/);
-  assert.match(source, /if \(!this\.drawingsVisible\) \{\s*this\.setDrawingsVisible\(true\)/);
+  assert.doesNotMatch(source, /if \(!this\.drawingsVisible\) \{\s*this\.setDrawingsVisible\(true\)/);
   assert.match(source, /this\.buttonLongPressed = true;\s*this\.toggleDrawingsVisible\(\)/);
   assert.match(source, /onButtonContextMenu\(event\)[\s\S]*this\.toggleDrawingsVisible\(\)/);
   assert.match(source, /toggleDrawingsVisible\(\) \{\s*this\.setDrawingsVisible\(!this\.drawingsVisible\)/);
@@ -79,5 +79,10 @@ test("inactive views and embedded Markdown load their own editable drawings", as
   assert.match(source, /surfaceType: "embedded",\s*embeddedSurface: true/);
   assert.match(source, /await this\.ensureDrawingsLoaded\(\);\s*this\.resizeCanvas\(\);\s*this\.render\(\)/);
   assert.match(source, /this\.plugin\.setInteractionController\(this\)/);
-  assert.match(styles, /\.notedraw-shell\.is-notedraw-embedded-shell \.notedraw-canvas/);
+  assert.match(source, /findEmbeddedStrokeControllerAtPoint\(controller, event\)/);
+  assert.match(source, /embeddedController\.onPointerDown\(event, true\)/);
+  assert.match(source, /this\.routedPointerController\.onPointerMove\(event\)/);
+  assert.match(source, /routedController\.onPointerUp\(event\)/);
+  assert.match(styles, /is-notedraw-embedded-shell\.is-drawing-active \.notedraw-canvas \{[\s\S]*pointer-events: none/);
+  assert.match(styles, /\.notedraw-shell\.is-notedraw-embedded-shell\.is-drawing-active \.notedraw-canvas/);
 });

@@ -2491,6 +2491,22 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       }
     }
   }
+  findEmbeddedStrokeControllerAtPoint(controller, event) {
+    const key = this.controllerStateKey(controller);
+    for (const candidate of this.liveControllers) {
+      if (candidate === controller || candidate.destroyed || !candidate.embeddedSurface || !candidate.active || !candidate.drawingsVisible || !candidate.previewEl?.isConnected || this.controllerStateKey(candidate) !== key) {
+        continue;
+      }
+      const rect = candidate.canvas?.getBoundingClientRect?.();
+      if (!rect || event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) {
+        continue;
+      }
+      if (candidate.findStrokeAt(candidate.eventToPoint(event)) >= 0) {
+        return candidate;
+      }
+    }
+    return null;
+  }
   setControllerToolbarState(controller, state) {
     const key = this.controllerStateKey(controller);
     if (!key) {
@@ -2707,7 +2723,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.2.4",
+      version: "3.2.5",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -3871,6 +3887,8 @@ var PreviewDrawingController = class {
     this.currentEditor = null;
     this.currentEditorFile = null;
     this.currentEditorEmbedded = false;
+    this.routedPointerController = null;
+    this.routedPointerHost = null;
     this.currentTextRange = null;
     this.formatToolbar = null;
     this.formatToolbarManualPosition = null;
@@ -4475,6 +4493,9 @@ var PreviewDrawingController = class {
     const eager = options.eager !== false;
     const wasActive = this.active;
     this.active = Boolean(active);
+    if (this.active && !this.embeddedSurface && isElementVisibleEnough(this.previewEl)) {
+      this.plugin.setInteractionController(this);
+    }
     this.previewEl.toggleClass("is-drawing-active", this.active);
     this.syncFloatingControlClasses();
     this.button?.classList.toggle("is-active", this.active);
@@ -5550,12 +5571,6 @@ var PreviewDrawingController = class {
       event?.stopPropagation();
       return;
     }
-    if (!this.drawingsVisible) {
-      this.setDrawingsVisible(true);
-      if (this.active) {
-        return;
-      }
-    }
     this.toggle().catch((error) => {
       console.error(`[${PLUGIN_ID}] Failed to toggle NoteDraw`, error);
     });
@@ -5965,11 +5980,29 @@ var PreviewDrawingController = class {
     this.previewEl.addClass("has-notedraw-canvas");
     return geometryChanged || backingStoreChanged;
   }
-  onPointerDown(event) {
+  onPointerDown(event, routed = false) {
     if (!this.active || event.button !== 0) {
       return;
     }
-    this.plugin.setInteractionController(this);
+    if (!routed) {
+      this.plugin.setInteractionController(this);
+      const ownPoint = this.eventToPoint(event);
+      if (this.findStrokeAt(ownPoint) < 0) {
+        const embeddedController = this.plugin.findEmbeddedStrokeControllerAtPoint(this, event);
+        if (embeddedController) {
+          this.routedPointerController = embeddedController;
+          embeddedController.routedPointerHost = this;
+          this.activePointerId = event.pointerId;
+          try {
+            this.canvas.setPointerCapture(event.pointerId);
+          } catch (error) {
+            void error;
+          }
+          embeddedController.onPointerDown(event, true);
+          return;
+        }
+      }
+    }
     if (this.shouldPassThroughHeaderPoint(event)) {
       return;
     }
@@ -6111,10 +6144,12 @@ var PreviewDrawingController = class {
     if (!editable) {
       this.endTextEdit();
     }
-    try {
-      this.canvas.setPointerCapture(event.pointerId);
-    } catch (error) {
-      void error;
+    if (!routed) {
+      try {
+        this.canvas.setPointerCapture(event.pointerId);
+      } catch (error) {
+        void error;
+      }
     }
     if (this.toolMode === TOOL_TEXT) {
       this.currentStroke = null;
@@ -6163,6 +6198,10 @@ var PreviewDrawingController = class {
     return target;
   }
   onPointerMove(event) {
+    if (this.routedPointerController && event.pointerId === this.activePointerId) {
+      this.routedPointerController.onPointerMove(event);
+      return;
+    }
     if (event.pointerType === "touch" && this.touchPointers.has(event.pointerId)) {
       this.touchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
       if (this.multiTouchScrolling) {
@@ -6208,6 +6247,25 @@ var PreviewDrawingController = class {
     event.stopPropagation();
   }
   onPointerUp(event) {
+    if (this.routedPointerHost) {
+      this.routedPointerHost.routedPointerController = null;
+      this.routedPointerHost.activePointerId = null;
+      this.routedPointerHost = null;
+    }
+    if (this.routedPointerController && event.pointerId === this.activePointerId) {
+      const routedController = this.routedPointerController;
+      this.routedPointerController = null;
+      routedController.onPointerUp(event);
+      this.activePointerId = null;
+      try {
+        if (this.canvas.hasPointerCapture?.(event.pointerId)) {
+          this.canvas.releasePointerCapture(event.pointerId);
+        }
+      } catch (error) {
+        void error;
+      }
+      return;
+    }
     if (event.type === "lostpointercapture" && this.multiTouchScrolling) {
       return;
     }
@@ -8941,7 +8999,7 @@ function serializeControllerEditableSource(element, embeddedSurface = false) {
   return embeddedSurface ? stripEmbeddedGeneratedBreaks(source) : source;
 }
 function stripEmbeddedGeneratedBreaks(value) {
-  return String(value || "").replace(/<br\s*\/?>/gi, "\n").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  return String(value || "").replace(/(?:<br\s*\/?>\s*)+/gi, "\n").replace(/[ \t]+\n/g, "\n").replace(/\n{2,}/g, "\n").trim();
 }
 function stripGeneratedTerminalBreaks(value) {
   return String(value || "").replace(/(?:<br>\s*)+$/gi, "");

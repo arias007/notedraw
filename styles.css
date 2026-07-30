@@ -20,8 +20,9 @@
   z-index: 64;
 }
 
-.notedraw-shell.is-notedraw-embedded-shell .notedraw-canvas {
+.notedraw-shell.is-notedraw-embedded-shell.is-drawing-active .notedraw-canvas {
   z-index: 65;
+  pointer-events: none;
 }
 
 .notedraw-shell.is-notedraw-embedded-shell .notedraw-embed-layer {
