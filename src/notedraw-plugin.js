@@ -1452,7 +1452,7 @@ var NoteDrawPlugin = class extends Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.2.1",
+      version: "3.2.2",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -2504,6 +2504,40 @@ var NoteDrawPlugin = class extends Plugin {
       return;
     }
     element.removeClass("notedraw-saving");
+  }
+  async flushTextSaveAndWait(element) {
+    const state = this.textSaveStates.get(element);
+    if (!state) {
+      return true;
+    }
+    if (state.timer) {
+      window.clearTimeout(state.timer);
+      state.timer = null;
+    }
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      await this.flushTextSave(element);
+      if (state.saveBlocked) {
+        return false;
+      }
+      const settled = !state.saving && normalizeEditableSourceText(state.baselineText) === normalizeEditableSourceText(state.latestText);
+      if (settled) {
+        if (state.timer) {
+          window.clearTimeout(state.timer);
+          state.timer = null;
+        }
+        state.pending = false;
+        return true;
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 10));
+    }
+    return false;
+  }
+  discardTextSaveState(element) {
+    const state = this.textSaveStates.get(element);
+    if (state?.timer) {
+      window.clearTimeout(state.timer);
+    }
+    this.textSaveStates.delete(element);
   }
   async saveTextBlock(file, originalText, editedText, sourceInfo, target) {
     const normalizedOriginal = normalizeRenderedText(originalText);
@@ -6762,14 +6796,16 @@ var PreviewDrawingController = class {
     }
     return dispatchMouseClickThroughOverlay(this.canvas, clientPoint);
   }
-  endTextEdit() {
+  endTextEdit(options = {}) {
     const element = this.currentEditor;
     if (!element) {
       return;
     }
     const original = element.dataset.noteDrawOriginal || "";
     const edited = this.surfaceType === "webview" ? element.innerText : serializeEditableSource(element);
-    if (this.surfaceType === "webview") {
+    if (options.save === false) {
+      // The caller already flushed the final value before a structural edit.
+    } else if (this.surfaceType === "webview") {
       this.commitWebviewTextEdit(element, original, edited);
     } else if (normalizeEditableSourceText(original) !== normalizeEditableSourceText(edited)) {
       this.plugin.scheduleTextSaveNow(this.currentEditorFile || this.file, original, edited, element, this);
@@ -6835,9 +6871,15 @@ var PreviewDrawingController = class {
         targetText: target.innerText
       };
       clearTarget();
-      await this.plugin.flushTextSave(element);
+      const flushed = await this.plugin.flushTextSaveAndWait(element);
+      if (!flushed) {
+        delete element.dataset.noteDrawSortDragging;
+        clearTarget();
+        return;
+      }
       delete element.dataset.noteDrawSortDragging;
-      this.endTextEdit();
+      this.endTextEdit({ save: false });
+      this.plugin.discardTextSaveState(element);
       const result = await this.plugin.reorderTextBlock(file, element, target, after, sourceState);
       if (result?.changed) {
         this.recordMarkdownHistory(file, result.before, result.after);
@@ -7671,7 +7713,10 @@ function serializeEditableNode(node) {
     const text = code ? code.textContent || "" : element.textContent || "";
     return `\n\`\`\`\n${text.replace(/\n+$/g, "")}\n\`\`\`\n`;
   }
-  const inner = serializeEditableChildren(element);
+  let inner = serializeEditableChildren(element);
+  if (["div", "p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "blockquote", "td", "th", "figcaption", "caption"].includes(tag)) {
+    inner = stripGeneratedTerminalBreaks(inner);
+  }
   if (!inner && !["span", "mark"].includes(tag)) {
     return "";
   }
