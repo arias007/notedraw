@@ -1057,6 +1057,7 @@ var NoteDrawPlugin = class extends Plugin {
     this.apiListeners = /* @__PURE__ */ new Map();
     this.settingsSaveTimer = null;
     this.webviewSyncTimer = null;
+    this.embeddedSyncTimer = null;
     this.floatingControlsSyncTimer = null;
     this.webviewMutationObserver = null;
     this.api = this.createPublicApi();
@@ -1146,6 +1147,10 @@ var NoteDrawPlugin = class extends Plugin {
     if (this.webviewSyncTimer !== null) {
       window.clearTimeout(this.webviewSyncTimer);
       this.webviewSyncTimer = null;
+    }
+    if (this.embeddedSyncTimer !== null) {
+      window.clearTimeout(this.embeddedSyncTimer);
+      this.embeddedSyncTimer = null;
     }
     if (this.floatingControlsSyncTimer !== null) {
       window.clearTimeout(this.floatingControlsSyncTimer);
@@ -1359,6 +1364,9 @@ var NoteDrawPlugin = class extends Plugin {
       return;
     }
     this.webviewMutationObserver = new MutationObserver((mutations) => {
+      if (mutations.some((mutation) => mutation.type === "childList")) {
+        this.scheduleEmbeddedMarkdownSync();
+      }
       if (mutations.some((mutation) => isWebviewSyncMutation(mutation))) {
         this.scheduleWebviewSync();
       }
@@ -1392,6 +1400,15 @@ var NoteDrawPlugin = class extends Plugin {
       this.webviewSyncTimer = null;
       this.syncWebviewControllers();
     }, 120);
+  }
+  scheduleEmbeddedMarkdownSync() {
+    if (this.embeddedSyncTimer !== null) {
+      window.clearTimeout(this.embeddedSyncTimer);
+    }
+    this.embeddedSyncTimer = window.setTimeout(() => {
+      this.embeddedSyncTimer = null;
+      this.syncEmbeddedMarkdownControllers();
+    }, 80);
   }
   createPublicApi() {
     const capabilities = Object.freeze({
@@ -1452,7 +1469,7 @@ var NoteDrawPlugin = class extends Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.2.3",
+      version: "3.2.4",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -2621,6 +2638,7 @@ var PreviewDrawingController = class {
     this.currentStroke = null;
     this.currentEditor = null;
     this.currentEditorFile = null;
+    this.currentEditorEmbedded = false;
     this.currentTextRange = null;
     this.formatToolbar = null;
     this.formatToolbarManualPosition = null;
@@ -4107,7 +4125,7 @@ var PreviewDrawingController = class {
       return;
     }
     const original = element.dataset.noteDrawOriginal || "";
-    const editedSource = serializeControllerEditableSource(element, this.embeddedSurface);
+    const editedSource = serializeControllerEditableSource(element, this.currentEditorEmbedded);
     const file = this.currentEditorFile || this.file;
     if (immediate) {
       this.plugin.scheduleTextSaveNow(file, original, editedSource, element, this);
@@ -6721,6 +6739,7 @@ var PreviewDrawingController = class {
     this.endTextEdit();
     this.currentEditor = element;
     this.currentEditorFile = this.plugin.resolveEditableFile(element, this.file);
+    this.currentEditorEmbedded = this.embeddedSurface || isEmbeddedEditableElement(element) || normalizeVaultPath(this.currentEditorFile?.path) !== normalizeVaultPath(this.file?.path);
     this.formatToolbarManualPosition = null;
     element.dataset.noteDrawOriginal = element.innerText;
     const saveToVault = this.surfaceType !== "webview";
@@ -6743,7 +6762,7 @@ var PreviewDrawingController = class {
       this.plugin.scheduleTextSave(
         this.currentEditorFile,
         element.dataset.noteDrawOriginal || "",
-        serializeControllerEditableSource(element, this.embeddedSurface),
+        serializeControllerEditableSource(element, this.currentEditorEmbedded),
         element,
         this
       );
@@ -6818,7 +6837,7 @@ var PreviewDrawingController = class {
       return;
     }
     const original = element.dataset.noteDrawOriginal || "";
-    const edited = this.surfaceType === "webview" ? element.innerText : serializeControllerEditableSource(element, this.embeddedSurface);
+    const edited = this.surfaceType === "webview" ? element.innerText : serializeControllerEditableSource(element, this.currentEditorEmbedded);
     if (options.save === false) {
       // The caller already flushed the final value before a structural edit.
     } else if (this.surfaceType === "webview") {
@@ -6839,6 +6858,7 @@ var PreviewDrawingController = class {
     this.formatToolbarManualPosition = null;
     this.currentEditor = null;
     this.currentEditorFile = null;
+    this.currentEditorEmbedded = false;
   }
   installTextSortHandle(element) {
     if (this.surfaceType !== "preview" || !element || element.querySelector(":scope > .notedraw-text-sort-handle")) {
@@ -6998,7 +7018,7 @@ var PreviewDrawingController = class {
       return;
     }
     const original = element.dataset.noteDrawOriginal || "";
-    const edited = this.surfaceType === "webview" ? element.innerText : serializeControllerEditableSource(element, this.embeddedSurface);
+    const edited = this.surfaceType === "webview" ? element.innerText : serializeControllerEditableSource(element, this.currentEditorEmbedded);
     if (this.surfaceType !== "webview" && normalizeEditableSourceText(original) !== normalizeEditableSourceText(edited)) {
       await this.plugin.scheduleTextSaveNow(this.currentEditorFile || this.file, original, edited, element, this);
     }
@@ -8369,6 +8389,9 @@ function findWebEditElement(root, edit, used = /* @__PURE__ */ new Set()) {
 }
 function isEmbeddedPreview(preview) {
   return Boolean(preview.closest(".markdown-embed, .markdown-embed-content, .internal-embed, .external-embed"));
+}
+function isEmbeddedEditableElement(element) {
+  return Boolean(element?.closest?.(".markdown-embed, .markdown-embed-content, .internal-embed"));
 }
 function cleanupAllDrawingHeaderButtons() {
   activeDocument.querySelectorAll(".notedraw-header-button, .notedraw-webview-button").forEach((button) => button.remove());

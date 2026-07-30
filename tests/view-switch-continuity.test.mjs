@@ -73,6 +73,8 @@ test("inactive views and embedded Markdown load their own editable drawings", as
 
   assert.match(source, /this\.embeddedControllers\s*=\s*\/\* @__PURE__ \*\/ new Map\(\)/);
   assert.match(source, /syncEmbeddedMarkdownControllers\(\)/);
+  assert.match(source, /mutation\.type === "childList"[\s\S]*this\.scheduleEmbeddedMarkdownSync\(\)/);
+  assert.match(source, /scheduleEmbeddedMarkdownSync\(\)[\s\S]*this\.syncEmbeddedMarkdownControllers\(\)/);
   assert.match(source, /querySelectorAll\("\.markdown-embed-content"\)/);
   assert.match(source, /surfaceType: "embedded",\s*embeddedSurface: true/);
   assert.match(source, /await this\.ensureDrawingsLoaded\(\);\s*this\.resizeCanvas\(\);\s*this\.render\(\)/);
