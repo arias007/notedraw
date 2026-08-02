@@ -19,7 +19,8 @@ test("fountain pen changes width with speed while keeping opacity constant", () 
   assert.equal(slow.length, 1);
   assert.equal(fast.length, 1);
   assert.ok(slow[0].width > fast[0].width);
-  assert.ok(slow[0].width / fast[0].width > 10, "fountain width contrast should remain visually distinct");
+  assert.ok(slow[0].width / fast[0].width > 2, "fountain width contrast should remain visually distinct");
+  assert.ok(slow[0].width / fast[0].width < 4, "fountain width contrast should stay smooth rather than bead-like");
   assert.equal(slow[0].opacity, 0.8);
   assert.equal(fast[0].opacity, 0.8);
 });
@@ -38,9 +39,10 @@ test("interpolated fast fountain points remain thin, continuous, and visible", (
   });
 
   assert.equal(segments.length, points.length - 1);
-  assert.ok(segments.every((segment) => segment.width >= 1));
-  assert.ok(segments.every((segment) => segment.width <= 1.1));
+  assert.ok(segments.slice(0, 3).every((segment) => segment.width >= 2));
   assert.ok(segments.every((segment) => segment.opacity === 0.35));
+  assert.ok(segments.at(-1).toWidth < segments.at(-1).fromWidth * 0.25, "a fast finish should taper to a pointed tail");
+  assert.ok(segments.slice(0, -1).every((segment, index) => Math.abs(segment.toWidth - segments[index + 1].fromWidth) < 1e-9));
 });
 
 test("straight watercolor only locks strokes already close to an axis", () => {

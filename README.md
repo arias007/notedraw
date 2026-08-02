@@ -21,6 +21,7 @@ It is built as a surface layer: the same drawing and text-edit logic works on Ob
 - Circular toolbar buttons sized for quick touch or mouse use.
 - Palette changes recolor selected elements directly; without a selection, select mode keeps the palette closed.
 - Selected elements can be copied and pasted across notes with styles, assets, layering, and bound connectors intact.
+- The active tool, brush variant, text preset, zoom, color, width, opacity, and mind-map link choice persist across notes and restarts.
 - Active pen and watercolor buttons use their current brush color as the button background.
 - The palette has common color swatches plus an advanced color picker entry, and applies color changes to selected elements.
 - Toolbar positioning stays below the Obsidian view header while scrolling.
@@ -38,7 +39,7 @@ It is built as a surface layer: the same drawing and text-edit logic works on Ob
 - Webview surfaces get independent drawing files, so annotations do not bleed between pages.
 - File-backed Canvas, PDF, image, database, and other workspace views retain their magic wand and drawing layer across internal rerenders.
 - Imported images, videos, files, Markdown, and HTML can be placed as floating NoteDraw elements.
-- Markdown files can be converted into editable NoteDraw mind maps with magnetically bound curved connectors.
+- Markdown files can be converted into editable NoteDraw mind maps with magnetically bound curved connectors, optional source-note updates, and source-note navigation.
 
 ## Storage
 
@@ -221,4 +222,4 @@ The current package focuses on the local Obsidian plugin runtime. The API and DO
 
 ## Version
 
-Current version: `3.3.0`.
+Current version: `3.3.1`.

@@ -19,7 +19,7 @@ test("default brushes remain separate from opt-in fountain and watercolor varian
     readFile(stylesUrl, "utf8")
   ]);
 
-  assert.match(source, /this\.brushVariants = \{\s*\[BRUSH_PEN\]: BRUSH_VARIANT_DEFAULT,\s*\[BRUSH_WATERCOLOR\]: BRUSH_VARIANT_DEFAULT/);
+  assert.match(source, /this\.brushVariants = \{\s*\[BRUSH_PEN\]: this\.runtimeSettings\.lastPenVariant,\s*\[BRUSH_WATERCOLOR\]: this\.runtimeSettings\.lastWatercolorVariant/);
   assert.match(source, /variant: this\.currentBrushVariant\(\)/);
   assert.match(source, /\[PEN_VARIANT_FOUNTAIN, PEN_VARIANT_NOTE\]\.includes\(normalizeBrushVariant\(BRUSH_PEN, stroke\.variant\)\)/);
   assert.match(source, /straightenWatercolorPoints\(stroke\.points/);
@@ -129,15 +129,27 @@ test("reading-only note pen and selected elements can reserve Markdown flow spac
 test("mind map import creates editable NoteDraw nodes and magnetically bound connectors", async () => {
   const source = await readFile(sourceUrl, "utf8");
 
-  assert.match(source, /import \{ layoutMindMap, parseMarkdownMindMap \} from "\.\/mind-map\.mjs"/);
+  assert.match(source, /import \{ layoutMindMap, parseMarkdownMindMap, replaceMarkdownMindMapNodeText \} from "\.\/mind-map\.mjs"/);
   assert.match(source, /new NoteDrawFileSuggestModal\(this\.plugin\.app, this\.file/);
   assert.match(source, /async insertMindMapAt\(point, sourceFile, options = \{\}\)/);
   assert.match(source, /kind: TOOL_TEXT/);
   assert.match(source, /mindMapNode:/);
+  assert.match(source, /affectsSource/);
+  assert.match(source, /openSelectedMindMapSource/);
   assert.match(source, /connector: \{\s*fromId: idMap\.get\(edge\.fromId\),\s*toId: idMap\.get\(edge\.toId\)/);
   assert.match(source, /syncBoundConnectors\(\)/);
   assert.match(source, /buildBoundConnectorPoints\(fromBounds, toBounds/);
   assert.match(source, /drawBoundConnectorOn\(ctx, stroke, alpha\)/);
+});
+
+test("controller startup and tool choices remain stable across reloads", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+
+  assert.match(source, /this\.selectedStrokeIndexes\?\.size/);
+  assert.match(source, /lastToolMode/);
+  assert.match(source, /lastPenVariant/);
+  assert.match(source, /lastTextPreset/);
+  assert.doesNotMatch(source, /this\.brushVariants\[mode\] = BRUSH_VARIANT_DEFAULT;\s*this\.setBrushMode\(mode\)/);
 });
 
 test("brush, palette, and text controls use touch-safe taps and anchor below their buttons", async () => {
@@ -169,8 +181,9 @@ test("fountain rendering stays continuous and palette ranges cover fine through 
   assert.match(source, /function paletteSliderToBrushWidth\(value\)/);
   assert.match(source, /function opacityToPaletteSlider\(value\)/);
   assert.match(source, /function paletteSliderToOpacity\(value\)/);
-  assert.match(fountainSource, /ctx\.beginPath\(\)[\s\S]*ctx\.arc\([\s\S]*ctx\.fill\(\)/);
-  assert.doesNotMatch(fountainSource, /ctx\.stroke\(\)/);
+  assert.match(fountainSource, /ctx\.beginPath\(\)[\s\S]*ctx\.quadraticCurveTo\([\s\S]*ctx\.fill\(\)/);
+  assert.doesNotMatch(fountainSource, /ctx\.arc\(/);
+  assert.match(fountainSource, /ctx\.lineWidth = Math\.max\(0\.7,[\s\S]*ctx\.stroke\(\)/);
 });
 
 test("file-backed workspace views remount drawings and header controls after internal rerenders", async () => {

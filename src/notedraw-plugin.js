@@ -53,7 +53,7 @@ import {
   buildFountainPenSegments,
   straightenWatercolorPoints
 } from "./stroke-dynamics.mjs";
-import { layoutMindMap, parseMarkdownMindMap } from "./mind-map.mjs";
+import { layoutMindMap, parseMarkdownMindMap, replaceMarkdownMindMapNodeText } from "./mind-map.mjs";
 const activeDocument = window.activeWindow?.document || window.document;
 var PLUGIN_ID = "notedraw";
 var DRAWING_DIR = `${PLUGIN_ID}/drawings`;
@@ -195,6 +195,10 @@ var I18N = {
     note: "Note",
     mindMap: "Mind map from file",
     chooseMindMapFile: "Choose a note for the mind map",
+    affectSourceNote: "Affect source note",
+    openSourceNote: "Open source note",
+    sourceNoteUpdated: "Source note updated",
+    sourceNoteUpdateFailed: "Could not update the source note",
     placeMindMap: "Tap the reading view to place the mind map.",
     emptyMindMap: "No usable content was found in that note.",
     mindMapTruncated: "The mind map was limited to 240 nodes for performance.",
@@ -331,6 +335,10 @@ var I18N = {
     note: "笔记",
     mindMap: "从文件提取思维导图",
     chooseMindMapFile: "选择要提取思维导图的笔记",
+    affectSourceNote: "影响笔记",
+    openSourceNote: "跳转源笔记",
+    sourceNoteUpdated: "源笔记已同步",
+    sourceNoteUpdateFailed: "源笔记同步失败",
     placeMindMap: "请在阅读视图中点击思维导图的放置位置。",
     emptyMindMap: "该笔记中没有可提取的有效内容。",
     mindMapTruncated: "为保证性能，思维导图最多提取 240 个节点。",
@@ -1003,6 +1011,13 @@ var DEFAULT_SETTINGS = {
   defaultWatercolorColor: "#3b82f6",
   defaultWatercolorWidth: 9,
   defaultWatercolorOpacity: 0.45,
+  lastToolMode: TOOL_DRAW,
+  lastBrushMode: BRUSH_PEN,
+  lastPenVariant: BRUSH_VARIANT_DEFAULT,
+  lastWatercolorVariant: BRUSH_VARIANT_DEFAULT,
+  lastTextPreset: "plain",
+  lastReadingZoom: 1,
+  mindMapAffectsSource: true,
   toolbarTopOffset: 6,
   longPressMs: LONG_PRESS_MS,
   selectTapDistance: SELECT_TAP_DISTANCE,
@@ -1087,11 +1102,22 @@ var WEBVIEW_BLOCKED_EDIT_SELECTOR = [
   "iframe"
 ].join(",");
 var NoteDrawFileSuggestModal = class extends FuzzySuggestModal {
-  constructor(app, currentFile, onChoose) {
+  constructor(app, currentFile, onChoose, options = {}) {
     super(app);
     this.currentFile = currentFile;
     this.onChoose = onChoose;
+    this.affectsSource = options.affectsSource !== false;
+    this.onAffectsSourceChange = options.onAffectsSourceChange;
     this.setPlaceholder(I18N[detectNoteDrawLanguage(app)]?.chooseMindMapFile || I18N.en.chooseMindMapFile);
+    const controls = this.modalEl.createDiv({ cls: "notedraw-mind-map-source-setting" });
+    new Setting(controls)
+      .setName(I18N[detectNoteDrawLanguage(app)]?.affectSourceNote || I18N.en.affectSourceNote)
+      .addToggle((toggle) => toggle.setValue(this.affectsSource).onChange((value) => {
+        this.affectsSource = Boolean(value);
+        this.onAffectsSourceChange?.(this.affectsSource);
+      }));
+    const inputContainer = this.modalEl.querySelector(".prompt-input-container");
+    inputContainer?.insertAdjacentElement("afterend", controls);
   }
   getItems() {
     const currentPath = normalizeVaultPath(this.currentFile?.path || "");
@@ -1109,12 +1135,13 @@ var NoteDrawFileSuggestModal = class extends FuzzySuggestModal {
     return file?.path || file?.basename || "";
   }
   onChooseItem(file) {
-    this.onChoose?.(file);
+    this.onChoose?.(file, this.affectsSource);
   }
 };
 var NoteDrawPlugin = class extends Plugin {
   async onload() {
     const savedSettings = await this.loadData();
+    this.runtimeDisposed = false;
     this.noteDrawSettings = sanitizeSettings({ ...DEFAULT_SETTINGS, ...(savedSettings || {}) });
     this.controllers = /* @__PURE__ */ new WeakMap();
     this.liveControllers = /* @__PURE__ */ new Set();
@@ -1176,6 +1203,9 @@ var NoteDrawPlugin = class extends Plugin {
     });
     this.addSettingTab(new NoteDrawSettingTab(this.app, this));
     const syncSurfaces = () => {
+      if (this.runtimeDisposed) {
+        return;
+      }
       this.pruneDisconnectedControllers();
       this.syncRenderedMarkdownAnnotations();
       this.syncSourceControllers();
@@ -1199,9 +1229,16 @@ var NoteDrawPlugin = class extends Plugin {
     this.installWebviewObserver();
     window.setTimeout(syncSurfaces, 0);
     this.registerMarkdownPostProcessor((el, ctx) => {
+      if (this.runtimeDisposed) {
+        return;
+      }
       const renderedSourcePath = resolveRenderedSourcePath(this.app, el, ctx.sourcePath);
       annotateEditableElements(el, ctx, renderedSourcePath);
-      window.setTimeout(() => this.syncEmbeddedMarkdownControllers(), 0);
+      window.setTimeout(() => {
+        if (!this.runtimeDisposed) {
+          this.syncEmbeddedMarkdownControllers();
+        }
+      }, 0);
       const preview = el.closest(".markdown-preview-view");
       if (!preview || isEmbeddedPreview(preview)) {
         return;
@@ -1224,10 +1261,15 @@ var NoteDrawPlugin = class extends Plugin {
       const controller = new PreviewDrawingController(this, preview, view, view.file);
       this.controllers.set(preview, controller);
       controller.mount();
-      window.setTimeout(() => this.syncWebviewControllers(), 0);
+      window.setTimeout(() => {
+        if (!this.runtimeDisposed) {
+          this.syncWebviewControllers();
+        }
+      }, 0);
     });
   }
   onunload() {
+    this.runtimeDisposed = true;
     for (const controller of Array.from(this.liveControllers)) {
       controller.destroy();
     }
@@ -1565,12 +1607,17 @@ var NoteDrawPlugin = class extends Plugin {
     }, 120);
   }
   scheduleEmbeddedMarkdownSync() {
+    if (this.runtimeDisposed) {
+      return;
+    }
     if (this.embeddedSyncTimer !== null) {
       window.clearTimeout(this.embeddedSyncTimer);
     }
     this.embeddedSyncTimer = window.setTimeout(() => {
       this.embeddedSyncTimer = null;
-      this.syncEmbeddedMarkdownControllers();
+      if (!this.runtimeDisposed) {
+        this.syncEmbeddedMarkdownControllers();
+      }
     }, 80);
   }
   scheduleWorkspaceSync() {
@@ -1657,7 +1704,7 @@ var NoteDrawPlugin = class extends Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.3.0",
+      version: "3.3.1",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -1814,7 +1861,10 @@ var NoteDrawPlugin = class extends Plugin {
       return { ok: false, reason: "source-or-surface-not-found" };
     }
     const point = options.point || controller.visibleCanvasPastePoint();
-    return controller.insertMindMapAt(point, sourceFile, { quiet: Boolean(options.quiet) });
+    return controller.insertMindMapAt(point, sourceFile, {
+      quiet: Boolean(options.quiet),
+      affectsSource: options.affectsSource ?? this.noteDrawSettings.mindMapAffectsSource
+    });
   }
   refreshControllersForFile(file, data, options = {}) {
     let refreshed = 0;
@@ -1988,6 +2038,9 @@ var NoteDrawPlugin = class extends Plugin {
     }
   }
   syncEmbeddedMarkdownControllers() {
+    if (this.runtimeDisposed) {
+      return;
+    }
     const activeSurfaces = /* @__PURE__ */ new Set();
     const leaves = this.app.workspace.getLeavesOfType?.("markdown") || [];
     for (const leaf of leaves) {
@@ -2967,10 +3020,10 @@ var PreviewDrawingController = class {
     this.formatColorInput = null;
     this.formatHighlightInput = null;
     this.formatSizeSelect = null;
-    this.brushMode = BRUSH_PEN;
+    this.brushMode = this.runtimeSettings.lastBrushMode;
     this.brushVariants = {
-      [BRUSH_PEN]: BRUSH_VARIANT_DEFAULT,
-      [BRUSH_WATERCOLOR]: BRUSH_VARIANT_DEFAULT
+      [BRUSH_PEN]: this.runtimeSettings.lastPenVariant,
+      [BRUSH_WATERCOLOR]: this.runtimeSettings.lastWatercolorVariant
     };
     this.brushSettings = {
       [BRUSH_PEN]: {
@@ -2986,12 +3039,17 @@ var PreviewDrawingController = class {
         count: 1
       }
     };
+    this.selectedStrokeIndex = -1;
+    this.selectedStrokeIndexes = /* @__PURE__ */ new Set();
     this.applySettings();
     this.penColor = this.brushSettings[BRUSH_PEN].color;
     this.penWidth = this.brushSettings[BRUSH_PEN].width;
     this.penOpacity = this.brushSettings[BRUSH_PEN].opacity;
     this.penCount = this.brushSettings[BRUSH_PEN].count;
-    this.toolMode = TOOL_DRAW;
+    this.toolMode = normalizeToolMode(this.runtimeSettings.lastToolMode);
+    if (this.workspaceSurface && this.toolMode === TOOL_EDIT_MD) {
+      this.toolMode = TOOL_DRAW;
+    }
     this.pointerDown = false;
     this.startedOnText = false;
     this.pointerStartPoint = null;
@@ -3024,8 +3082,6 @@ var PreviewDrawingController = class {
     this.selectionCurrentPoint = null;
     this.didMove = false;
     this.redoStack = [];
-    this.selectedStrokeIndex = -1;
-    this.selectedStrokeIndexes = /* @__PURE__ */ new Set();
     this.drawingsVisible = true;
     this.buttonLongPressed = false;
     this.buttonLongPressTimer = null;
@@ -3039,13 +3095,14 @@ var PreviewDrawingController = class {
     this.selectionLongPressState = null;
     this.floatingControlsHost = null;
     this.floatingControlsInBody = false;
-    this.textPreset = "plain";
-    this.readingZoom = 1;
+    this.textPreset = this.runtimeSettings.lastTextPreset;
+    this.readingZoom = this.runtimeSettings.lastReadingZoom;
     this.readingZoomTarget = null;
     this.readingZoomExtent = null;
     this.readingZoomStyleState = /* @__PURE__ */ new Map();
     this.pendingEmbedTool = null;
     this.pendingMindMapFile = null;
+    this.pendingMindMapOptions = null;
     this.noteFlowFrameId = null;
     this.noteFlowStyledElements = /* @__PURE__ */ new Map();
     this.noteFlowLayoutSignature = "";
@@ -3164,7 +3221,6 @@ var PreviewDrawingController = class {
     });
     setIcon(this.textButton, "type");
     bindNoteDrawControlTap(this.textButton, () => {
-      this.textPreset = "plain";
       this.setTextMode();
       this.setTextPanelOpen(true);
       this.syncTextPanelButtons();
@@ -3895,7 +3951,6 @@ var PreviewDrawingController = class {
       this.setBrushPanelOpen(false);
       return;
     }
-    this.brushVariants[mode] = BRUSH_VARIANT_DEFAULT;
     this.setBrushMode(mode);
     this.brushPanelMode = mode;
     this.setBrushPanelOpen(true);
@@ -3961,6 +4016,7 @@ var PreviewDrawingController = class {
     this.syncPaletteInputs();
     this.syncBrushPanelButtons();
     this.updateToolButtons();
+    this.persistInteractionSettings();
     this.syncSharedToolbarState();
     this.render();
   }
@@ -3975,6 +4031,7 @@ var PreviewDrawingController = class {
     this.cancelCurrentStroke();
     this.cancelSelectionDrag(true);
     this.updateToolButtons();
+    this.persistInteractionSettings();
     this.syncSharedToolbarState();
     this.render();
   }
@@ -3991,6 +4048,7 @@ var PreviewDrawingController = class {
     this.cancelCurrentStroke();
     this.cancelSelectionDrag(true);
     this.updateToolButtons();
+    this.persistInteractionSettings();
     this.syncSharedToolbarState();
     this.render();
   }
@@ -4122,6 +4180,17 @@ var PreviewDrawingController = class {
     this.plugin.noteDrawSettings = noteDrawSettings;
     this.plugin.scheduleSettingsSave?.();
   }
+  persistInteractionSettings() {
+    const noteDrawSettings = this.plugin?.noteDrawSettings || {};
+    noteDrawSettings.lastToolMode = normalizeToolMode(this.toolMode);
+    noteDrawSettings.lastBrushMode = this.brushMode === BRUSH_WATERCOLOR ? BRUSH_WATERCOLOR : BRUSH_PEN;
+    noteDrawSettings.lastPenVariant = normalizeBrushVariant(BRUSH_PEN, this.brushVariants[BRUSH_PEN]);
+    noteDrawSettings.lastWatercolorVariant = normalizeBrushVariant(BRUSH_WATERCOLOR, this.brushVariants[BRUSH_WATERCOLOR]);
+    noteDrawSettings.lastTextPreset = normalizeTextPreset(this.textPreset);
+    noteDrawSettings.lastReadingZoom = clamp(Number(this.readingZoom) || 1, MIN_READING_ZOOM, MAX_READING_ZOOM);
+    this.plugin.noteDrawSettings = noteDrawSettings;
+    this.plugin.scheduleSettingsSave?.();
+  }
   updateToolButtons() {
     const penActive = this.toolMode === TOOL_DRAW && this.brushMode === BRUSH_PEN;
     const watercolorActive = this.toolMode === TOOL_DRAW && this.brushMode === BRUSH_WATERCOLOR;
@@ -4210,12 +4279,20 @@ var PreviewDrawingController = class {
     this.syncTextPanelButtons();
   }
   openMindMapFilePicker() {
-    const modal = new NoteDrawFileSuggestModal(this.plugin.app, this.file, (file) => {
+    const affectsSourceByDefault = this.plugin.noteDrawSettings?.mindMapAffectsSource !== false;
+    const modal = new NoteDrawFileSuggestModal(this.plugin.app, this.file, (file, affectsSource) => {
       this.pendingMindMapFile = file;
+      this.pendingMindMapOptions = { affectsSource: Boolean(affectsSource) };
       this.textPreset = "mindMap";
       this.setTextMode();
       this.syncTextPanelButtons();
       new Notice(this.plugin.t("placeMindMap"));
+    }, {
+      affectsSource: affectsSourceByDefault,
+      onAffectsSourceChange: (value) => {
+        this.plugin.noteDrawSettings.mindMapAffectsSource = Boolean(value);
+        this.plugin.scheduleSettingsSave();
+      }
     });
     modal.open();
   }
@@ -4228,6 +4305,7 @@ var PreviewDrawingController = class {
     const actions = [
       { icon: "copy", key: "copyElement", action: () => this.copySelectedElements() },
       { icon: "clipboard-paste", key: "pasteElement", action: () => this.pasteCopiedElements() },
+      { icon: "external-link", key: "openSourceNote", action: () => void this.openSelectedMindMapSource() },
       { icon: "wrap-text", key: "insertIntoNote", action: () => this.toggleSelectedNoteFlow() },
       { icon: "bring-to-front", key: "bringToFront", action: () => this.reorderSelectedStrokes("front") },
       { icon: "move-up", key: "moveForward", action: () => this.reorderSelectedStrokes("forward") },
@@ -4265,6 +4343,8 @@ var PreviewDrawingController = class {
     }
     const pasteButton = this.selectionMenu.querySelector('[data-note-draw-title-key="pasteElement"]');
     pasteButton?.toggleAttribute("disabled", !this.plugin.elementClipboard?.strokes?.length);
+    const sourceButton = this.selectionMenu.querySelector('[data-note-draw-title-key="openSourceNote"]');
+    sourceButton?.toggleAttribute("hidden", !this.selectedMindMapSource());
     const noteFlowIndexes = this.getSelectedStrokeIndexes().filter((index) => !isConnectorStroke(this.drawingData.strokes[index]));
     const noteFlowEnabled = noteFlowIndexes.length > 0 && noteFlowIndexes.every((index) => this.drawingData.strokes[index]?.noteFlow?.enabled);
     const noteFlowButton = this.selectionMenu.querySelector('[data-note-draw-title-key="insertIntoNote"], [data-note-draw-title-key="removeFromNote"]');
@@ -4275,6 +4355,31 @@ var PreviewDrawingController = class {
       setIcon(noteFlowButton, noteFlowEnabled ? "unfold-vertical" : "wrap-text");
       noteFlowButton.toggleAttribute("hidden", !this.supportsNoteFlow());
     }
+  }
+  selectedMindMapSource() {
+    for (const index of this.getSelectedStrokeIndexes()) {
+      const node = normalizeMindMapNode(this.drawingData.strokes[index]?.mindMapNode);
+      if (node?.sourcePath) {
+        return node;
+      }
+    }
+    return null;
+  }
+  async openSelectedMindMapSource() {
+    const node = this.selectedMindMapSource();
+    const file = node ? this.plugin.resolveApiFile(node.sourcePath, this.file?.path || "") : null;
+    if (!file) {
+      return false;
+    }
+    this.hideSelectionMenu();
+    const leaf = this.plugin.app.workspace.getLeaf(false);
+    await leaf.openFile(file, Number.isFinite(node.sourceLine) && node.sourceLine >= 0 ? { eState: { line: node.sourceLine } } : void 0);
+    const editor = leaf.view?.editor;
+    if (editor && Number.isFinite(node.sourceLine) && node.sourceLine >= 0) {
+      editor.setCursor({ line: node.sourceLine, ch: 0 });
+      editor.scrollIntoView?.({ from: { line: node.sourceLine, ch: 0 }, to: { line: node.sourceLine, ch: 0 } }, true);
+    }
+    return true;
   }
   showSelectionMenu(clientPoint = null) {
     const indexes = this.getSelectedStrokeIndexes();
@@ -4804,6 +4909,7 @@ var PreviewDrawingController = class {
     this.endTextEdit();
     this.cancelCurrentStroke();
     this.cancelSelectionDrag(true);
+    this.persistInteractionSettings();
     this.syncSharedToolbarState();
     this.render();
   }
@@ -5993,8 +6099,10 @@ var PreviewDrawingController = class {
       return;
     }
     const historyBefore = this.captureDrawingHistorySnapshot();
+    let mindMapStrokeToSync = null;
     if (state.index >= 0 && isTextLikeStroke(this.drawingData.strokes[state.index])) {
       const stroke = this.drawingData.strokes[state.index];
+      const textChanged = stroke.text !== text;
       stroke.text = text;
       stroke.render = normalizeTextRenderMode(stroke.render);
       stroke.fontSize = clamp(Number(stroke.fontSize || 18), 10, 72);
@@ -6005,6 +6113,9 @@ var PreviewDrawingController = class {
         stroke.textWidth = this.floatingTextContentWidth(state.element);
       }
       this.setSelectedStrokes(state.index);
+      if (textChanged && normalizeMindMapNode(stroke.mindMapNode)?.affectsSource) {
+        mindMapStrokeToSync = stroke;
+      }
     } else {
       const brush = this.currentBrushSettings();
       const preset = createTextPreset(this.textPreset, text, brush.color || this.penColor);
@@ -6039,6 +6150,9 @@ var PreviewDrawingController = class {
     this.invalidateStaticCache();
     this.plugin.scheduleDrawingSave(this.file, this.drawingData);
     this.recordDrawingHistory(historyBefore);
+    if (mindMapStrokeToSync) {
+      void this.syncMindMapNodeToSource(mindMapStrokeToSync, text);
+    }
     this.scheduleLayoutRefresh({ settle: false });
     this.endFloatingTextInput(false, state);
     this.render();
@@ -6086,8 +6200,10 @@ var PreviewDrawingController = class {
         return;
       }
       const sourceFile = this.pendingMindMapFile;
+      const options = this.pendingMindMapOptions || { affectsSource: this.plugin.noteDrawSettings?.mindMapAffectsSource !== false };
       this.pendingMindMapFile = null;
-      void this.insertMindMapAt(snappedPoint, sourceFile);
+      this.pendingMindMapOptions = null;
+      void this.insertMindMapAt(snappedPoint, sourceFile, options);
       return;
     }
     if (isAssetTextPreset(this.textPreset)) {
@@ -6134,6 +6250,7 @@ var PreviewDrawingController = class {
       rowGap: 18
     });
     const mapId = `map-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const affectsSource = options.affectsSource !== false;
     const idMap = new Map();
     const depthColors = ["#2563eb", "#0f766e", "#b45309", "#be123c", "#4338ca", "#047857"];
     const nodeStrokes = geometry.nodes.map((node, index) => {
@@ -6164,7 +6281,13 @@ var PreviewDrawingController = class {
           nodeId: node.id,
           parentId: node.parentId || "",
           depth: node.depth,
-          role: node.type === "root" ? "root" : node.type === "heading" ? "heading" : "node"
+          role: node.type === "root" ? "root" : node.type === "heading" ? "heading" : "node",
+          type: node.type,
+          sourcePath: file.path,
+          sourceLine: node.sourceLine,
+          sourceEndLine: node.sourceEndLine,
+          sourceText: node.sourceText,
+          affectsSource
         },
         points: [{
           x: clamp(node.x / width, 0, 1),
@@ -6199,7 +6322,6 @@ var PreviewDrawingController = class {
     this.captureResponsiveAnchorsForIndexes(nodeIndexes);
     this.syncBoundConnectors();
     this.setSelectedStrokes([...connectorIndexes, ...nodeIndexes]);
-    this.textPreset = "plain";
     this.syncTextPanelButtons();
     this.redoStack = [];
     this.invalidateStaticCache();
@@ -6210,7 +6332,56 @@ var PreviewDrawingController = class {
     if (model.truncated && !options.quiet) {
       new Notice(this.plugin.t("mindMapTruncated"));
     }
-    return { ok: true, nodes: nodeStrokes.length, connectors: connectorStrokes.length, truncated: model.truncated };
+    return { ok: true, nodes: nodeStrokes.length, connectors: connectorStrokes.length, truncated: model.truncated, affectsSource };
+  }
+  async syncMindMapNodeToSource(stroke, text) {
+    const node = normalizeMindMapNode(stroke?.mindMapNode);
+    if (!node?.affectsSource || node.role === "root" || !node.sourcePath) {
+      return false;
+    }
+    const file = this.plugin.resolveApiFile(node.sourcePath, this.file?.path || "");
+    if (!file) {
+      return false;
+    }
+    try {
+      const source = await this.plugin.app.vault.cachedRead(file);
+      const currentModel = parseMarkdownMindMap(source, { title: file.basename || file.name || "Mind map", maxNodes: 240 });
+      const currentSourceNode = currentModel.nodes.find((candidate) => candidate.id === node.nodeId);
+      const result = replaceMarkdownMindMapNodeText(source, { ...node, ...(currentSourceNode || {}) }, text);
+      if (!result.changed) {
+        if (result.reason === "source-range-not-found") {
+          new Notice(this.plugin.t("sourceNoteUpdateFailed"));
+        }
+        return false;
+      }
+      await this.plugin.app.vault.modify(file, result.source);
+      this.refreshMindMapSourceMetadata(node.mapId, node.sourcePath, result.source);
+      this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+      return true;
+    } catch (error) {
+      console.error(`[${PLUGIN_ID}] Failed to update mind map source note`, error);
+      new Notice(this.plugin.t("sourceNoteUpdateFailed"));
+      return false;
+    }
+  }
+  refreshMindMapSourceMetadata(mapId, sourcePath, source) {
+    const file = this.plugin.resolveApiFile(sourcePath, this.file?.path || "");
+    const model = parseMarkdownMindMap(source, { title: file?.basename || file?.name || "Mind map", maxNodes: 240 });
+    const byId = new Map(model.nodes.map((node) => [node.id, node]));
+    for (const stroke of this.drawingData.strokes) {
+      const linked = normalizeMindMapNode(stroke.mindMapNode);
+      const sourceNode = linked?.mapId === mapId ? byId.get(linked.nodeId) : null;
+      if (!sourceNode) {
+        continue;
+      }
+      stroke.mindMapNode = {
+        ...linked,
+        sourceLine: sourceNode.sourceLine,
+        sourceEndLine: sourceNode.sourceEndLine,
+        sourceText: sourceNode.sourceText,
+        type: sourceNode.type
+      };
+    }
   }
   insertTextPresetAt(point, presetId, text) {
     const historyBefore = this.captureDrawingHistorySnapshot();
@@ -6499,6 +6670,7 @@ var PreviewDrawingController = class {
     }
     this.responsiveLayoutContext = null;
     this.scheduleResize({ layout: !this.usesVisualReadingZoom() });
+    this.persistInteractionSettings();
     if (options.share !== false) {
       this.syncSharedToolbarState();
     }
@@ -7446,22 +7618,79 @@ var PreviewDrawingController = class {
     ctx.save();
     ctx.globalAlpha = alpha * segments[0].opacity;
     ctx.fillStyle = stroke.color || this.penColor;
-    ctx.beginPath();
-    for (const segment of segments) {
-      const from = this.pointToCanvas(segment.from);
-      const to = this.pointToCanvas(segment.to);
-      const angle = Math.atan2(to.y - from.y, to.x - from.x);
-      const radius = Math.max(0.5, segment.width / 2);
-      const normalX = Math.cos(angle - Math.PI / 2) * radius;
-      const normalY = Math.sin(angle - Math.PI / 2) * radius;
-      ctx.moveTo(from.x + normalX, from.y + normalY);
-      ctx.lineTo(to.x + normalX, to.y + normalY);
-      ctx.arc(to.x, to.y, radius, angle - Math.PI / 2, angle + Math.PI / 2);
-      ctx.lineTo(from.x - normalX, from.y - normalY);
-      ctx.arc(from.x, from.y, radius, angle + Math.PI / 2, angle + Math.PI * 1.5);
-      ctx.closePath();
+    const centers = [segments[0].from, ...segments.map((segment) => segment.to)].map((point) => this.pointToCanvas(point));
+    const widths = [segments[0].fromWidth, ...segments.map((segment) => segment.toWidth)];
+    const left = [];
+    const right = [];
+    for (let index = 0; index < centers.length; index += 1) {
+      const previous = centers[Math.max(0, index - 1)];
+      const next = centers[Math.min(centers.length - 1, index + 1)];
+      const dx = next.x - previous.x;
+      const dy = next.y - previous.y;
+      const length = Math.max(0.001, Math.hypot(dx, dy));
+      const radius = Math.max(0.04, Number(widths[index]) / 2);
+      const normalX = -dy / length * radius;
+      const normalY = dx / length * radius;
+      left.push({ x: centers[index].x + normalX, y: centers[index].y + normalY });
+      right.push({ x: centers[index].x - normalX, y: centers[index].y - normalY });
     }
+    ctx.beginPath();
+    ctx.moveTo(left[0].x, left[0].y);
+    for (let index = 1; index < left.length - 1; index += 1) {
+      const midpoint = {
+        x: (left[index].x + left[index + 1].x) / 2,
+        y: (left[index].y + left[index + 1].y) / 2
+      };
+      if (typeof ctx.quadraticCurveTo === "function") {
+        ctx.quadraticCurveTo(left[index].x, left[index].y, midpoint.x, midpoint.y);
+      } else {
+        ctx.lineTo(midpoint.x, midpoint.y);
+      }
+    }
+    ctx.lineTo(left.at(-1).x, left.at(-1).y);
+    ctx.lineTo(right.at(-1).x, right.at(-1).y);
+    for (let index = right.length - 2; index > 0; index -= 1) {
+      const midpoint = {
+        x: (right[index].x + right[index - 1].x) / 2,
+        y: (right[index].y + right[index - 1].y) / 2
+      };
+      if (typeof ctx.quadraticCurveTo === "function") {
+        ctx.quadraticCurveTo(right[index].x, right[index].y, midpoint.x, midpoint.y);
+      } else {
+        ctx.lineTo(midpoint.x, midpoint.y);
+      }
+    }
+    ctx.lineTo(right[0].x, right[0].y);
+    const start = centers[0];
+    const firstNext = centers[1] || start;
+    const startLength = Math.max(0.001, Math.hypot(firstNext.x - start.x, firstNext.y - start.y));
+    const startRadius = Math.max(0.04, Number(widths[0]) / 2);
+    const capX = start.x - (firstNext.x - start.x) / startLength * startRadius;
+    const capY = start.y - (firstNext.y - start.y) / startLength * startRadius;
+    if (typeof ctx.quadraticCurveTo === "function") {
+      ctx.quadraticCurveTo(capX, capY, left[0].x, left[0].y);
+    }
+    ctx.closePath();
     ctx.fill();
+    ctx.strokeStyle = stroke.color || this.penColor;
+    ctx.lineWidth = Math.max(0.7, Math.min(1.05, Number(stroke.width || this.penWidth) * 0.13));
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.beginPath();
+    ctx.moveTo(centers[0].x, centers[0].y);
+    for (let index = 1; index < centers.length - 1; index += 1) {
+      const midpoint = {
+        x: (centers[index].x + centers[index + 1].x) / 2,
+        y: (centers[index].y + centers[index + 1].y) / 2
+      };
+      if (typeof ctx.quadraticCurveTo === "function") {
+        ctx.quadraticCurveTo(centers[index].x, centers[index].y, midpoint.x, midpoint.y);
+      } else {
+        ctx.lineTo(midpoint.x, midpoint.y);
+      }
+    }
+    ctx.lineTo(centers.at(-1).x, centers.at(-1).y);
+    ctx.stroke();
     ctx.restore();
   }
   drawImageStrokeOn(ctx, stroke) {
@@ -8005,7 +8234,7 @@ var PreviewDrawingController = class {
     }
   }
   getSelectedStrokeIndexes() {
-    if (this.selectedStrokeIndexes.size) {
+    if (this.selectedStrokeIndexes?.size) {
       return Array.from(this.selectedStrokeIndexes).filter((index) => index >= 0 && index < this.drawingData.strokes.length).sort((a, b) => a - b);
     }
     if (this.selectedStrokeIndex >= 0 && this.selectedStrokeIndex < this.drawingData.strokes.length) {
@@ -8014,7 +8243,7 @@ var PreviewDrawingController = class {
     return [];
   }
   isStrokeSelected(index) {
-    return this.selectedStrokeIndexes.has(index) || !this.selectedStrokeIndexes.size && this.selectedStrokeIndex === index;
+    return Boolean(this.selectedStrokeIndexes?.has(index)) || !this.selectedStrokeIndexes?.size && this.selectedStrokeIndex === index;
   }
   selectionHasDomStrokes() {
     return this.getSelectedStrokeIndexes().some((index) => {
@@ -8924,6 +9153,13 @@ function sanitizeSettings(settings) {
     defaultWatercolorColor: isCssColor(input.defaultWatercolorColor) ? input.defaultWatercolorColor : DEFAULT_SETTINGS.defaultWatercolorColor,
     defaultWatercolorWidth: clamp(Number(input.defaultWatercolorWidth ?? DEFAULT_SETTINGS.defaultWatercolorWidth), MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH),
     defaultWatercolorOpacity: clamp(Number(input.defaultWatercolorOpacity ?? DEFAULT_SETTINGS.defaultWatercolorOpacity), 0, 1),
+    lastToolMode: normalizeToolMode(input.lastToolMode),
+    lastBrushMode: input.lastBrushMode === BRUSH_WATERCOLOR ? BRUSH_WATERCOLOR : BRUSH_PEN,
+    lastPenVariant: normalizeBrushVariant(BRUSH_PEN, input.lastPenVariant),
+    lastWatercolorVariant: normalizeBrushVariant(BRUSH_WATERCOLOR, input.lastWatercolorVariant),
+    lastTextPreset: normalizeTextPreset(input.lastTextPreset),
+    lastReadingZoom: clamp(Number(input.lastReadingZoom ?? DEFAULT_SETTINGS.lastReadingZoom), MIN_READING_ZOOM, MAX_READING_ZOOM),
+    mindMapAffectsSource: input.mindMapAffectsSource !== false,
     toolbarTopOffset: clamp(Number(input.toolbarTopOffset ?? DEFAULT_SETTINGS.toolbarTopOffset), 0, 48),
     longPressMs: clamp(Number(input.longPressMs ?? DEFAULT_SETTINGS.longPressMs), MIN_LONG_PRESS_MS, MAX_LONG_PRESS_MS),
     selectTapDistance: clamp(Number(input.selectTapDistance ?? DEFAULT_SETTINGS.selectTapDistance), MIN_SELECT_TAP_DISTANCE, MAX_SELECT_TAP_DISTANCE),
@@ -10104,6 +10340,17 @@ function normalizeBrushVariant(brush, variant) {
   }
   return [PEN_VARIANT_FOUNTAIN, PEN_VARIANT_NOTE].includes(value) ? value : BRUSH_VARIANT_DEFAULT;
 }
+function normalizeToolMode(value) {
+  return [TOOL_DRAW, TOOL_SELECT, TOOL_EDIT_MD, TOOL_TEXT].includes(value) ? value : TOOL_DRAW;
+}
+function normalizeTextPreset(value) {
+  const preset = String(value || "plain");
+  return [
+    "plain", "title", "code", "file", "button", "buttonPrimary", "buttonOutline", "buttonPill",
+    "arrowUp", "arrowDown", "arrowLeft", "arrowRight", "image", "video", "attachment",
+    "markdown", "html", "note", "mindMap"
+  ].includes(preset) ? preset : "plain";
+}
 function normalizeConnector(value) {
   if (!value || typeof value.fromId !== "string" || !value.fromId || typeof value.toId !== "string" || !value.toId || value.fromId === value.toId) {
     return null;
@@ -10131,12 +10378,21 @@ function normalizeMindMapNode(value) {
   if (!value || typeof value.mapId !== "string" || typeof value.nodeId !== "string") {
     return null;
   }
+  const sourceLine = Number(value.sourceLine);
+  const sourceEndLine = Number(value.sourceEndLine);
+  const type = ["root", "heading", "paragraph", "list", "task", "quote", "table", "code"].includes(value.type) ? value.type : value.role === "root" ? "root" : value.role === "heading" ? "heading" : "paragraph";
   return {
     mapId: value.mapId,
     nodeId: value.nodeId,
     parentId: typeof value.parentId === "string" ? value.parentId : "",
     depth: Math.max(0, Math.round(Number(value.depth) || 0)),
-    role: value.role === "root" ? "root" : value.role === "heading" ? "heading" : "node"
+    role: value.role === "root" ? "root" : value.role === "heading" ? "heading" : "node",
+    type,
+    sourcePath: normalizeVaultPath(value.sourcePath || ""),
+    sourceLine: Number.isFinite(sourceLine) && sourceLine >= 0 ? Math.round(sourceLine) : -1,
+    sourceEndLine: Number.isFinite(sourceEndLine) && sourceEndLine >= 0 ? Math.round(sourceEndLine) : Number.isFinite(sourceLine) && sourceLine >= 0 ? Math.round(sourceLine) : -1,
+    sourceText: typeof value.sourceText === "string" ? value.sourceText : "",
+    affectsSource: value.affectsSource !== false
   };
 }
 function normalizeTextRenderMode(mode) {

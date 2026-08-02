@@ -281,6 +281,15 @@
   opacity: 0;
 }
 
+.notedraw-mind-map-source-setting {
+  border-bottom: 1px solid var(--background-modifier-border);
+  margin: 0 12px;
+}
+
+.notedraw-mind-map-source-setting .setting-item {
+  padding: 10px 0;
+}
+
 .notedraw-editing {
   outline: 2px solid var(--interactive-accent);
   outline-offset: 3px;

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { layoutMindMap, parseMarkdownMindMap } from "../src/mind-map.mjs";
+import { layoutMindMap, parseMarkdownMindMap, replaceMarkdownMindMapNodeText } from "../src/mind-map.mjs";
 
 test("mind map parser preserves heading, list, task, quote, table, and paragraph relationships", () => {
   const model = parseMarkdownMindMap(`---
@@ -30,6 +30,8 @@ Opening paragraph.
   assert.equal(byText.get("[x] Complete").type, "task");
   assert.equal(byText.get("Important").type, "quote");
   assert.equal(byText.get("A | 1").type, "table");
+  assert.equal(byText.get("Project").sourceText, "# Project");
+  assert.ok(Number.isInteger(byText.get("Opening paragraph.").sourceEndLine));
   assert.equal(model.truncated, false);
 });
 
@@ -58,4 +60,30 @@ test("mind map parser reports truncation without breaking parent references", ()
   assert.equal(model.nodes.length, 4);
   assert.equal(model.truncated, true);
   assert.ok(model.nodes.every((node) => node.parentId === null || ids.has(node.parentId)));
+});
+
+test("linked mind map node edits preserve Markdown structure", () => {
+  const source = "# Heading\n\n- [ ] Task\n- Item\n\n> Quote";
+  const headingResult = replaceMarkdownMindMapNodeText(
+    source,
+    parseMarkdownMindMap(source, { title: "Linked" }).nodes.find((node) => node.type === "heading"),
+    "Updated heading"
+  );
+  assert.match(headingResult.source, /^# Updated heading/m);
+
+  const taskModel = parseMarkdownMindMap(headingResult.source, { title: "Linked" });
+  const taskResult = replaceMarkdownMindMapNodeText(
+    headingResult.source,
+    taskModel.nodes.find((node) => node.type === "task"),
+    "[x] Done"
+  );
+  assert.match(taskResult.source, /^- \[x\] Done/m);
+
+  const quoteModel = parseMarkdownMindMap(taskResult.source, { title: "Linked" });
+  const quoteResult = replaceMarkdownMindMapNodeText(
+    taskResult.source,
+    quoteModel.nodes.find((node) => node.type === "quote"),
+    "Updated quote"
+  );
+  assert.match(quoteResult.source, /^> Updated quote/m);
 });
