@@ -209,7 +209,8 @@ function normalizeResponsiveAnchor(anchor) {
     y: clamp2(finite(anchor.y, 0), 0, 1),
     path: typeof anchor.path === "string" ? anchor.path : "",
     line: normalizeLinePosition(anchor.line),
-    lineConfidence: normalizeLineConfidence(anchor.lineConfidence)
+    lineConfidence: normalizeLineConfidence(anchor.lineConfidence),
+    offsetY: Number.isFinite(Number(anchor.offsetY)) ? clamp2(Number(anchor.offsetY), -1e5, 1e5) : 0
   };
 }
 function createResponsivePoint({
@@ -221,6 +222,7 @@ function createResponsivePoint({
   sourcePath = "",
   linePosition = null,
   lineConfidence = null,
+  lineOffsetY = 0,
   time = Date.now()
 }) {
   const width = Math.max(1, finite(canvasWidth, 1));
@@ -243,7 +245,8 @@ function createResponsivePoint({
       y,
       path: typeof sourcePath === "string" ? sourcePath : "",
       line: normalizeLinePosition(linePosition),
-      lineConfidence: normalizeLineConfidence(lineConfidence)
+      lineConfidence: normalizeLineConfidence(lineConfidence),
+      offsetY: Number.isFinite(Number(lineOffsetY)) ? clamp2(Number(lineOffsetY), -1e5, 1e5) : 0
     }
   };
 }
@@ -275,7 +278,7 @@ function projectResponsivePoint(point, {
   const lineAnchorIsReliable = canTrustLineAnchor(anchor);
   const lineShiftIsPlausible = anchor.line !== null && anchor.line >= 1 ? true : Math.abs(anchoredY - fallbackCanvasY) <= Math.max(96, height * 0.18);
   const canUseLineAnchor = Number.isFinite(anchoredY) && firstLineIsPlausible && lineAnchorIsReliable && lineShiftIsPlausible;
-  const canvasY = canUseLineAnchor ? anchoredY : fallbackCanvasY;
+  const canvasY = canUseLineAnchor ? anchoredY + anchor.offsetY : fallbackCanvasY;
   return {
     ...point,
     x: clamp2(canvasX / width, 0, 1),
@@ -1441,7 +1444,10 @@ function clamp6(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 function stripInlineMarkdown(value) {
-  return String(value || "").replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1").replace(/!?\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|([^\]]+))?\]\]/g, (_, target, alias) => alias || target).replace(/<https?:\/\/[^>]+>/g, (match) => match.slice(1, -1)).replace(/<[^>]+>/g, " ").replace(/(^|\s)([*_~`]{1,3})(?=\S)/g, "$1").replace(/(\S)([*_~`]{1,3})(?=\s|$)/g, "$1").replace(/\\([#*_[\]()`>+.!~-])/g, "$1").replace(/\s+/g, " ").trim();
+  return String(value || "").replace(/!\[([^\]]*)\]\([^)]*\)/g, (_, alt) => alt || "Image").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1").replace(/!?\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|([^\]]+))?\]\]/g, (_, target, alias) => alias || target).replace(/<https?:\/\/[^>]+>/g, (match) => match.slice(1, -1)).replace(/<[^>]+>/g, " ").replace(/(^|\s)([*_~`]{1,3})(?=\S)/g, "$1").replace(/(\S)([*_~`]{1,3})(?=\s|$)/g, "$1").replace(/\\([#*_[\]()`>+.!~-])/g, "$1").replace(/\s+/g, " ").trim();
+}
+function preserveInlineMarkdown(value) {
+  return String(value || "").replace(/\r\n?/g, "\n").split("\n").map((line) => line.trim()).filter(Boolean).join("\n").trim();
 }
 function leadingIndent(value) {
   let count = 0;
@@ -1460,7 +1466,14 @@ function parseMarkdownMindMap(source, {
   title = "Mind map",
   maxNodes = DEFAULT_MAX_NODES
 } = {}) {
-  const nodes = [{ id: "root", parentId: null, text: stripInlineMarkdown(title) || "Mind map", type: "root", sourceLine: -1 }];
+  const nodes = [{
+    id: "root",
+    parentId: null,
+    text: stripInlineMarkdown(title) || "Mind map",
+    markdown: preserveInlineMarkdown(title) || "Mind map",
+    type: "root",
+    sourceLine: -1
+  }];
   const headingStack = [];
   const listStack = [];
   let currentSectionId = "root";
@@ -1475,7 +1488,7 @@ function parseMarkdownMindMap(source, {
   let truncated = false;
   let sequence = 0;
   const canAdd = () => nodes.length < Math.max(2, Number(maxNodes) || DEFAULT_MAX_NODES);
-  const addNode = (text, parentId, type, sourceLine, sourceEndLine = sourceLine, sourceText = "") => {
+  const addNode = (text, parentId, type, sourceLine, sourceEndLine = sourceLine, sourceText = "", markdownText = text) => {
     const normalized = stripInlineMarkdown(text);
     if (!normalized || !canAdd()) {
       truncated = truncated || Boolean(normalized);
@@ -1485,6 +1498,7 @@ function parseMarkdownMindMap(source, {
       id: `node-${(++sequence).toString(36)}`,
       parentId: parentId || "root",
       text: normalized,
+      markdown: preserveInlineMarkdown(markdownText) || normalized,
       type,
       sourceLine,
       sourceEndLine,
@@ -1503,7 +1517,8 @@ function parseMarkdownMindMap(source, {
       "paragraph",
       paragraphStart,
       paragraphStart + paragraphSourceLines.length - 1,
-      paragraphSourceLines.join("\n")
+      paragraphSourceLines.join("\n"),
+      paragraphLines.join("\n")
     );
     paragraphLines = [];
     paragraphSourceLines = [];
@@ -1515,13 +1530,15 @@ function parseMarkdownMindMap(source, {
     }
     const language = codeFence.replace(/^`{3,}|^~{3,}/, "").trim();
     const body = codeLines.join(" ").replace(/\s+/g, " ").trim();
+    const sourceText = lines.slice(codeStart, (codeEnd >= codeStart ? codeEnd : codeStart + codeLines.length) + 1).join("\n");
     addNode(
       [language ? `Code (${language})` : "Code", body].filter(Boolean).join(": "),
       currentSectionId,
       "code",
       codeStart,
       codeEnd >= codeStart ? codeEnd : codeStart + codeLines.length,
-      lines.slice(codeStart, (codeEnd >= codeStart ? codeEnd : codeStart + codeLines.length) + 1).join("\n")
+      sourceText,
+      sourceText
     );
     codeLines = [];
     codeFence = "";
@@ -1567,7 +1584,7 @@ function parseMarkdownMindMap(source, {
         headingStack.pop();
       }
       const parentId = headingStack[headingStack.length - 1]?.id || "root";
-      const node = addNode(heading[2], parentId, "heading", index, index, line);
+      const node = addNode(heading[2], parentId, "heading", index, index, line, heading[2]);
       if (node) {
         headingStack.push({ level, id: node.id });
         currentSectionId = node.id;
@@ -1584,7 +1601,7 @@ function parseMarkdownMindMap(source, {
       const parentId = listStack[listStack.length - 1]?.id || currentSectionId;
       const task = list[2].match(/^\[([ xX])\]\s*(.*)$/);
       const text = task ? `[${task[1].toLowerCase() === "x" ? "x" : " "}] ${task[2]}` : list[2];
-      const node = addNode(text, parentId, task ? "task" : "list", index, index, line);
+      const node = addNode(text, parentId, task ? "task" : "list", index, index, line, text);
       if (node) {
         listStack.push({ indent, id: node.id });
       }
@@ -1609,7 +1626,8 @@ function parseMarkdownMindMap(source, {
         quote ? "quote" : "table",
         index,
         index,
-        line
+        line,
+        quote ? quote[1] : trimmed.replace(/^\||\|$/g, "").split("|").map((cell) => cell.trim()).filter(Boolean).join(" | ")
       );
       continue;
     }
@@ -1690,10 +1708,11 @@ function replaceMarkdownMindMapNodeText(source, node, nextText) {
     beforeText: before.slice(startLine, endLine + 1).join(newline)
   };
 }
-function estimateNodeHeight(text, width, fontSize) {
+function estimateNodeHeight(text, width, fontSize, markdown = "") {
   const charactersPerLine = Math.max(8, Math.floor(width / Math.max(6, fontSize * 0.58)));
   const lines = Math.max(1, Math.ceil(String(text || "").length / charactersPerLine));
-  return Math.max(34, Math.min(132, lines * fontSize * 1.28 + 16));
+  const mediaHeight = /!\[\[|!\[[^\]]*\]\(/.test(String(markdown || "")) ? 112 : 0;
+  return Math.max(34, mediaHeight, Math.min(168, lines * fontSize * 1.28 + 16));
 }
 function layoutMindMap(model, {
   originX = 24,
@@ -1732,7 +1751,7 @@ function layoutMindMap(model, {
   for (const node of byId.values()) {
     node.fontSize = node.type === "root" ? 18 : node.type === "heading" ? 15 : 13;
     node.width = node.type === "root" ? Math.min(effectiveWidth + 20, availableWidth) : effectiveWidth;
-    node.height = estimateNodeHeight(node.text, node.width, node.fontSize);
+    node.height = estimateNodeHeight(node.text, node.width, node.fontSize, node.markdown);
   }
   let cursorY = Number(originY) || 0;
   const place = (node) => {
@@ -1911,18 +1930,19 @@ var I18N = {
     penWidth: "Pen width",
     penOpacity: "Pen opacity",
     textGroup: "Text",
-    buttonGroup: "Buttons",
+    buttonGroup: "Buttons and connectors",
     textPlain: "Text",
     title: "Title",
     code: "Code",
     button: "Button",
     primaryButton: "Primary",
-    outlineButton: "Outline",
-    pillButton: "Pill",
+    outlineButton: "Rectangle",
+    pillButton: "Circle",
     arrowUp: "Up",
     arrowDown: "Down",
     arrowLeft: "Left",
     arrowRight: "Right",
+    arrow: "Arrow",
     fileTag: "File tag",
     importGroup: "Import",
     image: "Image",
@@ -2051,18 +2071,19 @@ var I18N = {
     penWidth: "\u7B14\u5BBD",
     penOpacity: "\u7B14\u900F\u660E\u5EA6",
     textGroup: "\u6587\u5B57",
-    buttonGroup: "\u6309\u94AE/\u65B9\u5411",
+    buttonGroup: "\u6309\u94AE/\u8FDE\u63A5",
     textPlain: "\u666E\u901A\u6587\u5B57",
     title: "\u6807\u9898",
     code: "\u4EE3\u7801",
     button: "\u6309\u94AE",
     primaryButton: "\u4E3B\u6309\u94AE",
-    outlineButton: "\u7EBF\u6846",
-    pillButton: "\u80F6\u56CA",
+    outlineButton: "\u77E9\u5F62",
+    pillButton: "\u5706\u5F62",
     arrowUp: "\u4E0A",
     arrowDown: "\u4E0B",
     arrowLeft: "\u5DE6",
     arrowRight: "\u53F3",
+    arrow: "\u7BAD\u5934",
     fileTag: "\u6587\u4EF6\u6807\u7B7E",
     importGroup: "\u5BFC\u5165",
     image: "\u56FE\u7247",
@@ -2185,18 +2206,19 @@ var I18N = {
     penWidth: "\u7B46\u5BEC",
     penOpacity: "\u7B46\u900F\u660E\u5EA6",
     textGroup: "\u6587\u5B57",
-    buttonGroup: "\u6309\u9215/\u65B9\u5411",
+    buttonGroup: "\u6309\u9215/\u9023\u63A5",
     textPlain: "\u666E\u901A\u6587\u5B57",
     title: "\u6A19\u984C",
     code: "\u7A0B\u5F0F\u78BC",
     button: "\u6309\u9215",
     primaryButton: "\u4E3B\u6309\u9215",
-    outlineButton: "\u7DDA\u6846",
-    pillButton: "\u81A0\u56CA",
+    outlineButton: "\u77E9\u5F62",
+    pillButton: "\u5713\u5F62",
     arrowUp: "\u4E0A",
     arrowDown: "\u4E0B",
     arrowLeft: "\u5DE6",
     arrowRight: "\u53F3",
+    arrow: "\u7BAD\u982D",
     fileTag: "\u6A94\u6848\u6A19\u7C64",
     importGroup: "\u532F\u5165",
     image: "\u5716\u7247",
@@ -2309,12 +2331,13 @@ var I18N = {
     code: "\u0643\u0648\u062F",
     button: "\u0643\u06C7\u0646\u06C7\u067E\u0643\u0627",
     primaryButton: "\u0626\u0627\u0633\u0627\u0633\u0649\u064A",
-    outlineButton: "\u0633\u0649\u0632\u0649\u0642\u0644\u0649\u0642",
-    pillButton: "\u064A\u06C7\u0645\u0649\u0644\u0627\u0642",
+    outlineButton: "Rectangle",
+    pillButton: "Circle",
     arrowUp: "\u0626\u06C8\u0633\u062A\u0649",
     arrowDown: "\u0626\u0627\u0633\u062A\u0649",
     arrowLeft: "\u0633\u0648\u0644",
     arrowRight: "\u0626\u0648\u06AD",
+    arrow: "Arrow",
     fileTag: "\u06BE\u06C6\u062C\u062C\u06D5\u062A \u0628\u06D5\u0644\u06AF\u0649\u0633\u0649",
     importGroup: "\u0643\u0649\u0631\u06AF\u06C8\u0632\u06C8\u0634",
     image: "\u0631\u06D5\u0633\u0649\u0645",
@@ -2403,12 +2426,13 @@ var I18N = {
     code: "\u041A\u043E\u0434",
     button: "\u041A\u043D\u043E\u043F\u043A\u0430",
     primaryButton: "\u041E\u0441\u043D\u043E\u0432\u043D\u0430\u044F",
-    outlineButton: "\u041A\u043E\u043D\u0442\u0443\u0440",
-    pillButton: "\u041F\u043B\u0430\u0448\u043A\u0430",
+    outlineButton: "\u041F\u0440\u044F\u043C\u043E\u0443\u0433\u043E\u043B\u044C\u043D\u0438\u043A",
+    pillButton: "\u041A\u0440\u0443\u0433",
     arrowUp: "\u0412\u0432\u0435\u0440\u0445",
     arrowDown: "\u0412\u043D\u0438\u0437",
     arrowLeft: "\u0412\u043B\u0435\u0432\u043E",
     arrowRight: "\u0412\u043F\u0440\u0430\u0432\u043E",
+    arrow: "\u0421\u0442\u0440\u0435\u043B\u043A\u0430",
     fileTag: "\u041C\u0435\u0442\u043A\u0430 \u0444\u0430\u0439\u043B\u0430",
     importGroup: "\u0418\u043C\u043F\u043E\u0440\u0442",
     image: "\u0418\u0437\u043E\u0431\u0440\u0430\u0436\u0435\u043D\u0438\u0435",
@@ -3497,7 +3521,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.3.2",
+      version: "3.3.3",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -4844,6 +4868,7 @@ var PreviewDrawingController = class {
     this.pointerStartEditable = null;
     this.pointerStartSourceText = false;
     this.activePointerId = null;
+    this.connectorGesture = null;
     this.touchPointers = /* @__PURE__ */ new Map();
     this.multiTouchScrolling = false;
     this.multiTouchLastCenter = null;
@@ -4931,6 +4956,7 @@ var PreviewDrawingController = class {
     this.pendingDomRender = false;
     this.resizeFrameId = null;
     this.resizeNeedsLayout = false;
+    this.scrollSettleTimer = null;
     this.positionFrameId = null;
     this.layoutRefreshGeneration = 0;
     this.markdownAnnotationTimer = null;
@@ -5358,6 +5384,10 @@ var PreviewDrawingController = class {
     this.cancelRenderFrame();
     this.cancelResizeFrame();
     this.cancelPositionFrame();
+    if (this.scrollSettleTimer !== null) {
+      window.clearTimeout(this.scrollSettleTimer);
+      this.scrollSettleTimer = null;
+    }
     this.resizeObserver?.disconnect();
     this.markdownRenderObserver?.disconnect();
     this.markdownRenderObserver = null;
@@ -5564,6 +5594,17 @@ var PreviewDrawingController = class {
     this.scheduleFloatingControlsPosition();
     if (this.active || this.drawingsLoaded || this.ctx) {
       this.scheduleResize({ layout: false });
+      if (this.scrollSettleTimer !== null) {
+        window.clearTimeout(this.scrollSettleTimer);
+      }
+      this.scrollSettleTimer = window.setTimeout(() => {
+        this.scrollSettleTimer = null;
+        if (this.destroyed) {
+          return;
+        }
+        this.scheduleMarkdownAnnotationRefresh({ layout: true });
+        this.scheduleResize({ layout: true });
+      }, 90);
     }
   }
   scheduleResize(options = {}) {
@@ -6010,13 +6051,9 @@ var PreviewDrawingController = class {
         labelKey: "buttonGroup",
         items: [
           { id: "button", labelKey: "button", icon: "square" },
-          { id: "buttonPrimary", labelKey: "primaryButton", icon: "square-check" },
-          { id: "buttonOutline", labelKey: "outlineButton", icon: "square" },
-          { id: "buttonPill", labelKey: "pillButton", icon: "circle" },
-          { id: "arrowUp", labelKey: "arrowUp", icon: "arrow-up" },
-          { id: "arrowDown", labelKey: "arrowDown", icon: "arrow-down" },
-          { id: "arrowLeft", labelKey: "arrowLeft", icon: "arrow-left" },
-          { id: "arrowRight", labelKey: "arrowRight", icon: "arrow-right" }
+          { id: "rectangle", labelKey: "outlineButton", icon: "square" },
+          { id: "circle", labelKey: "pillButton", icon: "circle" },
+          { id: "arrow", labelKey: "arrow", icon: "move-up-right" }
         ]
       },
       {
@@ -6909,10 +6946,42 @@ var PreviewDrawingController = class {
       const stroke = this.drawingData?.strokes?.[index];
       if (stroke?.points?.length && !isConnectorStroke(stroke)) {
         stroke.points = stroke.points.map((point) => this.captureResponsivePoint(point, context));
+        this.captureNoteFlowResponsiveAnchors(stroke, context);
         this.captureElementLayoutForStroke(stroke, context, index);
       }
     }
     this.rebuildElementRelations();
+  }
+  captureNoteFlowResponsiveAnchors(stroke, context = this.getResponsiveLayoutContext()) {
+    const noteFlow = normalizeNoteFlow(stroke?.noteFlow);
+    if (!noteFlow || !Number.isFinite(noteFlow.line) || !stroke?.points?.length) {
+      return false;
+    }
+    const linePosition = noteFlow.line + 0.999999;
+    const anchorY = this.projectLineLocation(noteFlow.path, linePosition, context);
+    if (!Number.isFinite(anchorY)) {
+      return false;
+    }
+    stroke.points = stroke.points.map((point) => {
+      const canvasX = clamp7(Number(point?.x || 0), 0, 1) * this.canvasWidth();
+      const canvasY = clamp7(Number(point?.y || 0), 0, 1) * this.canvasHeight();
+      return {
+        ...point,
+        ...createResponsivePoint({
+          canvasX,
+          canvasY,
+          canvasWidth: this.canvasWidth(),
+          canvasHeight: this.canvasHeight(),
+          frame: context.frame,
+          sourcePath: noteFlow.path,
+          linePosition,
+          lineConfidence: 1,
+          lineOffsetY: canvasY - anchorY,
+          time: point?.t
+        })
+      };
+    });
+    return true;
   }
   captureElementLayoutForStroke(stroke, context = this.getResponsiveLayoutContext(), index = -1, options = {}) {
     const bounds = getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight());
@@ -7299,6 +7368,10 @@ var PreviewDrawingController = class {
       hitStrokeIndex,
       insideSelectionFrame: this.selectedStrokeFrameContains(point)
     });
+    if (this.toolMode === TOOL_TEXT && this.textPreset === "arrow") {
+      this.startConnectorGesture(event, point, routed);
+      return;
+    }
     if (resizeHandle) {
       this.startSelectedStrokeResize(event, point, resizeHandle);
       return;
@@ -7320,6 +7393,19 @@ var PreviewDrawingController = class {
       event.preventDefault();
       event.stopPropagation();
       return;
+    }
+    if (hitStrokeIndex >= 0 && isTextLikeStroke(this.drawingData.strokes[hitStrokeIndex])) {
+      const repeatedSelectionTap = this.toolMode === TOOL_SELECT && this.isRepeatTextTap(hitStrokeIndex, point, event);
+      if (event.detail >= 2 || repeatedSelectionTap) {
+        this.editFloatingTextStroke(hitStrokeIndex);
+        this.lastTextTap = null;
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      if (this.toolMode === TOOL_SELECT) {
+        this.rememberTextTap(hitStrokeIndex, point, event);
+      }
     }
     if (this.toolMode === TOOL_SELECT && hitStrokeIndex >= 0) {
       const additiveSelect = event.shiftKey || event.ctrlKey || event.metaKey;
@@ -7442,6 +7528,111 @@ var PreviewDrawingController = class {
     event.preventDefault();
     event.stopPropagation();
   }
+  startConnectorGesture(event, point, routed = false) {
+    this.endFloatingTextInput(true);
+    this.endTextEdit();
+    this.clearSelectedStrokes();
+    this.pointerDown = true;
+    this.didMove = false;
+    this.pointerStartPoint = { ...point };
+    this.pointerStartClient = { x: event.clientX, y: event.clientY };
+    this.pointerStartEditable = null;
+    this.pointerStartSourceText = false;
+    this.activePointerId = event.pointerId;
+    const fromId = this.findSnapElementIdAtPoint(point);
+    const brush = this.currentBrushSettings();
+    this.connectorGesture = {
+      fromId,
+      historyBefore: this.captureDrawingHistorySnapshot()
+    };
+    this.currentStroke = {
+      elementId: createElementLayoutId(this.drawingData.strokes.length),
+      brush: BRUSH_PEN,
+      color: brush.color || this.penColor,
+      width: clamp7(Number(brush.width || 2.5), 1, 8),
+      opacity: clamp7(Number(brush.opacity ?? 0.9), 0, 1),
+      count: 1,
+      connector: { kind: "connector", fromId, toId: "", style: "curve", arrow: true },
+      points: buildFreeConnectorPoints(point, point, this.canvasWidth(), this.canvasHeight())
+    };
+    if (!routed) {
+      try {
+        this.canvas.setPointerCapture(event.pointerId);
+      } catch (error) {
+        void error;
+      }
+    }
+    event.preventDefault();
+    event.stopPropagation();
+  }
+  updateConnectorGesture(event) {
+    const endPoint = this.eventToPoint(event);
+    const movedDistance = this.pointerStartClient ? pointerDistance(this.pointerStartClient, { x: event.clientX, y: event.clientY }) : 0;
+    this.didMove = movedDistance > this.tapDistancePx();
+    if (this.currentStroke && this.pointerStartPoint) {
+      this.currentStroke.points = buildFreeConnectorPoints(this.pointerStartPoint, endPoint, this.canvasWidth(), this.canvasHeight());
+      this.requestRender();
+    }
+    event.preventDefault();
+    event.stopPropagation();
+  }
+  finishConnectorGesture(event) {
+    const startPoint = this.pointerStartPoint || this.eventToPoint(event);
+    let endPoint = this.eventToPoint(event);
+    if (!this.didMove) {
+      endPoint = {
+        ...startPoint,
+        x: clamp7(startPoint.x + Math.min(0.22, 96 / this.canvasWidth()), 0, 1),
+        t: Date.now(),
+        anchor: null
+      };
+    }
+    const fromId = this.connectorGesture?.fromId || this.findSnapElementIdAtPoint(startPoint);
+    let toId = this.findSnapElementIdAtPoint(endPoint, fromId);
+    if (toId === fromId) {
+      toId = "";
+    }
+    const stroke = normalizeStroke({
+      ...this.currentStroke,
+      connector: { kind: "connector", fromId, toId, style: "curve", arrow: true },
+      points: buildFreeConnectorPoints(startPoint, endPoint, this.canvasWidth(), this.canvasHeight())
+    });
+    this.drawingData.strokes.push(stroke);
+    const insertedIndex = this.drawingData.strokes.length - 1;
+    this.syncBoundConnectors();
+    this.setSelectedStrokes(insertedIndex);
+    this.redoStack = [];
+    this.invalidateStaticCache();
+    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.recordDrawingHistory(this.connectorGesture?.historyBefore);
+    this.currentStroke = null;
+    this.connectorGesture = null;
+    this.pointerDown = false;
+    this.finishPointerInteraction(event);
+  }
+  findSnapElementIdAtPoint(point, excludeId = "") {
+    const canvasPoint = this.pointToCanvas(point);
+    const threshold = Math.max(18, this.selectionHitPaddingPx() * 1.5);
+    let best = null;
+    for (let index = this.drawingData.strokes.length - 1; index >= 0; index -= 1) {
+      const stroke = this.drawingData.strokes[index];
+      const id = strokeElementId(stroke);
+      if (!id || id === excludeId || isConnectorStroke(stroke) || !isSnapStroke(stroke)) {
+        continue;
+      }
+      const bounds = getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight());
+      if (!bounds) {
+        continue;
+      }
+      const dx = Math.max(bounds.minX - canvasPoint.x, 0, canvasPoint.x - bounds.maxX);
+      const dy = Math.max(bounds.minY - canvasPoint.y, 0, canvasPoint.y - bounds.maxY);
+      const distance = Math.hypot(dx, dy);
+      if (distance <= threshold && (!best || distance < best.distance)) {
+        best = { id, distance };
+      }
+    }
+    return best?.id || "";
+  }
   shouldPassThroughHeaderPoint(event) {
     if (this.surfaceType !== "preview" || !isAppleMobileRuntime()) {
       return false;
@@ -7492,6 +7683,10 @@ var PreviewDrawingController = class {
     }
     if (this.selectingStrokes && event.pointerId === this.activePointerId) {
       this.updateSelectionDrag(event);
+      return;
+    }
+    if (this.connectorGesture && event.pointerId === this.activePointerId) {
+      this.updateConnectorGesture(event);
       return;
     }
     if (!this.active || !this.pointerDown || event.pointerId !== this.activePointerId) {
@@ -7560,6 +7755,10 @@ var PreviewDrawingController = class {
     }
     if (this.selectingStrokes && event.pointerId === this.activePointerId) {
       this.finishSelectionDrag(event);
+      return;
+    }
+    if (this.connectorGesture && event.pointerId === this.activePointerId) {
+      this.finishConnectorGesture(event);
       return;
     }
     if (!this.active || !this.pointerDown || event.pointerId !== this.activePointerId) {
@@ -8029,17 +8228,19 @@ var PreviewDrawingController = class {
         width: node.type === "root" ? 2.4 : 1.8,
         opacity: 1,
         count: 1,
-        text: node.text,
-        render: TEXT_RENDER_PLAIN,
+        text: node.markdown || node.text,
+        render: TEXT_RENDER_MARKDOWN,
         fontSize: node.fontSize,
         bold: node.type === "root" || node.type === "heading",
         code: node.type === "code",
         boxed: true,
         file: false,
+        previewWidth: Math.max(104, node.width),
+        previewHeight: Math.max(40, node.height),
         buttonStyle: "outline",
         snap: true,
         locked: false,
-        textWidth: Math.max(82, node.width - 18),
+        textWidth: null,
         mindMapNode: {
           mapId,
           nodeId: node.id,
@@ -8538,6 +8739,7 @@ var PreviewDrawingController = class {
       }
     }
     this.currentStroke = null;
+    this.connectorGesture = null;
     this.pointerDown = false;
     this.pointerStartPoint = null;
     this.pointerStartClient = null;
@@ -9170,6 +9372,8 @@ var PreviewDrawingController = class {
       node.toggleClass("is-rich-text", isRichTextStroke(stroke));
       node.toggleClass("is-asset", isEmbedStroke(stroke));
       node.toggleClass("is-locked", Boolean(stroke.locked));
+      node.toggleClass("is-mind-map-node", Boolean(normalizeMindMapNode(stroke.mindMapNode)));
+      setNoteDrawCssProps(node, { "--notedraw-node-color": stroke.color || "#64748b" });
       applyElementStyles(node, {
         left: `${Math.round(bounds.minX)}px`,
         top: `${Math.round(bounds.minY)}px`,
@@ -9240,7 +9444,8 @@ var PreviewDrawingController = class {
       await import_obsidian.MarkdownRenderer.render(this.plugin.app, noteContent, node, this.file.path, this.plugin);
       return;
     }
-    await import_obsidian.MarkdownRenderer.render(this.plugin.app, content, node, this.file.path, this.plugin);
+    const sourcePath = normalizeMindMapNode(stroke.mindMapNode)?.sourcePath || this.file.path;
+    await import_obsidian.MarkdownRenderer.render(this.plugin.app, content, node, sourcePath, this.plugin);
   }
   async resolveNotePreviewContent(text) {
     const link = String(text || "").trim();
@@ -9319,6 +9524,9 @@ var PreviewDrawingController = class {
       if (!connector) {
         continue;
       }
+      if (!connector.fromId || !connector.toId || connector.fromId === connector.toId) {
+        continue;
+      }
       const fromBounds = getStrokeBounds(byId.get(connector.fromId), this.canvasWidth(), this.canvasHeight());
       const toBounds = getStrokeBounds(byId.get(connector.toId), this.canvasWidth(), this.canvasHeight());
       if (!fromBounds || !toBounds) {
@@ -9348,13 +9556,17 @@ var PreviewDrawingController = class {
     ctx.lineJoin = "round";
     ctx.beginPath();
     ctx.moveTo(points[0].x, points[0].y);
-    for (let index = 1; index < points.length; index += 1) {
-      ctx.lineTo(points[index].x, points[index].y);
+    if (points.length === 3) {
+      ctx.quadraticCurveTo(points[1].x, points[1].y, points[2].x, points[2].y);
+    } else {
+      for (let index = 1; index < points.length; index += 1) {
+        ctx.lineTo(points[index].x, points[index].y);
+      }
     }
     ctx.stroke();
     const first = points[0];
     const last = points[points.length - 1];
-    const previous = points[Math.max(0, points.length - 3)];
+    const previous = points.length === 3 ? points[1] : points[Math.max(0, points.length - 3)];
     const angle = Math.atan2(last.y - previous.y, last.x - previous.x);
     const arrowSize = Math.max(6, width * 3.4);
     ctx.beginPath();
@@ -9536,8 +9748,13 @@ var PreviewDrawingController = class {
       }
       ctx.strokeStyle = stroke.color || this.penColor;
       ctx.lineWidth = 1.25;
-      const radius = style === "pill" ? Math.min(999, layout.height / 2) : 6;
-      roundRect(ctx, point.x - layout.paddingX, point.y - layout.paddingY, layout.width, layout.height, radius);
+      if (style === "circle") {
+        ctx.beginPath();
+        ctx.arc(point.x - layout.paddingX + layout.width / 2, point.y - layout.paddingY + layout.height / 2, layout.width / 2, 0, Math.PI * 2);
+      } else {
+        const radius = style === "pill" ? Math.min(999, layout.height / 2) : 6;
+        roundRect(ctx, point.x - layout.paddingX, point.y - layout.paddingY, layout.width, layout.height, radius);
+      }
       ctx.fill();
       ctx.stroke();
     }
@@ -9724,7 +9941,7 @@ var PreviewDrawingController = class {
     const selectedIds = new Set(indexes.map((index) => strokeElementId(this.drawingData.strokes[index])).filter(Boolean));
     const strokes = indexes.map((index) => {
       const stroke = JSON.parse(JSON.stringify(this.drawingData.strokes[index]));
-      if (stroke.connector && (!selectedIds.has(stroke.connector.fromId) || !selectedIds.has(stroke.connector.toId))) {
+      if (stroke.connector?.fromId && stroke.connector?.toId && (!selectedIds.has(stroke.connector.fromId) || !selectedIds.has(stroke.connector.toId))) {
         delete stroke.connector;
       }
       return stroke;
@@ -9885,10 +10102,12 @@ var PreviewDrawingController = class {
     }
     const historyBefore = this.captureDrawingHistorySnapshot();
     const disable = indexes.every((index) => this.drawingData.strokes[index]?.noteFlow?.enabled);
+    this.clearNoteFlowLayout();
     for (const index of indexes) {
       const stroke = this.drawingData.strokes[index];
       stroke.noteFlow = disable ? null : this.captureNoteFlowAnchor(stroke);
     }
+    this.captureResponsiveAnchorsForIndexes(indexes);
     this.hideSelectionMenu();
     this.redoStack = [];
     this.plugin.scheduleDrawingSave(this.file, this.drawingData);
@@ -12147,6 +12366,9 @@ function normalizeTextPreset(value) {
     "code",
     "file",
     "button",
+    "rectangle",
+    "circle",
+    "arrow",
     "buttonPrimary",
     "buttonOutline",
     "buttonPill",
@@ -12164,12 +12386,19 @@ function normalizeTextPreset(value) {
   ].includes(preset) ? preset : "plain";
 }
 function normalizeConnector(value) {
-  if (!value || typeof value.fromId !== "string" || !value.fromId || typeof value.toId !== "string" || !value.toId || value.fromId === value.toId) {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const fromId = typeof value.fromId === "string" ? value.fromId : "";
+  const toId = typeof value.toId === "string" ? value.toId : "";
+  const isFreeConnector = value.kind === "connector";
+  if (!isFreeConnector && (!fromId || !toId || fromId === toId)) {
     return null;
   }
   return {
-    fromId: value.fromId,
-    toId: value.toId,
+    kind: "connector",
+    fromId,
+    toId,
     style: value.style === "mindmap" ? "mindmap" : "curve",
     arrow: value.arrow !== false
   };
@@ -12471,7 +12700,7 @@ function isSnapStroke(stroke) {
   return Boolean(stroke?.snap) || stroke?.uiRole === "button" || stroke?.uiRole === "arrow" || isConnectorStroke(stroke);
 }
 function isSnapPreset(preset) {
-  return ["button", "buttonPrimary", "buttonOutline", "buttonPill", "arrowUp", "arrowDown", "arrowLeft", "arrowRight"].includes(preset);
+  return ["button", "rectangle", "circle", "arrow", "buttonPrimary", "buttonOutline", "buttonPill", "arrowUp", "arrowDown", "arrowLeft", "arrowRight"].includes(preset);
 }
 function instantTextForPreset(preset) {
   return {
@@ -12485,7 +12714,7 @@ function normalizeUiRole(value) {
   return ["button", "arrow"].includes(value) ? value : "";
 }
 function normalizeButtonStyle(value) {
-  return ["solid", "outline", "pill"].includes(value) ? value : "";
+  return ["solid", "outline", "pill", "circle"].includes(value) ? value : "";
 }
 function createTextPreset(preset, text, color) {
   const normalized = String(text || "").trim();
@@ -12501,11 +12730,11 @@ function createTextPreset(preset, text, color) {
   if (preset === "buttonPrimary") {
     return { kind: TOOL_TEXT, text: normalized, render: TEXT_RENDER_PLAIN, color: "#2563eb", fontSize: 17, bold: true, code: false, boxed: true, file: false, uiRole: "button", buttonStyle: "solid", snap: true };
   }
-  if (preset === "buttonOutline") {
+  if (["rectangle", "buttonOutline"].includes(preset)) {
     return { kind: TOOL_TEXT, text: normalized, render: TEXT_RENDER_PLAIN, color: "#2563eb", fontSize: 17, bold: true, code: false, boxed: true, file: false, uiRole: "button", buttonStyle: "outline", snap: true };
   }
-  if (preset === "buttonPill") {
-    return { kind: TOOL_TEXT, text: normalized, render: TEXT_RENDER_PLAIN, color: "#7c3aed", fontSize: 17, bold: true, code: false, boxed: true, file: false, uiRole: "button", buttonStyle: "pill", snap: true };
+  if (["circle", "buttonPill"].includes(preset)) {
+    return { kind: TOOL_TEXT, text: normalized, render: TEXT_RENDER_PLAIN, color: "#7c3aed", fontSize: 17, bold: true, code: false, boxed: true, file: false, uiRole: "button", buttonStyle: preset === "circle" ? "circle" : "pill", snap: true };
   }
   if (["arrowUp", "arrowDown", "arrowLeft", "arrowRight"].includes(preset)) {
     return { kind: TOOL_TEXT, text: normalized, render: TEXT_RENDER_PLAIN, color: "#111827", fontSize: 28, bold: true, code: false, boxed: false, file: false, uiRole: "arrow", buttonStyle: "", snap: true };
@@ -13236,9 +13465,15 @@ function measureVisibleSurfaceWindow(previewEl, scrollContainer, documentHeight,
   const surfaceTop = previewRect?.top || 0;
   const viewportTop = Math.max(0, (viewportRect.top - surfaceTop) / scale);
   const viewportBottom = Math.min(height, ((viewportRect.bottom || viewportRect.top + viewportRect.height) - surfaceTop) / scale);
+  const fallbackHeight = Math.max(1, (viewportRect.height || window.innerHeight || 1) / scale);
+  const visibleHeight = Math.min(height, Math.max(1, viewportBottom - viewportTop || fallbackHeight));
+  const scrollTop = Number(scrollContainer?.scrollTop) || 0;
+  const scrollHeight = Number(scrollContainer?.scrollHeight) || 0;
+  const clientHeight = Number(scrollContainer?.clientHeight) || Number(viewportRect.height) || 0;
+  const atScrollEnd = scrollHeight > clientHeight && scrollTop + clientHeight >= scrollHeight - 3;
   return {
-    top: clamp7(viewportTop, 0, Math.max(0, height - 1)),
-    height: Math.max(1, viewportBottom - viewportTop || (viewportRect.height || window.innerHeight || 1) / scale)
+    top: atScrollEnd ? Math.max(0, height - visibleHeight) : clamp7(viewportTop, 0, Math.max(0, height - visibleHeight)),
+    height: visibleHeight
   };
 }
 function clearCanvasContext(context, canvas) {
@@ -13387,24 +13622,33 @@ function buildBoundConnectorPoints(fromBounds, toBounds, canvasWidth, canvasHeig
     x: toCenter.x,
     y: dy >= 0 ? toBounds.minY : toBounds.maxY
   };
-  const bend = horizontal ? Math.max(24, Math.abs(to.x - from.x) * 0.46) : Math.max(24, Math.abs(to.y - from.y) * 0.46);
-  const c1 = horizontal ? { x: from.x + Math.sign(dx || 1) * bend, y: from.y } : { x: from.x, y: from.y + Math.sign(dy || 1) * bend };
-  const c2 = horizontal ? { x: to.x - Math.sign(dx || 1) * bend, y: to.y } : { x: to.x, y: to.y - Math.sign(dy || 1) * bend };
-  const points = [];
-  const count = 20;
-  for (let index = 0; index <= count; index += 1) {
-    const t = index / count;
-    const inverse = 1 - t;
-    const x = inverse ** 3 * from.x + 3 * inverse ** 2 * t * c1.x + 3 * inverse * t ** 2 * c2.x + t ** 3 * to.x;
-    const y = inverse ** 3 * from.y + 3 * inverse ** 2 * t * c1.y + 3 * inverse * t ** 2 * c2.y + t ** 3 * to.y;
-    points.push({
-      x: clamp7(x / Math.max(1, canvasWidth), 0, 1),
-      y: clamp7(y / Math.max(1, canvasHeight), 0, 1),
-      t: Date.now(),
-      anchor: null
-    });
-  }
-  return points;
+  const control = horizontal ? { x: (from.x + to.x) / 2, y: from.y } : { x: from.x, y: (from.y + to.y) / 2 };
+  return [from, control, to].map((point) => ({
+    x: clamp7(point.x / Math.max(1, canvasWidth), 0, 1),
+    y: clamp7(point.y / Math.max(1, canvasHeight), 0, 1),
+    t: Date.now(),
+    anchor: null
+  }));
+}
+function buildFreeConnectorPoints(fromPoint, toPoint, canvasWidth, canvasHeight) {
+  const width = Math.max(1, Number(canvasWidth) || 1);
+  const height = Math.max(1, Number(canvasHeight) || 1);
+  const from = {
+    x: clamp7(Number(fromPoint?.x) || 0, 0, 1) * width,
+    y: clamp7(Number(fromPoint?.y) || 0, 0, 1) * height
+  };
+  const to = {
+    x: clamp7(Number(toPoint?.x) || 0, 0, 1) * width,
+    y: clamp7(Number(toPoint?.y) || 0, 0, 1) * height
+  };
+  const horizontal = Math.abs(to.x - from.x) >= Math.abs(to.y - from.y);
+  const control = horizontal ? { x: (from.x + to.x) / 2, y: from.y } : { x: from.x, y: (from.y + to.y) / 2 };
+  return [from, control, to].map((point) => ({
+    x: clamp7(point.x / width, 0, 1),
+    y: clamp7(point.y / height, 0, 1),
+    t: Date.now(),
+    anchor: null
+  }));
 }
 function sameStrokePointPath(left, right, tolerance = 1e-6) {
   if (!Array.isArray(left) || left.length !== right.length) {
@@ -13419,7 +13663,7 @@ function getTextStrokeLayout(stroke, width, measureText = null) {
   const padded = !uiArrow && (stroke?.boxed || stroke?.code || stroke?.file || isButtonLikeStroke(stroke));
   const canvasX = clamp7(Number(point.x || 0), 0, 1) * Math.max(1, Number(width) || 1);
   const maxWidth = Math.max(fontSize, Math.max(1, Number(width) || 1) - canvasX - Math.max(8, fontSize * 0.45) - 8);
-  return computeTextLayout({
+  const layout = computeTextLayout({
     text: String(stroke?.text || "").trim(),
     fontSize,
     textWidth: stroke?.textWidth,
@@ -13427,6 +13671,17 @@ function getTextStrokeLayout(stroke, width, measureText = null) {
     padded,
     measureText
   });
+  if (normalizeButtonStyle(stroke?.buttonStyle) !== "circle") {
+    return layout;
+  }
+  const size = Math.max(44, layout.width, layout.height);
+  return {
+    ...layout,
+    paddingX: (size - layout.contentWidth) / 2,
+    paddingY: (size - layout.contentHeight) / 2,
+    width: size,
+    height: size
+  };
 }
 function getStrokeBounds(stroke, width, height) {
   if (!stroke?.points?.length) {

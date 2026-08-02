@@ -80,7 +80,8 @@ export function normalizeResponsiveAnchor(anchor) {
     y: clamp(finite(anchor.y, 0), 0, 1),
     path: typeof anchor.path === "string" ? anchor.path : "",
     line: normalizeLinePosition(anchor.line),
-    lineConfidence: normalizeLineConfidence(anchor.lineConfidence)
+    lineConfidence: normalizeLineConfidence(anchor.lineConfidence),
+    offsetY: Number.isFinite(Number(anchor.offsetY)) ? clamp(Number(anchor.offsetY), -100_000, 100_000) : 0
   };
 }
 
@@ -93,6 +94,7 @@ export function createResponsivePoint({
   sourcePath = "",
   linePosition = null,
   lineConfidence = null,
+  lineOffsetY = 0,
   time = Date.now()
 }) {
   const width = Math.max(1, finite(canvasWidth, 1));
@@ -115,7 +117,8 @@ export function createResponsivePoint({
       y,
       path: typeof sourcePath === "string" ? sourcePath : "",
       line: normalizeLinePosition(linePosition),
-      lineConfidence: normalizeLineConfidence(lineConfidence)
+      lineConfidence: normalizeLineConfidence(lineConfidence),
+      offsetY: Number.isFinite(Number(lineOffsetY)) ? clamp(Number(lineOffsetY), -100_000, 100_000) : 0
     }
   };
 }
@@ -157,7 +160,7 @@ export function projectResponsivePoint(point, {
     firstLineIsPlausible &&
     lineAnchorIsReliable &&
     lineShiftIsPlausible;
-  const canvasY = canUseLineAnchor ? anchoredY : fallbackCanvasY;
+  const canvasY = canUseLineAnchor ? anchoredY + anchor.offsetY : fallbackCanvasY;
   return {
     ...point,
     x: clamp(canvasX / width, 0, 1),

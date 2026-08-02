@@ -13,7 +13,7 @@ It is built as a surface layer: the same drawing and text-edit logic works on Ob
 - Reading view adds a note pen that uses fountain-pen dynamics while reserving clean Markdown flow space beneath the stroke.
 - The original watercolor brush remains available, with text-aligned and auto-straight variants.
 - Stroke selection, multi-select, movement, resize handles, and delete.
-- Floating text, button-style text boxes, rectangles, straight lines, and arrows.
+- Floating text, button-style text boxes, magnetic rectangles and circles, and three-point curved arrows.
 - Text style toggles for bold, italic, underline, and boxed text.
 - Text, title, code, file, style, and shape tools are grouped under the Text panel instead of being spread across the main toolbar.
 - Text and shape tools can select existing drawing elements before creating new ones.
@@ -39,7 +39,7 @@ It is built as a surface layer: the same drawing and text-edit logic works on Ob
 - Webview surfaces get independent drawing files, so annotations do not bleed between pages.
 - File-backed Canvas, PDF, image, database, and other workspace views retain their magic wand and drawing layer across internal rerenders.
 - Imported images, videos, files, Markdown, and HTML can be placed as floating NoteDraw elements.
-- Markdown files can be converted into editable NoteDraw mind maps with magnetically bound curved connectors, optional source-note updates, and source-note navigation.
+- Markdown files can be converted into rendered, editable NoteDraw mind maps with visible embeds, magnetically bound curved connectors, optional source-note updates, and source-note navigation.
 
 ## Storage
 
@@ -222,4 +222,4 @@ The current package focuses on the local Obsidian plugin runtime. The API and DO
 
 ## Version
 
-Current version: `3.3.2`.
+Current version: `3.3.3`.

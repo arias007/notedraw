@@ -62,6 +62,26 @@ test("mind map parser reports truncation without breaking parent references", ()
   assert.ok(model.nodes.every((node) => node.parentId === null || ids.has(node.parentId)));
 });
 
+test("mind map nodes keep renderable inline Markdown and embeds without exposing heading markers", () => {
+  const model = parseMarkdownMindMap([
+    "## **Rendered** heading",
+    "- See [[Reference|linked note]]",
+    "- ![[diagram.png]]",
+    "![remote](https://example.com/image.png)"
+  ].join("\n"), { title: "Map" });
+
+  const heading = model.nodes.find((node) => node.type === "heading");
+  const linked = model.nodes.find((node) => node.markdown.includes("[[Reference"));
+  const embedded = model.nodes.find((node) => node.markdown.includes("![[diagram.png]]"));
+  const remote = model.nodes.find((node) => node.markdown.includes("![remote]"));
+
+  assert.equal(heading.markdown, "**Rendered** heading");
+  assert.doesNotMatch(heading.markdown, /^#+\s/);
+  assert.equal(linked.text, "See linked note");
+  assert.equal(embedded.text, "diagram.png");
+  assert.equal(remote.text, "remote");
+});
+
 test("linked mind map node edits preserve Markdown structure", () => {
   const source = "# Heading\n\n- [ ] Task\n- Item\n\n> Quote";
   const headingResult = replaceMarkdownMindMapNodeText(

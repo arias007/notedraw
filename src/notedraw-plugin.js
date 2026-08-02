@@ -172,18 +172,19 @@ var I18N = {
     penWidth: "Pen width",
     penOpacity: "Pen opacity",
     textGroup: "Text",
-    buttonGroup: "Buttons",
+    buttonGroup: "Buttons and connectors",
     textPlain: "Text",
     title: "Title",
     code: "Code",
     button: "Button",
     primaryButton: "Primary",
-    outlineButton: "Outline",
-    pillButton: "Pill",
+    outlineButton: "Rectangle",
+    pillButton: "Circle",
     arrowUp: "Up",
     arrowDown: "Down",
     arrowLeft: "Left",
     arrowRight: "Right",
+    arrow: "Arrow",
     fileTag: "File tag",
     importGroup: "Import",
     image: "Image",
@@ -312,18 +313,19 @@ var I18N = {
     penWidth: "笔宽",
     penOpacity: "笔透明度",
     textGroup: "文字",
-    buttonGroup: "按钮/方向",
+    buttonGroup: "按钮/连接",
     textPlain: "普通文字",
     title: "标题",
     code: "代码",
     button: "按钮",
     primaryButton: "主按钮",
-    outlineButton: "线框",
-    pillButton: "胶囊",
+    outlineButton: "矩形",
+    pillButton: "圆形",
     arrowUp: "上",
     arrowDown: "下",
     arrowLeft: "左",
     arrowRight: "右",
+    arrow: "箭头",
     fileTag: "文件标签",
     importGroup: "导入",
     image: "图片",
@@ -446,18 +448,19 @@ var I18N = {
     penWidth: "筆寬",
     penOpacity: "筆透明度",
     textGroup: "文字",
-    buttonGroup: "按鈕/方向",
+    buttonGroup: "按鈕/連接",
     textPlain: "普通文字",
     title: "標題",
     code: "程式碼",
     button: "按鈕",
     primaryButton: "主按鈕",
-    outlineButton: "線框",
-    pillButton: "膠囊",
+    outlineButton: "矩形",
+    pillButton: "圓形",
     arrowUp: "上",
     arrowDown: "下",
     arrowLeft: "左",
     arrowRight: "右",
+    arrow: "箭頭",
     fileTag: "檔案標籤",
     importGroup: "匯入",
     image: "圖片",
@@ -570,12 +573,13 @@ var I18N = {
     code: "كود",
     button: "كۇنۇپكا",
     primaryButton: "ئاساسىي",
-    outlineButton: "سىزىقلىق",
-    pillButton: "يۇمىلاق",
+    outlineButton: "Rectangle",
+    pillButton: "Circle",
     arrowUp: "ئۈستى",
     arrowDown: "ئاستى",
     arrowLeft: "سول",
     arrowRight: "ئوڭ",
+    arrow: "Arrow",
     fileTag: "ھۆججەت بەلگىسى",
     importGroup: "كىرگۈزۈش",
     image: "رەسىم",
@@ -664,12 +668,13 @@ var I18N = {
     code: "Код",
     button: "Кнопка",
     primaryButton: "Основная",
-    outlineButton: "Контур",
-    pillButton: "Плашка",
+    outlineButton: "Прямоугольник",
+    pillButton: "Круг",
     arrowUp: "Вверх",
     arrowDown: "Вниз",
     arrowLeft: "Влево",
     arrowRight: "Вправо",
+    arrow: "Стрелка",
     fileTag: "Метка файла",
     importGroup: "Импорт",
     image: "Изображение",
@@ -1767,7 +1772,7 @@ var NoteDrawPlugin = class extends Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.3.2",
+      version: "3.3.3",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -3120,6 +3125,7 @@ var PreviewDrawingController = class {
     this.pointerStartEditable = null;
     this.pointerStartSourceText = false;
     this.activePointerId = null;
+    this.connectorGesture = null;
     this.touchPointers = /* @__PURE__ */ new Map();
     this.multiTouchScrolling = false;
     this.multiTouchLastCenter = null;
@@ -3207,6 +3213,7 @@ var PreviewDrawingController = class {
     this.pendingDomRender = false;
     this.resizeFrameId = null;
     this.resizeNeedsLayout = false;
+    this.scrollSettleTimer = null;
     this.positionFrameId = null;
     this.layoutRefreshGeneration = 0;
     this.markdownAnnotationTimer = null;
@@ -3634,6 +3641,10 @@ var PreviewDrawingController = class {
     this.cancelRenderFrame();
     this.cancelResizeFrame();
     this.cancelPositionFrame();
+    if (this.scrollSettleTimer !== null) {
+      window.clearTimeout(this.scrollSettleTimer);
+      this.scrollSettleTimer = null;
+    }
     this.resizeObserver?.disconnect();
     this.markdownRenderObserver?.disconnect();
     this.markdownRenderObserver = null;
@@ -3840,6 +3851,17 @@ var PreviewDrawingController = class {
     this.scheduleFloatingControlsPosition();
     if (this.active || this.drawingsLoaded || this.ctx) {
       this.scheduleResize({ layout: false });
+      if (this.scrollSettleTimer !== null) {
+        window.clearTimeout(this.scrollSettleTimer);
+      }
+      this.scrollSettleTimer = window.setTimeout(() => {
+        this.scrollSettleTimer = null;
+        if (this.destroyed) {
+          return;
+        }
+        this.scheduleMarkdownAnnotationRefresh({ layout: true });
+        this.scheduleResize({ layout: true });
+      }, 90);
     }
   }
   scheduleResize(options = {}) {
@@ -4286,13 +4308,9 @@ var PreviewDrawingController = class {
         labelKey: "buttonGroup",
         items: [
           { id: "button", labelKey: "button", icon: "square" },
-          { id: "buttonPrimary", labelKey: "primaryButton", icon: "square-check" },
-          { id: "buttonOutline", labelKey: "outlineButton", icon: "square" },
-          { id: "buttonPill", labelKey: "pillButton", icon: "circle" },
-          { id: "arrowUp", labelKey: "arrowUp", icon: "arrow-up" },
-          { id: "arrowDown", labelKey: "arrowDown", icon: "arrow-down" },
-          { id: "arrowLeft", labelKey: "arrowLeft", icon: "arrow-left" },
-          { id: "arrowRight", labelKey: "arrowRight", icon: "arrow-right" }
+          { id: "rectangle", labelKey: "outlineButton", icon: "square" },
+          { id: "circle", labelKey: "pillButton", icon: "circle" },
+          { id: "arrow", labelKey: "arrow", icon: "move-up-right" }
         ]
       },
       {
@@ -5185,10 +5203,42 @@ var PreviewDrawingController = class {
       const stroke = this.drawingData?.strokes?.[index];
       if (stroke?.points?.length && !isConnectorStroke(stroke)) {
         stroke.points = stroke.points.map((point) => this.captureResponsivePoint(point, context));
+        this.captureNoteFlowResponsiveAnchors(stroke, context);
         this.captureElementLayoutForStroke(stroke, context, index);
       }
     }
     this.rebuildElementRelations();
+  }
+  captureNoteFlowResponsiveAnchors(stroke, context = this.getResponsiveLayoutContext()) {
+    const noteFlow = normalizeNoteFlow(stroke?.noteFlow);
+    if (!noteFlow || !Number.isFinite(noteFlow.line) || !stroke?.points?.length) {
+      return false;
+    }
+    const linePosition = noteFlow.line + 0.999999;
+    const anchorY = this.projectLineLocation(noteFlow.path, linePosition, context);
+    if (!Number.isFinite(anchorY)) {
+      return false;
+    }
+    stroke.points = stroke.points.map((point) => {
+      const canvasX = clamp(Number(point?.x || 0), 0, 1) * this.canvasWidth();
+      const canvasY = clamp(Number(point?.y || 0), 0, 1) * this.canvasHeight();
+      return {
+        ...point,
+        ...createResponsivePoint({
+          canvasX,
+          canvasY,
+          canvasWidth: this.canvasWidth(),
+          canvasHeight: this.canvasHeight(),
+          frame: context.frame,
+          sourcePath: noteFlow.path,
+          linePosition,
+          lineConfidence: 1,
+          lineOffsetY: canvasY - anchorY,
+          time: point?.t
+        })
+      };
+    });
+    return true;
   }
   captureElementLayoutForStroke(stroke, context = this.getResponsiveLayoutContext(), index = -1, options = {}) {
     const bounds = getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight());
@@ -5578,6 +5628,10 @@ var PreviewDrawingController = class {
       hitStrokeIndex,
       insideSelectionFrame: this.selectedStrokeFrameContains(point)
     });
+    if (this.toolMode === TOOL_TEXT && this.textPreset === "arrow") {
+      this.startConnectorGesture(event, point, routed);
+      return;
+    }
     if (resizeHandle) {
       this.startSelectedStrokeResize(event, point, resizeHandle);
       return;
@@ -5599,6 +5653,19 @@ var PreviewDrawingController = class {
       event.preventDefault();
       event.stopPropagation();
       return;
+    }
+    if (hitStrokeIndex >= 0 && isTextLikeStroke(this.drawingData.strokes[hitStrokeIndex])) {
+      const repeatedSelectionTap = this.toolMode === TOOL_SELECT && this.isRepeatTextTap(hitStrokeIndex, point, event);
+      if (event.detail >= 2 || repeatedSelectionTap) {
+        this.editFloatingTextStroke(hitStrokeIndex);
+        this.lastTextTap = null;
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      if (this.toolMode === TOOL_SELECT) {
+        this.rememberTextTap(hitStrokeIndex, point, event);
+      }
     }
     if (this.toolMode === TOOL_SELECT && hitStrokeIndex >= 0) {
       const additiveSelect = event.shiftKey || event.ctrlKey || event.metaKey;
@@ -5721,6 +5788,111 @@ var PreviewDrawingController = class {
     event.preventDefault();
     event.stopPropagation();
   }
+  startConnectorGesture(event, point, routed = false) {
+    this.endFloatingTextInput(true);
+    this.endTextEdit();
+    this.clearSelectedStrokes();
+    this.pointerDown = true;
+    this.didMove = false;
+    this.pointerStartPoint = { ...point };
+    this.pointerStartClient = { x: event.clientX, y: event.clientY };
+    this.pointerStartEditable = null;
+    this.pointerStartSourceText = false;
+    this.activePointerId = event.pointerId;
+    const fromId = this.findSnapElementIdAtPoint(point);
+    const brush = this.currentBrushSettings();
+    this.connectorGesture = {
+      fromId,
+      historyBefore: this.captureDrawingHistorySnapshot()
+    };
+    this.currentStroke = {
+      elementId: createElementLayoutId(this.drawingData.strokes.length),
+      brush: BRUSH_PEN,
+      color: brush.color || this.penColor,
+      width: clamp(Number(brush.width || 2.5), 1, 8),
+      opacity: clamp(Number(brush.opacity ?? 0.9), 0, 1),
+      count: 1,
+      connector: { kind: "connector", fromId, toId: "", style: "curve", arrow: true },
+      points: buildFreeConnectorPoints(point, point, this.canvasWidth(), this.canvasHeight())
+    };
+    if (!routed) {
+      try {
+        this.canvas.setPointerCapture(event.pointerId);
+      } catch (error) {
+        void error;
+      }
+    }
+    event.preventDefault();
+    event.stopPropagation();
+  }
+  updateConnectorGesture(event) {
+    const endPoint = this.eventToPoint(event);
+    const movedDistance = this.pointerStartClient ? pointerDistance(this.pointerStartClient, { x: event.clientX, y: event.clientY }) : 0;
+    this.didMove = movedDistance > this.tapDistancePx();
+    if (this.currentStroke && this.pointerStartPoint) {
+      this.currentStroke.points = buildFreeConnectorPoints(this.pointerStartPoint, endPoint, this.canvasWidth(), this.canvasHeight());
+      this.requestRender();
+    }
+    event.preventDefault();
+    event.stopPropagation();
+  }
+  finishConnectorGesture(event) {
+    const startPoint = this.pointerStartPoint || this.eventToPoint(event);
+    let endPoint = this.eventToPoint(event);
+    if (!this.didMove) {
+      endPoint = {
+        ...startPoint,
+        x: clamp(startPoint.x + Math.min(0.22, 96 / this.canvasWidth()), 0, 1),
+        t: Date.now(),
+        anchor: null
+      };
+    }
+    const fromId = this.connectorGesture?.fromId || this.findSnapElementIdAtPoint(startPoint);
+    let toId = this.findSnapElementIdAtPoint(endPoint, fromId);
+    if (toId === fromId) {
+      toId = "";
+    }
+    const stroke = normalizeStroke({
+      ...this.currentStroke,
+      connector: { kind: "connector", fromId, toId, style: "curve", arrow: true },
+      points: buildFreeConnectorPoints(startPoint, endPoint, this.canvasWidth(), this.canvasHeight())
+    });
+    this.drawingData.strokes.push(stroke);
+    const insertedIndex = this.drawingData.strokes.length - 1;
+    this.syncBoundConnectors();
+    this.setSelectedStrokes(insertedIndex);
+    this.redoStack = [];
+    this.invalidateStaticCache();
+    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.recordDrawingHistory(this.connectorGesture?.historyBefore);
+    this.currentStroke = null;
+    this.connectorGesture = null;
+    this.pointerDown = false;
+    this.finishPointerInteraction(event);
+  }
+  findSnapElementIdAtPoint(point, excludeId = "") {
+    const canvasPoint = this.pointToCanvas(point);
+    const threshold = Math.max(18, this.selectionHitPaddingPx() * 1.5);
+    let best = null;
+    for (let index = this.drawingData.strokes.length - 1; index >= 0; index -= 1) {
+      const stroke = this.drawingData.strokes[index];
+      const id = strokeElementId(stroke);
+      if (!id || id === excludeId || isConnectorStroke(stroke) || !isSnapStroke(stroke)) {
+        continue;
+      }
+      const bounds = getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight());
+      if (!bounds) {
+        continue;
+      }
+      const dx = Math.max(bounds.minX - canvasPoint.x, 0, canvasPoint.x - bounds.maxX);
+      const dy = Math.max(bounds.minY - canvasPoint.y, 0, canvasPoint.y - bounds.maxY);
+      const distance = Math.hypot(dx, dy);
+      if (distance <= threshold && (!best || distance < best.distance)) {
+        best = { id, distance };
+      }
+    }
+    return best?.id || "";
+  }
   shouldPassThroughHeaderPoint(event) {
     if (this.surfaceType !== "preview" || !isAppleMobileRuntime()) {
       return false;
@@ -5771,6 +5943,10 @@ var PreviewDrawingController = class {
     }
     if (this.selectingStrokes && event.pointerId === this.activePointerId) {
       this.updateSelectionDrag(event);
+      return;
+    }
+    if (this.connectorGesture && event.pointerId === this.activePointerId) {
+      this.updateConnectorGesture(event);
       return;
     }
     if (!this.active || !this.pointerDown || event.pointerId !== this.activePointerId) {
@@ -5839,6 +6015,10 @@ var PreviewDrawingController = class {
     }
     if (this.selectingStrokes && event.pointerId === this.activePointerId) {
       this.finishSelectionDrag(event);
+      return;
+    }
+    if (this.connectorGesture && event.pointerId === this.activePointerId) {
+      this.finishConnectorGesture(event);
       return;
     }
     if (!this.active || !this.pointerDown || event.pointerId !== this.activePointerId) {
@@ -6317,17 +6497,19 @@ var PreviewDrawingController = class {
         width: node.type === "root" ? 2.4 : 1.8,
         opacity: 1,
         count: 1,
-        text: node.text,
-        render: TEXT_RENDER_PLAIN,
+        text: node.markdown || node.text,
+        render: TEXT_RENDER_MARKDOWN,
         fontSize: node.fontSize,
         bold: node.type === "root" || node.type === "heading",
         code: node.type === "code",
         boxed: true,
         file: false,
+        previewWidth: Math.max(104, node.width),
+        previewHeight: Math.max(40, node.height),
         buttonStyle: "outline",
         snap: true,
         locked: false,
-        textWidth: Math.max(82, node.width - 18),
+        textWidth: null,
         mindMapNode: {
           mapId,
           nodeId: node.id,
@@ -6826,6 +7008,7 @@ var PreviewDrawingController = class {
       }
     }
     this.currentStroke = null;
+    this.connectorGesture = null;
     this.pointerDown = false;
     this.pointerStartPoint = null;
     this.pointerStartClient = null;
@@ -7459,6 +7642,8 @@ var PreviewDrawingController = class {
       node.toggleClass("is-rich-text", isRichTextStroke(stroke));
       node.toggleClass("is-asset", isEmbedStroke(stroke));
       node.toggleClass("is-locked", Boolean(stroke.locked));
+      node.toggleClass("is-mind-map-node", Boolean(normalizeMindMapNode(stroke.mindMapNode)));
+      setNoteDrawCssProps(node, { "--notedraw-node-color": stroke.color || "#64748b" });
       applyElementStyles(node, {
         left: `${Math.round(bounds.minX)}px`,
         top: `${Math.round(bounds.minY)}px`,
@@ -7529,7 +7714,8 @@ var PreviewDrawingController = class {
       await MarkdownRenderer.render(this.plugin.app, noteContent, node, this.file.path, this.plugin);
       return;
     }
-    await MarkdownRenderer.render(this.plugin.app, content, node, this.file.path, this.plugin);
+    const sourcePath = normalizeMindMapNode(stroke.mindMapNode)?.sourcePath || this.file.path;
+    await MarkdownRenderer.render(this.plugin.app, content, node, sourcePath, this.plugin);
   }
   async resolveNotePreviewContent(text) {
     const link = String(text || "").trim();
@@ -7608,6 +7794,9 @@ var PreviewDrawingController = class {
       if (!connector) {
         continue;
       }
+      if (!connector.fromId || !connector.toId || connector.fromId === connector.toId) {
+        continue;
+      }
       const fromBounds = getStrokeBounds(byId.get(connector.fromId), this.canvasWidth(), this.canvasHeight());
       const toBounds = getStrokeBounds(byId.get(connector.toId), this.canvasWidth(), this.canvasHeight());
       if (!fromBounds || !toBounds) {
@@ -7637,13 +7826,17 @@ var PreviewDrawingController = class {
     ctx.lineJoin = "round";
     ctx.beginPath();
     ctx.moveTo(points[0].x, points[0].y);
-    for (let index = 1; index < points.length; index += 1) {
-      ctx.lineTo(points[index].x, points[index].y);
+    if (points.length === 3) {
+      ctx.quadraticCurveTo(points[1].x, points[1].y, points[2].x, points[2].y);
+    } else {
+      for (let index = 1; index < points.length; index += 1) {
+        ctx.lineTo(points[index].x, points[index].y);
+      }
     }
     ctx.stroke();
     const first = points[0];
     const last = points[points.length - 1];
-    const previous = points[Math.max(0, points.length - 3)];
+    const previous = points.length === 3 ? points[1] : points[Math.max(0, points.length - 3)];
     const angle = Math.atan2(last.y - previous.y, last.x - previous.x);
     const arrowSize = Math.max(6, width * 3.4);
     ctx.beginPath();
@@ -7825,8 +8018,13 @@ var PreviewDrawingController = class {
       }
       ctx.strokeStyle = stroke.color || this.penColor;
       ctx.lineWidth = 1.25;
-      const radius = style === "pill" ? Math.min(999, layout.height / 2) : 6;
-      roundRect(ctx, point.x - layout.paddingX, point.y - layout.paddingY, layout.width, layout.height, radius);
+      if (style === "circle") {
+        ctx.beginPath();
+        ctx.arc(point.x - layout.paddingX + layout.width / 2, point.y - layout.paddingY + layout.height / 2, layout.width / 2, 0, Math.PI * 2);
+      } else {
+        const radius = style === "pill" ? Math.min(999, layout.height / 2) : 6;
+        roundRect(ctx, point.x - layout.paddingX, point.y - layout.paddingY, layout.width, layout.height, radius);
+      }
       ctx.fill();
       ctx.stroke();
     }
@@ -8013,7 +8211,7 @@ var PreviewDrawingController = class {
     const selectedIds = new Set(indexes.map((index) => strokeElementId(this.drawingData.strokes[index])).filter(Boolean));
     const strokes = indexes.map((index) => {
       const stroke = JSON.parse(JSON.stringify(this.drawingData.strokes[index]));
-      if (stroke.connector && (!selectedIds.has(stroke.connector.fromId) || !selectedIds.has(stroke.connector.toId))) {
+      if (stroke.connector?.fromId && stroke.connector?.toId && (!selectedIds.has(stroke.connector.fromId) || !selectedIds.has(stroke.connector.toId))) {
         delete stroke.connector;
       }
       return stroke;
@@ -8176,10 +8374,12 @@ var PreviewDrawingController = class {
     }
     const historyBefore = this.captureDrawingHistorySnapshot();
     const disable = indexes.every((index) => this.drawingData.strokes[index]?.noteFlow?.enabled);
+    this.clearNoteFlowLayout();
     for (const index of indexes) {
       const stroke = this.drawingData.strokes[index];
       stroke.noteFlow = disable ? null : this.captureNoteFlowAnchor(stroke);
     }
+    this.captureResponsiveAnchorsForIndexes(indexes);
     this.hideSelectionMenu();
     this.redoStack = [];
     this.plugin.scheduleDrawingSave(this.file, this.drawingData);
@@ -10431,18 +10631,25 @@ function normalizeToolMode(value) {
 function normalizeTextPreset(value) {
   const preset = String(value || "plain");
   return [
-    "plain", "title", "code", "file", "button", "buttonPrimary", "buttonOutline", "buttonPill",
+    "plain", "title", "code", "file", "button", "rectangle", "circle", "arrow", "buttonPrimary", "buttonOutline", "buttonPill",
     "arrowUp", "arrowDown", "arrowLeft", "arrowRight", "image", "video", "attachment",
     "markdown", "html", "note", "mindMap"
   ].includes(preset) ? preset : "plain";
 }
 function normalizeConnector(value) {
-  if (!value || typeof value.fromId !== "string" || !value.fromId || typeof value.toId !== "string" || !value.toId || value.fromId === value.toId) {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const fromId = typeof value.fromId === "string" ? value.fromId : "";
+  const toId = typeof value.toId === "string" ? value.toId : "";
+  const isFreeConnector = value.kind === "connector";
+  if (!isFreeConnector && (!fromId || !toId || fromId === toId)) {
     return null;
   }
   return {
-    fromId: value.fromId,
-    toId: value.toId,
+    kind: "connector",
+    fromId,
+    toId,
     style: value.style === "mindmap" ? "mindmap" : "curve",
     arrow: value.arrow !== false
   };
@@ -10744,7 +10951,7 @@ function isSnapStroke(stroke) {
   return Boolean(stroke?.snap) || stroke?.uiRole === "button" || stroke?.uiRole === "arrow" || isConnectorStroke(stroke);
 }
 function isSnapPreset(preset) {
-  return ["button", "buttonPrimary", "buttonOutline", "buttonPill", "arrowUp", "arrowDown", "arrowLeft", "arrowRight"].includes(preset);
+  return ["button", "rectangle", "circle", "arrow", "buttonPrimary", "buttonOutline", "buttonPill", "arrowUp", "arrowDown", "arrowLeft", "arrowRight"].includes(preset);
 }
 function instantTextForPreset(preset) {
   return {
@@ -10758,7 +10965,7 @@ function normalizeUiRole(value) {
   return ["button", "arrow"].includes(value) ? value : "";
 }
 function normalizeButtonStyle(value) {
-  return ["solid", "outline", "pill"].includes(value) ? value : "";
+  return ["solid", "outline", "pill", "circle"].includes(value) ? value : "";
 }
 function createTextPreset(preset, text, color) {
   const normalized = String(text || "").trim();
@@ -10774,11 +10981,11 @@ function createTextPreset(preset, text, color) {
   if (preset === "buttonPrimary") {
     return { kind: TOOL_TEXT, text: normalized, render: TEXT_RENDER_PLAIN, color: "#2563eb", fontSize: 17, bold: true, code: false, boxed: true, file: false, uiRole: "button", buttonStyle: "solid", snap: true };
   }
-  if (preset === "buttonOutline") {
+  if (["rectangle", "buttonOutline"].includes(preset)) {
     return { kind: TOOL_TEXT, text: normalized, render: TEXT_RENDER_PLAIN, color: "#2563eb", fontSize: 17, bold: true, code: false, boxed: true, file: false, uiRole: "button", buttonStyle: "outline", snap: true };
   }
-  if (preset === "buttonPill") {
-    return { kind: TOOL_TEXT, text: normalized, render: TEXT_RENDER_PLAIN, color: "#7c3aed", fontSize: 17, bold: true, code: false, boxed: true, file: false, uiRole: "button", buttonStyle: "pill", snap: true };
+  if (["circle", "buttonPill"].includes(preset)) {
+    return { kind: TOOL_TEXT, text: normalized, render: TEXT_RENDER_PLAIN, color: "#7c3aed", fontSize: 17, bold: true, code: false, boxed: true, file: false, uiRole: "button", buttonStyle: preset === "circle" ? "circle" : "pill", snap: true };
   }
   if (["arrowUp", "arrowDown", "arrowLeft", "arrowRight"].includes(preset)) {
     return { kind: TOOL_TEXT, text: normalized, render: TEXT_RENDER_PLAIN, color: "#111827", fontSize: 28, bold: true, code: false, boxed: false, file: false, uiRole: "arrow", buttonStyle: "", snap: true };
@@ -11509,9 +11716,15 @@ function measureVisibleSurfaceWindow(previewEl, scrollContainer, documentHeight,
   const surfaceTop = previewRect?.top || 0;
   const viewportTop = Math.max(0, (viewportRect.top - surfaceTop) / scale);
   const viewportBottom = Math.min(height, ((viewportRect.bottom || viewportRect.top + viewportRect.height) - surfaceTop) / scale);
+  const fallbackHeight = Math.max(1, (viewportRect.height || window.innerHeight || 1) / scale);
+  const visibleHeight = Math.min(height, Math.max(1, viewportBottom - viewportTop || fallbackHeight));
+  const scrollTop = Number(scrollContainer?.scrollTop) || 0;
+  const scrollHeight = Number(scrollContainer?.scrollHeight) || 0;
+  const clientHeight = Number(scrollContainer?.clientHeight) || Number(viewportRect.height) || 0;
+  const atScrollEnd = scrollHeight > clientHeight && scrollTop + clientHeight >= scrollHeight - 3;
   return {
-    top: clamp(viewportTop, 0, Math.max(0, height - 1)),
-    height: Math.max(1, viewportBottom - viewportTop || (viewportRect.height || window.innerHeight || 1) / scale)
+    top: atScrollEnd ? Math.max(0, height - visibleHeight) : clamp(viewportTop, 0, Math.max(0, height - visibleHeight)),
+    height: visibleHeight
   };
 }
 function clearCanvasContext(context, canvas) {
@@ -11660,26 +11873,37 @@ function buildBoundConnectorPoints(fromBounds, toBounds, canvasWidth, canvasHeig
     x: toCenter.x,
     y: dy >= 0 ? toBounds.minY : toBounds.maxY
   };
-  const bend = horizontal
-    ? Math.max(24, Math.abs(to.x - from.x) * 0.46)
-    : Math.max(24, Math.abs(to.y - from.y) * 0.46);
-  const c1 = horizontal ? { x: from.x + Math.sign(dx || 1) * bend, y: from.y } : { x: from.x, y: from.y + Math.sign(dy || 1) * bend };
-  const c2 = horizontal ? { x: to.x - Math.sign(dx || 1) * bend, y: to.y } : { x: to.x, y: to.y - Math.sign(dy || 1) * bend };
-  const points = [];
-  const count = 20;
-  for (let index = 0; index <= count; index += 1) {
-    const t = index / count;
-    const inverse = 1 - t;
-    const x = inverse ** 3 * from.x + 3 * inverse ** 2 * t * c1.x + 3 * inverse * t ** 2 * c2.x + t ** 3 * to.x;
-    const y = inverse ** 3 * from.y + 3 * inverse ** 2 * t * c1.y + 3 * inverse * t ** 2 * c2.y + t ** 3 * to.y;
-    points.push({
-      x: clamp(x / Math.max(1, canvasWidth), 0, 1),
-      y: clamp(y / Math.max(1, canvasHeight), 0, 1),
-      t: Date.now(),
-      anchor: null
-    });
-  }
-  return points;
+  const control = horizontal
+    ? { x: (from.x + to.x) / 2, y: from.y }
+    : { x: from.x, y: (from.y + to.y) / 2 };
+  return [from, control, to].map((point) => ({
+    x: clamp(point.x / Math.max(1, canvasWidth), 0, 1),
+    y: clamp(point.y / Math.max(1, canvasHeight), 0, 1),
+    t: Date.now(),
+    anchor: null
+  }));
+}
+function buildFreeConnectorPoints(fromPoint, toPoint, canvasWidth, canvasHeight) {
+  const width = Math.max(1, Number(canvasWidth) || 1);
+  const height = Math.max(1, Number(canvasHeight) || 1);
+  const from = {
+    x: clamp(Number(fromPoint?.x) || 0, 0, 1) * width,
+    y: clamp(Number(fromPoint?.y) || 0, 0, 1) * height
+  };
+  const to = {
+    x: clamp(Number(toPoint?.x) || 0, 0, 1) * width,
+    y: clamp(Number(toPoint?.y) || 0, 0, 1) * height
+  };
+  const horizontal = Math.abs(to.x - from.x) >= Math.abs(to.y - from.y);
+  const control = horizontal
+    ? { x: (from.x + to.x) / 2, y: from.y }
+    : { x: from.x, y: (from.y + to.y) / 2 };
+  return [from, control, to].map((point) => ({
+    x: clamp(point.x / width, 0, 1),
+    y: clamp(point.y / height, 0, 1),
+    t: Date.now(),
+    anchor: null
+  }));
 }
 function sameStrokePointPath(left, right, tolerance = 1e-6) {
   if (!Array.isArray(left) || left.length !== right.length) {
@@ -11694,7 +11918,7 @@ function getTextStrokeLayout(stroke, width, measureText = null) {
   const padded = !uiArrow && (stroke?.boxed || stroke?.code || stroke?.file || isButtonLikeStroke(stroke));
   const canvasX = clamp(Number(point.x || 0), 0, 1) * Math.max(1, Number(width) || 1);
   const maxWidth = Math.max(fontSize, Math.max(1, Number(width) || 1) - canvasX - Math.max(8, fontSize * 0.45) - 8);
-  return computeTextLayout({
+  const layout = computeTextLayout({
     text: String(stroke?.text || "").trim(),
     fontSize,
     textWidth: stroke?.textWidth,
@@ -11702,6 +11926,17 @@ function getTextStrokeLayout(stroke, width, measureText = null) {
     padded,
     measureText
   });
+  if (normalizeButtonStyle(stroke?.buttonStyle) !== "circle") {
+    return layout;
+  }
+  const size = Math.max(44, layout.width, layout.height);
+  return {
+    ...layout,
+    paddingX: (size - layout.contentWidth) / 2,
+    paddingY: (size - layout.contentHeight) / 2,
+    width: size,
+    height: size
+  };
 }
 function getStrokeBounds(stroke, width, height) {
   if (!stroke?.points?.length) {

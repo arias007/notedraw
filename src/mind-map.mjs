@@ -6,7 +6,7 @@ function clamp(value, min, max) {
 
 function stripInlineMarkdown(value) {
   return String(value || "")
-    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, (_, alt) => alt || "Image")
     .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
     .replace(/!?\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|([^\]]+))?\]\]/g, (_, target, alias) => alias || target)
     .replace(/<https?:\/\/[^>]+>/g, (match) => match.slice(1, -1))
@@ -15,6 +15,16 @@ function stripInlineMarkdown(value) {
     .replace(/(\S)([*_~`]{1,3})(?=\s|$)/g, "$1")
     .replace(/\\([#*_[\]()`>+.!~-])/g, "$1")
     .replace(/\s+/g, " ")
+    .trim();
+}
+
+function preserveInlineMarkdown(value) {
+  return String(value || "")
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join("\n")
     .trim();
 }
 
@@ -36,7 +46,14 @@ export function parseMarkdownMindMap(source, {
   title = "Mind map",
   maxNodes = DEFAULT_MAX_NODES
 } = {}) {
-  const nodes = [{ id: "root", parentId: null, text: stripInlineMarkdown(title) || "Mind map", type: "root", sourceLine: -1 }];
+  const nodes = [{
+    id: "root",
+    parentId: null,
+    text: stripInlineMarkdown(title) || "Mind map",
+    markdown: preserveInlineMarkdown(title) || "Mind map",
+    type: "root",
+    sourceLine: -1
+  }];
   const headingStack = [];
   const listStack = [];
   let currentSectionId = "root";
@@ -52,7 +69,7 @@ export function parseMarkdownMindMap(source, {
   let sequence = 0;
 
   const canAdd = () => nodes.length < Math.max(2, Number(maxNodes) || DEFAULT_MAX_NODES);
-  const addNode = (text, parentId, type, sourceLine, sourceEndLine = sourceLine, sourceText = "") => {
+  const addNode = (text, parentId, type, sourceLine, sourceEndLine = sourceLine, sourceText = "", markdownText = text) => {
     const normalized = stripInlineMarkdown(text);
     if (!normalized || !canAdd()) {
       truncated = truncated || Boolean(normalized);
@@ -62,6 +79,7 @@ export function parseMarkdownMindMap(source, {
       id: `node-${(++sequence).toString(36)}`,
       parentId: parentId || "root",
       text: normalized,
+      markdown: preserveInlineMarkdown(markdownText) || normalized,
       type,
       sourceLine,
       sourceEndLine,
@@ -80,7 +98,8 @@ export function parseMarkdownMindMap(source, {
       "paragraph",
       paragraphStart,
       paragraphStart + paragraphSourceLines.length - 1,
-      paragraphSourceLines.join("\n")
+      paragraphSourceLines.join("\n"),
+      paragraphLines.join("\n")
     );
     paragraphLines = [];
     paragraphSourceLines = [];
@@ -92,13 +111,15 @@ export function parseMarkdownMindMap(source, {
     }
     const language = codeFence.replace(/^`{3,}|^~{3,}/, "").trim();
     const body = codeLines.join(" ").replace(/\s+/g, " ").trim();
+    const sourceText = lines.slice(codeStart, (codeEnd >= codeStart ? codeEnd : codeStart + codeLines.length) + 1).join("\n");
     addNode(
       [language ? `Code (${language})` : "Code", body].filter(Boolean).join(": "),
       currentSectionId,
       "code",
       codeStart,
       codeEnd >= codeStart ? codeEnd : codeStart + codeLines.length,
-      lines.slice(codeStart, (codeEnd >= codeStart ? codeEnd : codeStart + codeLines.length) + 1).join("\n")
+      sourceText,
+      sourceText
     );
     codeLines = [];
     codeFence = "";
@@ -145,7 +166,7 @@ export function parseMarkdownMindMap(source, {
         headingStack.pop();
       }
       const parentId = headingStack[headingStack.length - 1]?.id || "root";
-      const node = addNode(heading[2], parentId, "heading", index, index, line);
+      const node = addNode(heading[2], parentId, "heading", index, index, line, heading[2]);
       if (node) {
         headingStack.push({ level, id: node.id });
         currentSectionId = node.id;
@@ -162,7 +183,7 @@ export function parseMarkdownMindMap(source, {
       const parentId = listStack[listStack.length - 1]?.id || currentSectionId;
       const task = list[2].match(/^\[([ xX])\]\s*(.*)$/);
       const text = task ? `[${task[1].toLowerCase() === "x" ? "x" : " "}] ${task[2]}` : list[2];
-      const node = addNode(text, parentId, task ? "task" : "list", index, index, line);
+      const node = addNode(text, parentId, task ? "task" : "list", index, index, line, text);
       if (node) {
         listStack.push({ indent, id: node.id });
       }
@@ -187,7 +208,8 @@ export function parseMarkdownMindMap(source, {
         quote ? "quote" : "table",
         index,
         index,
-        line
+        line,
+        quote ? quote[1] : trimmed.replace(/^\||\|$/g, "").split("|").map((cell) => cell.trim()).filter(Boolean).join(" | ")
       );
       continue;
     }
@@ -270,10 +292,11 @@ export function replaceMarkdownMindMapNodeText(source, node, nextText) {
   };
 }
 
-function estimateNodeHeight(text, width, fontSize) {
+function estimateNodeHeight(text, width, fontSize, markdown = "") {
   const charactersPerLine = Math.max(8, Math.floor(width / Math.max(6, fontSize * 0.58)));
   const lines = Math.max(1, Math.ceil(String(text || "").length / charactersPerLine));
-  return Math.max(34, Math.min(132, lines * fontSize * 1.28 + 16));
+  const mediaHeight = /!\[\[|!\[[^\]]*\]\(/.test(String(markdown || "")) ? 112 : 0;
+  return Math.max(34, mediaHeight, Math.min(168, lines * fontSize * 1.28 + 16));
 }
 
 export function layoutMindMap(model, {
@@ -315,7 +338,7 @@ export function layoutMindMap(model, {
   for (const node of byId.values()) {
     node.fontSize = node.type === "root" ? 18 : node.type === "heading" ? 15 : 13;
     node.width = node.type === "root" ? Math.min(effectiveWidth + 20, availableWidth) : effectiveWidth;
-    node.height = estimateNodeHeight(node.text, node.width, node.fontSize);
+    node.height = estimateNodeHeight(node.text, node.width, node.fontSize, node.markdown);
   }
   let cursorY = Number(originY) || 0;
   const place = (node) => {

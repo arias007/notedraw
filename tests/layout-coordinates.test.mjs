@@ -105,8 +105,32 @@ test("malformed anchors are normalized without escaping the supported lane", () 
     y: 0,
     path: "",
     line: null,
-    lineConfidence: null
+    lineConfidence: null,
+    offsetY: 0
   });
+});
+
+test("line-relative pixel offsets keep note-flow drawings stable when Markdown gains space", () => {
+  const point = createResponsivePoint({
+    canvasX: 220,
+    canvasY: 760,
+    canvasWidth: 800,
+    canvasHeight: 2400,
+    frame: { left: 100, width: 600 },
+    sourcePath: "Notes/example.md",
+    linePosition: 12.999999,
+    lineConfidence: 1,
+    lineOffsetY: 84
+  });
+
+  const projected = projectResponsivePoint(point, {
+    canvasWidth: 800,
+    canvasHeight: 2800,
+    frame: { left: 100, width: 600 },
+    lineToCanvasY: () => 676
+  });
+
+  assert.ok(Math.abs(projected.y * 2800 - 760) < 0.001);
 });
 
 test("missing line anchors remain null instead of becoming line zero", () => {

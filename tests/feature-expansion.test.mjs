@@ -35,6 +35,8 @@ test("scrolling refreshes only the canvas window while real layout changes can r
   const source = await readFile(sourceUrl, "utf8");
 
   assert.match(source, /onScroll\(\) \{\s*this\.lastScrollAt = Date\.now\(\);[\s\S]*this\.scheduleResize\(\{ layout: false \}\)/);
+  assert.match(source, /this\.scrollSettleTimer = window\.setTimeout\([\s\S]*this\.scheduleMarkdownAnnotationRefresh\(\{ layout: true \}\);[\s\S]*this\.scheduleResize\(\{ layout: true \}\)/);
+  assert.match(source, /const atScrollEnd = scrollHeight > clientHeight && scrollTop \+ clientHeight >= scrollHeight - 3/);
   assert.match(source, /scheduleMarkdownAnnotationRefresh\(\{ layout: Date\.now\(\) - this\.lastScrollAt > 220 \}\)/);
   assert.match(source, /resizeCanvas\(options = \{\}\)[\s\S]*const refreshLayout = options\.layout !== false/);
   assert.match(source, /if \(this\.drawingsLoaded && refreshLayout\) \{\s*const frame = this\.getResponsiveContentFrame\(\)/);
@@ -122,6 +124,8 @@ test("reading-only note pen and selected elements can reserve Markdown flow spac
   assert.match(source, /return this\.surfaceType === "preview" && !this\.embeddedSurface/);
   assert.match(source, /toggleSelectedNoteFlow\(\)/);
   assert.match(source, /captureNoteFlowAnchor\(stroke\)/);
+  assert.match(source, /captureNoteFlowResponsiveAnchors\(stroke, context/);
+  assert.match(source, /lineOffsetY: canvasY - anchorY/);
   assert.match(source, /applyNoteFlowLayout\(\)/);
   const flowLayout = source.slice(source.indexOf("  applyNoteFlowLayout()"), source.indexOf("  scheduleNoteFlowLayout()"));
   assert.match(flowLayout, /const nextValue = `\$\{Math\.ceil\(state\.base \+ offset\)\}px`/);
@@ -144,6 +148,7 @@ test("mind map import creates editable NoteDraw nodes and magnetically bound con
   assert.match(source, /onClose: \(closedModal\) => \{\s*if \(this\.mindMapFileModal === closedModal\)/);
   assert.match(source, /async insertMindMapAt\(point, sourceFile, options = \{\}\)/);
   assert.match(source, /kind: TOOL_TEXT/);
+  assert.match(source, /text: node\.markdown \|\| node\.text,\s*render: TEXT_RENDER_MARKDOWN/);
   assert.match(source, /mindMapNode:/);
   assert.match(source, /affectsSource/);
   assert.match(source, /openSelectedMindMapSource/);
@@ -151,6 +156,30 @@ test("mind map import creates editable NoteDraw nodes and magnetically bound con
   assert.match(source, /syncBoundConnectors\(\)/);
   assert.match(source, /buildBoundConnectorPoints\(fromBounds, toBounds/);
   assert.match(source, /drawBoundConnectorOn\(ctx, stroke, alpha\)/);
+  assert.match(source, /ctx\.quadraticCurveTo\(points\[1\]\.x, points\[1\]\.y, points\[2\]\.x, points\[2\]\.y\)/);
+});
+
+test("text shapes use one magnetic rectangle, circle, and three-point arrow system", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const panelStart = source.indexOf("  createTextPanel() {");
+  const panelSource = source.slice(panelStart, source.indexOf("  scheduleMindMapFilePicker()", panelStart));
+
+  assert.match(panelSource, /\{ id: "rectangle", labelKey: "outlineButton", icon: "square" \}/);
+  assert.match(panelSource, /\{ id: "circle", labelKey: "pillButton", icon: "circle" \}/);
+  assert.match(panelSource, /\{ id: "arrow", labelKey: "arrow", icon: "move-up-right" \}/);
+  assert.doesNotMatch(panelSource, /id: "buttonPrimary"|id: "arrowUp"|id: "arrowDown"|id: "arrowLeft"|id: "arrowRight"/);
+  assert.match(source, /startConnectorGesture\(event, point, routed\)/);
+  assert.match(source, /findSnapElementIdAtPoint\(point/);
+  assert.match(source, /return \[from, control, to\]\.map/);
+  assert.match(source, /this\.syncBoundConnectors\(\)/);
+});
+
+test("selected text elements enter their editor before selection drag starts", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const pointerSource = source.slice(source.indexOf("  onPointerDown(event"), source.indexOf("  startConnectorGesture", source.indexOf("  onPointerDown(event")));
+
+  assert.ok(pointerSource.indexOf("this.editFloatingTextStroke(hitStrokeIndex)") < pointerSource.indexOf("if (this.toolMode === TOOL_SELECT && hitStrokeIndex >= 0)"));
+  assert.match(pointerSource, /const repeatedSelectionTap = this\.toolMode === TOOL_SELECT && this\.isRepeatTextTap/);
 });
 
 test("controller startup and tool choices remain stable across reloads", async () => {
