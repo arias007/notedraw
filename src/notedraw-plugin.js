@@ -50,6 +50,7 @@ import {
   computeTextLayout,
   placeFloatingTextEditor
 } from "./text-layout.mjs";
+import { calculatePinchPanScroll } from "./viewport-gesture.mjs";
 import {
   buildFountainPenSegments,
   straightenWatercolorPoints
@@ -1773,7 +1774,7 @@ var NoteDrawPlugin = class extends Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.3.6",
+      version: "3.3.7",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -2095,8 +2096,12 @@ var NoteDrawPlugin = class extends Plugin {
       let previewController = preview ? this.controllers.get(preview) || preview._noteDrawController : null;
       const sourceController = source ? this.controllers.get(source) || source._noteDrawController : null;
       const previewVisible = isElementVisibleEnough(preview);
-      if (isSourceMode(view)) {
+      const sourceVisible = isElementVisibleEnough(source);
+      if (sourceVisible) {
         previewController?.destroy();
+        continue;
+      }
+      if (isSourceMode(view) && !previewVisible) {
         continue;
       }
       sourceController?.syncFloatingControlClasses();
@@ -3131,6 +3136,9 @@ var PreviewDrawingController = class {
     this.multiTouchScrolling = false;
     this.multiTouchLastCenter = null;
     this.multiTouchLastDistance = null;
+    this.multiTouchPendingCenter = null;
+    this.multiTouchPendingDistance = null;
+    this.multiTouchFrameId = null;
     this.multiTouchPinching = false;
     this.suppressTouchDrawing = false;
     this.draggingStroke = false;
@@ -3646,6 +3654,7 @@ var PreviewDrawingController = class {
       window.clearTimeout(this.scrollSettleTimer);
       this.scrollSettleTimer = null;
     }
+    this.cancelMultiTouchFrame();
     this.resizeObserver?.disconnect();
     this.markdownRenderObserver?.disconnect();
     this.markdownRenderObserver = null;
@@ -3864,6 +3873,9 @@ var PreviewDrawingController = class {
     }
     if (this.active || this.drawingsLoaded || this.ctx) {
       this.scheduleResize({ layout: false });
+      if (this.multiTouchScrolling) {
+        return;
+      }
       if (this.scrollSettleTimer !== null) {
         window.clearTimeout(this.scrollSettleTimer);
       }
@@ -6892,27 +6904,50 @@ var PreviewDrawingController = class {
     }
     const next = clamp(Number(value) || 1, MIN_READING_ZOOM, MAX_READING_ZOOM);
     const previous = this.readingZoom || 1;
-    if (Math.abs(next - previous) < 0.001) {
+    const zoomChanged = Math.abs(next - previous) >= 0.001;
+    const previousClientPoint = options.previousClientPoint || clientPoint;
+    if (!zoomChanged && !previousClientPoint) {
       return true;
     }
     const scroller = findScrollableAncestor(this.previewEl);
     const scrollerRect = scroller?.getBoundingClientRect?.();
-    const focalX = Number.isFinite(clientPoint?.x) && scrollerRect ? clientPoint.x - scrollerRect.left : (scroller?.clientWidth || 0) / 2;
-    const focalY = Number.isFinite(clientPoint?.y) && scrollerRect ? clientPoint.y - scrollerRect.top : (scroller?.clientHeight || 0) / 2;
+    const center = (point) => ({
+      x: Number.isFinite(point?.x) && scrollerRect ? point.x - scrollerRect.left : (scroller?.clientWidth || 0) / 2,
+      y: Number.isFinite(point?.y) && scrollerRect ? point.y - scrollerRect.top : (scroller?.clientHeight || 0) / 2
+    });
+    const previousCenter = center(previousClientPoint);
+    const nextCenter = center(clientPoint);
     const scrollLeft = Number(scroller?.scrollLeft) || 0;
     const scrollTop = Number(scroller?.scrollTop) || 0;
-    this.readingZoom = next;
-    this.applyReadingZoom();
+    if (zoomChanged) {
+      this.readingZoom = next;
+      this.applyReadingZoom();
+    }
     const ratio = next / previous;
     if (scroller && Number.isFinite(ratio)) {
-      scroller.scrollLeft = Math.max(0, (scrollLeft + focalX) * ratio - focalX);
-      scroller.scrollTop = Math.max(0, (scrollTop + focalY) * ratio - focalY);
+      const scroll = calculatePinchPanScroll({
+        scrollLeft,
+        scrollTop,
+        previousCenter,
+        nextCenter,
+        zoomRatio: ratio,
+        maxScrollLeft: Math.max(0, scroller.scrollWidth - scroller.clientWidth),
+        maxScrollTop: Math.max(0, scroller.scrollHeight - scroller.clientHeight)
+      });
+      scroller.scrollLeft = scroll.left;
+      scroller.scrollTop = scroll.top;
     }
-    this.responsiveLayoutContext = null;
-    this.scheduleResize({ layout: !this.usesVisualReadingZoom() });
-    this.persistInteractionSettings();
-    if (options.share !== false) {
-      this.syncSharedToolbarState();
+    if (zoomChanged) {
+      this.responsiveLayoutContext = null;
+      if (options.resize !== false) {
+        this.scheduleResize({ layout: !this.usesVisualReadingZoom() });
+      }
+      if (options.persist !== false) {
+        this.persistInteractionSettings();
+      }
+      if (options.share !== false) {
+        this.syncSharedToolbarState();
+      }
     }
     return true;
   }
@@ -6921,7 +6956,13 @@ var PreviewDrawingController = class {
     this.multiTouchScrolling = true;
     this.multiTouchLastCenter = this.getTouchCenter();
     this.multiTouchLastDistance = this.getTouchDistance();
+    this.multiTouchPendingCenter = null;
+    this.multiTouchPendingDistance = null;
     this.multiTouchPinching = false;
+    if (this.scrollSettleTimer !== null) {
+      window.clearTimeout(this.scrollSettleTimer);
+      this.scrollSettleTimer = null;
+    }
     this.previewEl.addClass("is-two-finger-scroll");
     this.cancelCurrentStroke();
     this.cancelSelectedStrokeDrag(true);
@@ -6932,54 +6973,85 @@ var PreviewDrawingController = class {
     if (!this.touchPointers.has(pointerId)) {
       return false;
     }
+    this.flushMultiTouchGesture();
     this.touchPointers.delete(pointerId);
     if (this.touchPointers.size < 2) {
       this.multiTouchScrolling = false;
       this.multiTouchLastCenter = null;
       this.multiTouchLastDistance = null;
+      this.multiTouchPendingCenter = null;
+      this.multiTouchPendingDistance = null;
       this.previewEl.removeClass("is-two-finger-scroll");
     }
     if (this.touchPointers.size === 0) {
       this.suppressTouchDrawing = false;
       if (this.multiTouchPinching) {
+        this.persistInteractionSettings();
         this.syncSharedToolbarState();
       }
       this.multiTouchPinching = false;
+      this.scheduleMarkdownAnnotationRefresh({ layout: false });
       this.scheduleResize({ layout: false });
       this.requestRender(true);
     }
     return true;
   }
   resetTouchGestureState() {
+    this.cancelMultiTouchFrame();
     this.touchPointers.clear();
     this.multiTouchScrolling = false;
     this.multiTouchLastCenter = null;
     this.multiTouchLastDistance = null;
+    this.multiTouchPendingCenter = null;
+    this.multiTouchPendingDistance = null;
     this.multiTouchPinching = false;
     this.suppressTouchDrawing = false;
     this.previewEl?.removeClass("is-two-finger-scroll");
   }
   handleMultiTouchScroll(event) {
-    const center = this.getTouchCenter();
-    const previous = this.multiTouchLastCenter;
-    const distance = this.getTouchDistance();
-    const previousDistance = this.multiTouchLastDistance;
-    const scroller = findScrollableAncestor(this.previewEl);
-    if (center && previous && scroller) {
-      scroller.scrollBy({
-        left: previous.x - center.x,
-        top: previous.y - center.y,
-        behavior: "auto"
+    this.multiTouchPendingCenter = this.getTouchCenter();
+    this.multiTouchPendingDistance = this.getTouchDistance();
+    if (this.multiTouchFrameId === null) {
+      this.multiTouchFrameId = window.requestAnimationFrame(() => {
+        this.multiTouchFrameId = null;
+        this.flushMultiTouchGesture();
       });
     }
-    if (this.canZoomReadingSurface() && distance && previousDistance && Math.abs(distance - previousDistance) >= 1.5) {
-      this.multiTouchPinching = true;
-      this.setReadingZoom(this.readingZoom * distance / previousDistance, center, { share: false });
-    }
-    this.multiTouchLastCenter = center;
-    this.multiTouchLastDistance = distance;
     event.preventDefault();
     event.stopPropagation();
+  }
+  cancelMultiTouchFrame() {
+    if (this.multiTouchFrameId !== null) {
+      window.cancelAnimationFrame(this.multiTouchFrameId);
+      this.multiTouchFrameId = null;
+    }
+  }
+  flushMultiTouchGesture() {
+    this.cancelMultiTouchFrame();
+    const center = this.multiTouchPendingCenter;
+    const previous = this.multiTouchLastCenter;
+    const distance = this.multiTouchPendingDistance;
+    const previousDistance = this.multiTouchLastDistance;
+    this.multiTouchPendingCenter = null;
+    this.multiTouchPendingDistance = null;
+    if (!center || !previous) {
+      return;
+    }
+    let nextZoom = this.readingZoom;
+    if (this.canZoomReadingSurface() && distance && previousDistance && Math.abs(distance - previousDistance) >= 1.5) {
+      this.multiTouchPinching = true;
+      nextZoom = this.readingZoom * distance / previousDistance;
+    }
+    this.setReadingZoom(nextZoom, center, {
+      previousClientPoint: previous,
+      persist: false,
+      resize: false,
+      share: false
+    });
+    this.multiTouchLastCenter = center;
+    if (distance) {
+      this.multiTouchLastDistance = distance;
+    }
   }
   getTouchCenter() {
     if (!this.touchPointers.size) {

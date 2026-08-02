@@ -34,15 +34,15 @@ test("the stable v1 API exposes Cancip-friendly capabilities and events", async 
   assert.match(source, /setZoom: v1\.setZoom/);
 });
 
-test("3.3.6 preserves bottom coordinates and cross-view frames without eager hidden-view refresh", async () => {
+test("3.3.7 preserves bottom coordinates and cross-view frames without eager hidden-view refresh", async () => {
   const [source, manifestText] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(manifestUrl, "utf8")
   ]);
   const manifest = JSON.parse(manifestText);
 
-  assert.equal(manifest.version, "3.3.6");
-  assert.match(source, /version: "3\.3\.6"/);
+  assert.equal(manifest.version, "3.3.7");
+  assert.match(source, /version: "3\.3\.7"/);
   assert.match(source, /if \(!this\.responsivePointsInitialized \|\| signature !== this\.responsiveLayoutSignature\)/);
   assert.match(source, /migratedDrawingData\.version = Math\.max\(3/);
   assert.match(source, /captureElementLayoutForStroke/);
@@ -154,6 +154,18 @@ test("two-finger scrolling always releases touch suppression before the next str
   assert.match(source, /onDocumentPointerFinish\(event\)[\s\S]*this\.completeTrackedTouch\(event\.pointerId\)/);
   assert.match(source, /event\.isPrimary && this\.touchPointers\.size && !this\.pointerDown && this\.activePointerId === null[\s\S]*this\.resetTouchGestureState\(\)/);
   assert.match(source, /completeTrackedTouch\(pointerId\)[\s\S]*this\.touchPointers\.size === 0[\s\S]*this\.suppressTouchDrawing = false[\s\S]*this\.scheduleResize\(\{ layout: false \}\)[\s\S]*this\.requestRender\(true\)/);
+  assert.match(source, /handleMultiTouchScroll\(event\)[\s\S]*window\.requestAnimationFrame[\s\S]*this\.flushMultiTouchGesture\(\)/);
+  assert.match(source, /flushMultiTouchGesture\(\)[\s\S]*previousClientPoint: previous[\s\S]*persist: false[\s\S]*resize: false/);
+});
+
+test("reading controllers survive zero-sized view transitions until the source surface is visible", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const syncStart = source.indexOf("  syncMarkdownControllerModes() {");
+  const syncSource = source.slice(syncStart, source.indexOf("  syncEmbeddedMarkdownControllers()", syncStart));
+
+  assert.match(syncSource, /const sourceVisible = isElementVisibleEnough\(source\)/);
+  assert.match(syncSource, /if \(sourceVisible\) \{\s*previewController\?\.destroy\(\)/);
+  assert.match(syncSource, /if \(isSourceMode\(view\) && !previewVisible\) \{\s*continue;/);
 });
 
 test("deactivating the wand promotes selected text and drawings back into the static canvas", async () => {

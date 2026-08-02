@@ -19,10 +19,11 @@ test("canvas layers stay hidden until their backing stores are initialized", asy
   assert.match(source, /this\.canvas\.width = 1;\s*this\.canvas\.height = 1;/s);
 });
 
-test("source mode releases cached reading controllers", async () => {
+test("a visible source surface releases cached reading controllers after transitions settle", async () => {
   const source = await readFile(sourceUrl, "utf8");
 
-  assert.match(source, /if \(isSourceMode\(view\)\) \{\s*previewController\?\.destroy\(\);\s*continue;/s);
+  assert.match(source, /const sourceVisible = isElementVisibleEnough\(source\);\s*if \(sourceVisible\) \{\s*previewController\?\.destroy\(\);\s*continue;/s);
+  assert.match(source, /if \(isSourceMode\(view\) && !previewVisible\) \{\s*continue;/s);
   assert.match(source, /previewController\.file\?\.path !== view\.file\?\.path/s);
   assert.match(source, /previewController = this\.resolveLivePreviewController\(view\)/);
 });

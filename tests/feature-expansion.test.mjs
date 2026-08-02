@@ -52,7 +52,9 @@ test("reading zoom preserves wrapping while edit zoom can reflow", async () => {
   assert.match(source, /sourceViewLayoutZoom: true/);
   assert.match(source, /setZoom: \(zoom, options = \{\}\) => this\.setApiZoom\(zoom, options\)/);
   assert.match(source, /if \(\(event\.ctrlKey \|\| event\.metaKey\) && this\.canZoomReadingSurface\(\)\)/);
-  assert.match(source, /this\.setReadingZoom\(this\.readingZoom \* distance \/ previousDistance, center, \{ share: false \}\)/);
+  assert.match(source, /nextZoom = this\.readingZoom \* distance \/ previousDistance/);
+  assert.match(source, /calculatePinchPanScroll\(\{[\s\S]*previousCenter,[\s\S]*nextCenter,[\s\S]*zoomRatio: ratio/);
+  assert.match(source, /handleMultiTouchScroll\(event\)[\s\S]*window\.requestAnimationFrame/);
   assert.match(source, /return \["preview", "source"\]\.includes\(this\.surfaceType\) && !this\.embeddedSurface/);
   assert.match(source, /usesVisualReadingZoom\(\)/);
   assert.match(source, /readingZoomElements\(target = this\.readingZoomTarget\)/);
