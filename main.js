@@ -1307,8 +1307,9 @@ function buildFountainPenSegments(points, {
   }
   const width = Math.max(1, finite5(canvasWidth, 1));
   const height = Math.max(1, finite5(canvasHeight, 1));
-  const strokeWidth = Math.max(0.5, finite5(baseWidth, 3));
+  const strokeWidth = Math.max(0.25, finite5(baseWidth, 3));
   const strokeOpacity = clamp5(finite5(baseOpacity, 1), 0, 1);
+  const minimumVisibleWidth = Math.min(strokeWidth, Math.max(1, strokeWidth * 0.22));
   const segments = [];
   let widthFactor = null;
   for (let index = 1; index < points.length; index += 1) {
@@ -1320,16 +1321,29 @@ function buildFountainPenSegments(points, {
     if (distance <= 0.01) {
       continue;
     }
-    const elapsed = clamp5(finite5(to?.t, index * 16) - finite5(from?.t, (index - 1) * 16), 4, 80);
-    const speed = distance / elapsed;
-    const speedRatio = clamp5((speed - 0.08) / 2.12, 0, 1);
-    const targetWidthFactor = mix(2.05, 0.34, Math.pow(speedRatio, 0.72));
-    widthFactor = widthFactor === null ? targetWidthFactor : mix(widthFactor, targetWidthFactor, 0.68);
+    let sampleStart = index - 1;
+    let sampleDistance = distance;
+    let sampleElapsed = finite5(to?.t, index * 16) - finite5(from?.t, (index - 1) * 16);
+    while (sampleStart > 0 && sampleElapsed < 10) {
+      const previous = points[sampleStart - 1];
+      const current = points[sampleStart];
+      sampleDistance += Math.hypot(
+        (finite5(current?.x) - finite5(previous?.x)) * width,
+        (finite5(current?.y) - finite5(previous?.y)) * height
+      );
+      sampleStart -= 1;
+      sampleElapsed = finite5(to?.t, index * 16) - finite5(previous?.t, sampleStart * 16);
+    }
+    const elapsed = clamp5(sampleElapsed > 0 ? sampleElapsed : 4, 1, 250);
+    const speed = sampleDistance / elapsed;
+    const speedRatio = clamp5((speed - 0.12) / 1.48, 0, 1);
+    const targetWidthFactor = mix(4.2, 0.24, Math.pow(speedRatio, 1.15));
+    widthFactor = widthFactor === null ? targetWidthFactor : mix(widthFactor, targetWidthFactor, 0.78);
     segments.push({
       from,
       to,
       speed,
-      width: clamp5(strokeWidth * widthFactor, strokeWidth * 0.3, strokeWidth * 2.1),
+      width: clamp5(strokeWidth * widthFactor, minimumVisibleWidth, strokeWidth * 4.5),
       opacity: strokeOpacity
     });
   }
@@ -1397,8 +1411,8 @@ var DRAWING_INTERPOLATION_STEP_PX = 3;
 var DRAWING_MIN_POINT_DISTANCE_PX = 0.55;
 var DRAWING_COMPACT_DISTANCE_PX = 1.1;
 var MAX_PEN_COUNT = 5;
-var MIN_BRUSH_WIDTH = 0.5;
-var MAX_BRUSH_WIDTH = 32;
+var MIN_BRUSH_WIDTH = 0.25;
+var MAX_BRUSH_WIDTH = 96;
 var DEFAULT_PEN_OPACITY = 1;
 var MIN_LONG_PRESS_MS = 250;
 var MAX_LONG_PRESS_MS = 1200;
@@ -2889,7 +2903,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.2.11",
+      version: "3.2.12",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -4441,14 +4455,14 @@ var PreviewDrawingController = class {
     });
     this.widthInput = this.createPaletteInput("circle", "width", {
       type: "range",
-      value: String(this.penWidth),
-      min: String(MIN_BRUSH_WIDTH),
-      max: String(MAX_BRUSH_WIDTH),
-      step: "0.5",
+      value: String(brushWidthToPaletteSlider(this.penWidth)),
+      min: "0",
+      max: "1000",
+      step: "1",
       title: this.plugin.t("penWidth")
     });
     this.widthInput.addEventListener("input", () => {
-      this.currentBrushSettings().width = clamp6(Number(this.widthInput.value), MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH);
+      this.currentBrushSettings().width = paletteSliderToBrushWidth(this.widthInput.value);
       this.syncCurrentBrushFields();
       this.updateToolButtons();
       this.persistCurrentBrushSettings();
@@ -4456,14 +4470,14 @@ var PreviewDrawingController = class {
     });
     this.opacityInput = this.createPaletteInput("droplets", "opacity", {
       type: "range",
-      value: String(this.penOpacity),
+      value: String(opacityToPaletteSlider(this.penOpacity)),
       min: "0",
-      max: "1",
-      step: "0.02",
+      max: "1000",
+      step: "1",
       title: this.plugin.t("penOpacity")
     });
     this.opacityInput.addEventListener("input", () => {
-      this.currentBrushSettings().opacity = clamp6(Number(this.opacityInput.value), 0, 1);
+      this.currentBrushSettings().opacity = paletteSliderToOpacity(this.opacityInput.value);
       this.syncCurrentBrushFields();
       this.updateToolButtons();
       this.persistCurrentBrushSettings();
@@ -5290,10 +5304,10 @@ var PreviewDrawingController = class {
     }
     this.syncColorSwatches();
     if (this.widthInput) {
-      this.widthInput.value = String(settings.width);
+      this.widthInput.value = String(brushWidthToPaletteSlider(settings.width));
     }
     if (this.opacityInput) {
-      this.opacityInput.value = String(settings.opacity);
+      this.opacityInput.value = String(opacityToPaletteSlider(settings.opacity));
     }
   }
   persistCurrentBrushSettings() {
@@ -7875,7 +7889,7 @@ var PreviewDrawingController = class {
     const nextByIndex = /* @__PURE__ */ new Map();
     for (const [index, original] of originalStrokes.entries()) {
       nextByIndex.set(index, {
-        width: clamp6((original.width || this.penWidth) * strokeScale, 0.5, 80),
+        width: clamp6((original.width || this.penWidth) * strokeScale, MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH),
         fontSize: clamp6((original.fontSize || 18) * strokeScale, 10, 72),
         textWidth: Number(original.textWidth) > 0 ? clamp6(original.textWidth * Math.abs(scaleX), 24, 900) : null,
         previewWidth: clamp6((original.previewWidth || 260) * Math.abs(scaleX), 80, 900),
@@ -8353,19 +8367,24 @@ var PreviewDrawingController = class {
       return;
     }
     ctx.save();
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    ctx.strokeStyle = stroke.color || this.penColor;
+    ctx.globalAlpha = alpha * segments[0].opacity;
+    ctx.fillStyle = stroke.color || this.penColor;
+    ctx.beginPath();
     for (const segment of segments) {
       const from = this.pointToCanvas(segment.from);
       const to = this.pointToCanvas(segment.to);
-      ctx.globalAlpha = alpha * segment.opacity;
-      ctx.lineWidth = segment.width;
-      ctx.beginPath();
-      ctx.moveTo(from.x, from.y);
-      ctx.lineTo(to.x, to.y);
-      ctx.stroke();
+      const angle = Math.atan2(to.y - from.y, to.x - from.x);
+      const radius = Math.max(0.5, segment.width / 2);
+      const normalX = Math.cos(angle - Math.PI / 2) * radius;
+      const normalY = Math.sin(angle - Math.PI / 2) * radius;
+      ctx.moveTo(from.x + normalX, from.y + normalY);
+      ctx.lineTo(to.x + normalX, to.y + normalY);
+      ctx.arc(to.x, to.y, radius, angle - Math.PI / 2, angle + Math.PI / 2);
+      ctx.lineTo(from.x - normalX, from.y - normalY);
+      ctx.arc(from.x, from.y, radius, angle + Math.PI / 2, angle + Math.PI * 1.5);
+      ctx.closePath();
     }
+    ctx.fill();
     ctx.restore();
   }
   drawImageStrokeOn(ctx, stroke) {
@@ -9697,6 +9716,23 @@ function contrastTextColor(hexColor) {
   const luminance = (0.2126 * red + 0.7152 * green + 0.0722 * blue) / 255;
   return luminance > 0.58 ? "#111827" : "#ffffff";
 }
+function brushWidthToPaletteSlider(value) {
+  const width = clamp6(Number(value) || MIN_BRUSH_WIDTH, MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH);
+  const ratio = Math.log(width / MIN_BRUSH_WIDTH) / Math.log(MAX_BRUSH_WIDTH / MIN_BRUSH_WIDTH);
+  return Math.round(clamp6(ratio, 0, 1) * 1e3);
+}
+function paletteSliderToBrushWidth(value) {
+  const ratio = clamp6(Number(value) / 1e3, 0, 1);
+  const width = MIN_BRUSH_WIDTH * Math.pow(MAX_BRUSH_WIDTH / MIN_BRUSH_WIDTH, ratio);
+  return Math.round(width * 100) / 100;
+}
+function opacityToPaletteSlider(value) {
+  return Math.round(Math.sqrt(clamp6(Number(value), 0, 1)) * 1e3);
+}
+function paletteSliderToOpacity(value) {
+  const normalized = clamp6(Number(value) / 1e3, 0, 1);
+  return Math.round(normalized * normalized * 1e4) / 1e4;
+}
 function isSourceTextTarget(target, previewEl) {
   if (!target || !previewEl?.contains(target)) {
     return false;
@@ -10900,7 +10936,7 @@ function normalizeStroke(stroke) {
     brush,
     variant: normalizeBrushVariant(brush, stroke?.variant),
     color: typeof stroke?.color === "string" ? stroke.color : "#e53935",
-    width: Number.isFinite(Number(stroke?.width)) ? clamp6(Number(stroke.width), MIN_BRUSH_WIDTH, 80) : 3,
+    width: Number.isFinite(Number(stroke?.width)) ? clamp6(Number(stroke.width), MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH) : 3,
     opacity: clamp6(Number(stroke?.opacity ?? DEFAULT_PEN_OPACITY), 0, 1),
     count: clamp6(Math.round(Number(stroke?.count) || 1), 1, MAX_PEN_COUNT),
     text: typeof stroke?.text === "string" ? stroke.text : "",

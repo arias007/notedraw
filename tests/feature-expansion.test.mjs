@@ -110,6 +110,21 @@ test("brush, palette, and text controls use touch-safe taps and anchor below the
   assert.match(styles, /\.notedraw-text-panel \{[\s\S]*left: var\(--notedraw-text-panel-left, auto\)/);
 });
 
+test("fountain rendering stays continuous and palette ranges cover fine through very large brushes", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const fountainStart = source.indexOf("  drawFountainPenStrokeOn(ctx, stroke, alpha = 1) {");
+  const fountainSource = source.slice(fountainStart, source.indexOf("  drawImageStrokeOn", fountainStart));
+
+  assert.match(source, /var MIN_BRUSH_WIDTH = 0\.25;/);
+  assert.match(source, /var MAX_BRUSH_WIDTH = 96;/);
+  assert.match(source, /function brushWidthToPaletteSlider\(value\)/);
+  assert.match(source, /function paletteSliderToBrushWidth\(value\)/);
+  assert.match(source, /function opacityToPaletteSlider\(value\)/);
+  assert.match(source, /function paletteSliderToOpacity\(value\)/);
+  assert.match(fountainSource, /ctx\.beginPath\(\)[\s\S]*ctx\.arc\([\s\S]*ctx\.fill\(\)/);
+  assert.doesNotMatch(fountainSource, /ctx\.stroke\(\)/);
+});
+
 test("file-backed workspace views remount drawings and header controls after internal rerenders", async () => {
   const [source, styles] = await Promise.all([
     readFile(sourceUrl, "utf8"),

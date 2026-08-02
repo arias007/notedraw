@@ -22,8 +22,9 @@ export function buildFountainPenSegments(points, {
   }
   const width = Math.max(1, finite(canvasWidth, 1));
   const height = Math.max(1, finite(canvasHeight, 1));
-  const strokeWidth = Math.max(0.5, finite(baseWidth, 3));
+  const strokeWidth = Math.max(0.25, finite(baseWidth, 3));
   const strokeOpacity = clamp(finite(baseOpacity, 1), 0, 1);
+  const minimumVisibleWidth = Math.min(strokeWidth, Math.max(1, strokeWidth * 0.22));
   const segments = [];
   let widthFactor = null;
   for (let index = 1; index < points.length; index += 1) {
@@ -35,16 +36,29 @@ export function buildFountainPenSegments(points, {
     if (distance <= 0.01) {
       continue;
     }
-    const elapsed = clamp(finite(to?.t, index * 16) - finite(from?.t, (index - 1) * 16), 4, 80);
-    const speed = distance / elapsed;
-    const speedRatio = clamp((speed - 0.08) / 2.12, 0, 1);
-    const targetWidthFactor = mix(2.05, 0.34, Math.pow(speedRatio, 0.72));
-    widthFactor = widthFactor === null ? targetWidthFactor : mix(widthFactor, targetWidthFactor, 0.68);
+    let sampleStart = index - 1;
+    let sampleDistance = distance;
+    let sampleElapsed = finite(to?.t, index * 16) - finite(from?.t, (index - 1) * 16);
+    while (sampleStart > 0 && sampleElapsed < 10) {
+      const previous = points[sampleStart - 1];
+      const current = points[sampleStart];
+      sampleDistance += Math.hypot(
+        (finite(current?.x) - finite(previous?.x)) * width,
+        (finite(current?.y) - finite(previous?.y)) * height
+      );
+      sampleStart -= 1;
+      sampleElapsed = finite(to?.t, index * 16) - finite(previous?.t, sampleStart * 16);
+    }
+    const elapsed = clamp(sampleElapsed > 0 ? sampleElapsed : 4, 1, 250);
+    const speed = sampleDistance / elapsed;
+    const speedRatio = clamp((speed - 0.12) / 1.48, 0, 1);
+    const targetWidthFactor = mix(4.2, 0.24, Math.pow(speedRatio, 1.15));
+    widthFactor = widthFactor === null ? targetWidthFactor : mix(widthFactor, targetWidthFactor, 0.78);
     segments.push({
       from,
       to,
       speed,
-      width: clamp(strokeWidth * widthFactor, strokeWidth * 0.3, strokeWidth * 2.1),
+      width: clamp(strokeWidth * widthFactor, minimumVisibleWidth, strokeWidth * 4.5),
       opacity: strokeOpacity
     });
   }
