@@ -378,6 +378,7 @@
   color: var(--text-muted);
   background: transparent;
   cursor: pointer;
+  touch-action: manipulation;
 }
 
 .notedraw-toolbar button.is-active {
@@ -594,8 +595,8 @@
   position: fixed;
   z-index: 1002;
   top: var(--notedraw-palette-top, 92px);
-  left: auto;
-  right: var(--notedraw-toolbar-right, 8px);
+  left: var(--notedraw-palette-left, auto);
+  right: var(--notedraw-palette-right, var(--notedraw-toolbar-right, 8px));
   display: none;
   min-width: 220px;
   padding: 8px;
@@ -619,8 +620,8 @@
   position: fixed;
   z-index: 1002;
   top: var(--notedraw-brush-panel-top, 92px);
-  left: auto;
-  right: var(--notedraw-toolbar-right, 8px);
+  left: var(--notedraw-brush-panel-left, auto);
+  right: var(--notedraw-brush-panel-right, var(--notedraw-toolbar-right, 8px));
   display: none;
   width: max-content;
   min-width: 0;
@@ -675,8 +676,8 @@
   position: fixed;
   z-index: 1002;
   top: var(--notedraw-text-panel-top, 92px);
-  left: auto;
-  right: var(--notedraw-toolbar-right, 8px);
+  left: var(--notedraw-text-panel-left, auto);
+  right: var(--notedraw-text-panel-right, var(--notedraw-toolbar-right, 8px));
   display: none;
   width: 236px;
   padding: 8px;
@@ -826,6 +827,7 @@
   border: 1px solid var(--background-modifier-border);
   border-radius: 999px;
   cursor: pointer;
+  touch-action: manipulation;
 }
 
 .notedraw-color-swatch {
@@ -975,8 +977,8 @@
   }
 
   .notedraw-brush-panel {
-    left: auto;
-    right: 8px;
+    left: var(--notedraw-brush-panel-left, auto);
+    right: var(--notedraw-brush-panel-right, 8px);
     width: max-content;
     min-width: 0;
     max-width: calc(100vw - 16px);

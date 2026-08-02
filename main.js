@@ -1310,7 +1310,7 @@ function buildFountainPenSegments(points, {
   const strokeWidth = Math.max(0.5, finite5(baseWidth, 3));
   const strokeOpacity = clamp5(finite5(baseOpacity, 1), 0, 1);
   const segments = [];
-  let widthFactor = 1;
+  let widthFactor = null;
   for (let index = 1; index < points.length; index += 1) {
     const from = points[index - 1];
     const to = points[index];
@@ -1322,14 +1322,14 @@ function buildFountainPenSegments(points, {
     }
     const elapsed = clamp5(finite5(to?.t, index * 16) - finite5(from?.t, (index - 1) * 16), 4, 80);
     const speed = distance / elapsed;
-    const speedRatio = clamp5((speed - 0.04) / 1.16, 0, 1);
-    const targetWidthFactor = mix(1.42, 0.58, speedRatio);
-    widthFactor = mix(widthFactor, targetWidthFactor, 0.42);
+    const speedRatio = clamp5((speed - 0.08) / 2.12, 0, 1);
+    const targetWidthFactor = mix(2.05, 0.34, Math.pow(speedRatio, 0.72));
+    widthFactor = widthFactor === null ? targetWidthFactor : mix(widthFactor, targetWidthFactor, 0.68);
     segments.push({
       from,
       to,
       speed,
-      width: clamp5(strokeWidth * widthFactor, strokeWidth * 0.5, strokeWidth * 1.5),
+      width: clamp5(strokeWidth * widthFactor, strokeWidth * 0.3, strokeWidth * 2.1),
       opacity: strokeOpacity
     });
   }
@@ -2889,7 +2889,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.2.10",
+      version: "3.2.11",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -4354,19 +4354,17 @@ var PreviewDrawingController = class {
       attr: { type: "button", title: this.plugin.t("pen") }
     });
     (0, import_obsidian.setIcon)(this.penButton, "pen-line");
-    this.penButton.addEventListener("click", (event) => this.onBrushButtonClick(BRUSH_PEN, event));
+    bindNoteDrawControlTap(this.penButton, (event) => this.onBrushButtonClick(BRUSH_PEN, event));
     this.watercolorButton = this.toolbar.createEl("button", {
       attr: { type: "button", title: this.plugin.t("watercolorBrush") }
     });
     (0, import_obsidian.setIcon)(this.watercolorButton, "paintbrush");
-    this.watercolorButton.addEventListener("click", (event) => this.onBrushButtonClick(BRUSH_WATERCOLOR, event));
+    bindNoteDrawControlTap(this.watercolorButton, (event) => this.onBrushButtonClick(BRUSH_WATERCOLOR, event));
     this.textButton = this.toolbar.createEl("button", {
       attr: { type: "button", title: this.plugin.t("floatingText") }
     });
     (0, import_obsidian.setIcon)(this.textButton, "type");
-    this.textButton.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
+    bindNoteDrawControlTap(this.textButton, () => {
       this.textPreset = "plain";
       this.setTextMode();
       this.setTextPanelOpen(true);
@@ -4391,9 +4389,7 @@ var PreviewDrawingController = class {
       attr: { type: "button", title: this.plugin.t("penSettings") }
     });
     (0, import_obsidian.setIcon)(this.paletteButton, "palette");
-    this.paletteButton.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
+    bindNoteDrawControlTap(this.paletteButton, () => {
       if (this.toolMode === TOOL_EDIT_MD || this.toolMode === TOOL_SELECT && !this.getSelectedStrokeIndexes().length) {
         this.setPaletteOpen(false);
         return;
@@ -5057,13 +5053,27 @@ var PreviewDrawingController = class {
     const maxTop = Math.max(minTop, viewportTop + viewportHeight - toolbarHeight - 8);
     const topOffset = sanitizeSettings(this.plugin?.noteDrawSettings || {}).toolbarTopOffset;
     const top = clamp6(anchorBottom + topOffset, minTop, maxTop);
+    const panelTop = top + toolbarHeight + 6;
+    const panelLeft = (button, panel, fallbackWidth) => {
+      const buttonBounds = button?.getBoundingClientRect?.();
+      const measuredWidth = panel?.getBoundingClientRect?.().width || fallbackWidth;
+      const width = clamp6(measuredWidth, 34, Math.max(34, viewportWidth - 16));
+      const anchorX = buttonBounds?.width > 0 ? buttonBounds.left + buttonBounds.width / 2 : viewportRight - right - 14;
+      return clamp6(anchorX - width / 2, viewportLeft + 8, Math.max(viewportLeft + 8, viewportRight - width - 8));
+    };
     const props = {
       "--notedraw-toolbar-right": `${Math.round(right)}px`,
       "--notedraw-toolbar-left": typeof left === "number" ? `${Math.round(left)}px` : left,
       "--notedraw-toolbar-top": `${Math.round(top)}px`,
-      "--notedraw-palette-top": `${Math.round(top + 42)}px`,
-      "--notedraw-brush-panel-top": `${Math.round(top + 42)}px`,
-      "--notedraw-text-panel-top": `${Math.round(top + 42)}px`
+      "--notedraw-palette-top": `${Math.round(panelTop)}px`,
+      "--notedraw-palette-left": `${Math.round(panelLeft(this.paletteButton, this.palettePanel, 220))}px`,
+      "--notedraw-palette-right": "auto",
+      "--notedraw-brush-panel-top": `${Math.round(panelTop)}px`,
+      "--notedraw-brush-panel-left": `${Math.round(panelLeft(this.brushPanelMode === BRUSH_WATERCOLOR ? this.watercolorButton : this.penButton, this.brushPanel, this.brushPanelMode === BRUSH_WATERCOLOR ? 114 : 77))}px`,
+      "--notedraw-brush-panel-right": "auto",
+      "--notedraw-text-panel-top": `${Math.round(panelTop)}px`,
+      "--notedraw-text-panel-left": `${Math.round(panelLeft(this.textButton, this.textPanel, 236))}px`,
+      "--notedraw-text-panel-right": "auto"
     };
     setNoteDrawCssProps(this.previewEl, props);
     if (this.floatingControlsInBody) {
@@ -5101,13 +5111,7 @@ var PreviewDrawingController = class {
       button.dataset.noteDrawBrush = option.mode;
       button.dataset.noteDrawBrushVariant = option.variant;
       (0, import_obsidian.setIcon)(button, option.icon);
-      button.addEventListener("pointerdown", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-      });
-      button.addEventListener("click", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
+      bindNoteDrawControlTap(button, () => {
         this.brushVariants[option.mode] = option.variant;
         this.setBrushMode(option.mode);
         this.setBrushPanelOpen(false);
@@ -5128,10 +5132,10 @@ var PreviewDrawingController = class {
     this.previewEl.toggleClass("is-brush-panel-open", this.brushPanelOpen);
     this.syncFloatingControlClasses();
     if (this.brushPanelOpen) {
+      this.syncBrushPanelButtons();
       this.setPaletteOpen(false);
       this.setTextPanelOpen(false);
       this.updateFloatingControlsPosition();
-      this.syncBrushPanelButtons();
     }
     this.syncSharedToolbarState();
   }
@@ -5316,7 +5320,8 @@ var PreviewDrawingController = class {
     this.textButton?.classList.toggle("is-active", this.toolMode === TOOL_TEXT || this.textPanelOpen);
     this.textButton?.toggleAttribute("hidden", false);
     this.selectButton?.classList.toggle("is-active", this.toolMode === TOOL_SELECT);
-    this.paletteButton?.toggleAttribute("disabled", this.toolMode === TOOL_SELECT || this.toolMode === TOOL_EDIT_MD);
+    const paletteDisabled = this.toolMode === TOOL_EDIT_MD || this.toolMode === TOOL_SELECT && !this.getSelectedStrokeIndexes().length;
+    this.paletteButton?.toggleAttribute("disabled", paletteDisabled);
     this.previewEl.toggleClass("is-watercolor-mode", this.toolMode === TOOL_DRAW && this.brushMode === BRUSH_WATERCOLOR);
     this.previewEl.toggleClass("is-edit-md-mode", this.toolMode === TOOL_EDIT_MD);
   }
@@ -5374,13 +5379,7 @@ var PreviewDrawingController = class {
         button.dataset.noteDrawTextPreset = item.id;
         (0, import_obsidian.setIcon)(button, item.icon);
         button.createSpan({ text: label });
-        button.addEventListener("pointerdown", (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-        });
-        button.addEventListener("click", (event) => {
-          event.preventDefault();
-          event.stopPropagation();
+        bindNoteDrawControlTap(button, () => {
           this.textPreset = item.id;
           this.setTextMode();
           this.setTextPanelOpen(false);
@@ -5860,9 +5859,7 @@ var PreviewDrawingController = class {
         }
       });
       setNoteDrawCssProps(button, { "--notedraw-swatch-color": color });
-      button.addEventListener("click", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
+      bindNoteDrawControlTap(button, () => {
         this.setCurrentBrushColor(color);
       });
       return button;
@@ -5876,9 +5873,7 @@ var PreviewDrawingController = class {
       }
     });
     (0, import_obsidian.setIcon)(this.advancedColorButton, "sliders-horizontal");
-    this.advancedColorButton.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
+    bindNoteDrawControlTap(this.advancedColorButton, () => {
       this.colorInput?.click();
     });
   }
@@ -5990,6 +5985,9 @@ var PreviewDrawingController = class {
   }
   onDocumentPointerDown(event) {
     if (!this.paletteOpen && !this.brushPanelOpen && !this.textPanelOpen && !this.selectionMenuOpen && !this.currentEditor) {
+      return;
+    }
+    if (!this.controlsShouldBeVisible()) {
       return;
     }
     const target = event.target;
@@ -9617,6 +9615,49 @@ function createNoteDrawControlElement(parent, cls) {
     element.addClass("notedraw-body-control");
   }
   return element;
+}
+function bindNoteDrawControlTap(element, action) {
+  let touchPointer = null;
+  let suppressClickUntil = 0;
+  element.addEventListener("pointerdown", (event) => {
+    if (event.button !== void 0 && event.button !== 0) {
+      return;
+    }
+    event.stopPropagation();
+    if (event.pointerType && event.pointerType !== "mouse") {
+      touchPointer = {
+        id: event.pointerId,
+        x: event.clientX,
+        y: event.clientY
+      };
+    }
+  });
+  element.addEventListener("pointerup", (event) => {
+    if (!touchPointer || event.pointerId !== touchPointer.id) {
+      return;
+    }
+    const moved = pointerDistance(touchPointer, { x: event.clientX, y: event.clientY });
+    touchPointer = null;
+    if (moved > 12) {
+      return;
+    }
+    suppressClickUntil = Date.now() + 700;
+    event.preventDefault();
+    event.stopPropagation();
+    action(event);
+  });
+  element.addEventListener("pointercancel", () => {
+    touchPointer = null;
+  });
+  element.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (Date.now() <= suppressClickUntil) {
+      suppressClickUntil = 0;
+      return;
+    }
+    action(event);
+  });
 }
 function shouldUseBodyFloatingControls(previewEl, surfaceType) {
   if (surfaceType !== "preview") {

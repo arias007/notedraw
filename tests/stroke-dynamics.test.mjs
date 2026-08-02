@@ -19,6 +19,7 @@ test("fountain pen changes width with speed while keeping opacity constant", () 
   assert.equal(slow.length, 1);
   assert.equal(fast.length, 1);
   assert.ok(slow[0].width > fast[0].width);
+  assert.ok(slow[0].width / fast[0].width > 4, "fountain width contrast should remain visually distinct");
   assert.equal(slow[0].opacity, 0.8);
   assert.equal(fast[0].opacity, 0.8);
 });

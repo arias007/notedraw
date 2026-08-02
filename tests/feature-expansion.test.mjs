@@ -89,6 +89,25 @@ test("palette changes update the selected NoteDraw elements", async () => {
   assert.match(source, /applyColorToSelectedStrokes\(color\)[\s\S]*this\.drawingData\.strokes\[index\]\.color = color/);
   assert.match(source, /recordDrawingHistory\(historyBefore\)/);
   assert.match(source, /this\.toolMode === TOOL_SELECT && !this\.getSelectedStrokeIndexes\(\)\.length/);
+  assert.match(source, /const paletteDisabled = this\.toolMode === TOOL_EDIT_MD \|\| this\.toolMode === TOOL_SELECT && !this\.getSelectedStrokeIndexes\(\)\.length/);
+});
+
+test("brush, palette, and text controls use touch-safe taps and anchor below their buttons", async () => {
+  const [source, styles] = await Promise.all([
+    readFile(sourceUrl, "utf8"),
+    readFile(stylesUrl, "utf8")
+  ]);
+
+  assert.match(source, /function bindNoteDrawControlTap\(element, action\)/);
+  assert.match(source, /if \(moved > 12\) \{\s*return;/);
+  assert.match(source, /bindNoteDrawControlTap\(this\.paletteButton/);
+  assert.match(source, /bindNoteDrawControlTap\(this\.textButton/);
+  assert.match(source, /onDocumentPointerDown\(event\) \{[\s\S]*if \(!this\.controlsShouldBeVisible\(\)\) \{\s*return;/);
+  assert.match(source, /--notedraw-brush-panel-left/);
+  assert.match(source, /this\.brushPanelMode === BRUSH_WATERCOLOR \? this\.watercolorButton : this\.penButton/);
+  assert.match(styles, /\.notedraw-brush-panel \{[\s\S]*left: var\(--notedraw-brush-panel-left, auto\)/);
+  assert.match(styles, /\.notedraw-palette-panel \{[\s\S]*left: var\(--notedraw-palette-left, auto\)/);
+  assert.match(styles, /\.notedraw-text-panel \{[\s\S]*left: var\(--notedraw-text-panel-left, auto\)/);
 });
 
 test("file-backed workspace views remount drawings and header controls after internal rerenders", async () => {
