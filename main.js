@@ -1387,6 +1387,268 @@ function straightenWatercolorPoints(points, {
   };
 }
 
+// src/mind-map.mjs
+var DEFAULT_MAX_NODES = 240;
+function clamp6(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+function stripInlineMarkdown(value) {
+  return String(value || "").replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1").replace(/!?\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|([^\]]+))?\]\]/g, (_, target, alias) => alias || target).replace(/<https?:\/\/[^>]+>/g, (match) => match.slice(1, -1)).replace(/<[^>]+>/g, " ").replace(/(^|\s)([*_~`]{1,3})(?=\S)/g, "$1").replace(/(\S)([*_~`]{1,3})(?=\s|$)/g, "$1").replace(/\\([#*_[\]()`>+.!~-])/g, "$1").replace(/\s+/g, " ").trim();
+}
+function leadingIndent(value) {
+  let count = 0;
+  for (const character of String(value || "")) {
+    if (character === " ") {
+      count += 1;
+    } else if (character === "	") {
+      count += 4;
+    } else {
+      break;
+    }
+  }
+  return count;
+}
+function parseMarkdownMindMap(source, {
+  title = "Mind map",
+  maxNodes = DEFAULT_MAX_NODES
+} = {}) {
+  const nodes = [{ id: "root", parentId: null, text: stripInlineMarkdown(title) || "Mind map", type: "root", sourceLine: -1 }];
+  const headingStack = [];
+  const listStack = [];
+  let currentSectionId = "root";
+  let paragraphLines = [];
+  let paragraphStart = -1;
+  let codeFence = "";
+  let codeLines = [];
+  let codeStart = -1;
+  let frontmatter = false;
+  let truncated = false;
+  let sequence = 0;
+  const canAdd = () => nodes.length < Math.max(2, Number(maxNodes) || DEFAULT_MAX_NODES);
+  const addNode = (text, parentId, type, sourceLine) => {
+    const normalized = stripInlineMarkdown(text);
+    if (!normalized || !canAdd()) {
+      truncated = truncated || Boolean(normalized);
+      return null;
+    }
+    const node = {
+      id: `node-${(++sequence).toString(36)}`,
+      parentId: parentId || "root",
+      text: normalized,
+      type,
+      sourceLine
+    };
+    nodes.push(node);
+    return node;
+  };
+  const flushParagraph = () => {
+    if (!paragraphLines.length) {
+      return;
+    }
+    addNode(paragraphLines.join(" "), currentSectionId, "paragraph", paragraphStart);
+    paragraphLines = [];
+    paragraphStart = -1;
+  };
+  const flushCode = () => {
+    if (!codeLines.length && !codeFence) {
+      return;
+    }
+    const language = codeFence.replace(/^`{3,}|^~{3,}/, "").trim();
+    const body = codeLines.join(" ").replace(/\s+/g, " ").trim();
+    addNode([language ? `Code (${language})` : "Code", body].filter(Boolean).join(": "), currentSectionId, "code", codeStart);
+    codeLines = [];
+    codeFence = "";
+    codeStart = -1;
+  };
+  const lines = String(source || "").replace(/\r\n?/g, "\n").split("\n");
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const trimmed = line.trim();
+    if (index === 0 && trimmed === "---") {
+      frontmatter = true;
+      continue;
+    }
+    if (frontmatter) {
+      if (trimmed === "---") {
+        frontmatter = false;
+      }
+      continue;
+    }
+    const fence = trimmed.match(/^(`{3,}|~{3,})(.*)$/);
+    if (codeFence) {
+      if (fence && fence[1][0] === codeFence[0]) {
+        flushCode();
+      } else if (trimmed) {
+        codeLines.push(trimmed);
+      }
+      continue;
+    }
+    if (fence) {
+      flushParagraph();
+      codeFence = `${fence[1]}${fence[2] || ""}`;
+      codeStart = index;
+      continue;
+    }
+    const heading = line.match(/^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$/);
+    if (heading) {
+      flushParagraph();
+      listStack.length = 0;
+      const level = heading[1].length;
+      while (headingStack.length && headingStack[headingStack.length - 1].level >= level) {
+        headingStack.pop();
+      }
+      const parentId = headingStack[headingStack.length - 1]?.id || "root";
+      const node = addNode(heading[2], parentId, "heading", index);
+      if (node) {
+        headingStack.push({ level, id: node.id });
+        currentSectionId = node.id;
+      }
+      continue;
+    }
+    const list = line.match(/^(\s*)(?:[-+*]|\d+[.)])\s+(.*)$/);
+    if (list) {
+      flushParagraph();
+      const indent = leadingIndent(list[1]);
+      while (listStack.length && listStack[listStack.length - 1].indent >= indent) {
+        listStack.pop();
+      }
+      const parentId = listStack[listStack.length - 1]?.id || currentSectionId;
+      const task = list[2].match(/^\[([ xX])\]\s*(.*)$/);
+      const text = task ? `[${task[1].toLowerCase() === "x" ? "x" : " "}] ${task[2]}` : list[2];
+      const node = addNode(text, parentId, task ? "task" : "list", index);
+      if (node) {
+        listStack.push({ indent, id: node.id });
+      }
+      continue;
+    }
+    if (!trimmed) {
+      flushParagraph();
+      listStack.length = 0;
+      continue;
+    }
+    if (/^\|?\s*:?-{3,}/.test(trimmed)) {
+      continue;
+    }
+    const quote = trimmed.match(/^>\s?(.*)$/);
+    const table = trimmed.includes("|") && trimmed.replace(/\|/g, "").trim() !== trimmed;
+    if (quote || table) {
+      flushParagraph();
+      listStack.length = 0;
+      addNode(quote ? quote[1] : trimmed.replace(/^\||\|$/g, "").split("|").map((cell) => cell.trim()).filter(Boolean).join(" | "), currentSectionId, quote ? "quote" : "table", index);
+      continue;
+    }
+    if (paragraphStart < 0) {
+      paragraphStart = index;
+    }
+    paragraphLines.push(trimmed);
+    listStack.length = 0;
+  }
+  flushParagraph();
+  flushCode();
+  return { nodes, truncated };
+}
+function estimateNodeHeight(text, width, fontSize) {
+  const charactersPerLine = Math.max(8, Math.floor(width / Math.max(6, fontSize * 0.58)));
+  const lines = Math.max(1, Math.ceil(String(text || "").length / charactersPerLine));
+  return Math.max(34, Math.min(132, lines * fontSize * 1.28 + 16));
+}
+function layoutMindMap(model, {
+  originX = 24,
+  originY = 24,
+  canvasWidth = 900,
+  canvasHeight = 1200,
+  nodeWidth = 176,
+  columnGap = 72,
+  rowGap = 18
+} = {}) {
+  const sourceNodes = Array.isArray(model?.nodes) ? model.nodes : [];
+  if (!sourceNodes.length) {
+    return { nodes: [], edges: [], width: 0, height: 0 };
+  }
+  const byId = new Map(sourceNodes.map((node) => [node.id, { ...node, children: [] }]));
+  const root = byId.get("root") || byId.values().next().value;
+  for (const node of byId.values()) {
+    if (node === root) {
+      continue;
+    }
+    (byId.get(node.parentId) || root).children.push(node);
+  }
+  const assignDepth = (node, depth = 0) => {
+    node.depth = depth;
+    for (const child of node.children) {
+      assignDepth(child, depth + 1);
+    }
+  };
+  assignDepth(root);
+  const maxDepth = Math.max(...Array.from(byId.values(), (node) => node.depth));
+  const availableWidth = Math.max(240, Number(canvasWidth) - Number(originX) - 20);
+  const naturalWidth = nodeWidth + maxDepth * (nodeWidth + columnGap);
+  const horizontalScale = Math.min(1, availableWidth / Math.max(1, naturalWidth));
+  const effectiveWidth = clamp6(nodeWidth * horizontalScale, 104, nodeWidth);
+  const columnStep = maxDepth > 0 ? Math.max(effectiveWidth + 24, (availableWidth - effectiveWidth) / maxDepth) : effectiveWidth;
+  for (const node of byId.values()) {
+    node.fontSize = node.type === "root" ? 18 : node.type === "heading" ? 15 : 13;
+    node.width = node.type === "root" ? Math.min(effectiveWidth + 20, availableWidth) : effectiveWidth;
+    node.height = estimateNodeHeight(node.text, node.width, node.fontSize);
+  }
+  let cursorY = Number(originY) || 0;
+  const place = (node) => {
+    if (!node.children.length) {
+      node.y = cursorY;
+      cursorY += node.height + rowGap;
+    } else {
+      for (const child of node.children) {
+        place(child);
+      }
+      const first = node.children[0];
+      const last = node.children[node.children.length - 1];
+      const center = (first.y + first.height / 2 + (last.y + last.height / 2)) / 2;
+      node.y = center - node.height / 2;
+    }
+    node.x = Number(originX) + node.depth * columnStep;
+  };
+  place(root);
+  const levels = /* @__PURE__ */ new Map();
+  for (const node of byId.values()) {
+    const level = levels.get(node.depth) || [];
+    level.push(node);
+    levels.set(node.depth, level);
+  }
+  for (const level of levels.values()) {
+    level.sort((a, b) => a.y - b.y);
+    let bottom = -Infinity;
+    for (const node of level) {
+      node.y = Math.max(node.y, bottom + rowGap);
+      bottom = node.y + node.height;
+    }
+  }
+  const nodes = Array.from(byId.values()).map(({ children, ...node }) => node);
+  const minY = Math.min(...nodes.map((node) => node.y));
+  const maxY = Math.max(...nodes.map((node) => node.y + node.height));
+  const wantedHeight = maxY - minY;
+  const availableHeight = Math.max(100, Number(canvasHeight) - 20);
+  let shiftY = minY < 8 ? 8 - minY : 0;
+  if (maxY + shiftY > availableHeight && wantedHeight <= availableHeight - 8) {
+    shiftY -= maxY + shiftY - availableHeight;
+  }
+  if (shiftY) {
+    for (const node of nodes) {
+      node.y += shiftY;
+    }
+  }
+  const edges = nodes.filter((node) => node.parentId && byId.has(node.parentId)).map((node) => ({
+    fromId: node.parentId,
+    toId: node.id,
+    depth: node.depth
+  }));
+  return {
+    nodes,
+    edges,
+    width: Math.max(...nodes.map((node) => node.x + node.width)) - Number(originX),
+    height: Math.max(...nodes.map((node) => node.y + node.height)) - Math.min(...nodes.map((node) => node.y))
+  };
+}
+
 // src/notedraw-plugin.js
 var activeDocument = window.activeWindow?.document || window.document;
 var PLUGIN_ID = "notedraw";
@@ -1439,6 +1701,7 @@ var BRUSH_PEN = "pen";
 var BRUSH_WATERCOLOR = "watercolor";
 var BRUSH_VARIANT_DEFAULT = "default";
 var PEN_VARIANT_FOUNTAIN = "fountain";
+var PEN_VARIANT_NOTE = "note-flow";
 var WATERCOLOR_VARIANT_TEXT = "text-highlight";
 var WATERCOLOR_VARIANT_STRAIGHT = "straight";
 var MIN_READING_ZOOM = 0.6;
@@ -1491,6 +1754,7 @@ var I18N = {
     pen: "Pen",
     standardPen: "Standard pen",
     fountainPen: "Fountain pen",
+    notePen: "Note pen",
     watercolorBrush: "Watercolor brush",
     standardWatercolor: "Standard watercolor",
     textWatercolor: "Text watercolor",
@@ -1525,6 +1789,11 @@ var I18N = {
     markdown: "MD",
     html: "HTML",
     note: "Note",
+    mindMap: "Mind map from file",
+    chooseMindMapFile: "Choose a note for the mind map",
+    placeMindMap: "Tap the reading view to place the mind map.",
+    emptyMindMap: "No usable content was found in that note.",
+    mindMapTruncated: "The mind map was limited to 240 nodes for performance.",
     bold: "Bold",
     italic: "Italic",
     underline: "Underline",
@@ -1599,7 +1868,14 @@ var I18N = {
     moveForward: "Move up",
     moveBackward: "Move down",
     lockElement: "Lock",
-    unlockElement: "Unlock"
+    unlockElement: "Unlock",
+    copyElement: "Copy",
+    pasteElement: "Paste",
+    insertIntoNote: "Insert into note flow",
+    removeFromNote: "Remove from note flow",
+    copiedElements: "Copied {count} element(s).",
+    pastedElements: "Pasted {count} element(s).",
+    nothingToPaste: "No NoteDraw elements have been copied."
   },
   zh: {
     toggleCommand: "\u5207\u6362\u9605\u8BFB\u7F16\u8F91\u548C\u6D82\u9E26\u6A21\u5F0F",
@@ -1614,6 +1890,7 @@ var I18N = {
     pen: "\u7B14",
     standardPen: "\u666E\u901A\u7B14",
     fountainPen: "\u94A2\u7B14",
+    notePen: "\u7B14\u8BB0\u7B14",
     watercolorBrush: "\u6C34\u5F69\u7B14",
     standardWatercolor: "\u666E\u901A\u6C34\u5F69\u7B14",
     textWatercolor: "\u6587\u5B57\u6C34\u5F69\u7B14",
@@ -1648,6 +1925,11 @@ var I18N = {
     markdown: "MD",
     html: "HTML",
     note: "\u7B14\u8BB0",
+    mindMap: "\u4ECE\u6587\u4EF6\u63D0\u53D6\u601D\u7EF4\u5BFC\u56FE",
+    chooseMindMapFile: "\u9009\u62E9\u8981\u63D0\u53D6\u601D\u7EF4\u5BFC\u56FE\u7684\u7B14\u8BB0",
+    placeMindMap: "\u8BF7\u5728\u9605\u8BFB\u89C6\u56FE\u4E2D\u70B9\u51FB\u601D\u7EF4\u5BFC\u56FE\u7684\u653E\u7F6E\u4F4D\u7F6E\u3002",
+    emptyMindMap: "\u8BE5\u7B14\u8BB0\u4E2D\u6CA1\u6709\u53EF\u63D0\u53D6\u7684\u6709\u6548\u5185\u5BB9\u3002",
+    mindMapTruncated: "\u4E3A\u4FDD\u8BC1\u6027\u80FD\uFF0C\u601D\u7EF4\u5BFC\u56FE\u6700\u591A\u63D0\u53D6 240 \u4E2A\u8282\u70B9\u3002",
     bold: "\u52A0\u7C97",
     italic: "\u503E\u659C",
     underline: "\u4E0B\u5212\u7EBF",
@@ -1722,7 +2004,14 @@ var I18N = {
     moveForward: "\u4E0A\u79FB\u4E00\u5C42",
     moveBackward: "\u4E0B\u79FB\u4E00\u5C42",
     lockElement: "\u9501\u5B9A",
-    unlockElement: "\u89E3\u9501"
+    unlockElement: "\u89E3\u9501",
+    copyElement: "\u590D\u5236\u5143\u7D20",
+    pasteElement: "\u7C98\u8D34\u5143\u7D20",
+    insertIntoNote: "\u63D2\u5165\u7B14\u8BB0",
+    removeFromNote: "\u53D6\u6D88\u63D2\u5165\u7B14\u8BB0",
+    copiedElements: "\u5DF2\u590D\u5236 {count} \u4E2A\u5143\u7D20\u3002",
+    pastedElements: "\u5DF2\u7C98\u8D34 {count} \u4E2A\u5143\u7D20\u3002",
+    nothingToPaste: "\u8FD8\u6CA1\u6709\u590D\u5236 NoteDraw \u5143\u7D20\u3002"
   },
   "zh-TW": {
     toggleCommand: "\u5207\u63DB\u95B1\u8B80\u7DE8\u8F2F\u548C\u5857\u9D09\u6A21\u5F0F",
@@ -2393,6 +2682,32 @@ var WEBVIEW_BLOCKED_EDIT_SELECTOR = [
   "webview",
   "iframe"
 ].join(",");
+var NoteDrawFileSuggestModal = class extends import_obsidian.FuzzySuggestModal {
+  constructor(app, currentFile, onChoose) {
+    super(app);
+    this.currentFile = currentFile;
+    this.onChoose = onChoose;
+    this.setPlaceholder(I18N[detectNoteDrawLanguage(app)]?.chooseMindMapFile || I18N.en.chooseMindMapFile);
+  }
+  getItems() {
+    const currentPath = normalizeVaultPath(this.currentFile?.path || "");
+    return this.app.vault.getMarkdownFiles().slice().sort((a, b) => {
+      if (a.path === currentPath) {
+        return -1;
+      }
+      if (b.path === currentPath) {
+        return 1;
+      }
+      return a.path.localeCompare(b.path);
+    });
+  }
+  getItemText(file) {
+    return file?.path || file?.basename || "";
+  }
+  onChooseItem(file) {
+    this.onChoose?.(file);
+  }
+};
 var NoteDrawPlugin = class extends import_obsidian.Plugin {
   async onload() {
     const savedSettings = await this.loadData();
@@ -2414,6 +2729,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     this.viewInteractionController = /* @__PURE__ */ new WeakMap();
     this.textSaveStates = /* @__PURE__ */ new WeakMap();
     this.apiListeners = /* @__PURE__ */ new Map();
+    this.elementClipboard = null;
     this.settingsSaveTimer = null;
     this.webviewSyncTimer = null;
     this.embeddedSyncTimer = null;
@@ -2429,6 +2745,30 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       id: "toggle-draw-mode",
       name: this.t("toggleCommand"),
       callback: () => this.toggleActiveController()
+    });
+    this.addCommand({
+      id: "copy-selected-elements",
+      name: this.t("copyElement"),
+      checkCallback: (checking) => {
+        const controller = this.getActiveController();
+        const available = Boolean(controller?.getSelectedStrokeIndexes().length);
+        if (available && !checking) {
+          controller.copySelectedElements();
+        }
+        return available;
+      }
+    });
+    this.addCommand({
+      id: "paste-elements",
+      name: this.t("pasteElement"),
+      checkCallback: (checking) => {
+        const controller = this.getActiveController();
+        const available = Boolean(controller && this.elementClipboard?.strokes?.length);
+        if (available && !checking) {
+          controller.pasteCopiedElements();
+        }
+        return available;
+      }
     });
     this.addSettingTab(new NoteDrawSettingTab(this.app, this));
     const syncSurfaces = () => {
@@ -2845,8 +3185,12 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       readingViewZoom: true,
       sourceViewLayoutZoom: true,
       workspaceSurfaces: true,
+      elementClipboard: true,
+      readingNoteFlow: true,
+      editableMindMaps: true,
+      boundConnectors: true,
       brushVariants: {
-        [BRUSH_PEN]: [BRUSH_VARIANT_DEFAULT, PEN_VARIANT_FOUNTAIN],
+        [BRUSH_PEN]: [BRUSH_VARIANT_DEFAULT, PEN_VARIANT_FOUNTAIN, PEN_VARIANT_NOTE],
         [BRUSH_WATERCOLOR]: [BRUSH_VARIANT_DEFAULT, WATERCOLOR_VARIANT_TEXT, WATERCOLOR_VARIANT_STRAIGHT]
       },
       events: ["drawings-changed", "markdown-changed", "surface-changed"],
@@ -2888,6 +3232,9 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       },
       replaceText: async (options) => this.replaceTextApi(options),
       insertStroke: async (fileOrPath, stroke) => this.insertStrokeApi(fileOrPath, stroke),
+      copyElements: (options = {}) => this.copyElementsApi(options),
+      pasteElements: (options = {}) => this.pasteElementsApi(options),
+      insertMindMap: async (options = {}) => this.insertMindMapApi(options),
       refresh: async (fileOrPath) => {
         const file = this.resolveApiFile(fileOrPath);
         if (!file) {
@@ -2903,7 +3250,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.2.12",
+      version: "3.3.0",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -2922,6 +3269,9 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       injectExportSnapshot: v1.injectExportSnapshot,
       replaceSelectionText: async (file, originalText, editedText) => this.replaceTextApi({ file, originalText, editedText }),
       insertStroke: v1.insertStroke,
+      copyElements: v1.copyElements,
+      pasteElements: v1.pasteElements,
+      insertMindMap: v1.insertMindMap,
       on: v1.on
     };
   }
@@ -3041,6 +3391,23 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       this.refreshControllersForFile(file, data);
     }
     return data;
+  }
+  copyElementsApi(options = {}) {
+    const controller = this.findApiController(options);
+    return controller?.copySelectedElements({ quiet: Boolean(options.quiet) }) || { ok: false, reason: "selection-not-found" };
+  }
+  pasteElementsApi(options = {}) {
+    const controller = this.findApiController(options);
+    return controller?.pasteCopiedElements({ point: options.point, quiet: Boolean(options.quiet) }) || { ok: false, reason: "surface-not-found" };
+  }
+  async insertMindMapApi(options = {}) {
+    const controller = this.findApiController(options);
+    const sourceFile = this.resolveApiFile(options.source || options.sourcePath || options.file || controller?.file);
+    if (!controller || !sourceFile) {
+      return { ok: false, reason: "source-or-surface-not-found" };
+    }
+    const point = options.point || controller.visibleCanvasPastePoint();
+    return controller.insertMindMapAt(point, sourceFile, { quiet: Boolean(options.quiet) });
   }
   refreshControllersForFile(file, data, options = {}) {
     let refreshed = 0;
@@ -3799,7 +4166,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     canvas.className = "notedraw-export-image-canvas";
     canvas.width = Math.ceil(boxWidth * scale);
     canvas.height = Math.ceil(boxHeight * scale);
-    const opacity = clamp6(Number(stroke.opacity ?? 1), 0, 1);
+    const opacity = clamp7(Number(stroke.opacity ?? 1), 0, 1);
     canvas.dataset.notedrawAssetPath = stroke.assetPath || "";
     canvas.dataset.notedrawAssetName = stroke.assetName || "";
     canvas.dataset.notedrawAssetMime = stroke.assetMime || "";
@@ -4265,6 +4632,10 @@ var PreviewDrawingController = class {
     this.readingZoomExtent = null;
     this.readingZoomStyleState = /* @__PURE__ */ new Map();
     this.pendingEmbedTool = null;
+    this.pendingMindMapFile = null;
+    this.noteFlowFrameId = null;
+    this.noteFlowStyledElements = /* @__PURE__ */ new Map();
+    this.noteFlowLayoutSignature = "";
     const sharedToolbarState = this.plugin.controllerToolbarState(this);
     if (sharedToolbarState) {
       this.brushMode = [BRUSH_PEN, BRUSH_WATERCOLOR].includes(sharedToolbarState.brushMode) ? sharedToolbarState.brushMode : this.brushMode;
@@ -4277,7 +4648,7 @@ var PreviewDrawingController = class {
       this.brushPanelMode = [BRUSH_PEN, BRUSH_WATERCOLOR].includes(sharedToolbarState.brushPanelMode) ? sharedToolbarState.brushPanelMode : this.brushPanelMode;
       this.textPanelOpen = Boolean(sharedToolbarState.textPanelOpen);
       this.textPreset = sharedToolbarState.textPreset || this.textPreset;
-      this.readingZoom = clamp6(Number(sharedToolbarState.readingZoom) || 1, MIN_READING_ZOOM, MAX_READING_ZOOM);
+      this.readingZoom = clamp7(Number(sharedToolbarState.readingZoom) || 1, MIN_READING_ZOOM, MAX_READING_ZOOM);
       for (const mode of [BRUSH_PEN, BRUSH_WATERCOLOR]) {
         if (sharedToolbarState.brushSettings?.[mode]) {
           this.brushSettings[mode] = { ...this.brushSettings[mode], ...sharedToolbarState.brushSettings[mode] };
@@ -4332,6 +4703,7 @@ var PreviewDrawingController = class {
     this.onDocumentPointerDown = this.onDocumentPointerDown.bind(this);
     this.onDocumentPointerFinish = this.onDocumentPointerFinish.bind(this);
     this.onDocumentSelectionChange = this.onDocumentSelectionChange.bind(this);
+    this.onDocumentKeyDown = this.onDocumentKeyDown.bind(this);
     this.onFormatToolbarDragMove = this.onFormatToolbarDragMove.bind(this);
     this.onFormatToolbarDragEnd = this.onFormatToolbarDragEnd.bind(this);
   }
@@ -4504,6 +4876,7 @@ var PreviewDrawingController = class {
     activeDocument.addEventListener("pointerup", this.onDocumentPointerFinish, true);
     activeDocument.addEventListener("pointercancel", this.onDocumentPointerFinish, true);
     activeDocument.addEventListener("selectionchange", this.onDocumentSelectionChange);
+    activeDocument.addEventListener("keydown", this.onDocumentKeyDown, true);
     if (typeof ResizeObserver !== "undefined") {
       this.resizeObserver = new ResizeObserver(this.onResize);
       this.resizeObserver.observe(this.previewEl);
@@ -4647,6 +5020,9 @@ var PreviewDrawingController = class {
     }
     this.endTextEdit();
     this.endFloatingTextInput(true);
+    this.cancelNoteFlowLayout();
+    this.clearNoteFlowLayout();
+    this.noteFlowLayoutSignature = "";
     this.cancelRenderFrame();
     this.cancelResizeFrame();
     this.resetCanvasSurface();
@@ -4745,6 +5121,9 @@ var PreviewDrawingController = class {
     activeDocument.removeEventListener("pointerup", this.onDocumentPointerFinish, true);
     activeDocument.removeEventListener("pointercancel", this.onDocumentPointerFinish, true);
     activeDocument.removeEventListener("selectionchange", this.onDocumentSelectionChange);
+    activeDocument.removeEventListener("keydown", this.onDocumentKeyDown, true);
+    this.cancelNoteFlowLayout();
+    this.clearNoteFlowLayout();
     this.stopFormatToolbarDrag();
     this.canvas?.removeEventListener("pointerdown", this.onPointerDown);
     this.canvas?.removeEventListener("pointermove", this.onPointerMove);
@@ -5061,19 +5440,19 @@ var PreviewDrawingController = class {
       headerBottom
     );
     const compactViewport = isMobileRuntime() || viewportWidth < 640;
-    const right = compactViewport ? 8 : clamp6(viewportRight - anchorRight + 10, 8, Math.max(8, viewportWidth - 48));
+    const right = compactViewport ? 8 : clamp7(viewportRight - anchorRight + 10, 8, Math.max(8, viewportWidth - 48));
     const left = compactViewport ? viewportLeft + 8 : "auto";
     const minTop = Math.max(viewportTop + 8, headerBottom + 6);
     const maxTop = Math.max(minTop, viewportTop + viewportHeight - toolbarHeight - 8);
     const topOffset = sanitizeSettings(this.plugin?.noteDrawSettings || {}).toolbarTopOffset;
-    const top = clamp6(anchorBottom + topOffset, minTop, maxTop);
+    const top = clamp7(anchorBottom + topOffset, minTop, maxTop);
     const panelTop = top + toolbarHeight + 6;
     const panelLeft = (button, panel, fallbackWidth) => {
       const buttonBounds = button?.getBoundingClientRect?.();
       const measuredWidth = panel?.getBoundingClientRect?.().width || fallbackWidth;
-      const width = clamp6(measuredWidth, 34, Math.max(34, viewportWidth - 16));
+      const width = clamp7(measuredWidth, 34, Math.max(34, viewportWidth - 16));
       const anchorX = buttonBounds?.width > 0 ? buttonBounds.left + buttonBounds.width / 2 : viewportRight - right - 14;
-      return clamp6(anchorX - width / 2, viewportLeft + 8, Math.max(viewportLeft + 8, viewportRight - width - 8));
+      return clamp7(anchorX - width / 2, viewportLeft + 8, Math.max(viewportLeft + 8, viewportRight - width - 8));
     };
     const props = {
       "--notedraw-toolbar-right": `${Math.round(right)}px`,
@@ -5112,6 +5491,7 @@ var PreviewDrawingController = class {
     const options = [
       { mode: BRUSH_PEN, variant: BRUSH_VARIANT_DEFAULT, labelKey: "standardPen", icon: "pen-line" },
       { mode: BRUSH_PEN, variant: PEN_VARIANT_FOUNTAIN, labelKey: "fountainPen", icon: "pen-tool" },
+      { mode: BRUSH_PEN, variant: PEN_VARIANT_NOTE, labelKey: "notePen", icon: "notebook-pen" },
       { mode: BRUSH_WATERCOLOR, variant: BRUSH_VARIANT_DEFAULT, labelKey: "standardWatercolor", icon: "paintbrush" },
       { mode: BRUSH_WATERCOLOR, variant: WATERCOLOR_VARIANT_TEXT, labelKey: "textWatercolor", icon: "highlighter" },
       { mode: BRUSH_WATERCOLOR, variant: WATERCOLOR_VARIANT_STRAIGHT, labelKey: "straightWatercolor", icon: "ruler" }
@@ -5137,7 +5517,7 @@ var PreviewDrawingController = class {
     this.brushPanel?.querySelectorAll(".notedraw-brush-option").forEach((button) => {
       const mode = button.dataset.noteDrawBrush;
       const variant = button.dataset.noteDrawBrushVariant;
-      button.toggleAttribute("hidden", mode !== this.brushPanelMode);
+      button.toggleAttribute("hidden", mode !== this.brushPanelMode || variant === PEN_VARIANT_NOTE && !this.supportsNoteFlow());
       button.classList.toggle("is-active", mode === this.brushMode && variant === this.currentBrushVariant());
     });
   }
@@ -5237,7 +5617,7 @@ var PreviewDrawingController = class {
     this.brushPanelMode = [BRUSH_PEN, BRUSH_WATERCOLOR].includes(state.brushPanelMode) ? state.brushPanelMode : this.brushPanelMode;
     this.textPanelOpen = Boolean(state.textPanelOpen);
     this.textPreset = state.textPreset || this.textPreset;
-    this.readingZoom = clamp6(Number(state.readingZoom) || this.readingZoom || 1, MIN_READING_ZOOM, MAX_READING_ZOOM);
+    this.readingZoom = clamp7(Number(state.readingZoom) || this.readingZoom || 1, MIN_READING_ZOOM, MAX_READING_ZOOM);
     this.syncCurrentBrushFields();
     this.previewEl.toggleClass("is-select-mode", this.toolMode === TOOL_SELECT);
     this.previewEl.toggleClass("is-palette-open", this.paletteOpen);
@@ -5288,7 +5668,11 @@ var PreviewDrawingController = class {
     return this.brushSettings[this.brushMode];
   }
   currentBrushVariant() {
-    return normalizeBrushVariant(this.brushMode, this.brushVariants[this.brushMode]);
+    const variant = normalizeBrushVariant(this.brushMode, this.brushVariants[this.brushMode]);
+    return variant === PEN_VARIANT_NOTE && !this.supportsNoteFlow() ? BRUSH_VARIANT_DEFAULT : variant;
+  }
+  supportsNoteFlow() {
+    return this.surfaceType === "preview" && !this.embeddedSurface;
   }
   syncCurrentBrushFields() {
     const settings = this.currentBrushSettings();
@@ -5334,8 +5718,10 @@ var PreviewDrawingController = class {
     this.textButton?.classList.toggle("is-active", this.toolMode === TOOL_TEXT || this.textPanelOpen);
     this.textButton?.toggleAttribute("hidden", false);
     this.selectButton?.classList.toggle("is-active", this.toolMode === TOOL_SELECT);
-    const paletteDisabled = this.toolMode === TOOL_EDIT_MD || this.toolMode === TOOL_SELECT && !this.getSelectedStrokeIndexes().length;
+    const selectedElements = this.getSelectedStrokeIndexes().length > 0;
+    const paletteDisabled = this.toolMode === TOOL_EDIT_MD || this.toolMode === TOOL_SELECT && !selectedElements;
     this.paletteButton?.toggleAttribute("disabled", paletteDisabled);
+    this.paletteButton?.classList.toggle("is-selection-available", this.toolMode === TOOL_SELECT && selectedElements);
     this.previewEl.toggleClass("is-watercolor-mode", this.toolMode === TOOL_DRAW && this.brushMode === BRUSH_WATERCOLOR);
     this.previewEl.toggleClass("is-edit-md-mode", this.toolMode === TOOL_EDIT_MD);
   }
@@ -5376,7 +5762,8 @@ var PreviewDrawingController = class {
         items: [
           { id: "markdown", labelKey: "markdown", icon: "pilcrow" },
           { id: "html", labelKey: "html", icon: "code" },
-          { id: "note", labelKey: "note", icon: "file-text" }
+          { id: "note", labelKey: "note", icon: "file-text" },
+          { id: "mindMap", labelKey: "mindMap", icon: "git-fork" }
         ]
       }
     ];
@@ -5394,6 +5781,11 @@ var PreviewDrawingController = class {
         (0, import_obsidian.setIcon)(button, item.icon);
         button.createSpan({ text: label });
         bindNoteDrawControlTap(button, () => {
+          if (item.id === "mindMap") {
+            this.setTextPanelOpen(false);
+            this.openMindMapFilePicker();
+            return;
+          }
           this.textPreset = item.id;
           this.setTextMode();
           this.setTextPanelOpen(false);
@@ -5404,6 +5796,16 @@ var PreviewDrawingController = class {
     }
     this.syncTextPanelButtons();
   }
+  openMindMapFilePicker() {
+    const modal = new NoteDrawFileSuggestModal(this.plugin.app, this.file, (file) => {
+      this.pendingMindMapFile = file;
+      this.textPreset = "mindMap";
+      this.setTextMode();
+      this.syncTextPanelButtons();
+      new import_obsidian.Notice(this.plugin.t("placeMindMap"));
+    });
+    modal.open();
+  }
   syncTextPanelButtons() {
     this.textPanel?.querySelectorAll(".notedraw-text-option").forEach((button) => {
       button.classList.toggle("is-active", button.dataset.noteDrawTextPreset === this.textPreset);
@@ -5411,6 +5813,9 @@ var PreviewDrawingController = class {
   }
   createSelectionMenu() {
     const actions = [
+      { icon: "copy", key: "copyElement", action: () => this.copySelectedElements() },
+      { icon: "clipboard-paste", key: "pasteElement", action: () => this.pasteCopiedElements() },
+      { icon: "wrap-text", key: "insertIntoNote", action: () => this.toggleSelectedNoteFlow() },
       { icon: "bring-to-front", key: "bringToFront", action: () => this.reorderSelectedStrokes("front") },
       { icon: "move-up", key: "moveForward", action: () => this.reorderSelectedStrokes("forward") },
       { icon: "move-down", key: "moveBackward", action: () => this.reorderSelectedStrokes("backward") },
@@ -5445,6 +5850,18 @@ var PreviewDrawingController = class {
       this.plugin.setAccessibleLabel(lockButton, key);
       (0, import_obsidian.setIcon)(lockButton, locked ? "unlock" : "lock");
     }
+    const pasteButton = this.selectionMenu.querySelector('[data-note-draw-title-key="pasteElement"]');
+    pasteButton?.toggleAttribute("disabled", !this.plugin.elementClipboard?.strokes?.length);
+    const noteFlowIndexes = this.getSelectedStrokeIndexes().filter((index) => !isConnectorStroke(this.drawingData.strokes[index]));
+    const noteFlowEnabled = noteFlowIndexes.length > 0 && noteFlowIndexes.every((index) => this.drawingData.strokes[index]?.noteFlow?.enabled);
+    const noteFlowButton = this.selectionMenu.querySelector('[data-note-draw-title-key="insertIntoNote"], [data-note-draw-title-key="removeFromNote"]');
+    if (noteFlowButton) {
+      const key = noteFlowEnabled ? "removeFromNote" : "insertIntoNote";
+      noteFlowButton.dataset.noteDrawTitleKey = key;
+      this.plugin.setAccessibleLabel(noteFlowButton, key);
+      (0, import_obsidian.setIcon)(noteFlowButton, noteFlowEnabled ? "unfold-vertical" : "wrap-text");
+      noteFlowButton.toggleAttribute("hidden", !this.supportsNoteFlow());
+    }
   }
   showSelectionMenu(clientPoint = null) {
     const indexes = this.getSelectedStrokeIndexes();
@@ -5456,15 +5873,16 @@ var PreviewDrawingController = class {
     const canvasRect = this.canvas.getBoundingClientRect();
     const x = Number.isFinite(clientPoint?.x) ? clientPoint.x : fallback ? canvasRect.left + fallback.x + fallback.width / 2 : canvasRect.left + 20;
     const y = Number.isFinite(clientPoint?.y) ? clientPoint.y : fallback ? canvasRect.top + fallback.y : canvasRect.top + 20;
-    const width = Math.max(210, this.selectionMenu.getBoundingClientRect().width || 228);
+    const desiredWidth = Math.max(210, this.selectionMenu.getBoundingClientRect().width || 276);
     const height = Math.max(38, this.selectionMenu.getBoundingClientRect().height || 38);
     const viewport = window.visualViewport;
     const viewportTop = viewport?.offsetTop || 0;
     const viewportLeft = viewport?.offsetLeft || 0;
     const viewportWidth = Math.max(160, viewport?.width || window.innerWidth || 160);
     const viewportHeight = Math.max(120, viewport?.height || window.innerHeight || 120);
-    const left = clamp6(Math.round(x - width / 2), viewportLeft + 8, Math.max(viewportLeft + 8, viewportLeft + viewportWidth - width - 8));
-    const top = clamp6(Math.round(y - height - 14), viewportTop + 8, Math.max(viewportTop + 8, viewportTop + viewportHeight - height - 8));
+    const width = Math.min(desiredWidth, Math.max(144, viewportWidth - 16));
+    const left = clamp7(Math.round(x - width / 2), viewportLeft + 8, Math.max(viewportLeft + 8, viewportLeft + viewportWidth - width - 8));
+    const top = clamp7(Math.round(y - height - 14), viewportTop + 8, Math.max(viewportTop + 8, viewportTop + viewportHeight - height - 8));
     setNoteDrawCssProps(this.selectionMenu, {
       "--notedraw-selection-menu-left": `${left}px`,
       "--notedraw-selection-menu-top": `${top}px`
@@ -5629,10 +6047,10 @@ var PreviewDrawingController = class {
     const maxTop = Math.max(minTop, viewportTop + viewportHeight - height - 8);
     const gap = 14;
     const preferredLeft = rect.left + rect.width / 2 - width / 2;
-    const left = clamp6(Math.round(preferredLeft), viewportLeft + 8, Math.max(viewportLeft + 8, viewportLeft + viewportWidth - width - 8));
+    const left = clamp7(Math.round(preferredLeft), viewportLeft + 8, Math.max(viewportLeft + 8, viewportLeft + viewportWidth - width - 8));
     if (this.formatToolbarManualPosition) {
-      const top2 = clamp6(Math.round(this.formatToolbarManualPosition.top), minTop, maxTop);
-      const manualLeft = clamp6(Math.round(this.formatToolbarManualPosition.left), viewportLeft + 8, Math.max(viewportLeft + 8, viewportLeft + viewportWidth - width - 8));
+      const top2 = clamp7(Math.round(this.formatToolbarManualPosition.top), minTop, maxTop);
+      const manualLeft = clamp7(Math.round(this.formatToolbarManualPosition.left), viewportLeft + 8, Math.max(viewportLeft + 8, viewportLeft + viewportWidth - width - 8));
       this.formatToolbarManualPosition = { top: top2, left: manualLeft };
       setNoteDrawCssProps(this.formatToolbar, {
         "--notedraw-format-top": `${top2}px`,
@@ -5644,7 +6062,7 @@ var PreviewDrawingController = class {
     const belowOneLine = rect.bottom + gap + lineStep;
     const above = rect.top - height - gap;
     const below = rect.bottom + gap;
-    const top = belowOneLine <= maxTop ? belowOneLine : below <= maxTop ? below : above >= minTop ? above : clamp6(Math.round(belowOneLine), minTop, maxTop);
+    const top = belowOneLine <= maxTop ? belowOneLine : below <= maxTop ? below : above >= minTop ? above : clamp7(Math.round(belowOneLine), minTop, maxTop);
     setNoteDrawCssProps(this.formatToolbar, {
       "--notedraw-format-top": `${top}px`,
       "--notedraw-format-left": `${left}px`
@@ -5682,12 +6100,12 @@ var PreviewDrawingController = class {
     const viewportLeft = viewport?.offsetLeft || 0;
     const viewportHeight = Math.max(120, viewport?.height || window.innerHeight || 120);
     const viewportWidth = Math.max(160, viewport?.width || window.innerWidth || 160);
-    const top = clamp6(
+    const top = clamp7(
       this.formatToolbarDrag.startTop + event.clientY - this.formatToolbarDrag.startY,
       viewportTop + 8,
       Math.max(viewportTop + 8, viewportTop + viewportHeight - toolbarRect.height - 8)
     );
-    const left = clamp6(
+    const left = clamp7(
       this.formatToolbarDrag.startLeft + event.clientX - this.formatToolbarDrag.startX,
       viewportLeft + 8,
       Math.max(viewportLeft + 8, viewportLeft + viewportWidth - toolbarRect.width - 8)
@@ -6172,8 +6590,8 @@ var PreviewDrawingController = class {
     return (clientY - canvasRect.top) / Math.max(0.01, canvasScaleY) + this.canvasWindowTop;
   }
   captureResponsivePoint(point, context = this.getResponsiveLayoutContext()) {
-    const canvasX = clamp6(Number(point?.x || 0), 0, 1) * this.canvasWidth();
-    const canvasY = clamp6(Number(point?.y || 0), 0, 1) * this.canvasHeight();
+    const canvasX = clamp7(Number(point?.x || 0), 0, 1) * this.canvasWidth();
+    const canvasY = clamp7(Number(point?.y || 0), 0, 1) * this.canvasHeight();
     const lineLocation = this.captureLineLocation(canvasX, canvasY, context);
     return {
       ...point,
@@ -6194,7 +6612,7 @@ var PreviewDrawingController = class {
     const context = this.getResponsiveLayoutContext(true);
     for (const index of indexes) {
       const stroke = this.drawingData?.strokes?.[index];
-      if (stroke?.points?.length) {
+      if (stroke?.points?.length && !isConnectorStroke(stroke)) {
         stroke.points = stroke.points.map((point) => this.captureResponsivePoint(point, context));
         this.captureElementLayoutForStroke(stroke, context, index);
       }
@@ -6217,8 +6635,9 @@ var PreviewDrawingController = class {
       this.captureLineLocation(point.x, point.y, context, { maxDistance: 112 }) || { path: this.file?.path || "", line: null }
     ]));
     const previous = normalizeElementLayout(stroke.layout);
+    const elementId = strokeElementId(stroke) || createElementLayoutId(index);
     stroke.layout = createElementLayout({
-      id: previous?.id || createElementLayoutId(index),
+      id: previous?.id || elementId,
       bounds,
       canvasWidth: this.canvasWidth(),
       canvasHeight: this.canvasHeight(),
@@ -6235,12 +6654,16 @@ var PreviewDrawingController = class {
       },
       relations: options.preserveRelations === false ? [] : previous?.relations || []
     });
+    stroke.elementId = stroke.layout?.id || elementId;
     return stroke.layout;
   }
   rebuildElementRelations() {
     const items = [];
     const layoutsById = /* @__PURE__ */ new Map();
     for (const stroke of this.drawingData?.strokes || []) {
+      if (isConnectorStroke(stroke)) {
+        continue;
+      }
       const layout = normalizeElementLayout(stroke.layout);
       const bounds = getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight());
       if (!layout?.id || !bounds) {
@@ -6262,6 +6685,9 @@ var PreviewDrawingController = class {
       maxRelations: 3
     });
     for (const stroke of this.drawingData?.strokes || []) {
+      if (isConnectorStroke(stroke)) {
+        continue;
+      }
       const layout = normalizeElementLayout(stroke.layout);
       if (layout?.id) {
         layout.relations = relations.get(layout.id) || [];
@@ -6290,7 +6716,7 @@ var PreviewDrawingController = class {
       }
       return {
         ...projected,
-        x: clamp6(Number(point.x), 0, 1)
+        x: clamp7(Number(point.x), 0, 1)
       };
     });
   }
@@ -6304,6 +6730,9 @@ var PreviewDrawingController = class {
     }
     const lineToCanvasY = (path, line) => this.projectLineLocation(path, line, context);
     for (const [index, stroke] of (this.drawingData?.strokes || []).entries()) {
+      if (isConnectorStroke(stroke)) {
+        continue;
+      }
       const existingLayout = normalizeElementLayout(stroke.layout);
       const needsLayoutRepair = Boolean(existingLayout) && elementLayoutNeedsRepair(existingLayout);
       const hasUniqueElementLayout = Boolean(existingLayout?.id) && !elementIds.has(existingLayout.id) && !needsLayoutRepair;
@@ -6333,6 +6762,9 @@ var PreviewDrawingController = class {
     const projected = [];
     const layoutsById = /* @__PURE__ */ new Map();
     for (const stroke of this.drawingData?.strokes || []) {
+      if (isConnectorStroke(stroke)) {
+        continue;
+      }
       const layout = normalizeElementLayout(stroke.layout);
       const box = projectElementLayout(layout, {
         canvasWidth: this.canvasWidth(),
@@ -6349,10 +6781,13 @@ var PreviewDrawingController = class {
     }
     const projectedById = new Map(stabilizeElementRelations(projected, layoutsById).map((box) => [box.id, {
       ...box,
-      x: clamp6(box.x, 0, Math.max(0, this.canvasWidth() - box.width)),
-      y: clamp6(box.y, 0, Math.max(0, this.canvasHeight() - box.height))
+      x: clamp7(box.x, 0, Math.max(0, this.canvasWidth() - box.width)),
+      y: clamp7(box.y, 0, Math.max(0, this.canvasHeight() - box.height))
     }]));
     for (const stroke of this.drawingData?.strokes || []) {
+      if (isConnectorStroke(stroke)) {
+        continue;
+      }
       const layout = normalizeElementLayout(stroke.layout);
       const box = layout?.id ? projectedById.get(layout.id) : null;
       if (layout && box) {
@@ -6383,6 +6818,7 @@ var PreviewDrawingController = class {
         }));
       }
     }
+    this.syncBoundConnectors();
     if (this.currentStroke?.points?.length) {
       this.currentStroke.points = this.currentStroke.points.map((point) => projectResponsivePoint(point, {
         canvasWidth: this.canvasWidth(),
@@ -6700,6 +7136,12 @@ var PreviewDrawingController = class {
       width: brush.width,
       opacity: brush.opacity,
       count: brush.count,
+      noteFlow: this.currentBrushVariant() === PEN_VARIANT_NOTE && this.supportsNoteFlow() ? {
+        enabled: true,
+        path: this.file?.path || "",
+        line: null,
+        gap: 12
+      } : null,
       points: [this.pointerStartPoint]
     };
     event.preventDefault();
@@ -6866,12 +7308,17 @@ var PreviewDrawingController = class {
       const responsiveContext = this.getResponsiveLayoutContext();
       this.currentStroke.points = this.currentStroke.points.map((point) => this.captureResponsivePoint(point, responsiveContext));
       this.drawingData.strokes.push(this.currentStroke);
-      this.captureResponsiveAnchorsForIndexes([this.drawingData.strokes.length - 1]);
+      const insertedIndex = this.drawingData.strokes.length - 1;
+      if (this.currentStroke.noteFlow?.enabled) {
+        this.currentStroke.noteFlow = this.captureNoteFlowAnchor(this.currentStroke);
+      }
+      this.captureResponsiveAnchorsForIndexes([insertedIndex]);
       this.clearSelectedStrokes();
       this.redoStack = [];
       this.invalidateStaticCache();
       this.plugin.scheduleDrawingSave(this.file, this.drawingData);
       this.recordDrawingHistory(historyBefore);
+      this.scheduleNoteFlowLayout();
       this.currentStroke = null;
     }
     this.finishPointerInteraction(event);
@@ -7014,7 +7461,7 @@ var PreviewDrawingController = class {
   floatingTextContentWidth(element) {
     const rect = element.getBoundingClientRect();
     const insets = this.floatingTextEditorInsets(element);
-    return clamp6(rect.width - insets.horizontal, 24, 900);
+    return clamp7(rect.width - insets.horizontal, 24, 900);
   }
   openFloatingTextInput(point, index = -1) {
     this.endFloatingTextInput(true);
@@ -7034,7 +7481,7 @@ var PreviewDrawingController = class {
     textarea.value = isTextLikeStroke(existing) ? existing.text : "";
     applyElementStyles(textarea, {
       color: isTextLikeStroke(existing) ? existing.color : brushColor,
-      fontSize: `${isTextLikeStroke(existing) ? clamp6(Number(existing.fontSize || 18), 10, 72) : 18}px`,
+      fontSize: `${isTextLikeStroke(existing) ? clamp7(Number(existing.fontSize || 18), 10, 72) : 18}px`,
       fontWeight: isTextLikeStroke(existing) && existing.bold ? "700" : "400",
       fontFamily: isTextLikeStroke(existing) && existing.code ? "monospace" : "sans-serif"
     });
@@ -7125,7 +7572,7 @@ var PreviewDrawingController = class {
       const stroke = this.drawingData.strokes[state.index];
       stroke.text = text;
       stroke.render = normalizeTextRenderMode(stroke.render);
-      stroke.fontSize = clamp6(Number(stroke.fontSize || 18), 10, 72);
+      stroke.fontSize = clamp7(Number(stroke.fontSize || 18), 10, 72);
       if (isRichTextStroke(stroke)) {
         stroke.previewWidth = stroke.previewWidth || 300;
         stroke.previewHeight = stroke.previewHeight || 180;
@@ -7145,7 +7592,7 @@ var PreviewDrawingController = class {
         count: 1,
         text: preset.text,
         render: preset.render || TEXT_RENDER_PLAIN,
-        fontSize: clamp6(Number(preset.fontSize || 18), 10, 72),
+        fontSize: clamp7(Number(preset.fontSize || 18), 10, 72),
         bold: preset.bold,
         code: preset.code,
         boxed: preset.boxed,
@@ -7208,6 +7655,16 @@ var PreviewDrawingController = class {
   }
   handleTextToolTap(point) {
     const snappedPoint = this.snapPointForPreset(point, this.textPreset);
+    if (this.textPreset === "mindMap") {
+      if (!this.pendingMindMapFile) {
+        this.openMindMapFilePicker();
+        return;
+      }
+      const sourceFile = this.pendingMindMapFile;
+      this.pendingMindMapFile = null;
+      void this.insertMindMapAt(snappedPoint, sourceFile);
+      return;
+    }
     if (isAssetTextPreset(this.textPreset)) {
       this.pendingEmbedTool = { preset: this.textPreset, point: snappedPoint };
       if (this.hiddenFileInput) {
@@ -7223,6 +7680,113 @@ var PreviewDrawingController = class {
     }
     this.openFloatingTextInput(snappedPoint);
   }
+  async insertMindMapAt(point, sourceFile, options = {}) {
+    const file = this.plugin.resolveApiFile(sourceFile, this.file?.path || "");
+    if (!file) {
+      return { ok: false, reason: "source-not-found" };
+    }
+    const source = await this.plugin.app.vault.cachedRead(file);
+    const model = parseMarkdownMindMap(source, { title: file.basename || file.name || "Mind map", maxNodes: 240 });
+    if (model.nodes.length <= 1 && !String(source || "").trim()) {
+      if (!options.quiet) {
+        new import_obsidian.Notice(this.plugin.t("emptyMindMap"));
+      }
+      return { ok: false, reason: "empty-source" };
+    }
+    const historyBefore = this.captureDrawingHistorySnapshot();
+    const width = this.canvasWidth();
+    const height = this.canvasHeight();
+    const frame = this.getResponsiveContentFrame();
+    const originX = clamp7(Number(point?.x) * width, Math.max(8, frame.left + 8), Math.max(8, width - 260));
+    const originY = clamp7(Number(point?.y) * height, 12, Math.max(12, height - 80));
+    const geometry = layoutMindMap(model, {
+      originX,
+      originY,
+      canvasWidth: width,
+      canvasHeight: height,
+      nodeWidth: 176,
+      columnGap: 72,
+      rowGap: 18
+    });
+    const mapId = `map-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const idMap = /* @__PURE__ */ new Map();
+    const depthColors = ["#2563eb", "#0f766e", "#b45309", "#be123c", "#4338ca", "#047857"];
+    const nodeStrokes = geometry.nodes.map((node, index) => {
+      const elementId = createElementLayoutId(this.drawingData.strokes.length + index);
+      idMap.set(node.id, elementId);
+      const color = depthColors[Math.min(node.depth, depthColors.length - 1) % depthColors.length];
+      return normalizeStroke({
+        elementId,
+        kind: TOOL_TEXT,
+        brush: BRUSH_PEN,
+        color,
+        width: node.type === "root" ? 2.4 : 1.8,
+        opacity: 1,
+        count: 1,
+        text: node.text,
+        render: TEXT_RENDER_PLAIN,
+        fontSize: node.fontSize,
+        bold: node.type === "root" || node.type === "heading",
+        code: node.type === "code",
+        boxed: true,
+        file: false,
+        buttonStyle: "outline",
+        snap: true,
+        locked: false,
+        textWidth: Math.max(82, node.width - 18),
+        mindMapNode: {
+          mapId,
+          nodeId: node.id,
+          parentId: node.parentId || "",
+          depth: node.depth,
+          role: node.type === "root" ? "root" : node.type === "heading" ? "heading" : "node"
+        },
+        points: [{
+          x: clamp7(node.x / width, 0, 1),
+          y: clamp7(node.y / height, 0, 1),
+          t: Date.now(),
+          anchor: null
+        }]
+      });
+    });
+    const connectorStrokes = geometry.edges.map((edge, index) => normalizeStroke({
+      elementId: createElementLayoutId(this.drawingData.strokes.length + nodeStrokes.length + index),
+      brush: BRUSH_PEN,
+      color: depthColors[Math.min(edge.depth, depthColors.length - 1) % depthColors.length],
+      width: edge.depth <= 1 ? 2.6 : 2,
+      opacity: 0.88,
+      count: 1,
+      connector: {
+        fromId: idMap.get(edge.fromId),
+        toId: idMap.get(edge.toId),
+        style: "mindmap",
+        arrow: true
+      },
+      points: [
+        { x: clamp7(originX / width, 0, 1), y: clamp7(originY / height, 0, 1), t: Date.now(), anchor: null },
+        { x: clamp7((originX + 1) / width, 0, 1), y: clamp7((originY + 1) / height, 0, 1), t: Date.now(), anchor: null }
+      ]
+    }));
+    const startIndex = this.drawingData.strokes.length;
+    this.drawingData.strokes.push(...connectorStrokes, ...nodeStrokes);
+    const connectorIndexes = connectorStrokes.map((_, index) => startIndex + index);
+    const nodeIndexes = nodeStrokes.map((_, index) => startIndex + connectorStrokes.length + index);
+    this.captureResponsiveAnchorsForIndexes(nodeIndexes);
+    this.syncBoundConnectors();
+    this.setSelectedStrokes([...connectorIndexes, ...nodeIndexes]);
+    this.textPreset = "plain";
+    this.syncTextPanelButtons();
+    this.redoStack = [];
+    this.invalidateStaticCache();
+    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.recordDrawingHistory(historyBefore);
+    this.scheduleLayoutRefresh({ settle: false });
+    this.render();
+    if (model.truncated && !options.quiet) {
+      new import_obsidian.Notice(this.plugin.t("mindMapTruncated"));
+    }
+    return { ok: true, nodes: nodeStrokes.length, connectors: connectorStrokes.length, truncated: model.truncated };
+  }
   insertTextPresetAt(point, presetId, text) {
     const historyBefore = this.captureDrawingHistorySnapshot();
     const brush = this.currentBrushSettings();
@@ -7236,7 +7800,7 @@ var PreviewDrawingController = class {
       count: 1,
       text: preset.text,
       render: preset.render || TEXT_RENDER_PLAIN,
-      fontSize: clamp6(Number(preset.fontSize || 18), 10, 72),
+      fontSize: clamp7(Number(preset.fontSize || 18), 10, 72),
       bold: preset.bold,
       code: preset.code,
       boxed: preset.boxed,
@@ -7337,7 +7901,7 @@ var PreviewDrawingController = class {
       return;
     }
     if ((event.ctrlKey || event.metaKey) && this.canZoomReadingSurface()) {
-      const factor = Math.exp(-clamp6(Number(event.deltaY) || 0, -80, 80) * 25e-4);
+      const factor = Math.exp(-clamp7(Number(event.deltaY) || 0, -80, 80) * 25e-4);
       this.setReadingZoom(this.readingZoom * factor, { x: event.clientX, y: event.clientY });
       event.preventDefault();
       event.stopPropagation();
@@ -7352,7 +7916,7 @@ var PreviewDrawingController = class {
     return this.surfaceType === "preview" && !this.embeddedSurface;
   }
   readingZoomScale() {
-    return this.canZoomReadingSurface() ? clamp6(Number(this.readingZoom) || 1, MIN_READING_ZOOM, MAX_READING_ZOOM) : 1;
+    return this.canZoomReadingSurface() ? clamp7(Number(this.readingZoom) || 1, MIN_READING_ZOOM, MAX_READING_ZOOM) : 1;
   }
   readingZoomElements(target = this.readingZoomTarget) {
     const elements = [target, this.staticCanvas, this.canvas, this.embedLayer].filter((element) => element?.isConnected);
@@ -7490,7 +8054,7 @@ var PreviewDrawingController = class {
     if (!this.canZoomReadingSurface()) {
       return false;
     }
-    const next = clamp6(Number(value) || 1, MIN_READING_ZOOM, MAX_READING_ZOOM);
+    const next = clamp7(Number(value) || 1, MIN_READING_ZOOM, MAX_READING_ZOOM);
     const previous = this.readingZoom || 1;
     if (Math.abs(next - previous) < 1e-3) {
       return true;
@@ -7731,8 +8295,8 @@ var PreviewDrawingController = class {
         maxY = Math.max(maxY, strokePoint.y);
       }
     }
-    const dx = clamp6(point.x - this.dragStrokeStartPoint.x, -minX, 1 - maxX);
-    const dy = clamp6(point.y - this.dragStrokeStartPoint.y, -minY, 1 - maxY);
+    const dx = clamp7(point.x - this.dragStrokeStartPoint.x, -minX, 1 - maxX);
+    const dy = clamp7(point.y - this.dragStrokeStartPoint.y, -minY, 1 - maxY);
     const movedDistance = pointDistanceOnCanvas(
       this.dragStrokeStartPoint,
       point,
@@ -7747,8 +8311,8 @@ var PreviewDrawingController = class {
     let snappedDy = dy;
     if (this.shouldSnapStrokeIndexes(Array.from(this.dragStrokeOriginalPoints.keys())) && this.dragStrokeOriginalBounds) {
       const snap = this.computeSnapDeltaForNormalizedBounds(translateNormalizedBounds(this.dragStrokeOriginalBounds, dx, dy), Array.from(this.dragStrokeOriginalPoints.keys()));
-      snappedDx = clamp6(dx + snap.dx, -minX, 1 - maxX);
-      snappedDy = clamp6(dy + snap.dy, -minY, 1 - maxY);
+      snappedDx = clamp7(dx + snap.dx, -minX, 1 - maxX);
+      snappedDy = clamp7(dy + snap.dy, -minY, 1 - maxY);
     }
     for (const [index, points] of this.dragStrokeOriginalPoints.entries()) {
       const stroke = this.drawingData.strokes[index];
@@ -7757,10 +8321,14 @@ var PreviewDrawingController = class {
       }
       stroke.points = points.map((strokePoint) => ({
         ...strokePoint,
-        x: clamp6(strokePoint.x + snappedDx, 0, 1),
-        y: clamp6(strokePoint.y + snappedDy, 0, 1)
+        x: clamp7(strokePoint.x + snappedDx, 0, 1),
+        y: clamp7(strokePoint.y + snappedDy, 0, 1)
       }));
     }
+    if (this.syncBoundConnectors()) {
+      this.invalidateStaticCache();
+    }
+    this.scheduleNoteFlowLayout();
     this.requestRender(this.selectionHasDomStrokes());
     event.preventDefault();
     event.stopPropagation();
@@ -7768,11 +8336,21 @@ var PreviewDrawingController = class {
   finishSelectedStrokeDrag(event) {
     this.clearSelectionLongPress();
     if (this.dragStrokeMoved) {
-      this.captureResponsiveAnchorsForIndexes(Array.from(this.dragStrokeOriginalPoints?.keys() || []));
+      const movedIndexes = Array.from(this.dragStrokeOriginalPoints?.keys() || []);
+      this.clearNoteFlowLayout();
+      for (const index of movedIndexes) {
+        const stroke = this.drawingData.strokes[index];
+        if (stroke?.noteFlow?.enabled) {
+          stroke.noteFlow = this.captureNoteFlowAnchor(stroke);
+        }
+      }
+      this.captureResponsiveAnchorsForIndexes(movedIndexes);
+      this.syncBoundConnectors();
       this.lastTextTap = null;
       this.redoStack = [];
       this.plugin.scheduleDrawingSave(this.file, this.drawingData);
       this.recordDrawingHistory(this.dragDrawingHistoryBefore);
+      this.scheduleNoteFlowLayout();
     } else if (!this.dragStrokePreserveSelection && this.getSelectedStrokeIndexes().length > 1 && this.dragStrokeHitIndex >= 0) {
       this.setSelectedStrokes(this.dragStrokeHitIndex);
     } else {
@@ -7885,15 +8463,15 @@ var PreviewDrawingController = class {
     let scaleY = originalDy === 0 ? 1 : (point.y - anchor.y) / originalDy;
     scaleX = Math.max(0.12, scaleX);
     scaleY = Math.max(0.12, scaleY);
-    const strokeScale = clamp6((Math.abs(scaleX) + Math.abs(scaleY)) / 2, 0.2, 8);
+    const strokeScale = clamp7((Math.abs(scaleX) + Math.abs(scaleY)) / 2, 0.2, 8);
     const nextByIndex = /* @__PURE__ */ new Map();
     for (const [index, original] of originalStrokes.entries()) {
       nextByIndex.set(index, {
-        width: clamp6((original.width || this.penWidth) * strokeScale, MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH),
-        fontSize: clamp6((original.fontSize || 18) * strokeScale, 10, 72),
-        textWidth: Number(original.textWidth) > 0 ? clamp6(original.textWidth * Math.abs(scaleX), 24, 900) : null,
-        previewWidth: clamp6((original.previewWidth || 260) * Math.abs(scaleX), 80, 900),
-        previewHeight: clamp6((original.previewHeight || 160) * Math.abs(scaleY), 40, 700),
+        width: clamp7((original.width || this.penWidth) * strokeScale, MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH),
+        fontSize: clamp7((original.fontSize || 18) * strokeScale, 10, 72),
+        textWidth: Number(original.textWidth) > 0 ? clamp7(original.textWidth * Math.abs(scaleX), 24, 900) : null,
+        previewWidth: clamp7((original.previewWidth || 260) * Math.abs(scaleX), 80, 900),
+        previewHeight: clamp7((original.previewHeight || 160) * Math.abs(scaleY), 40, 700),
         points: original.points.map((strokePoint) => ({
           ...strokePoint,
           x: anchor.x + (strokePoint.x - anchor.x) * scaleX,
@@ -7918,17 +8496,24 @@ var PreviewDrawingController = class {
       }
       stroke.points = next.points.map((strokePoint) => ({
         ...strokePoint,
-        x: clamp6(strokePoint.x, 0, 1),
-        y: clamp6(strokePoint.y, 0, 1)
+        x: clamp7(strokePoint.x, 0, 1),
+        y: clamp7(strokePoint.y, 0, 1)
       }));
     }
+    if (this.syncBoundConnectors()) {
+      this.invalidateStaticCache();
+    }
+    this.scheduleNoteFlowLayout();
   }
   finishSelectedStrokeResize(event) {
     if (this.resizeSelectionMoved) {
-      this.captureResponsiveAnchorsForIndexes(Array.from(this.resizeSelectionOriginalStrokes?.keys() || []));
+      const resizedIndexes = Array.from(this.resizeSelectionOriginalStrokes?.keys() || []);
+      this.captureResponsiveAnchorsForIndexes(resizedIndexes);
+      this.syncBoundConnectors();
       this.redoStack = [];
       this.plugin.scheduleDrawingSave(this.file, this.drawingData);
       this.recordDrawingHistory(this.resizeDrawingHistoryBefore);
+      this.scheduleNoteFlowLayout();
     } else {
       this.cancelSelectedStrokeResize(true);
     }
@@ -8032,14 +8617,14 @@ var PreviewDrawingController = class {
       return false;
     }
     const lineCenterY = (lineRect.top + lineRect.height * 0.58 - canvasRect.top) / scaleY + this.canvasWindowTop;
-    const minX = clamp6((lineRect.left - canvasRect.left) / scaleX / canvasWidth, 0, 1);
-    const maxX = clamp6((lineRect.right - canvasRect.left) / scaleX / canvasWidth, 0, 1);
+    const minX = clamp7((lineRect.left - canvasRect.left) / scaleX / canvasWidth, 0, 1);
+    const maxX = clamp7((lineRect.right - canvasRect.left) / scaleX / canvasWidth, 0, 1);
     stroke.points = stroke.points.map((point) => ({
       ...point,
-      x: clamp6(Number(point.x), minX, maxX),
-      y: clamp6(lineCenterY / this.canvasHeight(), 0, 1)
+      x: clamp7(Number(point.x), minX, maxX),
+      y: clamp7(lineCenterY / this.canvasHeight(), 0, 1)
     }));
-    stroke.width = clamp6(lineRect.height / scaleY * 0.48, 4, 24);
+    stroke.width = clamp7(lineRect.height / scaleY * 0.48, 4, 24);
     return true;
   }
   addPointerSamples(event) {
@@ -8137,8 +8722,12 @@ var PreviewDrawingController = class {
     if (!this.ctx) {
       return;
     }
+    if (this.syncBoundConnectors()) {
+      this.invalidateStaticCache();
+    }
     this.applyWebEdits();
     this.updateEmbedLayer();
+    this.scheduleNoteFlowLayout();
     this.renderCanvas();
   }
   renderCanvas() {
@@ -8225,7 +8814,7 @@ var PreviewDrawingController = class {
         top: `${Math.round(bounds.minY)}px`,
         width: `${Math.max(32, Math.round(bounds.maxX - bounds.minX))}px`,
         height: `${Math.max(28, Math.round(bounds.maxY - bounds.minY))}px`,
-        opacity: String(clamp6(Number(stroke.opacity ?? 1), 0, 1))
+        opacity: String(clamp7(Number(stroke.opacity ?? 1), 0, 1))
       });
       this.renderEmbedNode(node, stroke, index);
     }
@@ -8316,6 +8905,10 @@ var PreviewDrawingController = class {
     if (!stroke.points.length) {
       return;
     }
+    if (isConnectorStroke(stroke)) {
+      this.drawBoundConnectorOn(ctx, stroke, alpha);
+      return;
+    }
     if (isImageEmbedStroke(stroke)) {
       this.drawImageStrokeOn(ctx, stroke);
       return;
@@ -8331,12 +8924,12 @@ var PreviewDrawingController = class {
       this.drawWatercolorStrokeOn(ctx, stroke, alpha);
       return;
     }
-    if (normalizeBrushVariant(BRUSH_PEN, stroke.variant) === PEN_VARIANT_FOUNTAIN) {
+    if ([PEN_VARIANT_FOUNTAIN, PEN_VARIANT_NOTE].includes(normalizeBrushVariant(BRUSH_PEN, stroke.variant))) {
       this.drawFountainPenStrokeOn(ctx, stroke, alpha);
       return;
     }
-    const count = clamp6(Math.round(Number(stroke.count || 1)), 1, MAX_PEN_COUNT);
-    const opacity = clamp6(Number(stroke.opacity ?? DEFAULT_PEN_OPACITY), 0, 1);
+    const count = clamp7(Math.round(Number(stroke.count || 1)), 1, MAX_PEN_COUNT);
+    const opacity = clamp7(Number(stroke.opacity ?? DEFAULT_PEN_OPACITY), 0, 1);
     const offsets = getPenOffsets(count, stroke.width || this.penWidth);
     ctx.save();
     ctx.globalAlpha = alpha * opacity;
@@ -8354,6 +8947,64 @@ var PreviewDrawingController = class {
       }
       ctx.stroke();
     }
+    ctx.restore();
+  }
+  syncBoundConnectors() {
+    const strokes = this.drawingData?.strokes || [];
+    const byId = new Map(strokes.map((stroke) => [strokeElementId(stroke), stroke]).filter(([id]) => id));
+    let changed = false;
+    for (const stroke of strokes) {
+      const connector = normalizeConnector(stroke.connector);
+      if (!connector) {
+        continue;
+      }
+      const fromBounds = getStrokeBounds(byId.get(connector.fromId), this.canvasWidth(), this.canvasHeight());
+      const toBounds = getStrokeBounds(byId.get(connector.toId), this.canvasWidth(), this.canvasHeight());
+      if (!fromBounds || !toBounds) {
+        continue;
+      }
+      const nextPoints = buildBoundConnectorPoints(fromBounds, toBounds, this.canvasWidth(), this.canvasHeight());
+      if (!sameStrokePointPath(stroke.points, nextPoints)) {
+        stroke.points = nextPoints;
+        changed = true;
+      }
+    }
+    return changed;
+  }
+  drawBoundConnectorOn(ctx, stroke, alpha = 1) {
+    if (!stroke.points?.length) {
+      return;
+    }
+    const opacity = clamp7(Number(stroke.opacity ?? 0.9), 0, 1);
+    const width = clamp7(Number(stroke.width || 2.25), 1, 8);
+    const points = stroke.points.map((point) => this.pointToCanvas(point));
+    ctx.save();
+    ctx.globalAlpha = alpha * opacity;
+    ctx.strokeStyle = stroke.color || "#64748b";
+    ctx.fillStyle = stroke.color || "#64748b";
+    ctx.lineWidth = width;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
+    for (let index = 1; index < points.length; index += 1) {
+      ctx.lineTo(points[index].x, points[index].y);
+    }
+    ctx.stroke();
+    const first = points[0];
+    const last = points[points.length - 1];
+    const previous = points[Math.max(0, points.length - 3)];
+    const angle = Math.atan2(last.y - previous.y, last.x - previous.x);
+    const arrowSize = Math.max(6, width * 3.4);
+    ctx.beginPath();
+    ctx.moveTo(last.x, last.y);
+    ctx.lineTo(last.x - Math.cos(angle - Math.PI / 6) * arrowSize, last.y - Math.sin(angle - Math.PI / 6) * arrowSize);
+    ctx.lineTo(last.x - Math.cos(angle + Math.PI / 6) * arrowSize, last.y - Math.sin(angle + Math.PI / 6) * arrowSize);
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(first.x, first.y, Math.max(2.2, width * 1.15), 0, Math.PI * 2);
+    ctx.fill();
     ctx.restore();
   }
   drawFountainPenStrokeOn(ctx, stroke, alpha = 1) {
@@ -8402,7 +9053,7 @@ var PreviewDrawingController = class {
     const height = Math.max(1, Math.round(bounds.maxY - bounds.minY));
     const fit = objectFitContain(image.naturalWidth, image.naturalHeight, width, height);
     ctx.save();
-    ctx.globalAlpha = clamp6(Number(stroke.opacity ?? 1), 0, 1);
+    ctx.globalAlpha = clamp7(Number(stroke.opacity ?? 1), 0, 1);
     ctx.fillStyle = "#fff";
     ctx.fillRect(x, y, width, height);
     ctx.imageSmoothingEnabled = true;
@@ -8448,8 +9099,8 @@ var PreviewDrawingController = class {
       return;
     }
     const point = this.pointToCanvas(stroke.points[0]);
-    const fontSize = clamp6(Number(stroke.fontSize || 18), 10, 72);
-    const opacity = clamp6(Number(stroke.opacity ?? 1), 0, 1);
+    const fontSize = clamp7(Number(stroke.fontSize || 18), 10, 72);
+    const opacity = clamp7(Number(stroke.opacity ?? 1), 0, 1);
     ctx.save();
     ctx.globalAlpha = alpha * opacity;
     ctx.font = `${stroke.bold ? "700 " : ""}${fontSize}px ${stroke.code ? "monospace" : "sans-serif"}`;
@@ -8486,7 +9137,7 @@ var PreviewDrawingController = class {
       return;
     }
     const width = Math.max(MIN_BRUSH_WIDTH, stroke.width || this.penWidth);
-    const opacity = clamp6(Number(stroke.opacity ?? 0.45), 0, 1);
+    const opacity = clamp7(Number(stroke.opacity ?? 0.45), 0, 1);
     ctx.save();
     ctx.globalAlpha = alpha * opacity;
     ctx.lineCap = "round";
@@ -8621,6 +9272,7 @@ var PreviewDrawingController = class {
     this.hideSelectionMenu();
     this.invalidateStaticCache();
     this.syncPaletteInputs();
+    this.updateToolButtons();
   }
   toggleStrokeSelection(index) {
     if (!Number.isInteger(index) || index < 0 || index >= this.drawingData.strokes.length) {
@@ -8640,6 +9292,289 @@ var PreviewDrawingController = class {
     this.hideSelectionMenu();
     this.invalidateStaticCache();
     this.syncPaletteInputs();
+    if (this.toolMode === TOOL_SELECT && this.paletteOpen) {
+      this.setPaletteOpen(false);
+    }
+    this.updateToolButtons();
+  }
+  copySelectedElements(options = {}) {
+    const indexes = this.getSelectedStrokeIndexes();
+    const bounds = this.getStrokeIndexesBounds(indexes);
+    if (!indexes.length || !bounds) {
+      return { ok: false, reason: "selection-not-found" };
+    }
+    const selectedIds = new Set(indexes.map((index) => strokeElementId(this.drawingData.strokes[index])).filter(Boolean));
+    const strokes = indexes.map((index) => {
+      const stroke = JSON.parse(JSON.stringify(this.drawingData.strokes[index]));
+      if (stroke.connector && (!selectedIds.has(stroke.connector.fromId) || !selectedIds.has(stroke.connector.toId))) {
+        delete stroke.connector;
+      }
+      return stroke;
+    });
+    this.plugin.elementClipboard = {
+      version: 1,
+      sourcePath: this.file?.path || "",
+      sourceWidth: this.canvasWidth(),
+      sourceHeight: this.canvasHeight(),
+      bounds,
+      strokes,
+      copiedAt: Date.now()
+    };
+    this.hideSelectionMenu();
+    if (!options.quiet) {
+      new import_obsidian.Notice(this.plugin.t("copiedElements", { count: strokes.length }));
+    }
+    return { ok: true, count: strokes.length };
+  }
+  visibleCanvasPastePoint() {
+    const frame = this.getResponsiveContentFrame();
+    const x = clamp7((frame.left + Math.min(frame.width * 0.16, 72)) / this.canvasWidth(), 0.02, 0.92);
+    const y = clamp7((this.canvasWindowTop + Math.min(this.canvasRenderHeight * 0.22, 140)) / this.canvasHeight(), 0.01, 0.96);
+    return { x, y, t: Date.now() };
+  }
+  pasteCopiedElements(options = {}) {
+    const clipboard = this.plugin.elementClipboard;
+    if (!clipboard?.strokes?.length || !clipboard.bounds) {
+      if (!options.quiet) {
+        new import_obsidian.Notice(this.plugin.t("nothingToPaste"));
+      }
+      return { ok: false, reason: "clipboard-empty" };
+    }
+    const historyBefore = this.captureDrawingHistorySnapshot();
+    const targetWidth = this.canvasWidth();
+    const targetHeight = this.canvasHeight();
+    const sourceWidth = Math.max(1, Number(clipboard.sourceWidth) || 1);
+    const sourceHeight = Math.max(1, Number(clipboard.sourceHeight) || 1);
+    const sourceBounds = clipboard.bounds;
+    const selectedBounds = this.getSelectedStrokeBounds();
+    const requested = options.point && Number.isFinite(Number(options.point.x)) && Number.isFinite(Number(options.point.y)) ? { x: clamp7(Number(options.point.x), 0, 1), y: clamp7(Number(options.point.y), 0, 1) } : null;
+    const defaultPoint = selectedBounds ? {
+      x: clamp7((selectedBounds.minX + 22) / targetWidth, 0, 0.96),
+      y: clamp7((selectedBounds.minY + 22) / targetHeight, 0, 0.96)
+    } : this.visibleCanvasPastePoint();
+    const targetPoint = requested || defaultPoint;
+    const groupWidth = Math.max(1, sourceBounds.maxX - sourceBounds.minX);
+    const groupHeight = Math.max(1, sourceBounds.maxY - sourceBounds.minY);
+    const fitScale = Math.min(
+      1,
+      Math.max(0.12, (targetWidth - 24) / groupWidth),
+      Math.max(0.12, (targetHeight - 24) / groupHeight)
+    );
+    const targetX = clamp7(targetPoint.x * targetWidth, 12, Math.max(12, targetWidth - groupWidth * fitScale - 12));
+    const targetY = clamp7(targetPoint.y * targetHeight, 12, Math.max(12, targetHeight - groupHeight * fitScale - 12));
+    const idMap = /* @__PURE__ */ new Map();
+    for (const sourceStroke of clipboard.strokes) {
+      const sourceId = strokeElementId(sourceStroke);
+      if (sourceId) {
+        idMap.set(sourceId, createElementLayoutId(this.drawingData.strokes.length + idMap.size));
+      }
+    }
+    const pasted = clipboard.strokes.map((sourceStroke, offset) => {
+      const stroke = JSON.parse(JSON.stringify(sourceStroke));
+      const sourceId = strokeElementId(stroke);
+      stroke.elementId = idMap.get(sourceId) || createElementLayoutId(this.drawingData.strokes.length + offset);
+      stroke.layout = null;
+      stroke.locked = false;
+      stroke.points = (stroke.points || []).map((point) => ({
+        x: clamp7((targetX + (Number(point.x) * sourceWidth - sourceBounds.minX) * fitScale) / targetWidth, 0, 1),
+        y: clamp7((targetY + (Number(point.y) * sourceHeight - sourceBounds.minY) * fitScale) / targetHeight, 0, 1),
+        t: Date.now(),
+        anchor: null
+      }));
+      if (stroke.connector) {
+        const fromId = idMap.get(stroke.connector.fromId);
+        const toId = idMap.get(stroke.connector.toId);
+        stroke.connector = fromId && toId ? { ...stroke.connector, fromId, toId } : null;
+      }
+      if (Number.isFinite(Number(stroke.width))) {
+        stroke.width = clamp7(Number(stroke.width) * fitScale, MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH);
+      }
+      if (Number.isFinite(Number(stroke.fontSize))) {
+        stroke.fontSize = clamp7(Number(stroke.fontSize) * fitScale, 10, 72);
+      }
+      for (const key of ["textWidth", "previewWidth", "previewHeight"]) {
+        if (Number.isFinite(Number(stroke[key]))) {
+          stroke[key] = Number(stroke[key]) * fitScale;
+        }
+      }
+      return normalizeStroke(stroke);
+    }).filter((stroke) => stroke.points.length);
+    const startIndex = this.drawingData.strokes.length;
+    this.drawingData.strokes.push(...pasted);
+    const indexes = pasted.map((_, index) => startIndex + index);
+    this.captureResponsiveAnchorsForIndexes(indexes.filter((index) => !isConnectorStroke(this.drawingData.strokes[index])));
+    this.syncBoundConnectors();
+    this.setSelectedStrokes(indexes);
+    this.redoStack = [];
+    this.invalidateStaticCache();
+    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.recordDrawingHistory(historyBefore);
+    this.scheduleNoteFlowLayout();
+    this.scheduleLayoutRefresh({ settle: false });
+    this.render();
+    if (!options.quiet) {
+      new import_obsidian.Notice(this.plugin.t("pastedElements", { count: pasted.length }));
+    }
+    return { ok: true, count: pasted.length, indexes };
+  }
+  onDocumentKeyDown(event) {
+    if (!this.active || this.plugin.interactionController(this) !== this || !(event.ctrlKey || event.metaKey) || event.altKey) {
+      return;
+    }
+    const target = event.target;
+    if (target?.closest?.("input, textarea, select, [contenteditable='true']") || this.currentEditor || this.floatingTextInput) {
+      return;
+    }
+    const key = String(event.key || "").toLowerCase();
+    if (key === "c" && this.getSelectedStrokeIndexes().length) {
+      this.copySelectedElements();
+      event.preventDefault();
+      event.stopPropagation();
+    } else if (key === "v" && this.plugin.elementClipboard?.strokes?.length) {
+      this.pasteCopiedElements();
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  }
+  captureNoteFlowAnchor(stroke) {
+    const bounds = getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight());
+    const canvasRect = this.canvas?.getBoundingClientRect?.();
+    if (!bounds || !canvasRect) {
+      return { enabled: true, path: this.file?.path || "", line: null, gap: 12 };
+    }
+    const scaleY = canvasRect.height > 0 ? canvasRect.height / Math.max(1, this.canvasRenderHeight) : 1;
+    const strokeTop = canvasRect.top + (bounds.minY - this.canvasWindowTop) * scaleY;
+    const candidates = Array.from(this.previewEl.querySelectorAll?.("[data-note-draw-line-start]") || []).map((element) => ({
+      element,
+      rect: element.getBoundingClientRect(),
+      path: normalizeVaultPath(element.dataset.noteDrawSourcePath || this.file?.path || ""),
+      start: parseInteger(element.dataset.noteDrawLineStart),
+      end: parseInteger(element.dataset.noteDrawLineEnd) ?? parseInteger(element.dataset.noteDrawLineStart)
+    })).filter((item) => Number.isFinite(item.start) && item.rect.height > 0 && item.rect.bottom <= strokeTop + 8 && !item.element.closest?.(".notedraw-body-control, .notedraw-embed-layer"));
+    candidates.sort((a, b) => b.rect.bottom - a.rect.bottom || a.rect.height - b.rect.height);
+    const anchor = candidates[0];
+    return {
+      enabled: true,
+      path: anchor?.path || this.file?.path || "",
+      line: Number.isFinite(anchor?.end) ? anchor.end : null,
+      gap: clamp7(Number(stroke?.noteFlow?.gap) || 12, 4, 64)
+    };
+  }
+  toggleSelectedNoteFlow() {
+    const indexes = this.getSelectedStrokeIndexes().filter((index) => !this.drawingData.strokes[index]?.locked && !isConnectorStroke(this.drawingData.strokes[index]));
+    if (!indexes.length || !this.supportsNoteFlow()) {
+      return;
+    }
+    const historyBefore = this.captureDrawingHistorySnapshot();
+    const disable = indexes.every((index) => this.drawingData.strokes[index]?.noteFlow?.enabled);
+    for (const index of indexes) {
+      const stroke = this.drawingData.strokes[index];
+      stroke.noteFlow = disable ? null : this.captureNoteFlowAnchor(stroke);
+    }
+    this.hideSelectionMenu();
+    this.redoStack = [];
+    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.recordDrawingHistory(historyBefore);
+    this.scheduleNoteFlowLayout();
+    this.scheduleLayoutRefresh({ settle: false });
+    this.render();
+  }
+  noteFlowAnchorElement(noteFlow) {
+    const path = normalizeVaultPath(noteFlow?.path || this.file?.path || "");
+    const line = Number(noteFlow?.line);
+    if (!Number.isFinite(line)) {
+      return null;
+    }
+    const candidates = Array.from(this.previewEl.querySelectorAll?.("[data-note-draw-line-start]") || []).filter((element) => {
+      const start = parseInteger(element.dataset.noteDrawLineStart);
+      const end = parseInteger(element.dataset.noteDrawLineEnd) ?? start;
+      const elementPath = normalizeVaultPath(element.dataset.noteDrawSourcePath || this.file?.path || "");
+      return elementPath === path && Number.isFinite(start) && line >= start && line <= end;
+    });
+    candidates.sort((a, b) => a.getBoundingClientRect().height - b.getBoundingClientRect().height);
+    return candidates[0] || null;
+  }
+  clearNoteFlowLayout() {
+    for (const [element, state] of this.noteFlowStyledElements || []) {
+      if (!element?.style) {
+        continue;
+      }
+      if (state.value) {
+        element.style.setProperty(state.property, state.value, state.priority || "");
+      } else {
+        element.style.removeProperty(state.property);
+      }
+      element.classList.remove("notedraw-note-flow-anchor");
+    }
+    this.noteFlowStyledElements?.clear();
+  }
+  applyNoteFlowLayout() {
+    if (!this.supportsNoteFlow() || !this.drawingsVisible || !this.canvas?.isConnected) {
+      this.clearNoteFlowLayout();
+      return false;
+    }
+    this.clearNoteFlowLayout();
+    const flows = (this.drawingData?.strokes || []).filter((stroke) => stroke?.noteFlow?.enabled && !isConnectorStroke(stroke)).map((stroke) => ({
+      stroke,
+      bounds: getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight())
+    })).filter((item) => item.bounds).sort((a, b) => a.bounds.minY - b.bounds.minY);
+    if (!flows.length) {
+      const changed2 = Boolean(this.noteFlowLayoutSignature);
+      this.noteFlowLayoutSignature = "";
+      return changed2;
+    }
+    const canvasRect = this.canvas.getBoundingClientRect();
+    const scaleY = canvasRect.height > 0 ? canvasRect.height / Math.max(1, this.canvasRenderHeight) : 1;
+    const offsets = /* @__PURE__ */ new Map();
+    for (const item of flows) {
+      item.stroke.noteFlow = this.captureNoteFlowAnchor(item.stroke);
+      const anchor = this.noteFlowAnchorElement(item.stroke.noteFlow);
+      const first = anchor || Array.from(this.previewEl.querySelectorAll?.("[data-note-draw-line-start]") || [])[0] || null;
+      if (!first) {
+        continue;
+      }
+      const property = anchor ? "margin-bottom" : "margin-top";
+      if (!this.noteFlowStyledElements.has(first)) {
+        const value = first.style.getPropertyValue(property);
+        const priority = first.style.getPropertyPriority(property);
+        this.noteFlowStyledElements.set(first, {
+          property,
+          value,
+          priority,
+          base: Number.parseFloat(window.getComputedStyle(first).getPropertyValue(property)) || 0
+        });
+      }
+      const rect = first.getBoundingClientRect();
+      const desiredBottom = canvasRect.top + (item.bounds.maxY - this.canvasWindowTop) * scaleY + Number(item.stroke.noteFlow.gap || 12) * scaleY;
+      const edge = anchor ? rect.bottom : rect.top;
+      const required = Math.max(0, (desiredBottom - edge) / Math.max(0.01, scaleY));
+      const offset = Math.max(offsets.get(first) || 0, required);
+      offsets.set(first, offset);
+      const state = this.noteFlowStyledElements.get(first);
+      first.style.setProperty(state.property, `${Math.ceil(state.base + offset)}px`, "important");
+      first.classList.add("notedraw-note-flow-anchor");
+    }
+    const signature = Array.from(offsets, ([element, offset]) => `${element.dataset.noteDrawSourcePath || ""}:${element.dataset.noteDrawLineStart || ""}:${Math.round(offset)}`).join("|");
+    const changed = signature !== this.noteFlowLayoutSignature;
+    this.noteFlowLayoutSignature = signature;
+    return changed;
+  }
+  scheduleNoteFlowLayout() {
+    if (this.noteFlowFrameId !== null) {
+      return;
+    }
+    this.noteFlowFrameId = window.requestAnimationFrame(() => {
+      this.noteFlowFrameId = null;
+      if (this.applyNoteFlowLayout()) {
+        this.scheduleResize({ layout: true });
+      }
+    });
+  }
+  cancelNoteFlowLayout() {
+    if (this.noteFlowFrameId !== null) {
+      window.cancelAnimationFrame(this.noteFlowFrameId);
+      this.noteFlowFrameId = null;
+    }
   }
   getSelectedStrokeIndexes() {
     if (this.selectedStrokeIndexes.size) {
@@ -8687,10 +9622,10 @@ var PreviewDrawingController = class {
       return null;
     }
     return {
-      minX: clamp6(bounds.minX / width, 0, 1),
-      minY: clamp6(bounds.minY / height, 0, 1),
-      maxX: clamp6(bounds.maxX / width, 0, 1),
-      maxY: clamp6(bounds.maxY / height, 0, 1)
+      minX: clamp7(bounds.minX / width, 0, 1),
+      minY: clamp7(bounds.minY / height, 0, 1),
+      maxX: clamp7(bounds.maxX / width, 0, 1),
+      maxY: clamp7(bounds.maxY / height, 0, 1)
     };
   }
   getSelectedStrokeNormalizedBounds() {
@@ -8737,8 +9672,8 @@ var PreviewDrawingController = class {
     const delta = this.computeSnapDeltaForNormalizedBounds(bounds, []);
     return {
       ...point,
-      x: clamp6((x + delta.dx * width) / width, 0, 1),
-      y: clamp6((y + delta.dy * height) / height, 0, 1)
+      x: clamp7((x + delta.dx * width) / width, 0, 1),
+      y: clamp7((y + delta.dy * height) / height, 0, 1)
     };
   }
   reorderSelectedStrokes(direction) {
@@ -8772,6 +9707,7 @@ var PreviewDrawingController = class {
     this.invalidateStaticCache();
     this.plugin.scheduleDrawingSave(this.file, this.drawingData);
     this.recordDrawingHistory(historyBefore);
+    this.scheduleNoteFlowLayout();
     this.render();
   }
   toggleSelectedStrokeLock() {
@@ -9150,14 +10086,20 @@ var PreviewDrawingController = class {
       return;
     }
     const historyBefore = this.captureDrawingHistorySnapshot();
+    const deletedIds = new Set(indexes.map((index) => strokeElementId(this.drawingData.strokes[index])).filter(Boolean));
     for (const index of indexes.slice().sort((a, b) => b - a)) {
       this.drawingData.strokes.splice(index, 1);
     }
+    this.drawingData.strokes = this.drawingData.strokes.filter((stroke) => {
+      const connector = normalizeConnector(stroke.connector);
+      return !connector || !deletedIds.has(connector.fromId) && !deletedIds.has(connector.toId);
+    });
     this.clearSelectedStrokes();
     this.redoStack = [];
     this.rebuildElementRelations();
     this.plugin.scheduleDrawingSave(this.file, this.drawingData);
     this.recordDrawingHistory(historyBefore);
+    this.scheduleNoteFlowLayout();
     this.render();
   }
 };
@@ -9548,20 +10490,20 @@ function sanitizeSettings(settings) {
   return {
     language: normalizeLanguageCode(input.language ?? DEFAULT_SETTINGS.language),
     defaultPenColor: isCssColor(input.defaultPenColor) ? input.defaultPenColor : DEFAULT_SETTINGS.defaultPenColor,
-    defaultPenWidth: clamp6(Number(input.defaultPenWidth ?? DEFAULT_SETTINGS.defaultPenWidth), MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH),
-    defaultPenOpacity: clamp6(Number(input.defaultPenOpacity ?? DEFAULT_SETTINGS.defaultPenOpacity), 0, 1),
+    defaultPenWidth: clamp7(Number(input.defaultPenWidth ?? DEFAULT_SETTINGS.defaultPenWidth), MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH),
+    defaultPenOpacity: clamp7(Number(input.defaultPenOpacity ?? DEFAULT_SETTINGS.defaultPenOpacity), 0, 1),
     defaultWatercolorColor: isCssColor(input.defaultWatercolorColor) ? input.defaultWatercolorColor : DEFAULT_SETTINGS.defaultWatercolorColor,
-    defaultWatercolorWidth: clamp6(Number(input.defaultWatercolorWidth ?? DEFAULT_SETTINGS.defaultWatercolorWidth), MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH),
-    defaultWatercolorOpacity: clamp6(Number(input.defaultWatercolorOpacity ?? DEFAULT_SETTINGS.defaultWatercolorOpacity), 0, 1),
-    toolbarTopOffset: clamp6(Number(input.toolbarTopOffset ?? DEFAULT_SETTINGS.toolbarTopOffset), 0, 48),
-    longPressMs: clamp6(Number(input.longPressMs ?? DEFAULT_SETTINGS.longPressMs), MIN_LONG_PRESS_MS, MAX_LONG_PRESS_MS),
-    selectTapDistance: clamp6(Number(input.selectTapDistance ?? DEFAULT_SETTINGS.selectTapDistance), MIN_SELECT_TAP_DISTANCE, MAX_SELECT_TAP_DISTANCE),
-    selectStrokePadding: clamp6(Number(input.selectStrokePadding ?? DEFAULT_SETTINGS.selectStrokePadding), MIN_SELECT_STROKE_PADDING, MAX_SELECT_STROKE_PADDING),
-    selectedStrokeAlpha: clamp6(Number(input.selectedStrokeAlpha ?? DEFAULT_SETTINGS.selectedStrokeAlpha), MIN_SELECTED_STROKE_ALPHA, MAX_SELECTED_STROKE_ALPHA),
-    drawingInterpolationStep: clamp6(Number(input.drawingInterpolationStep ?? DEFAULT_SETTINGS.drawingInterpolationStep), MIN_DRAWING_INTERPOLATION_STEP_PX, MAX_DRAWING_INTERPOLATION_STEP_PX),
-    drawingMinPointDistance: clamp6(Number(input.drawingMinPointDistance ?? DEFAULT_SETTINGS.drawingMinPointDistance), MIN_DRAWING_MIN_POINT_DISTANCE_PX, MAX_DRAWING_MIN_POINT_DISTANCE_PX),
-    drawingCompactDistance: clamp6(Number(input.drawingCompactDistance ?? DEFAULT_SETTINGS.drawingCompactDistance), MIN_DRAWING_COMPACT_DISTANCE_PX, MAX_DRAWING_COMPACT_DISTANCE_PX),
-    autoSaveDelayMs: clamp6(Number(input.autoSaveDelayMs ?? DEFAULT_SETTINGS.autoSaveDelayMs), MIN_AUTO_SAVE_DELAY_MS, MAX_AUTO_SAVE_DELAY_MS),
+    defaultWatercolorWidth: clamp7(Number(input.defaultWatercolorWidth ?? DEFAULT_SETTINGS.defaultWatercolorWidth), MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH),
+    defaultWatercolorOpacity: clamp7(Number(input.defaultWatercolorOpacity ?? DEFAULT_SETTINGS.defaultWatercolorOpacity), 0, 1),
+    toolbarTopOffset: clamp7(Number(input.toolbarTopOffset ?? DEFAULT_SETTINGS.toolbarTopOffset), 0, 48),
+    longPressMs: clamp7(Number(input.longPressMs ?? DEFAULT_SETTINGS.longPressMs), MIN_LONG_PRESS_MS, MAX_LONG_PRESS_MS),
+    selectTapDistance: clamp7(Number(input.selectTapDistance ?? DEFAULT_SETTINGS.selectTapDistance), MIN_SELECT_TAP_DISTANCE, MAX_SELECT_TAP_DISTANCE),
+    selectStrokePadding: clamp7(Number(input.selectStrokePadding ?? DEFAULT_SETTINGS.selectStrokePadding), MIN_SELECT_STROKE_PADDING, MAX_SELECT_STROKE_PADDING),
+    selectedStrokeAlpha: clamp7(Number(input.selectedStrokeAlpha ?? DEFAULT_SETTINGS.selectedStrokeAlpha), MIN_SELECTED_STROKE_ALPHA, MAX_SELECTED_STROKE_ALPHA),
+    drawingInterpolationStep: clamp7(Number(input.drawingInterpolationStep ?? DEFAULT_SETTINGS.drawingInterpolationStep), MIN_DRAWING_INTERPOLATION_STEP_PX, MAX_DRAWING_INTERPOLATION_STEP_PX),
+    drawingMinPointDistance: clamp7(Number(input.drawingMinPointDistance ?? DEFAULT_SETTINGS.drawingMinPointDistance), MIN_DRAWING_MIN_POINT_DISTANCE_PX, MAX_DRAWING_MIN_POINT_DISTANCE_PX),
+    drawingCompactDistance: clamp7(Number(input.drawingCompactDistance ?? DEFAULT_SETTINGS.drawingCompactDistance), MIN_DRAWING_COMPACT_DISTANCE_PX, MAX_DRAWING_COMPACT_DISTANCE_PX),
+    autoSaveDelayMs: clamp7(Number(input.autoSaveDelayMs ?? DEFAULT_SETTINGS.autoSaveDelayMs), MIN_AUTO_SAVE_DELAY_MS, MAX_AUTO_SAVE_DELAY_MS),
     enableDebugLog: Boolean(input.enableDebugLog)
   };
 }
@@ -9717,20 +10659,20 @@ function contrastTextColor(hexColor) {
   return luminance > 0.58 ? "#111827" : "#ffffff";
 }
 function brushWidthToPaletteSlider(value) {
-  const width = clamp6(Number(value) || MIN_BRUSH_WIDTH, MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH);
+  const width = clamp7(Number(value) || MIN_BRUSH_WIDTH, MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH);
   const ratio = Math.log(width / MIN_BRUSH_WIDTH) / Math.log(MAX_BRUSH_WIDTH / MIN_BRUSH_WIDTH);
-  return Math.round(clamp6(ratio, 0, 1) * 1e3);
+  return Math.round(clamp7(ratio, 0, 1) * 1e3);
 }
 function paletteSliderToBrushWidth(value) {
-  const ratio = clamp6(Number(value) / 1e3, 0, 1);
+  const ratio = clamp7(Number(value) / 1e3, 0, 1);
   const width = MIN_BRUSH_WIDTH * Math.pow(MAX_BRUSH_WIDTH / MIN_BRUSH_WIDTH, ratio);
   return Math.round(width * 100) / 100;
 }
 function opacityToPaletteSlider(value) {
-  return Math.round(Math.sqrt(clamp6(Number(value), 0, 1)) * 1e3);
+  return Math.round(Math.sqrt(clamp7(Number(value), 0, 1)) * 1e3);
 }
 function paletteSliderToOpacity(value) {
-  const normalized = clamp6(Number(value) / 1e3, 0, 1);
+  const normalized = clamp7(Number(value) / 1e3, 0, 1);
   return Math.round(normalized * normalized * 1e4) / 1e4;
 }
 function isSourceTextTarget(target, previewEl) {
@@ -10006,7 +10948,7 @@ function normalizeCssColor(value) {
   if (!rgb) {
     return "";
   }
-  const toHex = (part) => clamp6(Math.round(Number(part)), 0, 255).toString(16).padStart(2, "0");
+  const toHex = (part) => clamp7(Math.round(Number(part)), 0, 255).toString(16).padStart(2, "0");
   return `#${toHex(rgb[1])}${toHex(rgb[2])}${toHex(rgb[3])}`;
 }
 function isSafeCssSize(value) {
@@ -10734,7 +11676,42 @@ function normalizeBrushVariant(brush, variant) {
   if (brush === BRUSH_WATERCOLOR) {
     return [WATERCOLOR_VARIANT_TEXT, WATERCOLOR_VARIANT_STRAIGHT].includes(value) ? value : BRUSH_VARIANT_DEFAULT;
   }
-  return value === PEN_VARIANT_FOUNTAIN ? PEN_VARIANT_FOUNTAIN : BRUSH_VARIANT_DEFAULT;
+  return [PEN_VARIANT_FOUNTAIN, PEN_VARIANT_NOTE].includes(value) ? value : BRUSH_VARIANT_DEFAULT;
+}
+function normalizeConnector(value) {
+  if (!value || typeof value.fromId !== "string" || !value.fromId || typeof value.toId !== "string" || !value.toId || value.fromId === value.toId) {
+    return null;
+  }
+  return {
+    fromId: value.fromId,
+    toId: value.toId,
+    style: value.style === "mindmap" ? "mindmap" : "curve",
+    arrow: value.arrow !== false
+  };
+}
+function normalizeNoteFlow(value) {
+  if (!value?.enabled) {
+    return null;
+  }
+  const line = Number(value.line);
+  return {
+    enabled: true,
+    path: normalizeVaultPath(value.path || ""),
+    line: Number.isFinite(line) && line >= 0 ? line : null,
+    gap: clamp7(Number(value.gap) || 12, 4, 64)
+  };
+}
+function normalizeMindMapNode(value) {
+  if (!value || typeof value.mapId !== "string" || typeof value.nodeId !== "string") {
+    return null;
+  }
+  return {
+    mapId: value.mapId,
+    nodeId: value.nodeId,
+    parentId: typeof value.parentId === "string" ? value.parentId : "",
+    depth: Math.max(0, Math.round(Number(value.depth) || 0)),
+    role: value.role === "root" ? "root" : value.role === "heading" ? "heading" : "node"
+  };
 }
 function normalizeTextRenderMode(mode) {
   if ([TEXT_RENDER_MARKDOWN, TEXT_RENDER_HTML, TEXT_RENDER_NOTE].includes(mode)) {
@@ -10930,15 +11907,17 @@ function normalizeStroke(stroke) {
   const points = Array.isArray(stroke?.points) ? stroke.points : [];
   const kind = normalizeStrokeKind(stroke?.kind);
   const brush = stroke?.brush === BRUSH_WATERCOLOR ? BRUSH_WATERCOLOR : BRUSH_PEN;
+  const layout = normalizeElementLayout(stroke?.layout);
   return {
+    elementId: typeof stroke?.elementId === "string" && stroke.elementId ? stroke.elementId : layout?.id || "",
     kind,
     embedType: normalizeEmbedType(stroke?.embedType),
     brush,
     variant: normalizeBrushVariant(brush, stroke?.variant),
     color: typeof stroke?.color === "string" ? stroke.color : "#e53935",
-    width: Number.isFinite(Number(stroke?.width)) ? clamp6(Number(stroke.width), MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH) : 3,
-    opacity: clamp6(Number(stroke?.opacity ?? DEFAULT_PEN_OPACITY), 0, 1),
-    count: clamp6(Math.round(Number(stroke?.count) || 1), 1, MAX_PEN_COUNT),
+    width: Number.isFinite(Number(stroke?.width)) ? clamp7(Number(stroke.width), MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH) : 3,
+    opacity: clamp7(Number(stroke?.opacity ?? DEFAULT_PEN_OPACITY), 0, 1),
+    count: clamp7(Math.round(Number(stroke?.count) || 1), 1, MAX_PEN_COUNT),
     text: typeof stroke?.text === "string" ? stroke.text : "",
     render: normalizeTextRenderMode(stroke?.render),
     assetPath: normalizeVaultPath(stroke?.assetPath || ""),
@@ -10946,10 +11925,10 @@ function normalizeStroke(stroke) {
     assetMime: typeof stroke?.assetMime === "string" ? stroke.assetMime : "",
     assetSize: Number.isFinite(Number(stroke?.assetSize)) ? Math.max(0, Number(stroke.assetSize)) : 0,
     exportImageDataUrl: normalizeImageDataUrl(stroke?.exportImageDataUrl),
-    previewWidth: Number.isFinite(Number(stroke?.previewWidth)) ? clamp6(Number(stroke.previewWidth), 80, 900) : 260,
-    previewHeight: Number.isFinite(Number(stroke?.previewHeight)) ? clamp6(Number(stroke.previewHeight), 40, 700) : 160,
-    textWidth: Number.isFinite(Number(stroke?.textWidth)) && Number(stroke.textWidth) > 0 ? clamp6(Number(stroke.textWidth), 24, 900) : null,
-    fontSize: Number.isFinite(Number(stroke?.fontSize)) ? clamp6(Number(stroke.fontSize), 10, 72) : 18,
+    previewWidth: Number.isFinite(Number(stroke?.previewWidth)) ? clamp7(Number(stroke.previewWidth), 80, 900) : 260,
+    previewHeight: Number.isFinite(Number(stroke?.previewHeight)) ? clamp7(Number(stroke.previewHeight), 40, 700) : 160,
+    textWidth: Number.isFinite(Number(stroke?.textWidth)) && Number(stroke.textWidth) > 0 ? clamp7(Number(stroke.textWidth), 24, 900) : null,
+    fontSize: Number.isFinite(Number(stroke?.fontSize)) ? clamp7(Number(stroke.fontSize), 10, 72) : 18,
     bold: Boolean(stroke?.bold),
     code: Boolean(stroke?.code),
     boxed: Boolean(stroke?.boxed),
@@ -10958,10 +11937,13 @@ function normalizeStroke(stroke) {
     buttonStyle: normalizeButtonStyle(stroke?.buttonStyle),
     snap: Boolean(stroke?.snap),
     locked: Boolean(stroke?.locked),
-    layout: normalizeElementLayout(stroke?.layout),
+    connector: normalizeConnector(stroke?.connector),
+    noteFlow: normalizeNoteFlow(stroke?.noteFlow),
+    mindMapNode: normalizeMindMapNode(stroke?.mindMapNode),
+    layout,
     points: points.map((point) => ({
-      x: clamp6(Number(point?.x), 0, 1),
-      y: clamp6(Number(point?.y), 0, 1),
+      x: clamp7(Number(point?.x), 0, 1),
+      y: clamp7(Number(point?.y), 0, 1),
       t: Number.isFinite(Number(point?.t)) ? Number(point.t) : Date.now(),
       anchor: normalizeResponsiveAnchor(point?.anchor)
     })).filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
@@ -10982,11 +11964,17 @@ function isEmbedStroke(stroke) {
 function isImageEmbedStroke(stroke) {
   return stroke?.kind === TOOL_EMBED && normalizeEmbedType(stroke.embedType) === EMBED_IMAGE && Boolean(stroke.assetPath || stroke.exportImageDataUrl);
 }
+function strokeElementId(stroke) {
+  return typeof stroke?.elementId === "string" && stroke.elementId ? stroke.elementId : normalizeElementLayout(stroke?.layout)?.id || "";
+}
+function isConnectorStroke(stroke) {
+  return Boolean(normalizeConnector(stroke?.connector));
+}
 function isButtonLikeStroke(stroke) {
   return stroke?.uiRole === "button" || Boolean(normalizeButtonStyle(stroke?.buttonStyle));
 }
 function isSnapStroke(stroke) {
-  return Boolean(stroke?.snap) || stroke?.uiRole === "button" || stroke?.uiRole === "arrow";
+  return Boolean(stroke?.snap) || stroke?.uiRole === "button" || stroke?.uiRole === "arrow" || isConnectorStroke(stroke);
 }
 function isSnapPreset(preset) {
   return ["button", "buttonPrimary", "buttonOutline", "buttonPill", "arrowUp", "arrowDown", "arrowLeft", "arrowRight"].includes(preset);
@@ -11528,6 +12516,9 @@ function createElementLayoutId(index = -1) {
 function needsElementLayoutMigration(strokes) {
   const ids = /* @__PURE__ */ new Set();
   return (Array.isArray(strokes) ? strokes : []).some((stroke) => {
+    if (isConnectorStroke(stroke)) {
+      return false;
+    }
     const id = normalizeElementLayout(stroke?.layout)?.id;
     if (!id || ids.has(id)) {
       return true;
@@ -11577,7 +12568,7 @@ function collectRenderedLineAnchors(root, canvas, canvasWindowTop, visualScale =
       bottom: (rect.bottom - canvasRect.top) / scale + canvasWindowTop,
       height: rect.height / scale,
       area: rect.width * rect.height / (scale * scale),
-      confidence: clamp6(Number(element.dataset.noteDrawLineConfidence ?? 1), 0, 1)
+      confidence: clamp7(Number(element.dataset.noteDrawLineConfidence ?? 1), 0, 1)
     });
   }
   return anchors;
@@ -11623,13 +12614,13 @@ function captureRenderedLineLocation(anchors, canvasX, canvasY, { maxDistance = 
   if (!anchor) {
     return null;
   }
-  const ratio = clamp6((canvasY - anchor.top) / Math.max(1, anchor.height), 0, 0.999999);
+  const ratio = clamp7((canvasY - anchor.top) / Math.max(1, anchor.height), 0, 0.999999);
   const distance = Number(anchor.distance || 0);
   const inside = canvasY >= anchor.top && canvasY <= anchor.bottom;
   return {
     path: anchor.path,
     line: anchor.start + ratio * Math.max(1, anchor.end - anchor.start + 1),
-    lineConfidence: inside ? anchor.confidence : Math.min(anchor.confidence, clamp6(1 - distance / Math.max(1, maxDistance), 0, 0.55))
+    lineConfidence: inside ? anchor.confidence : Math.min(anchor.confidence, clamp7(1 - distance / Math.max(1, maxDistance), 0, 0.55))
   };
 }
 function projectRenderedLineLocation(anchors, path, line) {
@@ -11644,7 +12635,7 @@ function projectRenderedLineLocation(anchors, path, line) {
   if (!anchor) {
     return NaN;
   }
-  const ratio = clamp6((lineNumber - anchor.start) / Math.max(1, anchor.end - anchor.start + 1), 0, 1);
+  const ratio = clamp7((lineNumber - anchor.start) / Math.max(1, anchor.end - anchor.start + 1), 0, 1);
   return anchor.top + ratio * anchor.height;
 }
 function captureCodeMirrorLineLocation(codeMirror, clientX, clientY, sourcePath) {
@@ -11659,7 +12650,7 @@ function captureCodeMirrorLineLocation(codeMirror, clientX, clientY, sourcePath)
     const endRect = codeMirror.coordsAtPos?.(line.to);
     const top = Math.min(startRect?.top ?? clientY, endRect?.top ?? startRect?.top ?? clientY);
     const bottom = Math.max(startRect?.bottom ?? clientY + 1, endRect?.bottom ?? startRect?.bottom ?? clientY + 1);
-    const ratio = clamp6((clientY - top) / Math.max(1, bottom - top), 0, 0.999999);
+    const ratio = clamp7((clientY - top) / Math.max(1, bottom - top), 0, 0.999999);
     return {
       path: normalizeVaultPath(sourcePath),
       line: Math.max(0, line.number - 1) + ratio,
@@ -11689,7 +12680,7 @@ function projectCodeMirrorLineLocation(codeMirror, linePosition) {
     }
     const top = Math.min(startRect?.top ?? endRect.top, endRect?.top ?? startRect.top);
     const bottom = Math.max(startRect?.bottom ?? endRect.bottom, endRect?.bottom ?? startRect.bottom);
-    return top + clamp6(lineNumber - Math.floor(lineNumber), 0, 1) * Math.max(1, bottom - top);
+    return top + clamp7(lineNumber - Math.floor(lineNumber), 0, 1) * Math.max(1, bottom - top);
   } catch (error) {
     void error;
     return NaN;
@@ -11739,7 +12730,7 @@ function measureVisibleSurfaceWindow(previewEl, scrollContainer, documentHeight,
   if (scrollContainer === previewEl) {
     const viewportHeight = Math.max(1, (previewEl.clientHeight || previewRect?.height || window.innerHeight || 1) / scale);
     return {
-      top: clamp6((Number(previewEl.scrollTop) || 0) / scale, 0, Math.max(0, height - viewportHeight)),
+      top: clamp7((Number(previewEl.scrollTop) || 0) / scale, 0, Math.max(0, height - viewportHeight)),
       height: Math.min(height, viewportHeight)
     };
   }
@@ -11752,7 +12743,7 @@ function measureVisibleSurfaceWindow(previewEl, scrollContainer, documentHeight,
   const viewportTop = Math.max(0, (viewportRect.top - surfaceTop) / scale);
   const viewportBottom = Math.min(height, ((viewportRect.bottom || viewportRect.top + viewportRect.height) - surfaceTop) / scale);
   return {
-    top: clamp6(viewportTop, 0, Math.max(0, height - 1)),
+    top: clamp7(viewportTop, 0, Math.max(0, height - 1)),
     height: Math.max(1, viewportBottom - viewportTop || (viewportRect.height || window.innerHeight || 1) / scale)
   };
 }
@@ -11876,12 +12867,63 @@ function pointDistanceOnCanvas(a, b, width, height) {
     ((a?.y || 0) - (b?.y || 0)) * Math.max(1, height || 1)
   );
 }
+function buildBoundConnectorPoints(fromBounds, toBounds, canvasWidth, canvasHeight) {
+  const fromCenter = {
+    x: (fromBounds.minX + fromBounds.maxX) / 2,
+    y: (fromBounds.minY + fromBounds.maxY) / 2
+  };
+  const toCenter = {
+    x: (toBounds.minX + toBounds.maxX) / 2,
+    y: (toBounds.minY + toBounds.maxY) / 2
+  };
+  const dx = toCenter.x - fromCenter.x;
+  const dy = toCenter.y - fromCenter.y;
+  const horizontal = Math.abs(dx) >= Math.abs(dy) * 0.62;
+  const from = horizontal ? {
+    x: dx >= 0 ? fromBounds.maxX : fromBounds.minX,
+    y: fromCenter.y
+  } : {
+    x: fromCenter.x,
+    y: dy >= 0 ? fromBounds.maxY : fromBounds.minY
+  };
+  const to = horizontal ? {
+    x: dx >= 0 ? toBounds.minX : toBounds.maxX,
+    y: toCenter.y
+  } : {
+    x: toCenter.x,
+    y: dy >= 0 ? toBounds.minY : toBounds.maxY
+  };
+  const bend = horizontal ? Math.max(24, Math.abs(to.x - from.x) * 0.46) : Math.max(24, Math.abs(to.y - from.y) * 0.46);
+  const c1 = horizontal ? { x: from.x + Math.sign(dx || 1) * bend, y: from.y } : { x: from.x, y: from.y + Math.sign(dy || 1) * bend };
+  const c2 = horizontal ? { x: to.x - Math.sign(dx || 1) * bend, y: to.y } : { x: to.x, y: to.y - Math.sign(dy || 1) * bend };
+  const points = [];
+  const count = 20;
+  for (let index = 0; index <= count; index += 1) {
+    const t = index / count;
+    const inverse = 1 - t;
+    const x = inverse ** 3 * from.x + 3 * inverse ** 2 * t * c1.x + 3 * inverse * t ** 2 * c2.x + t ** 3 * to.x;
+    const y = inverse ** 3 * from.y + 3 * inverse ** 2 * t * c1.y + 3 * inverse * t ** 2 * c2.y + t ** 3 * to.y;
+    points.push({
+      x: clamp7(x / Math.max(1, canvasWidth), 0, 1),
+      y: clamp7(y / Math.max(1, canvasHeight), 0, 1),
+      t: Date.now(),
+      anchor: null
+    });
+  }
+  return points;
+}
+function sameStrokePointPath(left, right, tolerance = 1e-6) {
+  if (!Array.isArray(left) || left.length !== right.length) {
+    return false;
+  }
+  return left.every((point, index) => Math.abs(Number(point.x) - Number(right[index].x)) <= tolerance && Math.abs(Number(point.y) - Number(right[index].y)) <= tolerance);
+}
 function getTextStrokeLayout(stroke, width, measureText = null) {
   const point = stroke?.points?.[0] || { x: 0, y: 0 };
-  const fontSize = clamp6(Number(stroke?.fontSize || 18), 10, 72);
+  const fontSize = clamp7(Number(stroke?.fontSize || 18), 10, 72);
   const uiArrow = stroke?.uiRole === "arrow";
   const padded = !uiArrow && (stroke?.boxed || stroke?.code || stroke?.file || isButtonLikeStroke(stroke));
-  const canvasX = clamp6(Number(point.x || 0), 0, 1) * Math.max(1, Number(width) || 1);
+  const canvasX = clamp7(Number(point.x || 0), 0, 1) * Math.max(1, Number(width) || 1);
   const maxWidth = Math.max(fontSize, Math.max(1, Number(width) || 1) - canvasX - Math.max(8, fontSize * 0.45) - 8);
   return computeTextLayout({
     text: String(stroke?.text || "").trim(),
@@ -11898,8 +12940,8 @@ function getStrokeBounds(stroke, width, height) {
   }
   if (isEmbedStroke(stroke) || isRichTextStroke(stroke)) {
     const point = stroke.points[0];
-    const previewWidth = clamp6(Number(stroke.previewWidth || 260), 80, 900);
-    const previewHeight = clamp6(Number(stroke.previewHeight || 160), 40, 700);
+    const previewWidth = clamp7(Number(stroke.previewWidth || 260), 80, 900);
+    const previewHeight = clamp7(Number(stroke.previewHeight || 160), 40, 700);
     const x = point.x * width;
     const y = point.y * height;
     return {
@@ -12116,7 +13158,7 @@ function distanceToSegment(point, start, end) {
   if (dx === 0 && dy === 0) {
     return pointerDistance(point, start);
   }
-  const t = clamp6(((point.x - start.x) * dx + (point.y - start.y) * dy) / (dx * dx + dy * dy), 0, 1);
+  const t = clamp7(((point.x - start.x) * dx + (point.y - start.y) * dy) / (dx * dx + dy * dy), 0, 1);
   const projection = {
     x: start.x + t * dx,
     y: start.y + t * dy
@@ -12175,7 +13217,7 @@ function formatReplacementBlock(originalBlock, editedText) {
   }
   return edited;
 }
-function clamp6(value, min, max) {
+function clamp7(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 

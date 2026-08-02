@@ -21,7 +21,7 @@ test("default brushes remain separate from opt-in fountain and watercolor varian
 
   assert.match(source, /this\.brushVariants = \{\s*\[BRUSH_PEN\]: BRUSH_VARIANT_DEFAULT,\s*\[BRUSH_WATERCOLOR\]: BRUSH_VARIANT_DEFAULT/);
   assert.match(source, /variant: this\.currentBrushVariant\(\)/);
-  assert.match(source, /normalizeBrushVariant\(BRUSH_PEN, stroke\.variant\) === PEN_VARIANT_FOUNTAIN/);
+  assert.match(source, /\[PEN_VARIANT_FOUNTAIN, PEN_VARIANT_NOTE\]\.includes\(normalizeBrushVariant\(BRUSH_PEN, stroke\.variant\)\)/);
   assert.match(source, /straightenWatercolorPoints\(stroke\.points/);
   assert.match(source, /snapWatercolorStrokeToTextLine\(stroke\)/);
   assert.match(source, /event\.composedPath\(\)/);
@@ -89,7 +89,55 @@ test("palette changes update the selected NoteDraw elements", async () => {
   assert.match(source, /applyColorToSelectedStrokes\(color\)[\s\S]*this\.drawingData\.strokes\[index\]\.color = color/);
   assert.match(source, /recordDrawingHistory\(historyBefore\)/);
   assert.match(source, /this\.toolMode === TOOL_SELECT && !this\.getSelectedStrokeIndexes\(\)\.length/);
-  assert.match(source, /const paletteDisabled = this\.toolMode === TOOL_EDIT_MD \|\| this\.toolMode === TOOL_SELECT && !this\.getSelectedStrokeIndexes\(\)\.length/);
+  assert.match(source, /const paletteDisabled = this\.toolMode === TOOL_EDIT_MD \|\| this\.toolMode === TOOL_SELECT && !selectedElements/);
+  assert.match(source, /this\.paletteButton\?\.classList\.toggle\("is-selection-available", this\.toolMode === TOOL_SELECT && selectedElements\)/);
+  assert.match(source, /setSelectedStrokes\(indexes\)[\s\S]*this\.updateToolButtons\(\)/);
+});
+
+test("structured element clipboard supports long-press actions, commands, and cross-note anchor rebuilding", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+
+  assert.match(source, /this\.elementClipboard = null/);
+  assert.match(source, /id: "copy-selected-elements"/);
+  assert.match(source, /id: "paste-elements"/);
+  assert.match(source, /copySelectedElements\(options = \{\}\)/);
+  assert.match(source, /pasteCopiedElements\(options = \{\}\)/);
+  assert.match(source, /stroke\.layout = null/);
+  assert.match(source, /idMap\.get\(stroke\.connector\.fromId\)/);
+  assert.match(source, /this\.captureResponsiveAnchorsForIndexes\(indexes\.filter/);
+  assert.match(source, /\{ icon: "copy", key: "copyElement"/);
+  assert.match(source, /\{ icon: "clipboard-paste", key: "pasteElement"/);
+});
+
+test("reading-only note pen and selected elements can reserve Markdown flow space without editing Markdown", async () => {
+  const [source, styles] = await Promise.all([
+    readFile(sourceUrl, "utf8"),
+    readFile(stylesUrl, "utf8")
+  ]);
+
+  assert.match(source, /var PEN_VARIANT_NOTE = "note-flow"/);
+  assert.match(source, /variant: PEN_VARIANT_NOTE, labelKey: "notePen"/);
+  assert.match(source, /return this\.surfaceType === "preview" && !this\.embeddedSurface/);
+  assert.match(source, /toggleSelectedNoteFlow\(\)/);
+  assert.match(source, /captureNoteFlowAnchor\(stroke\)/);
+  assert.match(source, /applyNoteFlowLayout\(\)/);
+  assert.match(source, /first\.style\.setProperty\(state\.property, `\$\{Math\.ceil\(state\.base \+ offset\)\}px`, "important"\)/);
+  assert.doesNotMatch(source.slice(source.indexOf("  applyNoteFlowLayout()"), source.indexOf("  scheduleNoteFlowLayout()")), /vault\.modify|app\.vault\.process/);
+  assert.match(styles, /\.notedraw-note-flow-anchor/);
+});
+
+test("mind map import creates editable NoteDraw nodes and magnetically bound connectors", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+
+  assert.match(source, /import \{ layoutMindMap, parseMarkdownMindMap \} from "\.\/mind-map\.mjs"/);
+  assert.match(source, /new NoteDrawFileSuggestModal\(this\.plugin\.app, this\.file/);
+  assert.match(source, /async insertMindMapAt\(point, sourceFile, options = \{\}\)/);
+  assert.match(source, /kind: TOOL_TEXT/);
+  assert.match(source, /mindMapNode:/);
+  assert.match(source, /connector: \{\s*fromId: idMap\.get\(edge\.fromId\),\s*toId: idMap\.get\(edge\.toId\)/);
+  assert.match(source, /syncBoundConnectors\(\)/);
+  assert.match(source, /buildBoundConnectorPoints\(fromBounds, toBounds/);
+  assert.match(source, /drawBoundConnectorOn\(ctx, stroke, alpha\)/);
 });
 
 test("brush, palette, and text controls use touch-safe taps and anchor below their buttons", async () => {
