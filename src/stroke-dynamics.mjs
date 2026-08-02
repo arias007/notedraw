@@ -24,10 +24,8 @@ export function buildFountainPenSegments(points, {
   const height = Math.max(1, finite(canvasHeight, 1));
   const strokeWidth = Math.max(0.25, finite(baseWidth, 3));
   const strokeOpacity = clamp(finite(baseOpacity, 1), 0, 1);
-  const minimumVisibleWidth = Math.min(strokeWidth, Math.max(0.65, strokeWidth * 0.48));
-  const segments = [];
-  let widthFactor = null;
-  let smoothedSpeed = null;
+  const minimumVisibleWidth = Math.min(strokeWidth, Math.max(0.8, strokeWidth * 0.7));
+  const samples = [];
   for (let index = 1; index < points.length; index += 1) {
     const from = points[index - 1];
     const to = points[index];
@@ -51,16 +49,46 @@ export function buildFountainPenSegments(points, {
       sampleElapsed = finite(to?.t, index * 16) - finite(previous?.t, sampleStart * 16);
     }
     const elapsed = clamp(sampleElapsed > 0 ? sampleElapsed : 4, 1, 250);
-    const speed = sampleDistance / elapsed;
-    smoothedSpeed = smoothedSpeed === null ? speed : mix(smoothedSpeed, speed, speed > smoothedSpeed ? 0.42 : 0.28);
-    const speedRatio = clamp((smoothedSpeed - 0.1) / 1.75, 0, 1);
-    const targetWidthFactor = mix(1.78, 0.56, Math.pow(speedRatio, 0.9));
-    widthFactor = widthFactor === null ? targetWidthFactor : mix(widthFactor, targetWidthFactor, 0.34);
-    segments.push({
+    samples.push({
       from,
       to,
-      speed,
-      width: clamp(strokeWidth * widthFactor, minimumVisibleWidth, strokeWidth * 1.85),
+      speed: sampleDistance / elapsed
+    });
+  }
+  if (!samples.length) {
+    return [];
+  }
+  const forwardSpeeds = [];
+  let filteredSpeed = samples[0].speed;
+  for (const sample of samples) {
+    filteredSpeed = mix(filteredSpeed, sample.speed, 0.18);
+    forwardSpeeds.push(filteredSpeed);
+  }
+  const smoothedSpeeds = new Array(samples.length);
+  let reverseSpeed = forwardSpeeds.at(-1);
+  for (let index = samples.length - 1; index >= 0; index -= 1) {
+    reverseSpeed = mix(reverseSpeed, forwardSpeeds[index], 0.24);
+    smoothedSpeeds[index] = mix(forwardSpeeds[index], reverseSpeed, 0.35);
+  }
+  const segments = [];
+  let previousWidth = null;
+  const maximumWidthStep = Math.max(0.12, strokeWidth * 0.09);
+  for (let index = 0; index < samples.length; index += 1) {
+    const sample = samples[index];
+    const speedRatio = clamp((smoothedSpeeds[index] - 0.12) / 1.8, 0, 1);
+    const easedSpeed = speedRatio * speedRatio * (3 - 2 * speedRatio);
+    const targetWidth = strokeWidth * mix(1.36, 0.76, easedSpeed);
+    const blendedWidth = previousWidth === null ? targetWidth : mix(previousWidth, targetWidth, 0.24);
+    const width = previousWidth === null
+      ? blendedWidth
+      : clamp(blendedWidth, previousWidth - maximumWidthStep, previousWidth + maximumWidthStep);
+    const stableWidth = clamp(width, minimumVisibleWidth, strokeWidth * 1.42);
+    previousWidth = stableWidth;
+    segments.push({
+      from: sample.from,
+      to: sample.to,
+      speed: smoothedSpeeds[index],
+      width: stableWidth,
       opacity: strokeOpacity
     });
   }
@@ -69,12 +97,13 @@ export function buildFountainPenSegments(points, {
     ? terminalSamples.reduce((sum, segment) => sum + segment.speed, 0) / terminalSamples.length
     : 0;
   if (terminalSpeed > 0.72 && segments.length >= 2) {
-    const tailCount = Math.min(5, Math.max(2, Math.round(2 + terminalSpeed * 1.2)), segments.length);
+    const tailCount = Math.min(3, segments.length);
     const start = segments.length - tailCount;
     for (let index = start; index < segments.length; index += 1) {
       const progress = (index - start + 1) / tailCount;
-      const taper = mix(1, 0.12, Math.pow(progress, 1.55));
-      segments[index].width = Math.max(0.18, segments[index].width * taper);
+      const easedProgress = progress * progress * (3 - 2 * progress);
+      const taper = mix(1, 0.28, easedProgress);
+      segments[index].width = Math.max(0.4, segments[index].width * taper);
       segments[index].tailTaper = progress;
     }
   }
@@ -83,7 +112,7 @@ export function buildFountainPenSegments(points, {
     const current = segments[index];
     const next = segments[index + 1];
     current.fromWidth = previous ? (previous.width + current.width) / 2 : current.width;
-    current.toWidth = next ? (current.width + next.width) / 2 : current.tailTaper ? Math.max(0.08, current.width * 0.08) : current.width;
+    current.toWidth = next ? (current.width + next.width) / 2 : current.tailTaper ? Math.max(0.08, current.width * 0.05) : current.width;
   }
   return segments;
 }

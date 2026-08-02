@@ -328,6 +328,8 @@
   left: var(--notedraw-toolbar-left, auto);
   right: var(--notedraw-toolbar-right, 8px);
   display: none;
+  width: max-content;
+  min-width: 0;
   gap: 3px;
   align-items: center;
   padding: 4px;

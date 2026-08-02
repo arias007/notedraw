@@ -80,6 +80,8 @@ test("only the active note surface can expose a toolbar", async () => {
   assert.match(source, /if \(!ownedToolbars\.has\(toolbar\)\) \{\s*toolbar\.remove\(\)/);
   assert.match(styles, /\.notedraw-shell\.is-drawing-active\.is-notedraw-controls-visible > \.notedraw-toolbar/);
   assert.doesNotMatch(styles, /\.notedraw-shell\.is-drawing-active\.is-notedraw-controls-visible \.notedraw-toolbar/);
+  assert.match(source, /const right = compactViewport \? "auto"/);
+  assert.match(styles, /\.notedraw-toolbar \{[\s\S]*width: max-content;[\s\S]*min-width: 0;/);
 });
 
 test("palette changes update the selected NoteDraw elements", async () => {
@@ -121,8 +123,13 @@ test("reading-only note pen and selected elements can reserve Markdown flow spac
   assert.match(source, /toggleSelectedNoteFlow\(\)/);
   assert.match(source, /captureNoteFlowAnchor\(stroke\)/);
   assert.match(source, /applyNoteFlowLayout\(\)/);
-  assert.match(source, /first\.style\.setProperty\(state\.property, `\$\{Math\.ceil\(state\.base \+ offset\)\}px`, "important"\)/);
-  assert.doesNotMatch(source.slice(source.indexOf("  applyNoteFlowLayout()"), source.indexOf("  scheduleNoteFlowLayout()")), /vault\.modify|app\.vault\.process/);
+  const flowLayout = source.slice(source.indexOf("  applyNoteFlowLayout()"), source.indexOf("  scheduleNoteFlowLayout()"));
+  assert.match(flowLayout, /const nextValue = `\$\{Math\.ceil\(state\.base \+ offset\)\}px`/);
+  assert.match(flowLayout, /const edge = anchor \? rect\.bottom : rect\.top - state\.applied \* scaleY/);
+  assert.match(flowLayout, /state\.applied = offset/);
+  assert.doesNotMatch(flowLayout, /this\.clearNoteFlowLayout\(\);\s*const flows/);
+  assert.doesNotMatch(flowLayout, /item\.stroke\.noteFlow = this\.captureNoteFlowAnchor\(item\.stroke\);\s*const anchor/);
+  assert.doesNotMatch(flowLayout, /vault\.modify|app\.vault\.process/);
   assert.match(styles, /\.notedraw-note-flow-anchor/);
 });
 
@@ -130,7 +137,11 @@ test("mind map import creates editable NoteDraw nodes and magnetically bound con
   const source = await readFile(sourceUrl, "utf8");
 
   assert.match(source, /import \{ layoutMindMap, parseMarkdownMindMap, replaceMarkdownMindMapNodeText \} from "\.\/mind-map\.mjs"/);
-  assert.match(source, /new NoteDrawFileSuggestModal\(this\.plugin\.app, this\.file/);
+  assert.match(source, /new NoteDrawFileSuggestModal\(this\.app, currentFile/);
+  assert.match(source, /scheduleMindMapFilePicker\(\)[\s\S]*window\.setTimeout\([\s\S]*this\.openMindMapFilePicker\(\)[\s\S]*48\)/);
+  assert.match(source, /this\.mindMapFileModal = modal;\s*modal\.open\(\)/);
+  assert.match(source, /if \(previousModal\?\.modalEl\?\.isConnected\) \{\s*previousModal\.close\(\)/);
+  assert.match(source, /onClose: \(closedModal\) => \{\s*if \(this\.mindMapFileModal === closedModal\)/);
   assert.match(source, /async insertMindMapAt\(point, sourceFile, options = \{\}\)/);
   assert.match(source, /kind: TOOL_TEXT/);
   assert.match(source, /mindMapNode:/);

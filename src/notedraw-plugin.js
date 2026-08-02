@@ -1108,6 +1108,7 @@ var NoteDrawFileSuggestModal = class extends FuzzySuggestModal {
     this.onChoose = onChoose;
     this.affectsSource = options.affectsSource !== false;
     this.onAffectsSourceChange = options.onAffectsSourceChange;
+    this.onModalClose = options.onClose;
     this.setPlaceholder(I18N[detectNoteDrawLanguage(app)]?.chooseMindMapFile || I18N.en.chooseMindMapFile);
     const controls = this.modalEl.createDiv({ cls: "notedraw-mind-map-source-setting" });
     new Setting(controls)
@@ -1136,6 +1137,9 @@ var NoteDrawFileSuggestModal = class extends FuzzySuggestModal {
   }
   onChooseItem(file) {
     this.onChoose?.(file, this.affectsSource);
+  }
+  onClose() {
+    this.onModalClose?.(this);
   }
 };
 var NoteDrawPlugin = class extends Plugin {
@@ -1166,6 +1170,8 @@ var NoteDrawPlugin = class extends Plugin {
     this.embeddedSyncTimer = null;
     this.workspaceSyncTimer = null;
     this.floatingControlsSyncTimer = null;
+    this.mindMapPickerTimer = null;
+    this.mindMapFileModal = null;
     this.webviewMutationObserver = null;
     this.api = this.createPublicApi();
     if (typeof window !== "undefined") {
@@ -1311,12 +1317,69 @@ var NoteDrawPlugin = class extends Plugin {
       window.clearTimeout(this.floatingControlsSyncTimer);
       this.floatingControlsSyncTimer = null;
     }
+    if (this.mindMapPickerTimer !== null) {
+      window.clearTimeout(this.mindMapPickerTimer);
+      this.mindMapPickerTimer = null;
+    }
+    this.mindMapFileModal?.close?.();
+    this.mindMapFileModal = null;
     this.webviewMutationObserver?.disconnect();
     this.webviewMutationObserver = null;
     this.apiListeners?.clear();
     if (typeof window !== "undefined" && window.NoteDraw === this.api) {
       delete window.NoteDraw;
     }
+  }
+  scheduleMindMapFilePicker(controller) {
+    if (this.mindMapPickerTimer !== null) {
+      window.clearTimeout(this.mindMapPickerTimer);
+    }
+    this.mindMapPickerTimer = window.setTimeout(() => {
+      this.mindMapPickerTimer = null;
+      if (!this.runtimeDisposed) {
+        this.openMindMapFilePicker(controller);
+      }
+    }, 48);
+  }
+  openMindMapFilePicker(requestedController) {
+    const requestedPath = normalizeVaultPath(requestedController?.file?.path || this.app.workspace.getActiveFile?.()?.path || "");
+    const currentFile = getVaultFileByPath(this.app.vault, requestedPath) || requestedController?.file || this.app.workspace.getActiveFile?.();
+    const previousModal = this.mindMapFileModal;
+    this.mindMapFileModal = null;
+    if (previousModal?.modalEl?.isConnected) {
+      previousModal.close();
+    }
+    const affectsSourceByDefault = this.noteDrawSettings?.mindMapAffectsSource !== false;
+    const modal = new NoteDrawFileSuggestModal(this.app, currentFile, (file, affectsSource) => {
+      const target = !requestedController?.destroyed && requestedController?.previewEl?.isConnected
+        ? requestedController
+        : this.getActiveController() || this.getAllControllers().find((controller) => (
+          controller?.previewEl?.isConnected && normalizeVaultPath(controller.file?.path || "") === requestedPath && !controller.embeddedSurface
+        ));
+      if (!target) {
+        new Notice(this.t("openNoteOrWebviewFirst"));
+        return;
+      }
+      target.pendingMindMapFile = file;
+      target.pendingMindMapOptions = { affectsSource: Boolean(affectsSource) };
+      target.textPreset = "mindMap";
+      target.setTextMode();
+      target.syncTextPanelButtons();
+      new Notice(this.t("placeMindMap"));
+    }, {
+      affectsSource: affectsSourceByDefault,
+      onAffectsSourceChange: (value) => {
+        this.noteDrawSettings.mindMapAffectsSource = Boolean(value);
+        this.scheduleSettingsSave();
+      },
+      onClose: (closedModal) => {
+        if (this.mindMapFileModal === closedModal) {
+          this.mindMapFileModal = null;
+        }
+      }
+    });
+    this.mindMapFileModal = modal;
+    modal.open();
   }
   async saveSettings() {
     this.noteDrawSettings = sanitizeSettings(this.noteDrawSettings);
@@ -1704,7 +1767,7 @@ var NoteDrawPlugin = class extends Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.3.1",
+      version: "3.3.2",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -3909,7 +3972,7 @@ var PreviewDrawingController = class {
       headerBottom
     );
     const compactViewport = isMobileRuntime() || viewportWidth < 640;
-    const right = compactViewport ? 8 : clamp(viewportRight - anchorRight + 10, 8, Math.max(8, viewportWidth - 48));
+    const right = compactViewport ? "auto" : clamp(viewportRight - anchorRight + 10, 8, Math.max(8, viewportWidth - 48));
     const left = compactViewport ? viewportLeft + 8 : "auto";
     const minTop = Math.max(viewportTop + 8, headerBottom + 6);
     const maxTop = Math.max(minTop, viewportTop + viewportHeight - toolbarHeight - 8);
@@ -3920,11 +3983,12 @@ var PreviewDrawingController = class {
       const buttonBounds = button?.getBoundingClientRect?.();
       const measuredWidth = panel?.getBoundingClientRect?.().width || fallbackWidth;
       const width = clamp(measuredWidth, 34, Math.max(34, viewportWidth - 16));
-      const anchorX = buttonBounds?.width > 0 ? buttonBounds.left + buttonBounds.width / 2 : viewportRight - right - 14;
+      const rightInset = typeof right === "number" ? right : 8;
+      const anchorX = buttonBounds?.width > 0 ? buttonBounds.left + buttonBounds.width / 2 : viewportRight - rightInset - 14;
       return clamp(anchorX - width / 2, viewportLeft + 8, Math.max(viewportLeft + 8, viewportRight - width - 8));
     };
     const props = {
-      "--notedraw-toolbar-right": `${Math.round(right)}px`,
+      "--notedraw-toolbar-right": typeof right === "number" ? `${Math.round(right)}px` : right,
       "--notedraw-toolbar-left": typeof left === "number" ? `${Math.round(left)}px` : left,
       "--notedraw-toolbar-top": `${Math.round(top)}px`,
       "--notedraw-palette-top": `${Math.round(panelTop)}px`,
@@ -4265,7 +4329,7 @@ var PreviewDrawingController = class {
         bindNoteDrawControlTap(button, () => {
           if (item.id === "mindMap") {
             this.setTextPanelOpen(false);
-            this.openMindMapFilePicker();
+            this.scheduleMindMapFilePicker();
             return;
           }
           this.textPreset = item.id;
@@ -4278,23 +4342,11 @@ var PreviewDrawingController = class {
     }
     this.syncTextPanelButtons();
   }
+  scheduleMindMapFilePicker() {
+    this.plugin.scheduleMindMapFilePicker(this);
+  }
   openMindMapFilePicker() {
-    const affectsSourceByDefault = this.plugin.noteDrawSettings?.mindMapAffectsSource !== false;
-    const modal = new NoteDrawFileSuggestModal(this.plugin.app, this.file, (file, affectsSource) => {
-      this.pendingMindMapFile = file;
-      this.pendingMindMapOptions = { affectsSource: Boolean(affectsSource) };
-      this.textPreset = "mindMap";
-      this.setTextMode();
-      this.syncTextPanelButtons();
-      new Notice(this.plugin.t("placeMindMap"));
-    }, {
-      affectsSource: affectsSourceByDefault,
-      onAffectsSourceChange: (value) => {
-        this.plugin.noteDrawSettings.mindMapAffectsSource = Boolean(value);
-        this.plugin.scheduleSettingsSave();
-      }
-    });
-    modal.open();
+    this.plugin.openMindMapFilePicker(this);
   }
   syncTextPanelButtons() {
     this.textPanel?.querySelectorAll(".notedraw-text-option").forEach((button) => {
@@ -8170,13 +8222,13 @@ var PreviewDrawingController = class {
       this.clearNoteFlowLayout();
       return false;
     }
-    this.clearNoteFlowLayout();
     const flows = (this.drawingData?.strokes || []).filter((stroke) => stroke?.noteFlow?.enabled && !isConnectorStroke(stroke)).map((stroke) => ({
       stroke,
       bounds: getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight())
     })).filter((item) => item.bounds).sort((a, b) => a.bounds.minY - b.bounds.minY);
     if (!flows.length) {
       const changed = Boolean(this.noteFlowLayoutSignature);
+      this.clearNoteFlowLayout();
       this.noteFlowLayoutSignature = "";
       return changed;
     }
@@ -8184,13 +8236,24 @@ var PreviewDrawingController = class {
     const scaleY = canvasRect.height > 0 ? canvasRect.height / Math.max(1, this.canvasRenderHeight) : 1;
     const offsets = new Map();
     for (const item of flows) {
-      item.stroke.noteFlow = this.captureNoteFlowAnchor(item.stroke);
+      if (!Number.isFinite(item.stroke.noteFlow?.line)) {
+        item.stroke.noteFlow = this.captureNoteFlowAnchor(item.stroke);
+      }
       const anchor = this.noteFlowAnchorElement(item.stroke.noteFlow);
       const first = anchor || Array.from(this.previewEl.querySelectorAll?.("[data-note-draw-line-start]") || [])[0] || null;
       if (!first) {
         continue;
       }
       const property = anchor ? "margin-bottom" : "margin-top";
+      const previousState = this.noteFlowStyledElements.get(first);
+      if (previousState && previousState.property !== property) {
+        if (previousState.value) {
+          first.style.setProperty(previousState.property, previousState.value, previousState.priority || "");
+        } else {
+          first.style.removeProperty(previousState.property);
+        }
+        this.noteFlowStyledElements.delete(first);
+      }
       if (!this.noteFlowStyledElements.has(first)) {
         const value = first.style.getPropertyValue(property);
         const priority = first.style.getPropertyPriority(property);
@@ -8198,21 +8261,43 @@ var PreviewDrawingController = class {
           property,
           value,
           priority,
-          base: Number.parseFloat(window.getComputedStyle(first).getPropertyValue(property)) || 0
+          base: Number.parseFloat(window.getComputedStyle(first).getPropertyValue(property)) || 0,
+          applied: 0
         });
       }
+      const state = this.noteFlowStyledElements.get(first);
       const rect = first.getBoundingClientRect();
       const desiredBottom = canvasRect.top + (item.bounds.maxY - this.canvasWindowTop) * scaleY + Number(item.stroke.noteFlow.gap || 12) * scaleY;
-      const edge = anchor ? rect.bottom : rect.top;
+      const edge = anchor ? rect.bottom : rect.top - state.applied * scaleY;
       const required = Math.max(0, (desiredBottom - edge) / Math.max(0.01, scaleY));
       const offset = Math.max(offsets.get(first) || 0, required);
       offsets.set(first, offset);
-      const state = this.noteFlowStyledElements.get(first);
-      first.style.setProperty(state.property, `${Math.ceil(state.base + offset)}px`, "important");
-      first.classList.add("notedraw-note-flow-anchor");
+    }
+    let restoredStaleAnchor = false;
+    for (const [element, state] of Array.from(this.noteFlowStyledElements.entries())) {
+      if (offsets.has(element)) {
+        continue;
+      }
+      if (state.value) {
+        element.style.setProperty(state.property, state.value, state.priority || "");
+      } else {
+        element.style.removeProperty(state.property);
+      }
+      element.classList.remove("notedraw-note-flow-anchor");
+      this.noteFlowStyledElements.delete(element);
+      restoredStaleAnchor = true;
+    }
+    for (const [element, offset] of offsets) {
+      const state = this.noteFlowStyledElements.get(element);
+      const nextValue = `${Math.ceil(state.base + offset)}px`;
+      if (element.style.getPropertyValue(state.property) !== nextValue || element.style.getPropertyPriority(state.property) !== "important") {
+        element.style.setProperty(state.property, nextValue, "important");
+      }
+      state.applied = offset;
+      element.classList.add("notedraw-note-flow-anchor");
     }
     const signature = Array.from(offsets, ([element, offset]) => `${element.dataset.noteDrawSourcePath || ""}:${element.dataset.noteDrawLineStart || ""}:${Math.round(offset)}`).join("|");
-    const changed = signature !== this.noteFlowLayoutSignature;
+    const changed = restoredStaleAnchor || signature !== this.noteFlowLayoutSignature;
     this.noteFlowLayoutSignature = signature;
     return changed;
   }
@@ -10366,7 +10451,7 @@ function normalizeNoteFlow(value) {
   if (!value?.enabled) {
     return null;
   }
-  const line = Number(value.line);
+  const line = value.line === null || value.line === void 0 || value.line === "" ? NaN : Number(value.line);
   return {
     enabled: true,
     path: normalizeVaultPath(value.path || ""),

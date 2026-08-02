@@ -1309,10 +1309,8 @@ function buildFountainPenSegments(points, {
   const height = Math.max(1, finite5(canvasHeight, 1));
   const strokeWidth = Math.max(0.25, finite5(baseWidth, 3));
   const strokeOpacity = clamp5(finite5(baseOpacity, 1), 0, 1);
-  const minimumVisibleWidth = Math.min(strokeWidth, Math.max(0.65, strokeWidth * 0.48));
-  const segments = [];
-  let widthFactor = null;
-  let smoothedSpeed = null;
+  const minimumVisibleWidth = Math.min(strokeWidth, Math.max(0.8, strokeWidth * 0.7));
+  const samples = [];
   for (let index = 1; index < points.length; index += 1) {
     const from = points[index - 1];
     const to = points[index];
@@ -1336,28 +1334,57 @@ function buildFountainPenSegments(points, {
       sampleElapsed = finite5(to?.t, index * 16) - finite5(previous?.t, sampleStart * 16);
     }
     const elapsed = clamp5(sampleElapsed > 0 ? sampleElapsed : 4, 1, 250);
-    const speed = sampleDistance / elapsed;
-    smoothedSpeed = smoothedSpeed === null ? speed : mix(smoothedSpeed, speed, speed > smoothedSpeed ? 0.42 : 0.28);
-    const speedRatio = clamp5((smoothedSpeed - 0.1) / 1.75, 0, 1);
-    const targetWidthFactor = mix(1.78, 0.56, Math.pow(speedRatio, 0.9));
-    widthFactor = widthFactor === null ? targetWidthFactor : mix(widthFactor, targetWidthFactor, 0.34);
-    segments.push({
+    samples.push({
       from,
       to,
-      speed,
-      width: clamp5(strokeWidth * widthFactor, minimumVisibleWidth, strokeWidth * 1.85),
+      speed: sampleDistance / elapsed
+    });
+  }
+  if (!samples.length) {
+    return [];
+  }
+  const forwardSpeeds = [];
+  let filteredSpeed = samples[0].speed;
+  for (const sample of samples) {
+    filteredSpeed = mix(filteredSpeed, sample.speed, 0.18);
+    forwardSpeeds.push(filteredSpeed);
+  }
+  const smoothedSpeeds = new Array(samples.length);
+  let reverseSpeed = forwardSpeeds.at(-1);
+  for (let index = samples.length - 1; index >= 0; index -= 1) {
+    reverseSpeed = mix(reverseSpeed, forwardSpeeds[index], 0.24);
+    smoothedSpeeds[index] = mix(forwardSpeeds[index], reverseSpeed, 0.35);
+  }
+  const segments = [];
+  let previousWidth = null;
+  const maximumWidthStep = Math.max(0.12, strokeWidth * 0.09);
+  for (let index = 0; index < samples.length; index += 1) {
+    const sample = samples[index];
+    const speedRatio = clamp5((smoothedSpeeds[index] - 0.12) / 1.8, 0, 1);
+    const easedSpeed = speedRatio * speedRatio * (3 - 2 * speedRatio);
+    const targetWidth = strokeWidth * mix(1.36, 0.76, easedSpeed);
+    const blendedWidth = previousWidth === null ? targetWidth : mix(previousWidth, targetWidth, 0.24);
+    const width2 = previousWidth === null ? blendedWidth : clamp5(blendedWidth, previousWidth - maximumWidthStep, previousWidth + maximumWidthStep);
+    const stableWidth = clamp5(width2, minimumVisibleWidth, strokeWidth * 1.42);
+    previousWidth = stableWidth;
+    segments.push({
+      from: sample.from,
+      to: sample.to,
+      speed: smoothedSpeeds[index],
+      width: stableWidth,
       opacity: strokeOpacity
     });
   }
   const terminalSamples = segments.slice(-Math.min(3, segments.length));
   const terminalSpeed = terminalSamples.length ? terminalSamples.reduce((sum, segment) => sum + segment.speed, 0) / terminalSamples.length : 0;
   if (terminalSpeed > 0.72 && segments.length >= 2) {
-    const tailCount = Math.min(5, Math.max(2, Math.round(2 + terminalSpeed * 1.2)), segments.length);
+    const tailCount = Math.min(3, segments.length);
     const start = segments.length - tailCount;
     for (let index = start; index < segments.length; index += 1) {
       const progress = (index - start + 1) / tailCount;
-      const taper = mix(1, 0.12, Math.pow(progress, 1.55));
-      segments[index].width = Math.max(0.18, segments[index].width * taper);
+      const easedProgress = progress * progress * (3 - 2 * progress);
+      const taper = mix(1, 0.28, easedProgress);
+      segments[index].width = Math.max(0.4, segments[index].width * taper);
       segments[index].tailTaper = progress;
     }
   }
@@ -1366,7 +1393,7 @@ function buildFountainPenSegments(points, {
     const current = segments[index];
     const next = segments[index + 1];
     current.fromWidth = previous ? (previous.width + current.width) / 2 : current.width;
-    current.toWidth = next ? (current.width + next.width) / 2 : current.tailTaper ? Math.max(0.08, current.width * 0.08) : current.width;
+    current.toWidth = next ? (current.width + next.width) / 2 : current.tailTaper ? Math.max(0.08, current.width * 0.05) : current.width;
   }
   return segments;
 }
@@ -2820,6 +2847,7 @@ var NoteDrawFileSuggestModal = class extends import_obsidian.FuzzySuggestModal {
     this.onChoose = onChoose;
     this.affectsSource = options.affectsSource !== false;
     this.onAffectsSourceChange = options.onAffectsSourceChange;
+    this.onModalClose = options.onClose;
     this.setPlaceholder(I18N[detectNoteDrawLanguage(app)]?.chooseMindMapFile || I18N.en.chooseMindMapFile);
     const controls = this.modalEl.createDiv({ cls: "notedraw-mind-map-source-setting" });
     new import_obsidian.Setting(controls).setName(I18N[detectNoteDrawLanguage(app)]?.affectSourceNote || I18N.en.affectSourceNote).addToggle((toggle) => toggle.setValue(this.affectsSource).onChange((value) => {
@@ -2846,6 +2874,9 @@ var NoteDrawFileSuggestModal = class extends import_obsidian.FuzzySuggestModal {
   }
   onChooseItem(file) {
     this.onChoose?.(file, this.affectsSource);
+  }
+  onClose() {
+    this.onModalClose?.(this);
   }
 };
 var NoteDrawPlugin = class extends import_obsidian.Plugin {
@@ -2876,6 +2907,8 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     this.embeddedSyncTimer = null;
     this.workspaceSyncTimer = null;
     this.floatingControlsSyncTimer = null;
+    this.mindMapPickerTimer = null;
+    this.mindMapFileModal = null;
     this.webviewMutationObserver = null;
     this.api = this.createPublicApi();
     if (typeof window !== "undefined") {
@@ -3021,12 +3054,65 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       window.clearTimeout(this.floatingControlsSyncTimer);
       this.floatingControlsSyncTimer = null;
     }
+    if (this.mindMapPickerTimer !== null) {
+      window.clearTimeout(this.mindMapPickerTimer);
+      this.mindMapPickerTimer = null;
+    }
+    this.mindMapFileModal?.close?.();
+    this.mindMapFileModal = null;
     this.webviewMutationObserver?.disconnect();
     this.webviewMutationObserver = null;
     this.apiListeners?.clear();
     if (typeof window !== "undefined" && window.NoteDraw === this.api) {
       delete window.NoteDraw;
     }
+  }
+  scheduleMindMapFilePicker(controller) {
+    if (this.mindMapPickerTimer !== null) {
+      window.clearTimeout(this.mindMapPickerTimer);
+    }
+    this.mindMapPickerTimer = window.setTimeout(() => {
+      this.mindMapPickerTimer = null;
+      if (!this.runtimeDisposed) {
+        this.openMindMapFilePicker(controller);
+      }
+    }, 48);
+  }
+  openMindMapFilePicker(requestedController) {
+    const requestedPath = normalizeVaultPath(requestedController?.file?.path || this.app.workspace.getActiveFile?.()?.path || "");
+    const currentFile = getVaultFileByPath(this.app.vault, requestedPath) || requestedController?.file || this.app.workspace.getActiveFile?.();
+    const previousModal = this.mindMapFileModal;
+    this.mindMapFileModal = null;
+    if (previousModal?.modalEl?.isConnected) {
+      previousModal.close();
+    }
+    const affectsSourceByDefault = this.noteDrawSettings?.mindMapAffectsSource !== false;
+    const modal = new NoteDrawFileSuggestModal(this.app, currentFile, (file, affectsSource) => {
+      const target = !requestedController?.destroyed && requestedController?.previewEl?.isConnected ? requestedController : this.getActiveController() || this.getAllControllers().find((controller) => controller?.previewEl?.isConnected && normalizeVaultPath(controller.file?.path || "") === requestedPath && !controller.embeddedSurface);
+      if (!target) {
+        new import_obsidian.Notice(this.t("openNoteOrWebviewFirst"));
+        return;
+      }
+      target.pendingMindMapFile = file;
+      target.pendingMindMapOptions = { affectsSource: Boolean(affectsSource) };
+      target.textPreset = "mindMap";
+      target.setTextMode();
+      target.syncTextPanelButtons();
+      new import_obsidian.Notice(this.t("placeMindMap"));
+    }, {
+      affectsSource: affectsSourceByDefault,
+      onAffectsSourceChange: (value) => {
+        this.noteDrawSettings.mindMapAffectsSource = Boolean(value);
+        this.scheduleSettingsSave();
+      },
+      onClose: (closedModal) => {
+        if (this.mindMapFileModal === closedModal) {
+          this.mindMapFileModal = null;
+        }
+      }
+    });
+    this.mindMapFileModal = modal;
+    modal.open();
   }
   async saveSettings() {
     this.noteDrawSettings = sanitizeSettings(this.noteDrawSettings);
@@ -3411,7 +3497,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.3.1",
+      version: "3.3.2",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -5610,7 +5696,7 @@ var PreviewDrawingController = class {
       headerBottom
     );
     const compactViewport = isMobileRuntime() || viewportWidth < 640;
-    const right = compactViewport ? 8 : clamp7(viewportRight - anchorRight + 10, 8, Math.max(8, viewportWidth - 48));
+    const right = compactViewport ? "auto" : clamp7(viewportRight - anchorRight + 10, 8, Math.max(8, viewportWidth - 48));
     const left = compactViewport ? viewportLeft + 8 : "auto";
     const minTop = Math.max(viewportTop + 8, headerBottom + 6);
     const maxTop = Math.max(minTop, viewportTop + viewportHeight - toolbarHeight - 8);
@@ -5621,11 +5707,12 @@ var PreviewDrawingController = class {
       const buttonBounds = button?.getBoundingClientRect?.();
       const measuredWidth = panel?.getBoundingClientRect?.().width || fallbackWidth;
       const width = clamp7(measuredWidth, 34, Math.max(34, viewportWidth - 16));
-      const anchorX = buttonBounds?.width > 0 ? buttonBounds.left + buttonBounds.width / 2 : viewportRight - right - 14;
+      const rightInset = typeof right === "number" ? right : 8;
+      const anchorX = buttonBounds?.width > 0 ? buttonBounds.left + buttonBounds.width / 2 : viewportRight - rightInset - 14;
       return clamp7(anchorX - width / 2, viewportLeft + 8, Math.max(viewportLeft + 8, viewportRight - width - 8));
     };
     const props = {
-      "--notedraw-toolbar-right": `${Math.round(right)}px`,
+      "--notedraw-toolbar-right": typeof right === "number" ? `${Math.round(right)}px` : right,
       "--notedraw-toolbar-left": typeof left === "number" ? `${Math.round(left)}px` : left,
       "--notedraw-toolbar-top": `${Math.round(top)}px`,
       "--notedraw-palette-top": `${Math.round(panelTop)}px`,
@@ -5966,7 +6053,7 @@ var PreviewDrawingController = class {
         bindNoteDrawControlTap(button, () => {
           if (item.id === "mindMap") {
             this.setTextPanelOpen(false);
-            this.openMindMapFilePicker();
+            this.scheduleMindMapFilePicker();
             return;
           }
           this.textPreset = item.id;
@@ -5979,23 +6066,11 @@ var PreviewDrawingController = class {
     }
     this.syncTextPanelButtons();
   }
+  scheduleMindMapFilePicker() {
+    this.plugin.scheduleMindMapFilePicker(this);
+  }
   openMindMapFilePicker() {
-    const affectsSourceByDefault = this.plugin.noteDrawSettings?.mindMapAffectsSource !== false;
-    const modal = new NoteDrawFileSuggestModal(this.plugin.app, this.file, (file, affectsSource) => {
-      this.pendingMindMapFile = file;
-      this.pendingMindMapOptions = { affectsSource: Boolean(affectsSource) };
-      this.textPreset = "mindMap";
-      this.setTextMode();
-      this.syncTextPanelButtons();
-      new import_obsidian.Notice(this.plugin.t("placeMindMap"));
-    }, {
-      affectsSource: affectsSourceByDefault,
-      onAffectsSourceChange: (value) => {
-        this.plugin.noteDrawSettings.mindMapAffectsSource = Boolean(value);
-        this.plugin.scheduleSettingsSave();
-      }
-    });
-    modal.open();
+    this.plugin.openMindMapFilePicker(this);
   }
   syncTextPanelButtons() {
     this.textPanel?.querySelectorAll(".notedraw-text-option").forEach((button) => {
@@ -9856,13 +9931,13 @@ var PreviewDrawingController = class {
       this.clearNoteFlowLayout();
       return false;
     }
-    this.clearNoteFlowLayout();
     const flows = (this.drawingData?.strokes || []).filter((stroke) => stroke?.noteFlow?.enabled && !isConnectorStroke(stroke)).map((stroke) => ({
       stroke,
       bounds: getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight())
     })).filter((item) => item.bounds).sort((a, b) => a.bounds.minY - b.bounds.minY);
     if (!flows.length) {
       const changed2 = Boolean(this.noteFlowLayoutSignature);
+      this.clearNoteFlowLayout();
       this.noteFlowLayoutSignature = "";
       return changed2;
     }
@@ -9870,13 +9945,24 @@ var PreviewDrawingController = class {
     const scaleY = canvasRect.height > 0 ? canvasRect.height / Math.max(1, this.canvasRenderHeight) : 1;
     const offsets = /* @__PURE__ */ new Map();
     for (const item of flows) {
-      item.stroke.noteFlow = this.captureNoteFlowAnchor(item.stroke);
+      if (!Number.isFinite(item.stroke.noteFlow?.line)) {
+        item.stroke.noteFlow = this.captureNoteFlowAnchor(item.stroke);
+      }
       const anchor = this.noteFlowAnchorElement(item.stroke.noteFlow);
       const first = anchor || Array.from(this.previewEl.querySelectorAll?.("[data-note-draw-line-start]") || [])[0] || null;
       if (!first) {
         continue;
       }
       const property = anchor ? "margin-bottom" : "margin-top";
+      const previousState = this.noteFlowStyledElements.get(first);
+      if (previousState && previousState.property !== property) {
+        if (previousState.value) {
+          first.style.setProperty(previousState.property, previousState.value, previousState.priority || "");
+        } else {
+          first.style.removeProperty(previousState.property);
+        }
+        this.noteFlowStyledElements.delete(first);
+      }
       if (!this.noteFlowStyledElements.has(first)) {
         const value = first.style.getPropertyValue(property);
         const priority = first.style.getPropertyPriority(property);
@@ -9884,21 +9970,43 @@ var PreviewDrawingController = class {
           property,
           value,
           priority,
-          base: Number.parseFloat(window.getComputedStyle(first).getPropertyValue(property)) || 0
+          base: Number.parseFloat(window.getComputedStyle(first).getPropertyValue(property)) || 0,
+          applied: 0
         });
       }
+      const state = this.noteFlowStyledElements.get(first);
       const rect = first.getBoundingClientRect();
       const desiredBottom = canvasRect.top + (item.bounds.maxY - this.canvasWindowTop) * scaleY + Number(item.stroke.noteFlow.gap || 12) * scaleY;
-      const edge = anchor ? rect.bottom : rect.top;
+      const edge = anchor ? rect.bottom : rect.top - state.applied * scaleY;
       const required = Math.max(0, (desiredBottom - edge) / Math.max(0.01, scaleY));
       const offset = Math.max(offsets.get(first) || 0, required);
       offsets.set(first, offset);
-      const state = this.noteFlowStyledElements.get(first);
-      first.style.setProperty(state.property, `${Math.ceil(state.base + offset)}px`, "important");
-      first.classList.add("notedraw-note-flow-anchor");
+    }
+    let restoredStaleAnchor = false;
+    for (const [element, state] of Array.from(this.noteFlowStyledElements.entries())) {
+      if (offsets.has(element)) {
+        continue;
+      }
+      if (state.value) {
+        element.style.setProperty(state.property, state.value, state.priority || "");
+      } else {
+        element.style.removeProperty(state.property);
+      }
+      element.classList.remove("notedraw-note-flow-anchor");
+      this.noteFlowStyledElements.delete(element);
+      restoredStaleAnchor = true;
+    }
+    for (const [element, offset] of offsets) {
+      const state = this.noteFlowStyledElements.get(element);
+      const nextValue = `${Math.ceil(state.base + offset)}px`;
+      if (element.style.getPropertyValue(state.property) !== nextValue || element.style.getPropertyPriority(state.property) !== "important") {
+        element.style.setProperty(state.property, nextValue, "important");
+      }
+      state.applied = offset;
+      element.classList.add("notedraw-note-flow-anchor");
     }
     const signature = Array.from(offsets, ([element, offset]) => `${element.dataset.noteDrawSourcePath || ""}:${element.dataset.noteDrawLineStart || ""}:${Math.round(offset)}`).join("|");
-    const changed = signature !== this.noteFlowLayoutSignature;
+    const changed = restoredStaleAnchor || signature !== this.noteFlowLayoutSignature;
     this.noteFlowLayoutSignature = signature;
     return changed;
   }
@@ -12070,7 +12178,7 @@ function normalizeNoteFlow(value) {
   if (!value?.enabled) {
     return null;
   }
-  const line = Number(value.line);
+  const line = value.line === null || value.line === void 0 || value.line === "" ? NaN : Number(value.line);
   return {
     enabled: true,
     path: normalizeVaultPath(value.path || ""),
