@@ -30,8 +30,9 @@ import {
   ELEMENT_LAYOUT_BASIS,
   captureElementRelations,
   createElementLayout,
+  elementLayoutExceedsTarget,
   elementLayoutNeedsRepair,
-  estimateElementLayoutExtent,
+  estimateStableElementLayoutExtent,
   normalizeElementLayout,
   projectElementLayout,
   projectElementPoints,
@@ -1772,7 +1773,7 @@ var NoteDrawPlugin = class extends Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.3.5",
+      version: "3.3.6",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -5358,7 +5359,9 @@ var PreviewDrawingController = class {
         continue;
       }
       const existingLayout = normalizeElementLayout(stroke.layout);
-      const needsLayoutRepair = Boolean(existingLayout) && elementLayoutNeedsRepair(existingLayout);
+      const needsLayoutRepair = Boolean(existingLayout) && (
+        elementLayoutNeedsRepair(existingLayout) || elementLayoutExceedsTarget(existingLayout, this.canvasHeight())
+      );
       const hasUniqueElementLayout = Boolean(existingLayout?.id) && !elementIds.has(existingLayout.id) && !needsLayoutRepair;
       if (!hasUniqueElementLayout) {
         if (needsLayoutRepair) {
@@ -5472,7 +5475,7 @@ var PreviewDrawingController = class {
       const measuredHeight = Math.max(1, Math.round(measured.height));
       const extentFrame = measureResponsiveContentFrame(this.previewEl, this.surfaceType, width, this.canvas, visualScale);
       height = this.drawingsLoaded
-        ? estimateElementLayoutExtent((this.drawingData?.strokes || []).map((stroke) => stroke.layout), {
+        ? estimateStableElementLayoutExtent((this.drawingData?.strokes || []).map((stroke) => stroke.layout), {
           canvasWidth: width,
           frame: extentFrame,
           minHeight: measuredHeight

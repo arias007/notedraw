@@ -4,8 +4,10 @@ import {
   ELEMENT_LAYOUT_BASIS,
   captureElementRelations,
   createElementLayout,
+  elementLayoutExceedsTarget,
   elementLayoutNeedsRepair,
   estimateElementLayoutExtent,
+  estimateStableElementLayoutExtent,
   normalizeElementLayout,
   projectElementLayout,
   projectElementPoints,
@@ -644,4 +646,27 @@ test("layout extent follows content width reflow rather than viewport height", (
 
   assert.equal(narrowWithKeyboard, Math.max(narrow, 900));
   assert.ok(narrow > wide, "a narrow Markdown lane keeps the longer vertical flow");
+});
+
+test("runaway historical layout outliers cannot expand a note to hundreds of thousands of pixels", () => {
+  const normal = Array.from({ length: 24 }, (_, index) => makeLayout(`normal-${index}`, 80, 120 + index * 32, 180, 28));
+  const runaway = createElementLayout({
+    id: "runaway",
+    bounds: { minX: 80, minY: 463_745, maxX: 240, maxY: 463_780 },
+    canvasWidth: 576,
+    canvasHeight: 464_136,
+    viewportHeight: 986,
+    frame: { left: 24, width: 517 },
+    sourcePath: "Notes/example.md"
+  });
+  const extent = estimateStableElementLayoutExtent([...normal, runaway], {
+    canvasWidth: 576,
+    frame: { left: 24, width: 517 },
+    minHeight: 986
+  });
+
+  assert.ok(extent >= 986);
+  assert.ok(extent < 3_000, `the repaired extent stays close to real content, received ${extent}`);
+  assert.equal(elementLayoutExceedsTarget(runaway, extent), true);
+  assert.equal(elementLayoutExceedsTarget(normal.at(-1), extent), false);
 });

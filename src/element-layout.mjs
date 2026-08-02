@@ -233,6 +233,49 @@ export function estimateElementLayoutExtent(layouts, {
   return Math.ceil(clamp(extent, Math.max(1, finite(minHeight, 1)), Math.max(1, finite(maxHeight, 2_000_000))));
 }
 
+export function estimateStableElementLayoutExtent(layouts, options = {}) {
+  const normalized = (Array.isArray(layouts) ? layouts : []).map(normalizeElementLayout).filter(Boolean);
+  const rawExtent = estimateElementLayoutExtent(normalized, options);
+  if (!normalized.length) {
+    return rawExtent;
+  }
+  const minHeight = Math.max(1, finite(options.minHeight, 1));
+  const extents = normalized.map((layout) => estimateElementLayoutExtent([layout], options)).sort((a, b) => a - b);
+  const extraRoom = Math.max(192, Math.min(640, minHeight * 0.35));
+  const capAfter = (plausible) => Math.min(
+    rawExtent,
+    Math.ceil(Math.max(minHeight, plausible.length ? plausible[plausible.length - 1] : minHeight) + extraRoom)
+  );
+  const hardThreshold = Math.max(minHeight * 24, minHeight + 50_000);
+  const hardPlausible = extents.filter((extent) => extent <= hardThreshold);
+  if (hardPlausible.length !== extents.length) {
+    return capAfter(hardPlausible);
+  }
+  if (extents.length < 8) {
+    return rawExtent;
+  }
+  const baseline = extents[Math.floor((extents.length - 1) * 0.9)];
+  const relativeThreshold = Math.max(minHeight + 12_000, baseline + 12_000, baseline * 8);
+  const plausible = extents.filter((extent) => extent <= relativeThreshold);
+  const outlierCount = extents.length - plausible.length;
+  return outlierCount > 0 && outlierCount <= Math.max(4, Math.ceil(extents.length * 0.12))
+    ? capAfter(plausible)
+    : rawExtent;
+}
+
+export function elementLayoutExceedsTarget(layoutInput, targetDocumentHeight, {
+  factor = 8,
+  minExcess = 12_000
+} = {}) {
+  const layout = normalizeElementLayout(layoutInput);
+  if (!layout) {
+    return false;
+  }
+  const targetHeight = Math.max(1, finite(targetDocumentHeight, 1));
+  const threshold = Math.max(targetHeight * factor, targetHeight + minExcess);
+  return layout.sourceFrame.documentHeight > threshold && layout.box.y + layout.box.height > threshold;
+}
+
 function projectCorner(corner, target, lineToCanvasY, sourceInput = null, preferDocumentFlow = null) {
   if (!corner) {
     return null;

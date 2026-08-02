@@ -502,6 +502,45 @@ function estimateElementLayoutExtent(layouts, {
   }
   return Math.ceil(clamp3(extent, Math.max(1, finite2(minHeight, 1)), Math.max(1, finite2(maxHeight, 2e6))));
 }
+function estimateStableElementLayoutExtent(layouts, options = {}) {
+  const normalized = (Array.isArray(layouts) ? layouts : []).map(normalizeElementLayout).filter(Boolean);
+  const rawExtent = estimateElementLayoutExtent(normalized, options);
+  if (!normalized.length) {
+    return rawExtent;
+  }
+  const minHeight = Math.max(1, finite2(options.minHeight, 1));
+  const extents = normalized.map((layout) => estimateElementLayoutExtent([layout], options)).sort((a, b) => a - b);
+  const extraRoom = Math.max(192, Math.min(640, minHeight * 0.35));
+  const capAfter = (plausible2) => Math.min(
+    rawExtent,
+    Math.ceil(Math.max(minHeight, plausible2.length ? plausible2[plausible2.length - 1] : minHeight) + extraRoom)
+  );
+  const hardThreshold = Math.max(minHeight * 24, minHeight + 5e4);
+  const hardPlausible = extents.filter((extent) => extent <= hardThreshold);
+  if (hardPlausible.length !== extents.length) {
+    return capAfter(hardPlausible);
+  }
+  if (extents.length < 8) {
+    return rawExtent;
+  }
+  const baseline = extents[Math.floor((extents.length - 1) * 0.9)];
+  const relativeThreshold = Math.max(minHeight + 12e3, baseline + 12e3, baseline * 8);
+  const plausible = extents.filter((extent) => extent <= relativeThreshold);
+  const outlierCount = extents.length - plausible.length;
+  return outlierCount > 0 && outlierCount <= Math.max(4, Math.ceil(extents.length * 0.12)) ? capAfter(plausible) : rawExtent;
+}
+function elementLayoutExceedsTarget(layoutInput, targetDocumentHeight, {
+  factor = 8,
+  minExcess = 12e3
+} = {}) {
+  const layout = normalizeElementLayout(layoutInput);
+  if (!layout) {
+    return false;
+  }
+  const targetHeight = Math.max(1, finite2(targetDocumentHeight, 1));
+  const threshold = Math.max(targetHeight * factor, targetHeight + minExcess);
+  return layout.sourceFrame.documentHeight > threshold && layout.box.y + layout.box.height > threshold;
+}
 function projectCorner(corner, target, lineToCanvasY, sourceInput = null, preferDocumentFlow = null) {
   if (!corner) {
     return null;
@@ -3521,7 +3560,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.3.5",
+      version: "3.3.6",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -7101,7 +7140,7 @@ var PreviewDrawingController = class {
         continue;
       }
       const existingLayout = normalizeElementLayout(stroke.layout);
-      const needsLayoutRepair = Boolean(existingLayout) && elementLayoutNeedsRepair(existingLayout);
+      const needsLayoutRepair = Boolean(existingLayout) && (elementLayoutNeedsRepair(existingLayout) || elementLayoutExceedsTarget(existingLayout, this.canvasHeight()));
       const hasUniqueElementLayout = Boolean(existingLayout?.id) && !elementIds.has(existingLayout.id) && !needsLayoutRepair;
       if (!hasUniqueElementLayout) {
         if (needsLayoutRepair) {
@@ -7214,7 +7253,7 @@ var PreviewDrawingController = class {
       width = Math.max(1, Math.round(measured.width));
       const measuredHeight = Math.max(1, Math.round(measured.height));
       const extentFrame = measureResponsiveContentFrame(this.previewEl, this.surfaceType, width, this.canvas, visualScale);
-      height = this.drawingsLoaded ? estimateElementLayoutExtent((this.drawingData?.strokes || []).map((stroke) => stroke.layout), {
+      height = this.drawingsLoaded ? estimateStableElementLayoutExtent((this.drawingData?.strokes || []).map((stroke) => stroke.layout), {
         canvasWidth: width,
         frame: extentFrame,
         minHeight: measuredHeight
