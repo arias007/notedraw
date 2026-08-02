@@ -1311,7 +1311,6 @@ function buildFountainPenSegments(points, {
   const strokeOpacity = clamp5(finite5(baseOpacity, 1), 0, 1);
   const segments = [];
   let widthFactor = 1;
-  let opacityFactor = 1;
   for (let index = 1; index < points.length; index += 1) {
     const from = points[index - 1];
     const to = points[index];
@@ -1325,15 +1324,13 @@ function buildFountainPenSegments(points, {
     const speed = distance / elapsed;
     const speedRatio = clamp5((speed - 0.04) / 1.16, 0, 1);
     const targetWidthFactor = mix(1.42, 0.58, speedRatio);
-    const targetOpacityFactor = mix(1.06, 0.64, speedRatio);
     widthFactor = mix(widthFactor, targetWidthFactor, 0.42);
-    opacityFactor = mix(opacityFactor, targetOpacityFactor, 0.38);
     segments.push({
       from,
       to,
       speed,
       width: clamp5(strokeWidth * widthFactor, strokeWidth * 0.5, strokeWidth * 1.5),
-      opacity: clamp5(strokeOpacity * opacityFactor, 0, 1)
+      opacity: strokeOpacity
     });
   }
   return segments;
@@ -2611,6 +2608,34 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       }
     }
   }
+  enforceSingleVisibleToolbar(controller) {
+    if (!controller?.toolbar?.isConnected) {
+      return;
+    }
+    const ownedToolbars = /* @__PURE__ */ new Set();
+    for (const candidate of this.liveControllers) {
+      if (candidate.destroyed || !candidate.toolbar?.isConnected) {
+        continue;
+      }
+      ownedToolbars.add(candidate.toolbar);
+      if (candidate !== controller) {
+        candidate.previewEl?.removeClass("is-notedraw-controls-visible");
+        for (const element of [candidate.toolbar, candidate.palettePanel, candidate.brushPanel, candidate.textPanel, candidate.selectionMenu, candidate.formatToolbar]) {
+          element?.removeClass("is-notedraw-controls-visible");
+        }
+        candidate.toolbar.setAttribute("aria-hidden", "true");
+      }
+    }
+    controller.toolbar.removeAttribute("aria-hidden");
+    for (const toolbar of activeDocument.querySelectorAll(".notedraw-toolbar")) {
+      if (!ownedToolbars.has(toolbar)) {
+        toolbar.remove();
+      } else if (toolbar !== controller.toolbar) {
+        toolbar.removeClass("is-notedraw-controls-visible");
+        toolbar.setAttribute("aria-hidden", "true");
+      }
+    }
+  }
   findEmbeddedStrokeControllerAtPoint(controller, event) {
     const key = this.controllerStateKey(controller);
     for (const candidate of this.liveControllers) {
@@ -2804,6 +2829,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       readingViewEditing: true,
       sourceViewEditing: true,
       readingViewZoom: true,
+      sourceViewLayoutZoom: true,
       workspaceSurfaces: true,
       brushVariants: {
         [BRUSH_PEN]: [BRUSH_VARIANT_DEFAULT, PEN_VARIANT_FOUNTAIN],
@@ -2863,7 +2889,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.2.9",
+      version: "3.2.10",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -4222,6 +4248,8 @@ var PreviewDrawingController = class {
     this.textPreset = "plain";
     this.readingZoom = 1;
     this.readingZoomTarget = null;
+    this.readingZoomExtent = null;
+    this.readingZoomStyleState = /* @__PURE__ */ new Map();
     this.pendingEmbedTool = null;
     const sharedToolbarState = this.plugin.controllerToolbarState(this);
     if (sharedToolbarState) {
@@ -4310,6 +4338,7 @@ var PreviewDrawingController = class {
     this.previewEl.toggleClass("has-notedraw-body-controls", this.floatingControlsInBody);
     this.button = this.createHeaderButton();
     this.toolbar = createNoteDrawControlElement(this.floatingControlsHost, "notedraw-toolbar");
+    this.toolbar._noteDrawController = this;
     this.selectButton = this.toolbar.createEl("button", {
       attr: { type: "button", title: this.plugin.t("selectDrawings") }
     });
@@ -4365,7 +4394,7 @@ var PreviewDrawingController = class {
     this.paletteButton.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      if (this.toolMode === TOOL_SELECT || this.toolMode === TOOL_EDIT_MD) {
+      if (this.toolMode === TOOL_EDIT_MD || this.toolMode === TOOL_SELECT && !this.getSelectedStrokeIndexes().length) {
         this.setPaletteOpen(false);
         return;
       }
@@ -4392,12 +4421,7 @@ var PreviewDrawingController = class {
       }
     });
     this.colorInput.addEventListener("input", () => {
-      this.currentBrushSettings().color = this.colorInput.value;
-      this.syncCurrentBrushFields();
-      this.syncColorSwatches();
-      this.updateToolButtons();
-      this.persistCurrentBrushSettings();
-      this.syncSharedToolbarState();
+      this.setCurrentBrushColor(this.colorInput.value);
     });
     this.hiddenFileInput = this.floatingControlsHost.createEl("input", {
       cls: "notedraw-file-input",
@@ -4449,6 +4473,7 @@ var PreviewDrawingController = class {
       this.persistCurrentBrushSettings();
       this.syncSharedToolbarState();
     });
+    this.readingZoomExtent = this.previewEl.createDiv({ cls: "notedraw-reading-zoom-extent" });
     this.embedLayer = this.previewEl.createDiv({ cls: "notedraw-embed-layer" });
     this.staticCanvas.classList.add("notedraw-static-canvas");
     this.previewEl.appendChild(this.staticCanvas);
@@ -4731,6 +4756,8 @@ var PreviewDrawingController = class {
     this.embedRenderTokens.clear();
     this.canvasImageCache.clear();
     this.clearReadingZoomStyles();
+    this.readingZoomExtent?.remove();
+    this.readingZoomExtent = null;
     this.staticCanvas?.remove();
     this.canvas?.remove();
     this.previewEl.removeClass("notedraw-shell");
@@ -4753,6 +4780,7 @@ var PreviewDrawingController = class {
     this.previewEl.removeClass("is-resizing-selection");
     this.previewEl.removeClass("is-native-text-editing");
     this.previewEl.removeClass("is-reading-zoomed");
+    this.previewEl.removeClass("is-editing-layout-zoomed");
     this.clearSelectionLongPress();
     if (this.previewEl._noteDrawController === this) {
       delete this.previewEl._noteDrawController;
@@ -4796,6 +4824,9 @@ var PreviewDrawingController = class {
     }
     this.previewEl.toggleClass("is-drawing-active", this.active);
     this.syncFloatingControlClasses();
+    if (this.active && this.controlsShouldBeVisible()) {
+      this.plugin.enforceSingleVisibleToolbar(this);
+    }
     this.button?.classList.toggle("is-active", this.active);
     if (!this.active && wasActive) {
       this.endTextEdit();
@@ -4838,6 +4869,7 @@ var PreviewDrawingController = class {
   syncFloatingControlClasses() {
     const visible = this.controlsShouldBeVisible();
     this.previewEl?.toggleClass("is-notedraw-controls-visible", visible);
+    this.toolbar?.toggleAttribute("aria-hidden", !visible);
     for (const element of [this.toolbar, this.palettePanel, this.brushPanel, this.textPanel, this.selectionMenu, this.formatToolbar]) {
       element?.toggleClass("is-drawing-active", Boolean(this.active));
       element?.toggleClass("is-notedraw-controls-visible", visible);
@@ -5069,7 +5101,6 @@ var PreviewDrawingController = class {
       button.dataset.noteDrawBrush = option.mode;
       button.dataset.noteDrawBrushVariant = option.variant;
       (0, import_obsidian.setIcon)(button, option.icon);
-      button.createSpan({ text: label });
       button.addEventListener("pointerdown", (event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -5183,7 +5214,7 @@ var PreviewDrawingController = class {
       }
     }
     this.toolMode = state.toolMode || this.toolMode;
-    this.paletteOpen = Boolean(state.paletteOpen) && this.toolMode !== TOOL_SELECT && this.toolMode !== TOOL_EDIT_MD;
+    this.paletteOpen = Boolean(state.paletteOpen) && this.toolMode !== TOOL_EDIT_MD && (this.toolMode !== TOOL_SELECT || this.getSelectedStrokeIndexes().length > 0);
     this.brushPanelOpen = Boolean(state.brushPanelOpen) && this.toolMode === TOOL_DRAW;
     this.brushPanelMode = [BRUSH_PEN, BRUSH_WATERCOLOR].includes(state.brushPanelMode) ? state.brushPanelMode : this.brushPanelMode;
     this.textPanelOpen = Boolean(state.textPanelOpen);
@@ -5251,7 +5282,7 @@ var PreviewDrawingController = class {
   syncPaletteInputs() {
     const settings = this.currentBrushSettings();
     if (this.colorInput) {
-      this.colorInput.value = settings.color;
+      this.colorInput.value = this.currentPaletteColor();
     }
     this.syncColorSwatches();
     if (this.widthInput) {
@@ -5856,17 +5887,47 @@ var PreviewDrawingController = class {
       return;
     }
     this.currentBrushSettings().color = color;
+    this.applyColorToSelectedStrokes(color);
     this.syncCurrentBrushFields();
     this.syncPaletteInputs();
     this.updateToolButtons();
     this.persistCurrentBrushSettings();
     this.syncSharedToolbarState();
   }
+  currentPaletteColor() {
+    if (this.toolMode === TOOL_SELECT) {
+      const selectedColor = this.getSelectedStrokeIndexes().map((index) => this.drawingData.strokes[index]?.color).find((color) => isCssColor(color));
+      if (selectedColor) {
+        return selectedColor;
+      }
+    }
+    return this.currentBrushSettings().color;
+  }
+  applyColorToSelectedStrokes(color) {
+    const indexes = this.getSelectedStrokeIndexes();
+    const changed = indexes.filter((index) => {
+      const stroke = this.drawingData.strokes[index];
+      return stroke && stroke.color !== color;
+    });
+    if (!changed.length) {
+      return false;
+    }
+    const historyBefore = this.captureDrawingHistorySnapshot();
+    for (const index of changed) {
+      this.drawingData.strokes[index].color = color;
+    }
+    this.redoStack = [];
+    this.invalidateStaticCache();
+    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.recordDrawingHistory(historyBefore);
+    this.render();
+    return true;
+  }
   syncColorSwatches() {
     if (!this.colorSwatchButtons?.length) {
       return;
     }
-    const currentColor = this.currentBrushSettings().color?.toLowerCase?.();
+    const currentColor = this.currentPaletteColor()?.toLowerCase?.();
     this.colorSwatchButtons.forEach((button, index) => {
       const color = COMMON_COLORS[index].toLowerCase();
       button.classList.toggle("is-active", color === currentColor);
@@ -5907,7 +5968,7 @@ var PreviewDrawingController = class {
     this.render();
   }
   togglePalettePanel() {
-    if (this.toolMode === TOOL_SELECT || this.toolMode === TOOL_EDIT_MD) {
+    if (this.toolMode === TOOL_EDIT_MD || this.toolMode === TOOL_SELECT && !this.getSelectedStrokeIndexes().length) {
       this.setPaletteOpen(false);
       return;
     }
@@ -6047,7 +6108,7 @@ var PreviewDrawingController = class {
     );
   }
   getResponsiveContentFrame() {
-    return measureResponsiveContentFrame(this.previewEl, this.surfaceType, this.canvasWidth(), this.canvas);
+    return measureResponsiveContentFrame(this.previewEl, this.surfaceType, this.canvasWidth(), this.canvas, this.readingZoomScale());
   }
   getResponsiveLayoutContext(refresh = false) {
     if (this.responsiveLayoutContext && !refresh) {
@@ -6055,10 +6116,10 @@ var PreviewDrawingController = class {
     }
     this.responsiveLayoutContext = {
       frame: this.getResponsiveContentFrame(),
-      viewportHeight: measureResponsiveViewportHeight(this.previewEl, this.scrollContainer),
+      viewportHeight: measureResponsiveViewportHeight(this.previewEl, this.scrollContainer, this.readingZoomScale()),
       lineAnchors: [
-        ...collectRenderedLineAnchors(this.previewEl, this.canvas, this.canvasWindowTop),
-        ...collectVirtualMarkdownLineAnchors(this.view, this.previewEl, this.canvas, this.canvasWindowTop, this.file?.path || "")
+        ...collectRenderedLineAnchors(this.previewEl, this.canvas, this.canvasWindowTop, this.readingZoomScale()),
+        ...collectVirtualMarkdownLineAnchors(this.view, this.previewEl, this.canvas, this.canvasWindowTop, this.file?.path || "", this.readingZoomScale())
       ],
       codeMirror: this.surfaceType === "source" ? getCodeMirrorView(this.view, this.previewEl) : null
     };
@@ -6073,10 +6134,12 @@ var PreviewDrawingController = class {
       return null;
     }
     const canvasRect = this.canvas.getBoundingClientRect();
+    const canvasScaleX = canvasRect.width > 0 ? canvasRect.width / this.canvasWidth() : 1;
+    const canvasScaleY = canvasRect.height > 0 ? canvasRect.height / Math.max(1, this.canvasRenderHeight) : 1;
     return captureCodeMirrorLineLocation(
       context.codeMirror,
-      canvasRect.left + canvasX,
-      canvasRect.top + canvasY - this.canvasWindowTop,
+      canvasRect.left + canvasX * canvasScaleX,
+      canvasRect.top + (canvasY - this.canvasWindowTop) * canvasScaleY,
       this.file?.path || ""
     );
   }
@@ -6092,7 +6155,9 @@ var PreviewDrawingController = class {
     if (!Number.isFinite(clientY)) {
       return NaN;
     }
-    return clientY - this.canvas.getBoundingClientRect().top + this.canvasWindowTop;
+    const canvasRect = this.canvas.getBoundingClientRect();
+    const canvasScaleY = canvasRect.height > 0 ? canvasRect.height / Math.max(1, this.canvasRenderHeight) : 1;
+    return (clientY - canvasRect.top) / Math.max(0.01, canvasScaleY) + this.canvasWindowTop;
   }
   captureResponsivePoint(point, context = this.getResponsiveLayoutContext()) {
     const canvasX = clamp6(Number(point?.x || 0), 0, 1) * this.canvasWidth();
@@ -6324,15 +6389,16 @@ var PreviewDrawingController = class {
   resizeCanvas(options = {}) {
     this.refreshScrollContainer();
     const refreshLayout = options.layout !== false || this.canvasCssWidth <= 1 || this.canvasCssHeight <= 1;
+    const visualScale = this.readingZoomScale();
     let measured;
     let width;
     let height;
     if (refreshLayout) {
       this.layoutMeasureEl = findLayoutMeasureElement(this.previewEl);
-      measured = measureCanvasExtent(this.previewEl, this.layoutMeasureEl);
+      measured = measureCanvasExtent(this.previewEl, this.layoutMeasureEl, visualScale);
       width = Math.max(1, Math.round(measured.width));
       const measuredHeight = Math.max(1, Math.round(measured.height));
-      const extentFrame = measureResponsiveContentFrame(this.previewEl, this.surfaceType, width, this.canvas);
+      const extentFrame = measureResponsiveContentFrame(this.previewEl, this.surfaceType, width, this.canvas, visualScale);
       height = this.drawingsLoaded ? estimateElementLayoutExtent((this.drawingData?.strokes || []).map((stroke) => stroke.layout), {
         canvasWidth: width,
         frame: extentFrame,
@@ -6343,7 +6409,7 @@ var PreviewDrawingController = class {
       height = this.canvasCssHeight;
       measured = { visibleWidth: Math.max(1, this.previewEl.getBoundingClientRect?.().width || width) };
     }
-    const visible = measureVisibleSurfaceWindow(this.previewEl, this.scrollContainer, height);
+    const visible = measureVisibleSurfaceWindow(this.previewEl, this.scrollContainer, height, visualScale);
     const isMobile = isMobileRuntime();
     const devicePixelRatio = window.devicePixelRatio || 1;
     const maxDevicePixelRatio = isMobile ? 4 : 3;
@@ -6389,6 +6455,11 @@ var PreviewDrawingController = class {
         height: `${canvasWindow.height}px`
       });
     }
+    if (canvasWindow.changed && visualScale !== 1 && this.usesVisualReadingZoom()) {
+      for (const canvas of [this.staticCanvas, this.canvas]) {
+        this.applyVisualReadingZoomElement(canvas, visualScale);
+      }
+    }
     if (backingStoreChanged) {
       this.canvas.width = backingStore.width;
       this.canvas.height = backingStore.height;
@@ -6412,7 +6483,7 @@ var PreviewDrawingController = class {
     this.staticCtx.setTransform(backingStore.scale, 0, 0, backingStore.scale, 0, -canvasWindow.top * backingStore.scale);
     if (this.drawingsLoaded && refreshLayout) {
       const frame = this.getResponsiveContentFrame();
-      const viewportHeight = measureResponsiveViewportHeight(this.previewEl, this.scrollContainer);
+      const viewportHeight = measureResponsiveViewportHeight(this.previewEl, this.scrollContainer, visualScale);
       const signature = responsiveLayoutSignature(width, height, frame, this.surfaceType, viewportHeight);
       if (!this.responsivePointsInitialized || signature !== this.responsiveLayoutSignature) {
         this.responsiveLayoutContext = null;
@@ -6428,6 +6499,7 @@ var PreviewDrawingController = class {
         applyElementStyles(canvas, { minWidth: `${Math.round(measured.visibleWidth)}px` });
       }
     }
+    this.updateReadingZoomExtent(visualScale, this.readingZoomTarget);
     this.previewEl.addClass("has-notedraw-canvas");
     return geometryChanged || backingStoreChanged;
   }
@@ -6858,9 +6930,11 @@ var PreviewDrawingController = class {
   floatingTextPointToClient(point) {
     const canvasPoint = this.pointToCanvas(point);
     const canvasRect = this.canvas.getBoundingClientRect();
+    const scaleX = canvasRect.width > 0 ? canvasRect.width / this.canvasWidth() : 1;
+    const scaleY = canvasRect.height > 0 ? canvasRect.height / Math.max(1, this.canvasRenderHeight) : 1;
     return {
-      x: canvasRect.left + canvasPoint.x,
-      y: canvasRect.top + canvasPoint.y - this.canvasWindowTop
+      x: canvasRect.left + canvasPoint.x * scaleX,
+      y: canvasRect.top + (canvasPoint.y - this.canvasWindowTop) * scaleY
     };
   }
   floatingTextEditorInsets(element) {
@@ -7260,7 +7334,94 @@ var PreviewDrawingController = class {
     this.scheduleFloatingControlsPosition();
   }
   canZoomReadingSurface() {
+    return ["preview", "source"].includes(this.surfaceType) && !this.embeddedSurface;
+  }
+  usesVisualReadingZoom() {
     return this.surfaceType === "preview" && !this.embeddedSurface;
+  }
+  readingZoomScale() {
+    return this.canZoomReadingSurface() ? clamp6(Number(this.readingZoom) || 1, MIN_READING_ZOOM, MAX_READING_ZOOM) : 1;
+  }
+  readingZoomElements(target = this.readingZoomTarget) {
+    const elements = [target, this.staticCanvas, this.canvas, this.embedLayer].filter((element) => element?.isConnected);
+    return Array.from(new Set(elements)).filter((element) => !elements.some((parent) => parent !== element && parent.contains?.(element)));
+  }
+  applyVisualReadingZoomElement(element, zoom) {
+    if (!element?.isConnected) {
+      return;
+    }
+    this.rememberReadingZoomStyles(element);
+    const state = this.readingZoomStyleState.get(element);
+    const originalTransform = state?.transform?.value;
+    const origin = this.readingZoomOrigin(element);
+    element.style.setProperty("transform", `scale(${zoom})${originalTransform && originalTransform !== "none" ? ` ${originalTransform}` : ""}`);
+    element.style.setProperty("transform-origin", `${-origin.x}px ${-origin.y}px`);
+  }
+  rememberReadingZoomStyles(element) {
+    if (!element || this.readingZoomStyleState.has(element)) {
+      return;
+    }
+    const properties = ["zoom", "transform", "transform-origin", "margin-bottom"];
+    this.readingZoomStyleState.set(element, Object.fromEntries(properties.map((property) => [property, {
+      value: element.style.getPropertyValue(property),
+      priority: element.style.getPropertyPriority(property)
+    }])));
+  }
+  restoreReadingZoomStyles() {
+    for (const [element, properties] of this.readingZoomStyleState) {
+      for (const [property, state] of Object.entries(properties)) {
+        if (state.value) {
+          element.style.setProperty(property, state.value, state.priority || "");
+        } else {
+          element.style.removeProperty(property);
+        }
+      }
+    }
+    this.readingZoomStyleState.clear();
+  }
+  readingZoomOrigin(element) {
+    if ([this.staticCanvas, this.canvas, this.embedLayer].includes(element)) {
+      return {
+        x: Number.parseFloat(element?.style?.left) || 0,
+        y: Number.parseFloat(element?.style?.top) || 0
+      };
+    }
+    const previewRect = this.previewEl?.getBoundingClientRect?.();
+    const elementRect = element?.getBoundingClientRect?.();
+    if (!previewRect || !elementRect) {
+      return { x: 0, y: 0 };
+    }
+    return {
+      x: elementRect.left - previewRect.left + (Number(this.previewEl.scrollLeft) || 0),
+      y: elementRect.top - previewRect.top + (Number(this.previewEl.scrollTop) || 0)
+    };
+  }
+  updateReadingZoomExtent(zoom, target) {
+    if (!this.readingZoomExtent) {
+      return;
+    }
+    if (!this.usesVisualReadingZoom() || Math.abs(zoom - 1) < 1e-3) {
+      this.readingZoomExtent.style.removeProperty("width");
+      this.readingZoomExtent.style.removeProperty("height");
+      this.readingZoomExtent.removeAttribute("data-active");
+      return;
+    }
+    const visualOrigin = this.readingZoomOrigin(target);
+    const targetOrigin = {
+      x: visualOrigin.x / zoom,
+      y: visualOrigin.y / zoom
+    };
+    const logicalWidth = Math.max(this.canvasCssWidth || 0, targetOrigin.x + (target?.scrollWidth || target?.offsetWidth || 0), this.previewEl.clientWidth || 0);
+    const logicalHeight = Math.max(this.canvasCssHeight || 0, targetOrigin.y + (target?.scrollHeight || target?.offsetHeight || 0), this.previewEl.clientHeight || 0);
+    const width = `${Math.max(1, Math.ceil(logicalWidth * zoom))}px`;
+    const height = `${Math.max(1, Math.ceil(logicalHeight * zoom))}px`;
+    if (this.readingZoomExtent.style.width !== width) {
+      this.readingZoomExtent.style.setProperty("width", width);
+    }
+    if (this.readingZoomExtent.style.height !== height) {
+      this.readingZoomExtent.style.setProperty("height", height);
+    }
+    this.readingZoomExtent.setAttribute("data-active", "true");
   }
   applyReadingZoom() {
     if (!this.canZoomReadingSurface()) {
@@ -7270,27 +7431,47 @@ var PreviewDrawingController = class {
     if (!target) {
       return false;
     }
-    if (this.readingZoomTarget && this.readingZoomTarget !== target) {
-      this.readingZoomTarget.style.removeProperty("zoom");
-      this.readingZoomTarget.style.removeProperty("transform-origin");
-    }
+    this.restoreReadingZoomStyles();
     this.readingZoomTarget = target;
-    const zoom = clamp6(Number(this.readingZoom) || 1, MIN_READING_ZOOM, MAX_READING_ZOOM);
+    const zoom = this.readingZoomScale();
     this.readingZoom = zoom;
+    const elements = this.readingZoomElements(target);
     if (Math.abs(zoom - 1) < 1e-3) {
-      target.style.removeProperty("zoom");
-      target.style.removeProperty("transform-origin");
       this.previewEl.removeClass("is-reading-zoomed");
+      this.previewEl.removeClass("is-editing-layout-zoomed");
     } else {
-      target.style.setProperty("zoom", String(zoom));
-      target.style.setProperty("transform-origin", "top left");
-      this.previewEl.addClass("is-reading-zoomed");
+      if (this.usesVisualReadingZoom()) {
+        for (const element of elements) {
+          this.applyVisualReadingZoomElement(element, zoom);
+        }
+        const targetState = this.readingZoomStyleState.get(target);
+        const originalMarginBottom = Number.parseFloat(window.getComputedStyle(target).marginBottom) || 0;
+        const targetHeight = Math.max(1, target?.offsetHeight || target?.scrollHeight || 1);
+        if (zoom < 1) {
+          target.style.setProperty("margin-bottom", `${originalMarginBottom - targetHeight * (1 - zoom)}px`);
+        } else if (targetState?.["margin-bottom"]?.value) {
+          target.style.setProperty("margin-bottom", targetState["margin-bottom"].value, targetState["margin-bottom"].priority || "");
+        } else {
+          target.style.removeProperty("margin-bottom");
+        }
+      } else {
+        for (const element of elements) {
+          this.rememberReadingZoomStyles(element);
+          element.style.setProperty("zoom", String(zoom));
+          element.style.setProperty("transform-origin", "top left");
+        }
+      }
+      this.previewEl.toggleClass("is-reading-zoomed", this.usesVisualReadingZoom());
+      this.previewEl.toggleClass("is-editing-layout-zoomed", !this.usesVisualReadingZoom());
     }
+    this.updateReadingZoomExtent(zoom, target);
     return true;
   }
   clearReadingZoomStyles() {
-    this.readingZoomTarget?.style?.removeProperty("zoom");
-    this.readingZoomTarget?.style?.removeProperty("transform-origin");
+    this.restoreReadingZoomStyles();
+    this.updateReadingZoomExtent(1, this.readingZoomTarget);
+    this.previewEl?.removeClass("is-reading-zoomed");
+    this.previewEl?.removeClass("is-editing-layout-zoomed");
     this.readingZoomTarget = null;
   }
   setReadingZoom(value, clientPoint = null, options = {}) {
@@ -7316,8 +7497,7 @@ var PreviewDrawingController = class {
       scroller.scrollTop = Math.max(0, (scrollTop + focalY) * ratio - focalY);
     }
     this.responsiveLayoutContext = null;
-    this.responsiveLayoutSignature = "";
-    this.scheduleResize({ layout: true });
+    this.scheduleResize({ layout: !this.usesVisualReadingZoom() });
     if (options.share !== false) {
       this.syncSharedToolbarState();
     }
@@ -8423,6 +8603,7 @@ var PreviewDrawingController = class {
     this.selectedStrokeIndex = selected.length ? selected[selected.length - 1] : -1;
     this.hideSelectionMenu();
     this.invalidateStaticCache();
+    this.syncPaletteInputs();
   }
   toggleStrokeSelection(index) {
     if (!Number.isInteger(index) || index < 0 || index >= this.drawingData.strokes.length) {
@@ -8441,6 +8622,7 @@ var PreviewDrawingController = class {
     this.selectedStrokeIndex = -1;
     this.hideSelectionMenu();
     this.invalidateStaticCache();
+    this.syncPaletteInputs();
   }
   getSelectedStrokeIndexes() {
     if (this.selectedStrokeIndexes.size) {
@@ -10376,8 +10558,8 @@ function cleanupAllDrawingHeaderButtons() {
   activeDocument.body?.querySelectorAll?.(".notedraw-body-control, .notedraw-file-input").forEach((element) => element.remove());
 }
 function cleanupDrawingUi(preview) {
-  preview.querySelectorAll(".notedraw-button, .notedraw-fallback-button, .notedraw-webview-button, .notedraw-toolbar, .notedraw-palette-panel, .notedraw-brush-panel, .notedraw-text-panel, .notedraw-selection-menu, .notedraw-format-toolbar, .notedraw-embed-layer, .notedraw-file-input, .notedraw-static-canvas, .notedraw-canvas").forEach((element) => element.remove());
-  preview.classList.remove("notedraw-shell", "is-drawing-active", "is-drawing-hidden", "is-select-mode", "is-palette-open", "is-brush-panel-open", "is-text-panel-open", "is-selection-menu-open", "is-watercolor-mode", "is-edit-md-mode", "is-selecting-strokes", "is-resizing-selection", "is-native-text-editing", "is-reading-zoomed", "is-notedraw-webview-shell", "is-notedraw-workspace-shell", "is-notedraw-embedded-shell", "is-notedraw-responsive-layout", "is-notedraw-controls-visible", "has-notedraw-body-controls", "has-notedraw-canvas");
+  preview.querySelectorAll(".notedraw-button, .notedraw-fallback-button, .notedraw-webview-button, .notedraw-toolbar, .notedraw-palette-panel, .notedraw-brush-panel, .notedraw-text-panel, .notedraw-selection-menu, .notedraw-format-toolbar, .notedraw-reading-zoom-extent, .notedraw-embed-layer, .notedraw-file-input, .notedraw-static-canvas, .notedraw-canvas").forEach((element) => element.remove());
+  preview.classList.remove("notedraw-shell", "is-drawing-active", "is-drawing-hidden", "is-select-mode", "is-palette-open", "is-brush-panel-open", "is-text-panel-open", "is-selection-menu-open", "is-watercolor-mode", "is-edit-md-mode", "is-selecting-strokes", "is-resizing-selection", "is-native-text-editing", "is-reading-zoomed", "is-editing-layout-zoomed", "is-notedraw-webview-shell", "is-notedraw-workspace-shell", "is-notedraw-embedded-shell", "is-notedraw-responsive-layout", "is-notedraw-controls-visible", "has-notedraw-body-controls", "has-notedraw-canvas");
 }
 function isMarkdownContentMutation(mutation) {
   if (mutation?.type !== "childList") {
@@ -11233,10 +11415,11 @@ function findResponsiveContentElement(previewEl, surfaceType) {
   }
   return previewEl.querySelector?.(":scope > .markdown-preview-sizer") || previewEl.querySelector?.(".markdown-preview-sizer") || previewEl;
 }
-function measureResponsiveContentFrame(previewEl, surfaceType, surfaceWidth, canvas) {
+function measureResponsiveContentFrame(previewEl, surfaceType, surfaceWidth, canvas, visualScale = 1) {
   const content = findResponsiveContentElement(previewEl, surfaceType);
   const contentRect = content?.getBoundingClientRect?.();
   const surfaceRect = previewEl?.getBoundingClientRect?.() || canvas?.getBoundingClientRect?.();
+  const scale = Math.max(0.01, Number(visualScale) || 1);
   if (!contentRect || !surfaceRect || contentRect.width <= 1) {
     return constrainWideContentFrame({
       surfaceWidth,
@@ -11246,12 +11429,13 @@ function measureResponsiveContentFrame(previewEl, surfaceType, surfaceWidth, can
   }
   return constrainWideContentFrame({
     surfaceWidth,
-    contentLeft: contentRect.left - surfaceRect.left + (Number(previewEl?.scrollLeft) || 0),
-    contentWidth: contentRect.width
+    contentLeft: (contentRect.left - surfaceRect.left + (Number(previewEl?.scrollLeft) || 0)) / scale,
+    contentWidth: contentRect.width / scale
   }, { isMobile: isMobileRuntime() });
 }
-function measureResponsiveViewportHeight(previewEl, scrollContainer) {
+function measureResponsiveViewportHeight(previewEl, scrollContainer, visualScale = 1) {
   const scrollRect = scrollContainer?.getBoundingClientRect?.();
+  const scale = Math.max(0.01, Number(visualScale) || 1);
   const candidates = [
     scrollContainer === previewEl ? previewEl?.clientHeight : scrollContainer?.clientHeight,
     scrollRect?.height,
@@ -11259,7 +11443,7 @@ function measureResponsiveViewportHeight(previewEl, scrollContainer) {
     window.innerHeight,
     previewEl?.clientHeight
   ];
-  return Math.max(1, Number(candidates.find((value) => Number(value) > 1)) || 1);
+  return Math.max(1, (Number(candidates.find((value) => Number(value) > 1)) || 1) / scale);
 }
 function createElementLayoutId(index = -1) {
   return `el-${Date.now().toString(36)}-${Math.max(0, Number(index) || 0).toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
@@ -11291,11 +11475,12 @@ function responsiveLayoutSignature(width, height, frame, surfaceType, viewportHe
     Math.round(Number(viewportHeight) || 0)
   ].join(":");
 }
-function collectRenderedLineAnchors(root, canvas, canvasWindowTop) {
+function collectRenderedLineAnchors(root, canvas, canvasWindowTop, visualScale = 1) {
   if (!root || !canvas) {
     return [];
   }
   const canvasRect = canvas.getBoundingClientRect();
+  const scale = Math.max(0.01, Number(visualScale) || 1);
   const anchors = [];
   for (const element of root.querySelectorAll?.("[data-note-draw-line-start]") || []) {
     const start = parseInteger(element.dataset.noteDrawLineStart);
@@ -11309,28 +11494,29 @@ function collectRenderedLineAnchors(root, canvas, canvasWindowTop) {
       path,
       start: Math.min(start, end),
       end: Math.max(start, end),
-      left: rect.left - canvasRect.left,
-      right: rect.right - canvasRect.left,
-      top: rect.top - canvasRect.top + canvasWindowTop,
-      bottom: rect.bottom - canvasRect.top + canvasWindowTop,
-      height: rect.height,
-      area: rect.width * rect.height,
+      left: (rect.left - canvasRect.left) / scale,
+      right: (rect.right - canvasRect.left) / scale,
+      top: (rect.top - canvasRect.top) / scale + canvasWindowTop,
+      bottom: (rect.bottom - canvasRect.top) / scale + canvasWindowTop,
+      height: rect.height / scale,
+      area: rect.width * rect.height / (scale * scale),
       confidence: clamp6(Number(element.dataset.noteDrawLineConfidence ?? 1), 0, 1)
     });
   }
   return anchors;
 }
-function collectVirtualMarkdownLineAnchors(view, root, canvas, canvasWindowTop, fallbackPath) {
+function collectVirtualMarkdownLineAnchors(view, root, canvas, canvasWindowTop, fallbackPath, visualScale = 1) {
   const renderer = view?.previewMode?.renderer;
   const sections = Array.isArray(renderer?.sections) ? renderer.sections : [];
   if (!root || !canvas || !sections.length || renderer?.previewEl !== root) {
     return [];
   }
   const canvasRect = canvas.getBoundingClientRect();
+  const scale = Math.max(0.01, Number(visualScale) || 1);
   const sizer = renderer.sizerEl || root.querySelector?.(":scope > .markdown-preview-sizer") || root.querySelector?.(".markdown-preview-sizer");
   const sizerRect = sizer?.getBoundingClientRect?.();
-  const baseTop = sizerRect ? sizerRect.top - canvasRect.top + canvasWindowTop : 0;
-  const frame = measureResponsiveContentFrame(root, "preview", Math.max(1, Number(root.scrollWidth) || root.clientWidth || 1), canvas);
+  const baseTop = sizerRect ? (sizerRect.top - canvasRect.top) / scale + canvasWindowTop : 0;
+  const frame = measureResponsiveContentFrame(root, "preview", Math.max(1, Number(root.clientWidth) || Number(root.scrollWidth) / scale || 1), canvas, scale);
   return buildVirtualMarkdownSectionAnchors(sections.map((section) => {
     const element = section?.el;
     const measured = Number(element?.offsetHeight) > 0 && Number.isFinite(Number(element?.offsetTop));
@@ -11435,32 +11621,33 @@ function projectCodeMirrorLineLocation(codeMirror, linePosition) {
 function findLayoutMeasureElement(previewEl) {
   return previewEl?.querySelector?.(".markdown-preview-sizer") || previewEl?.querySelector?.(".cm-sizer") || previewEl?.querySelector?.(".cm-content") || previewEl;
 }
-function measureCanvasExtent(previewEl, measureEl = null) {
+function measureCanvasExtent(previewEl, measureEl = null, visualScale = 1) {
   const previewRect = previewEl.getBoundingClientRect();
   const measureRect = measureEl?.getBoundingClientRect?.();
   const measureIsPreview = !measureEl || measureEl === previewEl;
+  const scale = Math.max(0.01, Number(visualScale) || 1);
   const scrollLeft = Math.max(0, Number(previewEl.scrollLeft) || 0);
   const scrollTop = Math.max(0, Number(previewEl.scrollTop) || 0);
-  const relativeRight = measureRect ? measureRect.right - previewRect.left + scrollLeft : 0;
-  const relativeBottom = measureRect ? measureRect.bottom - previewRect.top + scrollTop : 0;
+  const relativeRight = measureRect ? (measureRect.right - previewRect.left + scrollLeft) / scale : 0;
+  const relativeBottom = measureRect ? (measureRect.bottom - previewRect.top + scrollTop) / scale : 0;
   const width = Math.max(
-    measureIsPreview ? previewEl.scrollWidth || 0 : 0,
-    scrollLeft + (previewEl.clientWidth || 0),
+    measureIsPreview ? (previewEl.scrollWidth || 0) / scale : 0,
+    previewEl.clientWidth || 0,
     measureEl?.scrollWidth || 0,
     measureEl?.offsetWidth || 0,
     relativeRight,
     previewRect.width || 0,
-    measureRect?.width || 0
+    (measureRect?.width || 0) / scale
   );
   const height = Math.max(
-    measureIsPreview ? previewEl.scrollHeight || 0 : 0,
-    scrollTop + (previewEl.clientHeight || 0),
+    measureIsPreview ? (previewEl.scrollHeight || 0) / scale : 0,
+    previewEl.clientHeight || 0,
     measureEl?.scrollHeight || 0,
     measureEl?.offsetHeight || 0,
     relativeBottom,
     measureIsPreview ? previewEl.offsetHeight || 0 : 0,
     previewRect.height || 0,
-    measureRect?.height || 0
+    (measureRect?.height || 0) / scale
   );
   return {
     width: Math.max(1, width),
@@ -11468,13 +11655,14 @@ function measureCanvasExtent(previewEl, measureEl = null) {
     visibleWidth: Math.max(1, previewRect.width || width)
   };
 }
-function measureVisibleSurfaceWindow(previewEl, scrollContainer, documentHeight) {
+function measureVisibleSurfaceWindow(previewEl, scrollContainer, documentHeight, visualScale = 1) {
   const height = Math.max(1, Number(documentHeight) || 1);
+  const scale = Math.max(0.01, Number(visualScale) || 1);
   const previewRect = previewEl?.getBoundingClientRect?.();
   if (scrollContainer === previewEl) {
-    const viewportHeight = Math.max(1, previewEl.clientHeight || previewRect?.height || window.innerHeight || 1);
+    const viewportHeight = Math.max(1, (previewEl.clientHeight || previewRect?.height || window.innerHeight || 1) / scale);
     return {
-      top: clamp6(Number(previewEl.scrollTop) || 0, 0, Math.max(0, height - viewportHeight)),
+      top: clamp6((Number(previewEl.scrollTop) || 0) / scale, 0, Math.max(0, height - viewportHeight)),
       height: Math.min(height, viewportHeight)
     };
   }
@@ -11484,11 +11672,11 @@ function measureVisibleSurfaceWindow(previewEl, scrollContainer, documentHeight)
     height: window.innerHeight || height
   };
   const surfaceTop = previewRect?.top || 0;
-  const viewportTop = Math.max(0, viewportRect.top - surfaceTop);
-  const viewportBottom = Math.min(height, (viewportRect.bottom || viewportRect.top + viewportRect.height) - surfaceTop);
+  const viewportTop = Math.max(0, (viewportRect.top - surfaceTop) / scale);
+  const viewportBottom = Math.min(height, ((viewportRect.bottom || viewportRect.top + viewportRect.height) - surfaceTop) / scale);
   return {
     top: clamp6(viewportTop, 0, Math.max(0, height - 1)),
-    height: Math.max(1, viewportBottom - viewportTop || viewportRect.height || window.innerHeight || 1)
+    height: Math.max(1, viewportBottom - viewportTop || (viewportRect.height || window.innerHeight || 1) / scale)
   };
 }
 function clearCanvasContext(context, canvas) {

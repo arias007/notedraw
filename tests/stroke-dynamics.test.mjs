@@ -6,7 +6,7 @@ import {
   straightenWatercolorPoints
 } from "../src/stroke-dynamics.mjs";
 
-test("fountain pen becomes wider and denser during slower movement", () => {
+test("fountain pen changes width with speed while keeping opacity constant", () => {
   const slow = buildFountainPenSegments([
     { x: 0, y: 0, t: 0 },
     { x: 0.02, y: 0, t: 40 }
@@ -19,7 +19,8 @@ test("fountain pen becomes wider and denser during slower movement", () => {
   assert.equal(slow.length, 1);
   assert.equal(fast.length, 1);
   assert.ok(slow[0].width > fast[0].width);
-  assert.ok(slow[0].opacity > fast[0].opacity);
+  assert.equal(slow[0].opacity, 0.8);
+  assert.equal(fast[0].opacity, 0.8);
 });
 
 test("straight watercolor only locks strokes already close to an axis", () => {

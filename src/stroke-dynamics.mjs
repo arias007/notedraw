@@ -26,7 +26,6 @@ export function buildFountainPenSegments(points, {
   const strokeOpacity = clamp(finite(baseOpacity, 1), 0, 1);
   const segments = [];
   let widthFactor = 1;
-  let opacityFactor = 1;
   for (let index = 1; index < points.length; index += 1) {
     const from = points[index - 1];
     const to = points[index];
@@ -40,15 +39,13 @@ export function buildFountainPenSegments(points, {
     const speed = distance / elapsed;
     const speedRatio = clamp((speed - 0.04) / 1.16, 0, 1);
     const targetWidthFactor = mix(1.42, 0.58, speedRatio);
-    const targetOpacityFactor = mix(1.06, 0.64, speedRatio);
     widthFactor = mix(widthFactor, targetWidthFactor, 0.42);
-    opacityFactor = mix(opacityFactor, targetOpacityFactor, 0.38);
     segments.push({
       from,
       to,
       speed,
       width: clamp(strokeWidth * widthFactor, strokeWidth * 0.5, strokeWidth * 1.5),
-      opacity: clamp(strokeOpacity * opacityFactor, 0, 1)
+      opacity: strokeOpacity
     });
   }
   return segments;

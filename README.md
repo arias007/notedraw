@@ -9,7 +9,7 @@ It is built as a surface layer: the same drawing and text-edit logic works on Ob
 - Magic-wand header button for entering NoteDraw mode.
 - In-place text editing in reading view.
 - Source/edit view overlay using the same command entry.
-- The original pen remains the default, with a separate speed-sensitive fountain pen that varies width and density.
+- The original pen remains the default, with a separate speed-sensitive fountain pen that varies stroke width while keeping opacity stable.
 - The original watercolor brush remains available, with text-aligned and auto-straight variants.
 - Stroke selection, multi-select, movement, resize handles, and delete.
 - Floating text, button-style text boxes, rectangles, straight lines, and arrows.
@@ -18,15 +18,16 @@ It is built as a surface layer: the same drawing and text-edit logic works on Ob
 - Text and shape tools can select existing drawing elements before creating new ones.
 - Text elements can be double-clicked to edit again, and text-panel style buttons apply to active rendered Markdown text when possible.
 - Circular toolbar buttons sized for quick touch or mouse use.
-- Palette button is disabled while select mode is active.
+- Palette changes recolor selected elements directly; without a selection, select mode keeps the palette closed.
 - Active pen and watercolor buttons use their current brush color as the button background.
-- The palette has common color swatches plus an advanced color picker entry.
+- The palette has common color swatches plus an advanced color picker entry, and applies color changes to selected elements.
 - Toolbar positioning stays below the Obsidian view header while scrolling.
 - Lazy drawing-data loading to reduce note-open lag.
 - Viewport-windowed canvas rendering with mobile pixel budgets for stable long-note performance.
 - Inactive canvases stay out of the compositor, and stale view controllers are released on mode or file changes.
 - Responsive coordinates follow the Markdown content lane and nearby source lines across reading, source, desktop, and mobile layouts.
-- Reading view supports smooth pinch zoom and Ctrl/Cmd + wheel zoom without losing drawing alignment.
+- Reading view uses non-reflowing visual zoom: original line breaks stay fixed, enlarged content can overflow horizontally, and two-axis panning keeps every NoteDraw layer aligned.
+- Source/edit view keeps layout zoom, so text can reflow to the edited working width.
 - Click-to-caret behavior inside active text blocks.
 - Drawing data stored outside Markdown so notes stay clean.
 - Public API for scripts, other plugins, and AI agents.
@@ -217,4 +218,4 @@ The current package focuses on the local Obsidian plugin runtime. The API and DO
 
 ## Version
 
-Current version: `3.2.9`.
+Current version: `3.2.10`.
