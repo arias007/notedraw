@@ -9,7 +9,8 @@ It is built as a surface layer: the same drawing and text-edit logic works on Ob
 - Magic-wand header button for entering NoteDraw mode.
 - In-place text editing in reading view.
 - Source/edit view overlay using the same command entry.
-- Pen and watercolor brushes with separate default color, width, and opacity.
+- The original pen remains the default, with a separate speed-sensitive fountain pen that varies width and density.
+- The original watercolor brush remains available, with text-aligned and auto-straight variants.
 - Stroke selection, multi-select, movement, resize handles, and delete.
 - Floating text, button-style text boxes, rectangles, straight lines, and arrows.
 - Text style toggles for bold, italic, underline, and boxed text.
@@ -25,12 +26,14 @@ It is built as a surface layer: the same drawing and text-edit logic works on Ob
 - Viewport-windowed canvas rendering with mobile pixel budgets for stable long-note performance.
 - Inactive canvases stay out of the compositor, and stale view controllers are released on mode or file changes.
 - Responsive coordinates follow the Markdown content lane and nearby source lines across reading, source, desktop, and mobile layouts.
+- Reading view supports smooth pinch zoom and Ctrl/Cmd + wheel zoom without losing drawing alignment.
 - Click-to-caret behavior inside active text blocks.
 - Drawing data stored outside Markdown so notes stay clean.
 - Public API for scripts, other plugins, and AI agents.
 - Drawings made inside embedded note previews are stored against the embedded note path, so opening that note shows the same layer.
 - Embedded `![[Markdown notes]]` can be edited in place: direct editing in source view and the floating format toolbar in reading view.
 - Webview surfaces get independent drawing files, so annotations do not bleed between pages.
+- File-backed Canvas, PDF, image, database, and other workspace views retain their magic wand and drawing layer across internal rerenders.
 - Imported images, videos, files, Markdown, and HTML can be placed as floating NoteDraw elements.
 
 ## Storage
@@ -138,6 +141,9 @@ noteDraw.capabilities;
 noteDraw.listSurfaces();
 await noteDraw.activate({ tool: "edit-md" });
 noteDraw.setTool("pen");
+noteDraw.setTool({ tool: "draw", brush: "pen", variant: "fountain" });
+noteDraw.setTool({ tool: "draw", brush: "watercolor", variant: "text-highlight" });
+noteDraw.setZoom(1.25);
 await noteDraw.readDrawings("Notes/example.md");
 await noteDraw.writeDrawings("Notes/example.md", drawingData);
 await noteDraw.replaceText({
@@ -211,4 +217,4 @@ The current package focuses on the local Obsidian plugin runtime. The API and DO
 
 ## Version
 
-Current version: `3.2.8`.
+Current version: `3.2.9`.

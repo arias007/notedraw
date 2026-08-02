@@ -11,6 +11,23 @@
   min-height: 180px;
 }
 
+.notedraw-shell.is-notedraw-workspace-shell {
+  position: relative;
+  min-height: 180px;
+}
+
+.notedraw-shell.is-notedraw-workspace-shell .notedraw-static-canvas {
+  z-index: 900;
+}
+
+.notedraw-shell.is-notedraw-workspace-shell .notedraw-canvas {
+  z-index: 901;
+}
+
+.notedraw-shell.is-notedraw-workspace-shell .notedraw-embed-layer {
+  z-index: 899;
+}
+
 .notedraw-shell.is-notedraw-embedded-shell {
   position: relative;
   min-height: 48px;
@@ -317,6 +334,7 @@
 }
 
 .notedraw-body-control.notedraw-palette-panel,
+.notedraw-body-control.notedraw-brush-panel,
 .notedraw-body-control.notedraw-text-panel {
   z-index: 10001;
 }
@@ -577,6 +595,61 @@
   gap: 8px;
 }
 
+.notedraw-brush-panel {
+  position: fixed;
+  z-index: 1002;
+  top: var(--notedraw-brush-panel-top, 92px);
+  left: auto;
+  right: var(--notedraw-toolbar-right, 8px);
+  display: none;
+  min-width: 168px;
+  padding: 6px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 7px;
+  background: var(--background-primary);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.14);
+}
+
+.notedraw-shell.is-drawing-active.is-notedraw-controls-visible.is-brush-panel-open .notedraw-brush-panel,
+.notedraw-body-control.notedraw-brush-panel.is-drawing-active.is-notedraw-controls-visible.is-brush-panel-open {
+  display: grid;
+  gap: 4px;
+}
+
+.notedraw-brush-option {
+  min-width: 0;
+  height: 32px;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--text-muted);
+  background: transparent;
+  cursor: pointer;
+  font-size: var(--font-ui-small);
+  touch-action: manipulation;
+}
+
+.notedraw-brush-option[hidden] {
+  display: none;
+}
+
+.notedraw-brush-option svg,
+.notedraw-brush-option .svg-icon {
+  width: 17px;
+  height: 17px;
+  min-width: 17px;
+}
+
+.notedraw-brush-option.is-active,
+.notedraw-brush-option:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+  border-color: color-mix(in srgb, var(--interactive-accent) 35%, var(--background-modifier-border));
+}
+
 .notedraw-text-panel {
   position: fixed;
   z-index: 1002;
@@ -633,6 +706,7 @@
   background: var(--background-secondary);
   cursor: pointer;
   font-size: 11px;
+  touch-action: manipulation;
 }
 
 .notedraw-text-option svg,
@@ -870,6 +944,7 @@
   }
 
   .notedraw-palette-panel,
+  .notedraw-brush-panel,
   .notedraw-text-panel {
     left: 8px;
     right: 8px;

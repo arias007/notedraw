@@ -28,17 +28,21 @@ test("the stable v1 API exposes Cancip-friendly capabilities and events", async 
   assert.match(source, /responsiveElements: ELEMENT_LAYOUT_BASIS/);
   assert.match(source, /replaceText: async \(options\) => this\.replaceTextApi\(options\)/);
   assert.match(source, /on: \(eventName, listener\) => this\.onApiEvent\(eventName, listener\)/);
+  assert.match(source, /listSurfaces: v1\.listSurfaces/);
+  assert.match(source, /setTool: v1\.setTool/);
+  assert.match(source, /getZoom: v1\.getZoom/);
+  assert.match(source, /setZoom: v1\.setZoom/);
 });
 
-test("3.2.8 preserves bottom coordinates and cross-view frames without eager hidden-view refresh", async () => {
+test("3.2.9 preserves bottom coordinates and cross-view frames without eager hidden-view refresh", async () => {
   const [source, manifestText] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(manifestUrl, "utf8")
   ]);
   const manifest = JSON.parse(manifestText);
 
-  assert.equal(manifest.version, "3.2.8");
-  assert.match(source, /version: "3\.2\.8"/);
+  assert.equal(manifest.version, "3.2.9");
+  assert.match(source, /version: "3\.2\.9"/);
   assert.match(source, /if \(!this\.responsivePointsInitialized \|\| signature !== this\.responsiveLayoutSignature\)/);
   assert.match(source, /migratedDrawingData\.version = Math\.max\(3/);
   assert.match(source, /captureElementLayoutForStroke/);
@@ -47,7 +51,7 @@ test("3.2.8 preserves bottom coordinates and cross-view frames without eager hid
   assert.match(source, /elementLayoutNeedsRepair\(existingLayout\)/);
   assert.match(source, /normalizeDrawingDataForStorage\(this\.drawingData, this\.file\)/);
   assert.match(source, /scheduleDrawingSave\(this\.file, migratedDrawingData, \{ excludeData: this\.drawingData \}\)/);
-  assert.match(source, /for \(const controller of this\.liveControllers\) \{\s*controller\.syncFloatingControlClasses\(\);\s*if \(controller\.active \|\| controller\.drawingsLoaded \|\| isElementVisibleEnough\(controller\.previewEl\)\) \{\s*controller\.scheduleLayoutRefresh\(\{ settle: false \}\)/);
+  assert.match(source, /for \(const controller of this\.liveControllers\) \{[\s\S]*controller\.syncFloatingControlClasses\(\);\s*if \(controller\.active \|\| controller\.drawingsLoaded \|\| isElementVisibleEnough\(controller\.previewEl\)\) \{\s*controller\.scheduleLayoutRefresh\(\{ settle: false \}\)/);
   assert.match(source, /const eager = !enabled \|\| candidate === controller \|\| isElementVisibleEnough\(candidate\.previewEl\);\s*candidate\.applyActiveState\(enabled, \{ eager \}\)/);
   assert.match(source, /scheduleLayoutRefresh\(options = \{\}\)/);
   assert.match(source, /generation === this\.layoutRefreshGeneration/);
@@ -149,7 +153,7 @@ test("two-finger scrolling always releases touch suppression before the next str
   assert.match(source, /activeDocument\.addEventListener\("pointercancel", this\.onDocumentPointerFinish, true\)/);
   assert.match(source, /onDocumentPointerFinish\(event\)[\s\S]*this\.completeTrackedTouch\(event\.pointerId\)/);
   assert.match(source, /event\.isPrimary && this\.touchPointers\.size && !this\.pointerDown && this\.activePointerId === null[\s\S]*this\.resetTouchGestureState\(\)/);
-  assert.match(source, /completeTrackedTouch\(pointerId\)[\s\S]*this\.touchPointers\.size === 0[\s\S]*this\.suppressTouchDrawing = false[\s\S]*this\.scheduleResize\(\)[\s\S]*this\.requestRender\(true\)/);
+  assert.match(source, /completeTrackedTouch\(pointerId\)[\s\S]*this\.touchPointers\.size === 0[\s\S]*this\.suppressTouchDrawing = false[\s\S]*this\.scheduleResize\(\{ layout: false \}\)[\s\S]*this\.requestRender\(true\)/);
 });
 
 test("deactivating the wand promotes selected text and drawings back into the static canvas", async () => {

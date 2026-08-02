@@ -48,6 +48,10 @@ import {
   computeTextLayout,
   placeFloatingTextEditor
 } from "./text-layout.mjs";
+import {
+  buildFountainPenSegments,
+  straightenWatercolorPoints
+} from "./stroke-dynamics.mjs";
 const activeDocument = window.activeWindow?.document || window.document;
 var PLUGIN_ID = "notedraw";
 var DRAWING_DIR = `${PLUGIN_ID}/drawings`;
@@ -97,6 +101,12 @@ var TOOL_TEXT = "text";
 var TOOL_EMBED = "embed";
 var BRUSH_PEN = "pen";
 var BRUSH_WATERCOLOR = "watercolor";
+var BRUSH_VARIANT_DEFAULT = "default";
+var PEN_VARIANT_FOUNTAIN = "fountain";
+var WATERCOLOR_VARIANT_TEXT = "text-highlight";
+var WATERCOLOR_VARIANT_STRAIGHT = "straight";
+var MIN_READING_ZOOM = 0.6;
+var MAX_READING_ZOOM = 2.5;
 var TEXT_RENDER_PLAIN = "plain";
 var TEXT_RENDER_MARKDOWN = "markdown";
 var TEXT_RENDER_HTML = "html";
@@ -143,7 +153,12 @@ var I18N = {
     selectDrawings: "Select drawings",
     editMarkdownTool: "Edit MD",
     pen: "Pen",
+    standardPen: "Standard pen",
+    fountainPen: "Fountain pen",
     watercolorBrush: "Watercolor brush",
+    standardWatercolor: "Standard watercolor",
+    textWatercolor: "Text watercolor",
+    straightWatercolor: "Straight watercolor",
     floatingText: "Floating text",
     undoLastDrawing: "Undo last drawing",
     redoDrawing: "Redo drawing",
@@ -261,7 +276,12 @@ var I18N = {
     selectDrawings: "选择元素",
     editMarkdownTool: "编辑 MD",
     pen: "笔",
+    standardPen: "普通笔",
+    fountainPen: "钢笔",
     watercolorBrush: "水彩笔",
+    standardWatercolor: "普通水彩笔",
+    textWatercolor: "文字水彩笔",
+    straightWatercolor: "自动拉直水彩笔",
     floatingText: "悬浮文字",
     undoLastDrawing: "撤销上一步涂鸦",
     redoDrawing: "重做涂鸦",
@@ -975,6 +995,7 @@ var BLOCKED_EDIT_SELECTOR = [
   ".notedraw-button",
   ".notedraw-toolbar",
   ".notedraw-palette-panel",
+  ".notedraw-brush-panel",
   ".notedraw-selection-menu",
   ".notedraw-static-canvas",
   ".notedraw-canvas",
@@ -1016,6 +1037,7 @@ var WEBVIEW_BLOCKED_EDIT_SELECTOR = [
   ".notedraw-button",
   ".notedraw-toolbar",
   ".notedraw-palette-panel",
+  ".notedraw-brush-panel",
   ".notedraw-text-panel",
   ".notedraw-selection-menu",
   ".notedraw-embed-layer",
@@ -1044,6 +1066,7 @@ var NoteDrawPlugin = class extends Plugin {
     this.sourceControllers = /* @__PURE__ */ new Map();
     this.embeddedControllers = /* @__PURE__ */ new Map();
     this.webviewControllers = /* @__PURE__ */ new Map();
+    this.workspaceControllers = /* @__PURE__ */ new Map();
     this.headerActions = /* @__PURE__ */ new Map();
     this.saveTimers = /* @__PURE__ */ new Map();
     this.pendingDrawingSaves = /* @__PURE__ */ new Map();
@@ -1058,6 +1081,7 @@ var NoteDrawPlugin = class extends Plugin {
     this.settingsSaveTimer = null;
     this.webviewSyncTimer = null;
     this.embeddedSyncTimer = null;
+    this.workspaceSyncTimer = null;
     this.floatingControlsSyncTimer = null;
     this.webviewMutationObserver = null;
     this.api = this.createPublicApi();
@@ -1078,7 +1102,11 @@ var NoteDrawPlugin = class extends Plugin {
       this.syncMarkdownControllerModes();
       this.syncEmbeddedMarkdownControllers();
       this.syncWebviewControllers();
+      this.syncWorkspaceControllers();
       for (const controller of this.liveControllers) {
+        if (!controller.button?.isConnected) {
+          controller.button = this.installHeaderButton(controller);
+        }
         controller.syncFloatingControlClasses();
         if (controller.active || controller.drawingsLoaded || isElementVisibleEnough(controller.previewEl)) {
           controller.scheduleLayoutRefresh({ settle: false });
@@ -1127,6 +1155,7 @@ var NoteDrawPlugin = class extends Plugin {
     this.sourceControllers.clear();
     this.embeddedControllers.clear();
     this.webviewControllers.clear();
+    this.workspaceControllers.clear();
     for (const state of this.headerActions.values()) {
       state.button?.remove();
     }
@@ -1151,6 +1180,10 @@ var NoteDrawPlugin = class extends Plugin {
     if (this.embeddedSyncTimer !== null) {
       window.clearTimeout(this.embeddedSyncTimer);
       this.embeddedSyncTimer = null;
+    }
+    if (this.workspaceSyncTimer !== null) {
+      window.clearTimeout(this.workspaceSyncTimer);
+      this.workspaceSyncTimer = null;
     }
     if (this.floatingControlsSyncTimer !== null) {
       window.clearTimeout(this.floatingControlsSyncTimer);
@@ -1389,6 +1422,9 @@ var NoteDrawPlugin = class extends Plugin {
       if (mutations.some((mutation) => isWebviewSyncMutation(mutation))) {
         this.scheduleWebviewSync();
       }
+      if (mutations.some((mutation) => isWorkspaceSurfaceMutation(mutation))) {
+        this.scheduleWorkspaceSync();
+      }
       if (mutations.some((mutation) => isFloatingControlsVisibilityMutation(mutation))) {
         this.scheduleFloatingControlsSync();
       }
@@ -1429,6 +1465,15 @@ var NoteDrawPlugin = class extends Plugin {
       this.syncEmbeddedMarkdownControllers();
     }, 80);
   }
+  scheduleWorkspaceSync() {
+    if (this.workspaceSyncTimer !== null) {
+      window.clearTimeout(this.workspaceSyncTimer);
+    }
+    this.workspaceSyncTimer = window.setTimeout(() => {
+      this.workspaceSyncTimer = null;
+      this.syncWorkspaceControllers();
+    }, 100);
+  }
   createPublicApi() {
     const capabilities = Object.freeze({
       responsiveCoordinates: RESPONSIVE_POINT_BASIS,
@@ -1436,6 +1481,12 @@ var NoteDrawPlugin = class extends Plugin {
       embeddedMarkdownEditing: true,
       readingViewEditing: true,
       sourceViewEditing: true,
+      readingViewZoom: true,
+      workspaceSurfaces: true,
+      brushVariants: {
+        [BRUSH_PEN]: [BRUSH_VARIANT_DEFAULT, PEN_VARIANT_FOUNTAIN],
+        [BRUSH_WATERCOLOR]: [BRUSH_VARIANT_DEFAULT, WATERCOLOR_VARIANT_TEXT, WATERCOLOR_VARIANT_STRAIGHT]
+      },
       events: ["drawings-changed", "markdown-changed", "surface-changed"],
       tools: [TOOL_DRAW, TOOL_SELECT, TOOL_EDIT_MD, TOOL_TEXT]
     });
@@ -1447,6 +1498,8 @@ var NoteDrawPlugin = class extends Plugin {
       getActiveSurface: () => this.describeController(this.getActiveController()),
       activate: async (options = {}) => this.activateApi(options),
       setTool: (tool, options = {}) => this.setApiTool(tool, options),
+      getZoom: (options = {}) => this.describeController(this.findApiController(options))?.zoom ?? 1,
+      setZoom: (zoom, options = {}) => this.setApiZoom(zoom, options),
       readDrawings: async (fileOrPath) => {
         const file = this.resolveApiFile(fileOrPath);
         if (!file) {
@@ -1488,14 +1541,22 @@ var NoteDrawPlugin = class extends Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.2.8",
+      version: "3.2.9",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
+      resolveFile: v1.resolveFile,
+      listSurfaces: v1.listSurfaces,
+      getActiveSurface: v1.getActiveSurface,
+      activate: v1.activate,
+      setTool: v1.setTool,
+      getZoom: v1.getZoom,
+      setZoom: v1.setZoom,
       getActiveController: () => this.getActiveController(),
       readDrawings: v1.readDrawings,
       writeDrawings: v1.writeDrawings,
       getStoragePaths: v1.getStoragePaths,
+      refresh: v1.refresh,
       injectExportSnapshot: v1.injectExportSnapshot,
       replaceSelectionText: async (file, originalText, editedText) => this.replaceTextApi({ file, originalText, editedText }),
       insertStroke: v1.insertStroke,
@@ -1519,8 +1580,12 @@ var NoteDrawPlugin = class extends Plugin {
     return {
       file: controller.file?.path || "",
       surface: controller.surfaceType,
+      viewType: controller.workspaceViewType || controller.surfaceType,
       active: Boolean(controller.active),
       tool: controller.toolMode,
+      brush: controller.brushMode,
+      variant: controller.currentBrushVariant?.() || BRUSH_VARIANT_DEFAULT,
+      zoom: controller.readingZoom || 1,
       drawingsLoaded: Boolean(controller.drawingsLoaded),
       coordinateBasis: RESPONSIVE_POINT_BASIS
     };
@@ -1551,16 +1616,35 @@ var NoteDrawPlugin = class extends Plugin {
     if (options.tool) {
       controller.setToolFromApi(options.tool, options);
     }
+    if (options.zoom !== void 0 && controller.canZoomReadingSurface?.()) {
+      controller.setReadingZoom(options.zoom);
+    }
     const surface = this.describeController(controller);
     this.emitApiEvent("surface-changed", surface);
     return { ok: true, surface };
   }
   setApiTool(tool, options = {}) {
+    if (tool && typeof tool === "object") {
+      options = { ...tool, ...options };
+      tool = options.tool;
+    }
     const controller = this.findApiController(options);
     if (!controller) {
       return { ok: false, reason: "surface-not-found" };
     }
     const ok = controller.setToolFromApi(tool, options);
+    const surface = this.describeController(controller);
+    if (ok) {
+      this.emitApiEvent("surface-changed", surface);
+    }
+    return { ok, surface };
+  }
+  setApiZoom(zoom, options = {}) {
+    const controller = this.findApiController(options);
+    if (!controller || !controller.canZoomReadingSurface?.()) {
+      return { ok: false, reason: "reading-surface-not-found" };
+    }
+    const ok = controller.setReadingZoom(zoom);
     const surface = this.describeController(controller);
     if (ok) {
       this.emitApiEvent("surface-changed", surface);
@@ -1651,7 +1735,8 @@ var NoteDrawPlugin = class extends Plugin {
   }
   getActiveController() {
     const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
-    const activeContainer = activeView?.containerEl;
+    const activeLeaf = findActiveWorkspaceLeaf(this.app);
+    const activeContainer = activeView?.containerEl || activeLeaf?.view?.containerEl;
     if (activeView instanceof MarkdownView) {
       const surface = findPrimaryMarkdownSurface(activeView);
       const controller = surface ? this.controllers.get(surface) || surface._noteDrawController : null;
@@ -1663,6 +1748,10 @@ var NoteDrawPlugin = class extends Plugin {
       const activeWebview = Array.from(this.webviewControllers.values()).find((controller) => controller.previewEl?.isConnected && activeContainer.contains(controller.previewEl));
       if (activeWebview) {
         return activeWebview;
+      }
+      const activeWorkspace = this.workspaceControllers.get(activeLeaf?.view) || Array.from(this.workspaceControllers.values()).find((controller) => controller.previewEl?.isConnected && activeContainer.contains(controller.previewEl));
+      if (activeWorkspace) {
+        return activeWorkspace;
       }
     }
     const view = this.app.workspace.getActiveViewOfType(MarkdownView);
@@ -1858,6 +1947,56 @@ var NoteDrawPlugin = class extends Plugin {
       if (!activeSurfaces.has(surface) || !surface.isConnected) {
         controller.destroy();
         this.webviewControllers.delete(surface);
+      }
+    }
+  }
+  syncWorkspaceControllers() {
+    const activeViews = /* @__PURE__ */ new Set();
+    for (const leaf of collectWorkspaceLeaves(this.app)) {
+      const view = leaf?.view;
+      const viewType = String(view?.getViewType?.() || view?.containerEl?.querySelector?.(".workspace-leaf-content")?.dataset?.type || "").toLowerCase();
+      if (!view?.containerEl || view instanceof MarkdownView || viewType === "markdown" || isWebviewWorkspaceType(viewType)) {
+        continue;
+      }
+      const file = view.file && typeof view.file.path === "string" ? view.file : null;
+      const surface = file ? findWorkspaceDrawingSurface(view) : null;
+      if (!file || !surface?.isConnected) {
+        continue;
+      }
+      activeViews.add(view);
+      const existing = this.workspaceControllers.get(view);
+      if (existing?.previewEl === surface && !existing.destroyed) {
+        existing.workspaceViewType = viewType;
+        existing.setFile(file).catch((error) => {
+          console.error(`[${PLUGIN_ID}] Failed to switch workspace drawing file`, error);
+        });
+        if (!existing.button?.isConnected) {
+          existing.button = this.installHeaderButton(existing);
+        }
+        continue;
+      }
+      existing?.destroy();
+      const mountedOnElement = this.controllers.get(surface) || surface._noteDrawController;
+      if (mountedOnElement?.destroy) {
+        mountedOnElement.destroy();
+      }
+      cleanupDrawingUi(surface);
+      const controller = new PreviewDrawingController(this, surface, view, file, {
+        allowTextEdit: false,
+        surfaceType: "workspace",
+        workspaceSurface: true,
+        workspaceViewType: viewType
+      });
+      this.controllers.set(surface, controller);
+      this.workspaceControllers.set(view, controller);
+      controller.mount().catch((error) => {
+        console.error(`[${PLUGIN_ID}] Failed to mount workspace drawing controller`, error);
+      });
+    }
+    for (const [view, controller] of Array.from(this.workspaceControllers.entries())) {
+      if (!activeViews.has(view) || !controller.previewEl?.isConnected) {
+        controller.destroy();
+        this.workspaceControllers.delete(view);
       }
     }
   }
@@ -2402,6 +2541,29 @@ var NoteDrawPlugin = class extends Plugin {
       this.flushTextSave(element);
     }, TEXT_SAVE_DELAY_MS);
   }
+  stageTextSave(file, originalText, editedText, element, controller = null) {
+    const state = this.getTextSaveState(file, originalText, element);
+    state.file = file;
+    state.latestText = editedText;
+    state.latestSourceInfo = getSourceInfo(element);
+    state.controller = controller || state.controller;
+    state.saveBlocked = false;
+    state.saveLogged = false;
+    if (!state.target && !state.targetPromise) {
+      state.targetPromise = this.resolveTextEditTarget(file, originalText, element).then((target) => {
+        state.target = target;
+        return target;
+      }).catch((error) => {
+        console.error(`[${PLUGIN_ID}] Failed to resolve text edit target`, error);
+        return null;
+      });
+    }
+    if (state.timer) {
+      window.clearTimeout(state.timer);
+      state.timer = null;
+    }
+    return state;
+  }
   scheduleTextSaveNow(file, originalText, editedText, element, controller = null) {
     const state = this.getTextSaveState(file, originalText, element);
     state.file = file;
@@ -2644,6 +2806,8 @@ var PreviewDrawingController = class {
     this.allowTextEdit = options.allowTextEdit !== false;
     this.surfaceType = options.surfaceType || "preview";
     this.embeddedSurface = Boolean(options.embeddedSurface);
+    this.workspaceSurface = Boolean(options.workspaceSurface);
+    this.workspaceViewType = String(options.workspaceViewType || "");
     this.destroyed = false;
     this.plugin.liveControllers?.add(this);
     this.runtimeSettings = sanitizeSettings(this.plugin?.noteDrawSettings || {});
@@ -2668,6 +2832,10 @@ var PreviewDrawingController = class {
     this.formatHighlightInput = null;
     this.formatSizeSelect = null;
     this.brushMode = BRUSH_PEN;
+    this.brushVariants = {
+      [BRUSH_PEN]: BRUSH_VARIANT_DEFAULT,
+      [BRUSH_WATERCOLOR]: BRUSH_VARIANT_DEFAULT
+    };
     this.brushSettings = {
       [BRUSH_PEN]: {
         color: "#e53935",
@@ -2698,6 +2866,8 @@ var PreviewDrawingController = class {
     this.touchPointers = /* @__PURE__ */ new Map();
     this.multiTouchScrolling = false;
     this.multiTouchLastCenter = null;
+    this.multiTouchLastDistance = null;
+    this.multiTouchPinching = false;
     this.suppressTouchDrawing = false;
     this.draggingStroke = false;
     this.dragStrokeStartPoint = null;
@@ -2725,6 +2895,8 @@ var PreviewDrawingController = class {
     this.buttonLongPressTimer = null;
     this.suppressNextButtonClick = false;
     this.paletteOpen = false;
+    this.brushPanelOpen = false;
+    this.brushPanelMode = BRUSH_PEN;
     this.textPanelOpen = false;
     this.selectionMenuOpen = false;
     this.selectionLongPressTimer = null;
@@ -2732,14 +2904,22 @@ var PreviewDrawingController = class {
     this.floatingControlsHost = null;
     this.floatingControlsInBody = false;
     this.textPreset = "plain";
+    this.readingZoom = 1;
+    this.readingZoomTarget = null;
     this.pendingEmbedTool = null;
     const sharedToolbarState = this.plugin.controllerToolbarState(this);
     if (sharedToolbarState) {
       this.brushMode = [BRUSH_PEN, BRUSH_WATERCOLOR].includes(sharedToolbarState.brushMode) ? sharedToolbarState.brushMode : this.brushMode;
+      for (const mode of [BRUSH_PEN, BRUSH_WATERCOLOR]) {
+        this.brushVariants[mode] = normalizeBrushVariant(mode, sharedToolbarState.brushVariants?.[mode]);
+      }
       this.toolMode = sharedToolbarState.toolMode || this.toolMode;
       this.paletteOpen = Boolean(sharedToolbarState.paletteOpen);
+      this.brushPanelOpen = Boolean(sharedToolbarState.brushPanelOpen);
+      this.brushPanelMode = [BRUSH_PEN, BRUSH_WATERCOLOR].includes(sharedToolbarState.brushPanelMode) ? sharedToolbarState.brushPanelMode : this.brushPanelMode;
       this.textPanelOpen = Boolean(sharedToolbarState.textPanelOpen);
       this.textPreset = sharedToolbarState.textPreset || this.textPreset;
+      this.readingZoom = clamp(Number(sharedToolbarState.readingZoom) || 1, MIN_READING_ZOOM, MAX_READING_ZOOM);
       for (const mode of [BRUSH_PEN, BRUSH_WATERCOLOR]) {
         if (sharedToolbarState.brushSettings?.[mode]) {
           this.brushSettings[mode] = { ...this.brushSettings[mode], ...sharedToolbarState.brushSettings[mode] };
@@ -2764,9 +2944,12 @@ var PreviewDrawingController = class {
     this.renderFrameId = null;
     this.pendingDomRender = false;
     this.resizeFrameId = null;
+    this.resizeNeedsLayout = false;
     this.positionFrameId = null;
     this.layoutRefreshGeneration = 0;
     this.markdownAnnotationTimer = null;
+    this.markdownAnnotationNeedsLayout = false;
+    this.lastScrollAt = 0;
     this.markdownRenderObserver = null;
     this.staticCanvas = activeDocument.createElement("canvas");
     this.staticCanvas.width = 1;
@@ -2805,6 +2988,7 @@ var PreviewDrawingController = class {
     this.previewEl.toggleClass("is-notedraw-source-shell", this.surfaceType === "source");
     this.previewEl.toggleClass("is-notedraw-webview-shell", this.surfaceType === "webview");
     this.previewEl.toggleClass("is-notedraw-embedded-shell", this.embeddedSurface);
+    this.previewEl.toggleClass("is-notedraw-workspace-shell", this.workspaceSurface);
     this.floatingControlsInBody = shouldUseBodyFloatingControls(this.previewEl, this.surfaceType);
     this.floatingControlsHost = this.floatingControlsInBody ? activeDocument.body : this.previewEl;
     this.previewEl.toggleClass("has-notedraw-body-controls", this.floatingControlsInBody);
@@ -2819,17 +3003,18 @@ var PreviewDrawingController = class {
       attr: { type: "button", title: this.plugin.t("editMarkdownTool") }
     });
     setIcon(this.editMarkdownButton, "file-pen-line");
+    this.editMarkdownButton.toggleAttribute("hidden", this.workspaceSurface);
     this.editMarkdownButton.addEventListener("click", () => this.setEditMarkdownMode());
     this.penButton = this.toolbar.createEl("button", {
       attr: { type: "button", title: this.plugin.t("pen") }
     });
     setIcon(this.penButton, "pen-line");
-    this.penButton.addEventListener("click", () => this.setBrushMode(BRUSH_PEN));
+    this.penButton.addEventListener("click", (event) => this.onBrushButtonClick(BRUSH_PEN, event));
     this.watercolorButton = this.toolbar.createEl("button", {
       attr: { type: "button", title: this.plugin.t("watercolorBrush") }
     });
     setIcon(this.watercolorButton, "paintbrush");
-    this.watercolorButton.addEventListener("click", () => this.setBrushMode(BRUSH_WATERCOLOR));
+    this.watercolorButton.addEventListener("click", (event) => this.onBrushButtonClick(BRUSH_WATERCOLOR, event));
     this.textButton = this.toolbar.createEl("button", {
       attr: { type: "button", title: this.plugin.t("floatingText") }
     });
@@ -2872,6 +3057,8 @@ var PreviewDrawingController = class {
     });
     this.palettePanel = createNoteDrawControlElement(this.floatingControlsHost, "notedraw-palette-panel");
     this.createColorPalette();
+    this.brushPanel = createNoteDrawControlElement(this.floatingControlsHost, "notedraw-brush-panel");
+    this.createBrushPanel();
     this.textPanel = createNoteDrawControlElement(this.floatingControlsHost, "notedraw-text-panel");
     this.createTextPanel();
     this.selectionMenu = createNoteDrawControlElement(this.floatingControlsHost, "notedraw-selection-menu");
@@ -2958,7 +3145,7 @@ var PreviewDrawingController = class {
     this.canvas.addEventListener("pointercancel", this.onPointerUp);
     this.canvas.addEventListener("lostpointercapture", this.onPointerUp);
     this.canvas.addEventListener("dblclick", this.onCanvasDoubleClick);
-    this.canvas.addEventListener("wheel", this.onWheel, { passive: true });
+    this.canvas.addEventListener("wheel", this.onWheel, { passive: false });
     window.addEventListener("resize", this.onResize);
     window.visualViewport?.addEventListener("resize", this.onResize);
     window.visualViewport?.addEventListener("scroll", this.onResize);
@@ -2980,7 +3167,7 @@ var PreviewDrawingController = class {
     if (typeof MutationObserver !== "undefined") {
       this.markdownRenderObserver = new MutationObserver((mutations) => {
         if (mutations.some((mutation) => isMarkdownContentMutation(mutation))) {
-          this.scheduleMarkdownAnnotationRefresh();
+          this.scheduleMarkdownAnnotationRefresh({ layout: Date.now() - this.lastScrollAt > 220 });
         }
       });
       this.markdownRenderObserver.observe(this.previewEl, { subtree: true, childList: true });
@@ -2989,6 +3176,7 @@ var PreviewDrawingController = class {
     this.syncPaletteInputs();
     this.refreshLocalizedLabels();
     this.applySharedToolbarState(this.plugin.controllerToolbarState(this));
+    this.applyReadingZoom();
     this.applyActiveState(this.active);
     await this.ensureDrawingsLoaded();
     this.resizeCanvas();
@@ -3034,6 +3222,14 @@ var PreviewDrawingController = class {
     });
     this.widthInput?.setAttribute("title", this.plugin.t("penWidth"));
     this.opacityInput?.setAttribute("title", this.plugin.t("penOpacity"));
+    if (this.brushPanel) {
+      const wasOpen = this.brushPanelOpen;
+      this.brushPanel.empty();
+      this.createBrushPanel();
+      this.brushPanelOpen = wasOpen;
+      this.previewEl.toggleClass("is-brush-panel-open", this.brushPanelOpen);
+      this.syncBrushPanelButtons();
+    }
     if (this.textPanel) {
       const wasOpen = this.textPanelOpen;
       this.textPanel.empty();
@@ -3186,6 +3382,7 @@ var PreviewDrawingController = class {
       window.clearTimeout(this.markdownAnnotationTimer);
       this.markdownAnnotationTimer = null;
     }
+    this.markdownAnnotationNeedsLayout = false;
     this.scrollEventTarget?.removeEventListener("scroll", this.onScroll);
     this.scrollContainer = null;
     this.scrollEventTarget = null;
@@ -3208,6 +3405,7 @@ var PreviewDrawingController = class {
     this.plugin.releaseHeaderButton(this);
     this.toolbar?.remove();
     this.palettePanel?.remove();
+    this.brushPanel?.remove();
     this.textPanel?.remove();
     this.selectionMenu?.remove();
     this.formatToolbar?.remove();
@@ -3216,6 +3414,7 @@ var PreviewDrawingController = class {
     this.embedNodes.clear();
     this.embedRenderTokens.clear();
     this.canvasImageCache.clear();
+    this.clearReadingZoomStyles();
     this.staticCanvas?.remove();
     this.canvas?.remove();
     this.previewEl.removeClass("notedraw-shell");
@@ -3225,16 +3424,19 @@ var PreviewDrawingController = class {
     this.previewEl.removeClass("is-drawing-hidden");
     this.previewEl.removeClass("is-select-mode");
     this.previewEl.removeClass("is-palette-open");
+    this.previewEl.removeClass("is-brush-panel-open");
     this.previewEl.removeClass("is-text-panel-open");
     this.previewEl.removeClass("is-selection-menu-open");
     this.previewEl.removeClass("is-watercolor-mode");
     this.previewEl.removeClass("is-edit-md-mode");
     this.previewEl.removeClass("is-notedraw-source-shell");
     this.previewEl.removeClass("is-notedraw-webview-shell");
+    this.previewEl.removeClass("is-notedraw-workspace-shell");
     this.previewEl.removeClass("has-notedraw-body-controls");
     this.previewEl.removeClass("has-notedraw-canvas");
     this.previewEl.removeClass("is-resizing-selection");
     this.previewEl.removeClass("is-native-text-editing");
+    this.previewEl.removeClass("is-reading-zoomed");
     this.clearSelectionLongPress();
     if (this.previewEl._noteDrawController === this) {
       delete this.previewEl._noteDrawController;
@@ -3247,6 +3449,9 @@ var PreviewDrawingController = class {
     }
     if (this.plugin.webviewControllers?.get(this.previewEl) === this) {
       this.plugin.webviewControllers.delete(this.previewEl);
+    }
+    if (this.plugin.workspaceControllers?.get(this.view) === this) {
+      this.plugin.workspaceControllers.delete(this.view);
     }
     this.plugin.liveControllers?.delete(this);
   }
@@ -3280,6 +3485,7 @@ var PreviewDrawingController = class {
       this.endTextEdit();
       this.endFloatingTextInput(true);
       this.setPaletteOpen(false);
+      this.setBrushPanelOpen(false);
       this.setTextPanelOpen(false);
       this.hideSelectionMenu();
       this.clearSelectionLongPress();
@@ -3316,10 +3522,11 @@ var PreviewDrawingController = class {
   syncFloatingControlClasses() {
     const visible = this.controlsShouldBeVisible();
     this.previewEl?.toggleClass("is-notedraw-controls-visible", visible);
-    for (const element of [this.toolbar, this.palettePanel, this.textPanel, this.selectionMenu, this.formatToolbar]) {
+    for (const element of [this.toolbar, this.palettePanel, this.brushPanel, this.textPanel, this.selectionMenu, this.formatToolbar]) {
       element?.toggleClass("is-drawing-active", Boolean(this.active));
       element?.toggleClass("is-notedraw-controls-visible", visible);
       element?.toggleClass("is-palette-open", Boolean(this.paletteOpen));
+      element?.toggleClass("is-brush-panel-open", Boolean(this.brushPanelOpen));
       element?.toggleClass("is-text-panel-open", Boolean(this.textPanelOpen));
       element?.toggleClass("is-selection-menu-open", Boolean(this.selectionMenuOpen));
     }
@@ -3353,24 +3560,29 @@ var PreviewDrawingController = class {
   }
   onResize() {
     this.syncFloatingControlClasses();
+    this.applyReadingZoom();
     if (this.active || this.drawingsLoaded || this.ctx) {
       this.scheduleResize();
     }
   }
   onScroll() {
+    this.lastScrollAt = Date.now();
     this.syncFloatingControlClasses();
     this.scheduleFloatingControlsPosition();
     if (this.active || this.drawingsLoaded || this.ctx) {
-      this.scheduleResize();
+      this.scheduleResize({ layout: false });
     }
   }
-  scheduleResize() {
+  scheduleResize(options = {}) {
+    this.resizeNeedsLayout = this.resizeNeedsLayout || options.layout !== false;
     if (this.resizeFrameId !== null) {
       return;
     }
     this.resizeFrameId = window.requestAnimationFrame(() => {
       this.resizeFrameId = null;
-      const canvasChanged = this.resizeCanvas();
+      const layout = this.resizeNeedsLayout;
+      this.resizeNeedsLayout = false;
+      const canvasChanged = this.resizeCanvas({ layout });
       this.updateFloatingControlsPosition();
       this.positionFormatToolbar();
       this.positionFloatingTextInput();
@@ -3384,6 +3596,7 @@ var PreviewDrawingController = class {
       window.cancelAnimationFrame(this.resizeFrameId);
       this.resizeFrameId = null;
     }
+    this.resizeNeedsLayout = false;
   }
   scheduleFloatingControlsPosition() {
     if (this.positionFrameId !== null) {
@@ -3435,15 +3648,19 @@ var PreviewDrawingController = class {
       }
     }
   }
-  scheduleMarkdownAnnotationRefresh() {
+  scheduleMarkdownAnnotationRefresh(options = {}) {
+    this.markdownAnnotationNeedsLayout = this.markdownAnnotationNeedsLayout || options.layout !== false;
     if (this.markdownAnnotationTimer !== null || this.destroyed) {
       return;
     }
     this.markdownAnnotationTimer = window.setTimeout(() => {
       this.markdownAnnotationTimer = null;
+      const layout = this.markdownAnnotationNeedsLayout;
+      this.markdownAnnotationNeedsLayout = false;
       if (this.destroyed || !this.previewEl?.isConnected) {
         return;
       }
+      this.applyReadingZoom();
       annotateVisibleMarkdownElements(this.plugin.app, this.previewEl, this.file.path);
       annotateRenderedMarkdownLines(this.plugin.app, this.previewEl, this.file.path).catch((error) => {
         void error;
@@ -3453,8 +3670,10 @@ var PreviewDrawingController = class {
         }
         this.responsiveLayoutContext = null;
         if (this.drawingsLoaded) {
-          this.responsiveLayoutSignature = "";
-          this.scheduleResize();
+          if (layout) {
+            this.responsiveLayoutSignature = "";
+          }
+          this.scheduleResize({ layout });
         }
       });
     }, 120);
@@ -3495,14 +3714,79 @@ var PreviewDrawingController = class {
       "--notedraw-toolbar-left": typeof left === "number" ? `${Math.round(left)}px` : left,
       "--notedraw-toolbar-top": `${Math.round(top)}px`,
       "--notedraw-palette-top": `${Math.round(top + 42)}px`,
+      "--notedraw-brush-panel-top": `${Math.round(top + 42)}px`,
       "--notedraw-text-panel-top": `${Math.round(top + 42)}px`
     };
     setNoteDrawCssProps(this.previewEl, props);
     if (this.floatingControlsInBody) {
-      for (const element of [this.toolbar, this.palettePanel, this.textPanel, this.selectionMenu, this.formatToolbar]) {
+      for (const element of [this.toolbar, this.palettePanel, this.brushPanel, this.textPanel, this.selectionMenu, this.formatToolbar]) {
         setNoteDrawCssProps(element, props);
       }
     }
+  }
+  onBrushButtonClick(mode, event) {
+    event?.preventDefault?.();
+    event?.stopPropagation?.();
+    if (this.brushPanelOpen && this.brushPanelMode === mode) {
+      this.setBrushPanelOpen(false);
+      return;
+    }
+    this.brushVariants[mode] = BRUSH_VARIANT_DEFAULT;
+    this.setBrushMode(mode);
+    this.brushPanelMode = mode;
+    this.setBrushPanelOpen(true);
+  }
+  createBrushPanel() {
+    const options = [
+      { mode: BRUSH_PEN, variant: BRUSH_VARIANT_DEFAULT, labelKey: "standardPen", icon: "pen-line" },
+      { mode: BRUSH_PEN, variant: PEN_VARIANT_FOUNTAIN, labelKey: "fountainPen", icon: "pen-tool" },
+      { mode: BRUSH_WATERCOLOR, variant: BRUSH_VARIANT_DEFAULT, labelKey: "standardWatercolor", icon: "paintbrush" },
+      { mode: BRUSH_WATERCOLOR, variant: WATERCOLOR_VARIANT_TEXT, labelKey: "textWatercolor", icon: "highlighter" },
+      { mode: BRUSH_WATERCOLOR, variant: WATERCOLOR_VARIANT_STRAIGHT, labelKey: "straightWatercolor", icon: "ruler" }
+    ];
+    for (const option of options) {
+      const label = this.plugin.t(option.labelKey);
+      const button = this.brushPanel.createEl("button", {
+        cls: "notedraw-brush-option",
+        attr: { type: "button", title: label, "aria-label": label }
+      });
+      button.dataset.noteDrawBrush = option.mode;
+      button.dataset.noteDrawBrushVariant = option.variant;
+      setIcon(button, option.icon);
+      button.createSpan({ text: label });
+      button.addEventListener("pointerdown", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      });
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        this.brushVariants[option.mode] = option.variant;
+        this.setBrushMode(option.mode);
+        this.setBrushPanelOpen(false);
+      });
+    }
+    this.syncBrushPanelButtons();
+  }
+  syncBrushPanelButtons() {
+    this.brushPanel?.querySelectorAll(".notedraw-brush-option").forEach((button) => {
+      const mode = button.dataset.noteDrawBrush;
+      const variant = button.dataset.noteDrawBrushVariant;
+      button.toggleAttribute("hidden", mode !== this.brushPanelMode);
+      button.classList.toggle("is-active", mode === this.brushMode && variant === this.currentBrushVariant());
+    });
+  }
+  setBrushPanelOpen(open) {
+    this.brushPanelOpen = Boolean(open);
+    this.previewEl.toggleClass("is-brush-panel-open", this.brushPanelOpen);
+    this.syncFloatingControlClasses();
+    if (this.brushPanelOpen) {
+      this.setPaletteOpen(false);
+      this.setTextPanelOpen(false);
+      this.updateFloatingControlsPosition();
+      this.syncBrushPanelButtons();
+    }
+    this.syncSharedToolbarState();
   }
   setBrushMode(mode) {
     if (![BRUSH_PEN, BRUSH_WATERCOLOR].includes(mode)) {
@@ -3517,6 +3801,7 @@ var PreviewDrawingController = class {
     this.cancelSelectionDrag(true);
     this.syncCurrentBrushFields();
     this.syncPaletteInputs();
+    this.syncBrushPanelButtons();
     this.updateToolButtons();
     this.syncSharedToolbarState();
     this.render();
@@ -3526,6 +3811,7 @@ var PreviewDrawingController = class {
     this.previewEl.removeClass("is-select-mode");
     this.hideSelectionMenu();
     this.setPaletteOpen(false);
+    this.setBrushPanelOpen(false);
     this.setTextPanelOpen(false);
     this.endTextEdit();
     this.cancelCurrentStroke();
@@ -3540,6 +3826,7 @@ var PreviewDrawingController = class {
     this.hideSelectionMenu();
     this.clearSelectedStrokes();
     this.setPaletteOpen(false);
+    this.setBrushPanelOpen(false);
     this.setTextPanelOpen(false);
     this.endFloatingTextInput(true);
     this.endTextEdit();
@@ -3552,6 +3839,9 @@ var PreviewDrawingController = class {
   syncSharedToolbarState() {
     this.plugin.setControllerToolbarState(this, {
       brushMode: this.brushMode,
+      brushVariants: { ...this.brushVariants },
+      brushPanelOpen: this.brushPanelOpen,
+      brushPanelMode: this.brushPanelMode,
       brushSettings: {
         [BRUSH_PEN]: { ...this.brushSettings[BRUSH_PEN] },
         [BRUSH_WATERCOLOR]: { ...this.brushSettings[BRUSH_WATERCOLOR] }
@@ -3559,7 +3849,8 @@ var PreviewDrawingController = class {
       toolMode: this.toolMode,
       paletteOpen: this.paletteOpen,
       textPanelOpen: this.textPanelOpen,
-      textPreset: this.textPreset
+      textPreset: this.textPreset,
+      readingZoom: this.readingZoom
     });
   }
   applySharedToolbarState(state) {
@@ -3568,20 +3859,29 @@ var PreviewDrawingController = class {
     }
     this.brushMode = [BRUSH_PEN, BRUSH_WATERCOLOR].includes(state.brushMode) ? state.brushMode : this.brushMode;
     for (const mode of [BRUSH_PEN, BRUSH_WATERCOLOR]) {
+      this.brushVariants[mode] = normalizeBrushVariant(mode, state.brushVariants?.[mode] ?? this.brushVariants[mode]);
+    }
+    for (const mode of [BRUSH_PEN, BRUSH_WATERCOLOR]) {
       if (state.brushSettings?.[mode]) {
         this.brushSettings[mode] = { ...this.brushSettings[mode], ...state.brushSettings[mode] };
       }
     }
     this.toolMode = state.toolMode || this.toolMode;
     this.paletteOpen = Boolean(state.paletteOpen) && this.toolMode !== TOOL_SELECT && this.toolMode !== TOOL_EDIT_MD;
+    this.brushPanelOpen = Boolean(state.brushPanelOpen) && this.toolMode === TOOL_DRAW;
+    this.brushPanelMode = [BRUSH_PEN, BRUSH_WATERCOLOR].includes(state.brushPanelMode) ? state.brushPanelMode : this.brushPanelMode;
     this.textPanelOpen = Boolean(state.textPanelOpen);
     this.textPreset = state.textPreset || this.textPreset;
+    this.readingZoom = clamp(Number(state.readingZoom) || this.readingZoom || 1, MIN_READING_ZOOM, MAX_READING_ZOOM);
     this.syncCurrentBrushFields();
     this.previewEl.toggleClass("is-select-mode", this.toolMode === TOOL_SELECT);
     this.previewEl.toggleClass("is-palette-open", this.paletteOpen);
+    this.previewEl.toggleClass("is-brush-panel-open", this.brushPanelOpen);
     this.previewEl.toggleClass("is-text-panel-open", this.textPanelOpen);
     this.syncPaletteInputs();
+    this.syncBrushPanelButtons?.();
     this.syncTextPanelButtons?.();
+    this.applyReadingZoom();
     this.updateToolButtons();
     this.syncFloatingControlClasses();
     if (this.ctx || this.drawingsLoaded) {
@@ -3591,6 +3891,9 @@ var PreviewDrawingController = class {
   setToolFromApi(tool, options = {}) {
     const normalized = String(tool || "").trim().toLowerCase();
     if (normalized === TOOL_EDIT_MD || normalized === "edit" || normalized === "markdown") {
+      if (this.workspaceSurface) {
+        return false;
+      }
       this.setEditMarkdownMode();
       return true;
     }
@@ -3606,7 +3909,9 @@ var PreviewDrawingController = class {
       return true;
     }
     if (normalized === TOOL_DRAW || normalized === BRUSH_PEN || normalized === BRUSH_WATERCOLOR) {
-      this.setBrushMode(normalized === BRUSH_WATERCOLOR || options.brush === BRUSH_WATERCOLOR ? BRUSH_WATERCOLOR : BRUSH_PEN);
+      const brush = normalized === BRUSH_WATERCOLOR || options.brush === BRUSH_WATERCOLOR ? BRUSH_WATERCOLOR : BRUSH_PEN;
+      this.brushVariants[brush] = normalizeBrushVariant(brush, options.variant);
+      this.setBrushMode(brush);
       return true;
     }
     return false;
@@ -3616,6 +3921,9 @@ var PreviewDrawingController = class {
       this.brushMode = BRUSH_PEN;
     }
     return this.brushSettings[this.brushMode];
+  }
+  currentBrushVariant() {
+    return normalizeBrushVariant(this.brushMode, this.brushVariants[this.brushMode]);
   }
   syncCurrentBrushFields() {
     const settings = this.currentBrushSettings();
@@ -3719,6 +4027,10 @@ var PreviewDrawingController = class {
         button.dataset.noteDrawTextPreset = item.id;
         setIcon(button, item.icon);
         button.createSpan({ text: label });
+        button.addEventListener("pointerdown", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+        });
         button.addEventListener("click", (event) => {
           event.preventDefault();
           event.stopPropagation();
@@ -4162,7 +4474,9 @@ var PreviewDrawingController = class {
     const original = element.dataset.noteDrawOriginal || "";
     const editedSource = serializeControllerEditableSource(element, this.currentEditorEmbedded);
     const file = this.currentEditorFile || this.file;
-    if (immediate) {
+    if (this.currentEditorEmbedded) {
+      this.plugin.stageTextSave(file, original, editedSource, element, this);
+    } else if (immediate) {
       this.plugin.scheduleTextSaveNow(file, original, editedSource, element, this);
     } else {
       this.plugin.scheduleTextSave(file, original, editedSource, element, this);
@@ -4178,6 +4492,7 @@ var PreviewDrawingController = class {
     this.textButton?.classList.toggle("is-active", this.toolMode === TOOL_TEXT || this.textPanelOpen);
     if (this.textPanelOpen) {
       this.setPaletteOpen(false);
+      this.setBrushPanelOpen(false);
       this.updateFloatingControlsPosition();
       this.syncTextPanelButtons();
     }
@@ -4263,6 +4578,7 @@ var PreviewDrawingController = class {
     this.previewEl.toggleClass("is-select-mode", this.toolMode === TOOL_SELECT);
     if (this.toolMode === TOOL_SELECT) {
       this.setPaletteOpen(false);
+      this.setBrushPanelOpen(false);
       this.setTextPanelOpen(false);
     } else {
       this.hideSelectionMenu();
@@ -4290,28 +4606,35 @@ var PreviewDrawingController = class {
     this.syncFloatingControlClasses();
     this.paletteButton?.classList.toggle("is-active", this.paletteOpen);
     if (this.paletteOpen) {
+      this.setBrushPanelOpen(false);
       this.updateFloatingControlsPosition();
     }
     this.syncSharedToolbarState();
   }
   onDocumentPointerDown(event) {
-    if (!this.paletteOpen && !this.textPanelOpen && !this.selectionMenuOpen && !this.currentEditor) {
+    if (!this.paletteOpen && !this.brushPanelOpen && !this.textPanelOpen && !this.selectionMenuOpen && !this.currentEditor) {
       return;
     }
     const target = event.target;
-    if (
-      this.palettePanel?.contains(target) ||
-      this.paletteButton?.contains(target) ||
-      this.textPanel?.contains(target) ||
-      this.textButton?.contains(target) ||
-      this.selectionMenu?.contains(target) ||
-      this.formatToolbar?.contains(target) ||
-      this.currentEditor?.contains(target) ||
-      this.floatingTextInput?.element?.contains(target)
-    ) {
+    const path = typeof event.composedPath === "function" ? event.composedPath() : [];
+    const containsEvent = (element) => Boolean(element) && (path.includes(element) || element.contains?.(target));
+    if ([
+      this.palettePanel,
+      this.paletteButton,
+      this.brushPanel,
+      this.penButton,
+      this.watercolorButton,
+      this.textPanel,
+      this.textButton,
+      this.selectionMenu,
+      this.formatToolbar,
+      this.currentEditor,
+      this.floatingTextInput?.element
+    ].some(containsEvent)) {
       return;
     }
     this.setPaletteOpen(false);
+    this.setBrushPanelOpen(false);
     this.setTextPanelOpen(false);
     this.hideSelectionMenu();
     if (this.currentEditor) {
@@ -4682,20 +5005,30 @@ var PreviewDrawingController = class {
       this.plugin.scheduleDrawingSave(this.file, migratedDrawingData, { excludeData: this.drawingData });
     }
   }
-  resizeCanvas() {
+  resizeCanvas(options = {}) {
     this.refreshScrollContainer();
-    this.layoutMeasureEl = findLayoutMeasureElement(this.previewEl);
-    const measured = measureCanvasExtent(this.previewEl, this.layoutMeasureEl);
-    const width = Math.max(1, Math.round(measured.width));
-    const measuredHeight = Math.max(1, Math.round(measured.height));
-    const extentFrame = measureResponsiveContentFrame(this.previewEl, this.surfaceType, width, this.canvas);
-    const height = this.drawingsLoaded
-      ? estimateElementLayoutExtent((this.drawingData?.strokes || []).map((stroke) => stroke.layout), {
-        canvasWidth: width,
-        frame: extentFrame,
-        minHeight: measuredHeight
-      })
-      : measuredHeight;
+    const refreshLayout = options.layout !== false || this.canvasCssWidth <= 1 || this.canvasCssHeight <= 1;
+    let measured;
+    let width;
+    let height;
+    if (refreshLayout) {
+      this.layoutMeasureEl = findLayoutMeasureElement(this.previewEl);
+      measured = measureCanvasExtent(this.previewEl, this.layoutMeasureEl);
+      width = Math.max(1, Math.round(measured.width));
+      const measuredHeight = Math.max(1, Math.round(measured.height));
+      const extentFrame = measureResponsiveContentFrame(this.previewEl, this.surfaceType, width, this.canvas);
+      height = this.drawingsLoaded
+        ? estimateElementLayoutExtent((this.drawingData?.strokes || []).map((stroke) => stroke.layout), {
+          canvasWidth: width,
+          frame: extentFrame,
+          minHeight: measuredHeight
+        })
+        : measuredHeight;
+    } else {
+      width = this.canvasCssWidth;
+      height = this.canvasCssHeight;
+      measured = { visibleWidth: Math.max(1, this.previewEl.getBoundingClientRect?.().width || width) };
+    }
     const visible = measureVisibleSurfaceWindow(this.previewEl, this.scrollContainer, height);
     const isMobile = isMobileRuntime();
     const devicePixelRatio = window.devicePixelRatio || 1;
@@ -4764,7 +5097,7 @@ var PreviewDrawingController = class {
       return false;
     }
     this.staticCtx.setTransform(backingStore.scale, 0, 0, backingStore.scale, 0, -canvasWindow.top * backingStore.scale);
-    if (this.drawingsLoaded) {
+    if (this.drawingsLoaded && refreshLayout) {
       const frame = this.getResponsiveContentFrame();
       const viewportHeight = measureResponsiveViewportHeight(this.previewEl, this.scrollContainer);
       const signature = responsiveLayoutSignature(width, height, frame, this.surfaceType, viewportHeight);
@@ -4965,6 +5298,7 @@ var PreviewDrawingController = class {
     const brush = this.currentBrushSettings();
     this.currentStroke = {
       brush: this.brushMode,
+      variant: this.currentBrushVariant(),
       color: brush.color,
       width: brush.width,
       opacity: brush.opacity,
@@ -5131,6 +5465,7 @@ var PreviewDrawingController = class {
       this.currentStroke = null;
     } else {
       const historyBefore = this.captureDrawingHistorySnapshot();
+      this.finalizeBrushVariant(this.currentStroke);
       const responsiveContext = this.getResponsiveLayoutContext();
       this.currentStroke.points = this.currentStroke.points.map((point) => this.captureResponsivePoint(point, responsiveContext));
       this.drawingData.strokes.push(this.currentStroke);
@@ -5611,12 +5946,85 @@ var PreviewDrawingController = class {
     if (!this.active) {
       return;
     }
+    if ((event.ctrlKey || event.metaKey) && this.canZoomReadingSurface()) {
+      const factor = Math.exp(-clamp(Number(event.deltaY) || 0, -80, 80) * 0.0025);
+      this.setReadingZoom(this.readingZoom * factor, { x: event.clientX, y: event.clientY });
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     this.scheduleFloatingControlsPosition();
+  }
+  canZoomReadingSurface() {
+    return this.surfaceType === "preview" && !this.embeddedSurface;
+  }
+  applyReadingZoom() {
+    if (!this.canZoomReadingSurface()) {
+      return false;
+    }
+    const target = findResponsiveContentElement(this.previewEl, this.surfaceType);
+    if (!target) {
+      return false;
+    }
+    if (this.readingZoomTarget && this.readingZoomTarget !== target) {
+      this.readingZoomTarget.style.removeProperty("zoom");
+      this.readingZoomTarget.style.removeProperty("transform-origin");
+    }
+    this.readingZoomTarget = target;
+    const zoom = clamp(Number(this.readingZoom) || 1, MIN_READING_ZOOM, MAX_READING_ZOOM);
+    this.readingZoom = zoom;
+    if (Math.abs(zoom - 1) < 0.001) {
+      target.style.removeProperty("zoom");
+      target.style.removeProperty("transform-origin");
+      this.previewEl.removeClass("is-reading-zoomed");
+    } else {
+      target.style.setProperty("zoom", String(zoom));
+      target.style.setProperty("transform-origin", "top left");
+      this.previewEl.addClass("is-reading-zoomed");
+    }
+    return true;
+  }
+  clearReadingZoomStyles() {
+    this.readingZoomTarget?.style?.removeProperty("zoom");
+    this.readingZoomTarget?.style?.removeProperty("transform-origin");
+    this.readingZoomTarget = null;
+  }
+  setReadingZoom(value, clientPoint = null, options = {}) {
+    if (!this.canZoomReadingSurface()) {
+      return false;
+    }
+    const next = clamp(Number(value) || 1, MIN_READING_ZOOM, MAX_READING_ZOOM);
+    const previous = this.readingZoom || 1;
+    if (Math.abs(next - previous) < 0.001) {
+      return true;
+    }
+    const scroller = findScrollableAncestor(this.previewEl);
+    const scrollerRect = scroller?.getBoundingClientRect?.();
+    const focalX = Number.isFinite(clientPoint?.x) && scrollerRect ? clientPoint.x - scrollerRect.left : (scroller?.clientWidth || 0) / 2;
+    const focalY = Number.isFinite(clientPoint?.y) && scrollerRect ? clientPoint.y - scrollerRect.top : (scroller?.clientHeight || 0) / 2;
+    const scrollLeft = Number(scroller?.scrollLeft) || 0;
+    const scrollTop = Number(scroller?.scrollTop) || 0;
+    this.readingZoom = next;
+    this.applyReadingZoom();
+    const ratio = next / previous;
+    if (scroller && Number.isFinite(ratio)) {
+      scroller.scrollLeft = Math.max(0, (scrollLeft + focalX) * ratio - focalX);
+      scroller.scrollTop = Math.max(0, (scrollTop + focalY) * ratio - focalY);
+    }
+    this.responsiveLayoutContext = null;
+    this.responsiveLayoutSignature = "";
+    this.scheduleResize({ layout: true });
+    if (options.share !== false) {
+      this.syncSharedToolbarState();
+    }
+    return true;
   }
   startMultiTouchScroll(event) {
     this.suppressTouchDrawing = true;
     this.multiTouchScrolling = true;
     this.multiTouchLastCenter = this.getTouchCenter();
+    this.multiTouchLastDistance = this.getTouchDistance();
+    this.multiTouchPinching = false;
     this.previewEl.addClass("is-two-finger-scroll");
     this.cancelCurrentStroke();
     this.cancelSelectedStrokeDrag(true);
@@ -5631,11 +6039,16 @@ var PreviewDrawingController = class {
     if (this.touchPointers.size < 2) {
       this.multiTouchScrolling = false;
       this.multiTouchLastCenter = null;
+      this.multiTouchLastDistance = null;
       this.previewEl.removeClass("is-two-finger-scroll");
     }
     if (this.touchPointers.size === 0) {
       this.suppressTouchDrawing = false;
-      this.scheduleResize();
+      if (this.multiTouchPinching) {
+        this.syncSharedToolbarState();
+      }
+      this.multiTouchPinching = false;
+      this.scheduleResize({ layout: false });
       this.requestRender(true);
     }
     return true;
@@ -5644,12 +6057,16 @@ var PreviewDrawingController = class {
     this.touchPointers.clear();
     this.multiTouchScrolling = false;
     this.multiTouchLastCenter = null;
+    this.multiTouchLastDistance = null;
+    this.multiTouchPinching = false;
     this.suppressTouchDrawing = false;
     this.previewEl?.removeClass("is-two-finger-scroll");
   }
   handleMultiTouchScroll(event) {
     const center = this.getTouchCenter();
     const previous = this.multiTouchLastCenter;
+    const distance = this.getTouchDistance();
+    const previousDistance = this.multiTouchLastDistance;
     const scroller = findScrollableAncestor(this.previewEl);
     if (center && previous && scroller) {
       scroller.scrollBy({
@@ -5658,7 +6075,12 @@ var PreviewDrawingController = class {
         behavior: "auto"
       });
     }
+    if (this.canZoomReadingSurface() && distance && previousDistance && Math.abs(distance - previousDistance) >= 1.5) {
+      this.multiTouchPinching = true;
+      this.setReadingZoom(this.readingZoom * distance / previousDistance, center, { share: false });
+    }
     this.multiTouchLastCenter = center;
+    this.multiTouchLastDistance = distance;
     event.preventDefault();
     event.stopPropagation();
   }
@@ -5676,6 +6098,13 @@ var PreviewDrawingController = class {
       x: x / this.touchPointers.size,
       y: y / this.touchPointers.size
     };
+  }
+  getTouchDistance() {
+    if (this.touchPointers.size < 2) {
+      return null;
+    }
+    const points = Array.from(this.touchPointers.values());
+    return pointerDistance(points[0], points[1]);
   }
   cancelCurrentStroke() {
     if (this.activePointerId !== null) {
@@ -6058,6 +6487,65 @@ var PreviewDrawingController = class {
       void error;
     }
   }
+  finalizeBrushVariant(stroke) {
+    const variant = normalizeBrushVariant(stroke?.brush, stroke?.variant);
+    stroke.variant = variant;
+    if (stroke?.brush !== BRUSH_WATERCOLOR) {
+      return;
+    }
+    if (variant === WATERCOLOR_VARIANT_STRAIGHT) {
+      const straightened = straightenWatercolorPoints(stroke.points, {
+        canvasWidth: this.canvasWidth(),
+        canvasHeight: this.canvasHeight()
+      });
+      stroke.points = straightened.points;
+      return;
+    }
+    if (variant === WATERCOLOR_VARIANT_TEXT) {
+      this.snapWatercolorStrokeToTextLine(stroke);
+    }
+  }
+  snapWatercolorStrokeToTextLine(stroke) {
+    if (!stroke?.points?.length || !this.canvas) {
+      return false;
+    }
+    const canvasRect = this.canvas.getBoundingClientRect();
+    const canvasWidth = this.canvasWidth();
+    const visibleHeight = Math.max(1, this.canvasRenderHeight);
+    const scaleX = canvasRect.width > 0 ? canvasRect.width / canvasWidth : 1;
+    const scaleY = canvasRect.height > 0 ? canvasRect.height / visibleHeight : 1;
+    const candidates = [
+      stroke.points[Math.floor(stroke.points.length / 2)],
+      stroke.points[0],
+      stroke.points[stroke.points.length - 1]
+    ];
+    let lineRect = null;
+    for (const point of candidates) {
+      const canvasPoint = this.pointToCanvas(point);
+      lineRect = findTextLineRectBelowCanvas(
+        this.canvas,
+        this.previewEl,
+        canvasRect.left + canvasPoint.x * scaleX,
+        canvasRect.top + (canvasPoint.y - this.canvasWindowTop) * scaleY
+      );
+      if (lineRect) {
+        break;
+      }
+    }
+    if (!lineRect) {
+      return false;
+    }
+    const lineCenterY = (lineRect.top + lineRect.height * 0.58 - canvasRect.top) / scaleY + this.canvasWindowTop;
+    const minX = clamp((lineRect.left - canvasRect.left) / scaleX / canvasWidth, 0, 1);
+    const maxX = clamp((lineRect.right - canvasRect.left) / scaleX / canvasWidth, 0, 1);
+    stroke.points = stroke.points.map((point) => ({
+      ...point,
+      x: clamp(Number(point.x), minX, maxX),
+      y: clamp(lineCenterY / this.canvasHeight(), 0, 1)
+    }));
+    stroke.width = clamp(lineRect.height / scaleY * 0.48, 4, 24);
+    return true;
+  }
   addPointerSamples(event) {
     const samples = typeof event.getCoalescedEvents === "function" ? event.getCoalescedEvents() : null;
     const events = samples?.length ? samples : [event];
@@ -6087,16 +6575,21 @@ var PreviewDrawingController = class {
       points.push({
         x: from.x + (point.x - from.x) * ratio,
         y: from.y + (point.y - from.y) * ratio,
-        t: Math.round((from.t || Date.now()) + ((point.t || Date.now()) - (from.t || Date.now())) * ratio)
+        t: Math.round(
+          (Number.isFinite(Number(from.t)) ? Number(from.t) : Date.now()) +
+          ((Number.isFinite(Number(point.t)) ? Number(point.t) : Date.now()) - (Number.isFinite(Number(from.t)) ? Number(from.t) : Date.now())) * ratio
+        )
       });
     }
   }
   eventToPoint(event) {
     const rect = this.canvas.getBoundingClientRect();
-    const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top + this.canvasWindowTop;
     const width = this.canvasWidth();
     const height = this.canvasHeight();
+    const xScale = rect.width > 0 ? width / rect.width : 1;
+    const yScale = rect.height > 0 ? this.canvasRenderHeight / rect.height : 1;
+    const x = (event.clientX - rect.left) * xScale;
+    const y = (event.clientY - rect.top) * yScale + this.canvasWindowTop;
     const context = this.getResponsiveLayoutContext();
     const lineLocation = this.captureLineLocation(x, y, context);
     return createResponsivePoint({
@@ -6106,7 +6599,8 @@ var PreviewDrawingController = class {
       canvasHeight: height,
       frame: context.frame,
       sourcePath: lineLocation?.path || this.file?.path || "",
-      linePosition: lineLocation?.line ?? null
+      linePosition: lineLocation?.line ?? null,
+      time: Number.isFinite(Number(event.timeStamp)) ? Number(event.timeStamp) : Date.now()
     });
   }
   pointToCanvas(point) {
@@ -6342,6 +6836,10 @@ var PreviewDrawingController = class {
       this.drawWatercolorStrokeOn(ctx, stroke, alpha);
       return;
     }
+    if (normalizeBrushVariant(BRUSH_PEN, stroke.variant) === PEN_VARIANT_FOUNTAIN) {
+      this.drawFountainPenStrokeOn(ctx, stroke, alpha);
+      return;
+    }
     const count = clamp(Math.round(Number(stroke.count || 1)), 1, MAX_PEN_COUNT);
     const opacity = clamp(Number(stroke.opacity ?? DEFAULT_PEN_OPACITY), 0, 1);
     const offsets = getPenOffsets(count, stroke.width || this.penWidth);
@@ -6359,6 +6857,32 @@ var PreviewDrawingController = class {
         const next = this.pointToCanvas(stroke.points[pointIndex]);
         ctx.lineTo(next.x + offset.x, next.y + offset.y);
       }
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+  drawFountainPenStrokeOn(ctx, stroke, alpha = 1) {
+    const segments = buildFountainPenSegments(stroke.points, {
+      canvasWidth: this.canvasWidth(),
+      canvasHeight: this.canvasHeight(),
+      baseWidth: stroke.width || this.penWidth,
+      baseOpacity: stroke.opacity ?? DEFAULT_PEN_OPACITY
+    });
+    if (!segments.length) {
+      return;
+    }
+    ctx.save();
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = stroke.color || this.penColor;
+    for (const segment of segments) {
+      const from = this.pointToCanvas(segment.from);
+      const to = this.pointToCanvas(segment.to);
+      ctx.globalAlpha = alpha * segment.opacity;
+      ctx.lineWidth = segment.width;
+      ctx.beginPath();
+      ctx.moveTo(from.x, from.y);
+      ctx.lineTo(to.x, to.y);
       ctx.stroke();
     }
     ctx.restore();
@@ -6842,13 +7366,13 @@ var PreviewDrawingController = class {
       if (!saveToVault) {
         return;
       }
-      this.plugin.scheduleTextSave(
-        this.currentEditorFile,
-        element.dataset.noteDrawOriginal || "",
-        serializeControllerEditableSource(element, this.currentEditorEmbedded),
-        element,
-        this
-      );
+      const original = element.dataset.noteDrawOriginal || "";
+      const edited = serializeControllerEditableSource(element, this.currentEditorEmbedded);
+      if (this.currentEditorEmbedded) {
+        this.plugin.stageTextSave(this.currentEditorFile, original, edited, element, this);
+      } else {
+        this.plugin.scheduleTextSave(this.currentEditorFile, original, edited, element, this);
+      }
       this.positionFormatToolbar();
     };
     const onKeyDown = (event) => {
@@ -8132,6 +8656,20 @@ function findOwningLeaf(app, element) {
   }
   return collectWorkspaceLeaves(app).find((leaf) => leaf?.view?.containerEl?.contains(element)) || null;
 }
+function findActiveWorkspaceLeaf(app) {
+  try {
+    const recent = app.workspace?.getMostRecentLeaf?.();
+    if (recent?.view?.containerEl?.isConnected) {
+      return recent;
+    }
+  } catch (error) {
+    void error;
+  }
+  return collectWorkspaceLeaves(app).find((leaf) => {
+    const container = leaf?.view?.containerEl;
+    return Boolean(container?.closest?.(".workspace-leaf.mod-active, .workspace-tab-header.is-active")) || container?.classList?.contains("mod-active");
+  }) || null;
+}
 function collectWorkspaceLeaves(app) {
   const leaves = [];
   try {
@@ -8141,6 +8679,17 @@ function collectWorkspaceLeaves(app) {
     return [];
   }
   return leaves;
+}
+function isWebviewWorkspaceType(viewType) {
+  return /(webview|web-view|browser|iframe)/i.test(String(viewType || ""));
+}
+function findWorkspaceDrawingSurface(view) {
+  const candidates = [
+    view?.contentEl,
+    view?.containerEl?.querySelector?.(":scope > .view-content"),
+    view?.containerEl?.querySelector?.(".view-content")
+  ].filter((element) => element?.isConnected && !element.closest?.(".notedraw-body-control"));
+  return candidates.find((element) => element.getBoundingClientRect?.().width > 8 && element.getBoundingClientRect?.().height > 8) || candidates[0] || null;
 }
 function findRootPreviewForView(view) {
   const previews = Array.from(view?.containerEl?.querySelectorAll(".markdown-preview-view") || []);
@@ -8204,7 +8753,7 @@ function findWebviewSurfaces(root) {
   ];
   const candidates = selectors.flatMap((selector) => Array.from(root.querySelectorAll(selector)));
   const iframeHosts = Array.from(root.querySelectorAll("webview, iframe")).map((element) => element.closest(".mwv-embed[data-url], .view-content, .workspace-leaf-content") || element);
-  return uniqueConnectedElements([...candidates, ...iframeHosts]).filter((element) => !element.closest(".notedraw-toolbar, .notedraw-palette-panel, .notedraw-text-panel"));
+  return uniqueConnectedElements([...candidates, ...iframeHosts]).filter((element) => !element.closest(".notedraw-toolbar, .notedraw-palette-panel, .notedraw-brush-panel, .notedraw-text-panel"));
 }
 function findWebviewButtonHost(previewEl, view) {
   const candidates = [
@@ -8420,6 +8969,45 @@ function dispatchMouseClickThroughOverlay(canvas, clientPoint) {
   target.dispatchEvent(new MouseEvent("click", { ...eventInit, buttons: 0 }));
   return true;
 }
+function findTextLineRectBelowCanvas(canvas, root, clientX, clientY) {
+  const document = canvas?.ownerDocument || activeDocument;
+  if (!canvas || !root || !document?.elementFromPoint) {
+    return null;
+  }
+  const previousPointerEvents = canvas.style.pointerEvents;
+  applyElementStyles(canvas, { pointerEvents: "none" });
+  const hit = document.elementFromPoint(clientX, clientY);
+  applyElementStyles(canvas, { pointerEvents: previousPointerEvents || "" });
+  const textElement = hit?.closest?.(MARKDOWN_TEXT_SELECTOR);
+  if (!textElement || !root.contains(textElement) || textElement.closest?.(WEBVIEW_BLOCKED_EDIT_SELECTOR)) {
+    return null;
+  }
+  const nodeFilter = document.defaultView?.NodeFilter || window.NodeFilter;
+  if (!nodeFilter) {
+    return textElement.getBoundingClientRect?.() || null;
+  }
+  const walker = document.createTreeWalker(textElement, nodeFilter.SHOW_TEXT);
+  const rects = [];
+  let node = walker.nextNode();
+  while (node) {
+    if (String(node.nodeValue || "").trim()) {
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      rects.push(...Array.from(range.getClientRects()).filter((rect) => rect.width > 1 && rect.height > 1));
+    }
+    node = walker.nextNode();
+  }
+  if (!rects.length) {
+    const rect = textElement.getBoundingClientRect?.();
+    return rect?.width > 1 && rect?.height > 1 ? rect : null;
+  }
+  return rects.reduce((best, rect) => {
+    const verticalDistance = clientY < rect.top ? rect.top - clientY : clientY > rect.bottom ? clientY - rect.bottom : 0;
+    const horizontalDistance = clientX < rect.left ? rect.left - clientX : clientX > rect.right ? clientX - rect.right : 0;
+    const score = verticalDistance * 4 + horizontalDistance;
+    return !best || score < best.score ? { rect, score } : best;
+  }, null)?.rect || null;
+}
 function domPathForElement(element, root) {
   if (!element || !root?.contains(element) || element === root) {
     return "";
@@ -8481,8 +9069,8 @@ function cleanupAllDrawingHeaderButtons() {
   activeDocument.body?.querySelectorAll?.(".notedraw-body-control, .notedraw-file-input").forEach((element) => element.remove());
 }
 function cleanupDrawingUi(preview) {
-  preview.querySelectorAll(".notedraw-button, .notedraw-fallback-button, .notedraw-webview-button, .notedraw-toolbar, .notedraw-palette-panel, .notedraw-text-panel, .notedraw-selection-menu, .notedraw-format-toolbar, .notedraw-embed-layer, .notedraw-file-input, .notedraw-static-canvas, .notedraw-canvas").forEach((element) => element.remove());
-  preview.classList.remove("notedraw-shell", "is-drawing-active", "is-drawing-hidden", "is-select-mode", "is-palette-open", "is-text-panel-open", "is-selection-menu-open", "is-watercolor-mode", "is-edit-md-mode", "is-selecting-strokes", "is-resizing-selection", "is-native-text-editing", "is-notedraw-webview-shell", "is-notedraw-embedded-shell", "is-notedraw-responsive-layout", "is-notedraw-controls-visible", "has-notedraw-body-controls", "has-notedraw-canvas");
+  preview.querySelectorAll(".notedraw-button, .notedraw-fallback-button, .notedraw-webview-button, .notedraw-toolbar, .notedraw-palette-panel, .notedraw-brush-panel, .notedraw-text-panel, .notedraw-selection-menu, .notedraw-format-toolbar, .notedraw-embed-layer, .notedraw-file-input, .notedraw-static-canvas, .notedraw-canvas").forEach((element) => element.remove());
+  preview.classList.remove("notedraw-shell", "is-drawing-active", "is-drawing-hidden", "is-select-mode", "is-palette-open", "is-brush-panel-open", "is-text-panel-open", "is-selection-menu-open", "is-watercolor-mode", "is-edit-md-mode", "is-selecting-strokes", "is-resizing-selection", "is-native-text-editing", "is-reading-zoomed", "is-notedraw-webview-shell", "is-notedraw-workspace-shell", "is-notedraw-embedded-shell", "is-notedraw-responsive-layout", "is-notedraw-controls-visible", "has-notedraw-body-controls", "has-notedraw-canvas");
 }
 function isMarkdownContentMutation(mutation) {
   if (mutation?.type !== "childList") {
@@ -8508,6 +9096,26 @@ function isWebviewSyncMutation(mutation) {
     return false;
   }
   return [...Array.from(mutation.addedNodes || []), ...Array.from(mutation.removedNodes || [])].some((node) => isWebviewRelatedNode(node));
+}
+function isWorkspaceSurfaceMutation(mutation) {
+  if (!mutation || mutation.target?.closest?.(".notedraw-body-control")) {
+    return false;
+  }
+  if (mutation.type === "attributes") {
+    return Boolean(mutation.target?.matches?.(".workspace-leaf, .workspace-leaf-content, .view-content, .canvas-wrapper"));
+  }
+  if (mutation.type !== "childList") {
+    return false;
+  }
+  const nodes = [...Array.from(mutation.addedNodes || []), ...Array.from(mutation.removedNodes || [])].filter((node) => {
+    return node?.nodeType === Node.ELEMENT_NODE && !node.matches?.(".notedraw-static-canvas, .notedraw-canvas, .notedraw-embed-layer, .notedraw-body-control");
+  });
+  if (!nodes.length) {
+    return false;
+  }
+  const leafContent = mutation.target?.closest?.(".workspace-leaf-content");
+  const viewType = leafContent?.dataset?.type || "";
+  return Boolean(leafContent) && viewType !== "markdown" && !isWebviewWorkspaceType(viewType);
 }
 function isFloatingControlsVisibilityMutation(mutation) {
   if (!mutation || mutation.target?.closest?.(".notedraw-body-control")) {
@@ -8556,6 +9164,13 @@ function normalizeStrokeKind(kind) {
     return kind;
   }
   return void 0;
+}
+function normalizeBrushVariant(brush, variant) {
+  const value = String(variant || BRUSH_VARIANT_DEFAULT).trim().toLowerCase();
+  if (brush === BRUSH_WATERCOLOR) {
+    return [WATERCOLOR_VARIANT_TEXT, WATERCOLOR_VARIANT_STRAIGHT].includes(value) ? value : BRUSH_VARIANT_DEFAULT;
+  }
+  return value === PEN_VARIANT_FOUNTAIN ? PEN_VARIANT_FOUNTAIN : BRUSH_VARIANT_DEFAULT;
 }
 function normalizeTextRenderMode(mode) {
   if ([TEXT_RENDER_MARKDOWN, TEXT_RENDER_HTML, TEXT_RENDER_NOTE].includes(mode)) {
@@ -8750,10 +9365,12 @@ function normalizeWebEdits(value) {
 function normalizeStroke(stroke) {
   const points = Array.isArray(stroke?.points) ? stroke.points : [];
   const kind = normalizeStrokeKind(stroke?.kind);
+  const brush = stroke?.brush === BRUSH_WATERCOLOR ? BRUSH_WATERCOLOR : BRUSH_PEN;
   return {
     kind,
     embedType: normalizeEmbedType(stroke?.embedType),
-    brush: stroke?.brush === BRUSH_WATERCOLOR ? BRUSH_WATERCOLOR : BRUSH_PEN,
+    brush,
+    variant: normalizeBrushVariant(brush, stroke?.variant),
     color: typeof stroke?.color === "string" ? stroke.color : "#e53935",
     width: Number.isFinite(Number(stroke?.width)) ? clamp(Number(stroke.width), MIN_BRUSH_WIDTH, 80) : 3,
     opacity: clamp(Number(stroke?.opacity ?? DEFAULT_PEN_OPACITY), 0, 1),
