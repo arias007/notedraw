@@ -1634,7 +1634,7 @@ var NoteDrawPlugin = class extends Plugin {
       return;
     }
     this.webviewMutationObserver = new MutationObserver((mutations) => {
-      if (mutations.some((mutation) => mutation.type === "childList")) {
+      if (mutations.some((mutation) => isEmbeddedSurfaceSyncMutation(mutation))) {
         this.scheduleEmbeddedMarkdownSync();
       }
       if (mutations.some((mutation) => isWebviewSyncMutation(mutation))) {
@@ -1772,7 +1772,7 @@ var NoteDrawPlugin = class extends Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.3.4",
+      version: "3.3.5",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -2117,7 +2117,7 @@ var NoteDrawPlugin = class extends Plugin {
         continue;
       }
       const surfaces = Array.from(view.containerEl.querySelectorAll(".markdown-embed-content")).filter((surface) => {
-        return surface.isConnected && !surface.closest(".notedraw-embed");
+        return isElementLaidOut(surface) && !surface.closest(".notedraw-embed");
       });
       for (const surface of surfaces) {
         const sourcePath = resolveRenderedSourcePath(this.app, surface, view.file.path);
@@ -3839,6 +3839,9 @@ var PreviewDrawingController = class {
     await this.loadingDrawings;
   }
   onResize() {
+    if (this.embeddedSurface && !isElementLaidOut(this.previewEl)) {
+      return;
+    }
     this.syncFloatingControlClasses();
     this.applyReadingZoom();
     if (this.active || this.drawingsLoaded || this.ctx) {
@@ -3847,8 +3850,17 @@ var PreviewDrawingController = class {
   }
   onScroll() {
     this.lastScrollAt = Date.now();
-    this.syncFloatingControlClasses();
-    this.scheduleFloatingControlsPosition();
+    if (this.embeddedSurface && !isElementNearViewport(this.previewEl)) {
+      if (this.scrollSettleTimer !== null) {
+        window.clearTimeout(this.scrollSettleTimer);
+        this.scrollSettleTimer = null;
+      }
+      return;
+    }
+    if (!this.embeddedSurface) {
+      this.syncFloatingControlClasses();
+      this.scheduleFloatingControlsPosition();
+    }
     if (this.active || this.drawingsLoaded || this.ctx) {
       this.scheduleResize({ layout: false });
       if (this.scrollSettleTimer !== null) {
@@ -10166,11 +10178,25 @@ function isReadingSurfaceVisible(view) {
   return isElementVisibleEnough(preview) && !isElementVisibleEnough(findSourceSurfaceForView(view));
 }
 function isElementVisibleEnough(element) {
+  if (!isElementLaidOut(element)) {
+    return false;
+  }
+  const rect = element.getBoundingClientRect();
+  return Boolean(rect.bottom > 0 && rect.right > 0 && rect.top < window.innerHeight && rect.left < window.innerWidth);
+}
+function isElementLaidOut(element) {
   if (!element?.isConnected) {
     return false;
   }
   const rect = element.getBoundingClientRect?.();
-  return Boolean(rect && rect.width > 8 && rect.height > 8 && rect.bottom > 0 && rect.right > 0 && rect.top < window.innerHeight && rect.left < window.innerWidth);
+  return Boolean(rect && rect.width > 8 && rect.height > 8);
+}
+function isElementNearViewport(element, margin = 320) {
+  if (!isElementLaidOut(element)) {
+    return false;
+  }
+  const rect = element.getBoundingClientRect();
+  return rect.bottom > -margin && rect.right > -margin && rect.top < window.innerHeight + margin && rect.left < window.innerWidth + margin;
 }
 function isBlockingObsidianOverlayOpen(document) {
   const candidates = document?.querySelectorAll?.(".modal-container .modal, .modal-container.mod-dim, .modal-bg") || [];
@@ -10528,6 +10554,23 @@ function isMarkdownContentMutation(mutation) {
     const insideMarkdown = Boolean(node.closest?.(markdownRootSelector));
     return node.matches?.(markdownRootSelector) || node.querySelector?.(markdownRootSelector) || insideMarkdown && (node.matches?.(MARKDOWN_TEXT_SELECTOR) || node.querySelector?.(MARKDOWN_TEXT_SELECTOR));
   });
+}
+function isEmbeddedSurfaceSyncMutation(mutation) {
+  if (!mutation || mutation.target?.closest?.(".notedraw-body-control")) {
+    return false;
+  }
+  const selector = ".markdown-embed, .markdown-embed-content, .internal-embed";
+  if (mutation.type === "attributes") {
+    return mutation.attributeName === "class" && Boolean(
+      mutation.target?.matches?.(selector) || mutation.target?.closest?.(selector) || mutation.target?.querySelector?.(selector)
+    );
+  }
+  if (mutation.type !== "childList") {
+    return false;
+  }
+  return [...Array.from(mutation.addedNodes || []), ...Array.from(mutation.removedNodes || [])].some((node) => (
+    node?.nodeType === Node.ELEMENT_NODE && (node.matches?.(selector) || node.querySelector?.(selector) || node.closest?.(selector))
+  ));
 }
 function isWebviewSyncMutation(mutation) {
   if (!mutation) {

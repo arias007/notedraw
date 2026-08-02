@@ -28,6 +28,7 @@ It is built as a surface layer: the same drawing and text-edit logic works on Ob
 - Lazy drawing-data loading to reduce note-open lag.
 - Viewport-windowed canvas rendering with mobile pixel budgets for stable long-note performance.
 - Inactive canvases stay out of the compositor, and stale view controllers are released on mode or file changes.
+- Hidden Obsidian embed copies are not mounted, and offscreen embeds pause scroll-driven layout work until they approach the viewport.
 - Responsive coordinates follow the Markdown content lane and nearby source lines across reading, source, desktop, and mobile layouts.
 - Reading view uses non-reflowing visual zoom: original line breaks stay fixed, enlarged content can overflow horizontally, and two-axis panning keeps every NoteDraw layer aligned.
 - Source/edit view keeps layout zoom, so text can reflow to the edited working width.
@@ -222,4 +223,4 @@ The current package focuses on the local Obsidian plugin runtime. The API and DO
 
 ## Version
 
-Current version: `3.3.4`.
+Current version: `3.3.5`.

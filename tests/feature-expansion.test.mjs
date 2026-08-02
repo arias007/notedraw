@@ -242,3 +242,19 @@ test("file-backed workspace views remount drawings and header controls after int
   assert.match(source, /isWorkspaceSurfaceMutation\(mutation\)/);
   assert.match(styles, /\.notedraw-shell\.is-notedraw-workspace-shell \.notedraw-static-canvas/);
 });
+
+test("hidden and offscreen embeds avoid redundant controllers and scroll work", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const observerSource = source.slice(source.indexOf("  installWebviewObserver()"), source.indexOf("  scheduleFloatingControlsSync()"));
+  const embeddedSource = source.slice(source.indexOf("  syncEmbeddedMarkdownControllers()"), source.indexOf("  syncWebviewControllers()"));
+  const scrollStart = source.indexOf("  onScroll()");
+  const scrollSource = source.slice(scrollStart, source.indexOf("  scheduleResize(options", scrollStart));
+
+  assert.match(observerSource, /mutations\.some\(\(mutation\) => isEmbeddedSurfaceSyncMutation\(mutation\)\)/);
+  assert.doesNotMatch(observerSource, /mutations\.some\(\(mutation\) => mutation\.type === "childList"\)/);
+  assert.match(embeddedSource, /return isElementLaidOut\(surface\) && !surface\.closest\("\.notedraw-embed"\)/);
+  assert.match(scrollSource, /this\.embeddedSurface && !isElementNearViewport\(this\.previewEl\)/);
+  assert.match(source, /function isElementLaidOut\(element\)/);
+  assert.match(source, /function isElementNearViewport\(element, margin = 320\)/);
+  assert.match(source, /function isEmbeddedSurfaceSyncMutation\(mutation\)/);
+});

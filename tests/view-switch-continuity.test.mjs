@@ -66,7 +66,7 @@ test("element migration waits for a stable note lane instead of transition geome
   assert.match(source, /contentWidth \/ width >= 0\.42 \|\| stableWideLane/);
 });
 
-test("inactive views and embedded Markdown load their own editable drawings", async () => {
+test("laid-out embedded Markdown loads its own editable drawings without scanning unrelated DOM changes", async () => {
   const [source, styles] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(stylesUrl, "utf8")
@@ -74,7 +74,8 @@ test("inactive views and embedded Markdown load their own editable drawings", as
 
   assert.match(source, /this\.embeddedControllers\s*=\s*\/\* @__PURE__ \*\/ new Map\(\)/);
   assert.match(source, /syncEmbeddedMarkdownControllers\(\)/);
-  assert.match(source, /mutation\.type === "childList"[\s\S]*this\.scheduleEmbeddedMarkdownSync\(\)/);
+  assert.match(source, /isEmbeddedSurfaceSyncMutation\(mutation\)[\s\S]*this\.scheduleEmbeddedMarkdownSync\(\)/);
+  assert.match(source, /isElementLaidOut\(surface\)/);
   assert.match(source, /scheduleEmbeddedMarkdownSync\(\)[\s\S]*this\.syncEmbeddedMarkdownControllers\(\)/);
   assert.match(source, /querySelectorAll\("\.markdown-embed-content"\)/);
   assert.match(source, /surfaceType: "embedded",\s*embeddedSurface: true/);
