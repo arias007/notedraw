@@ -13,9 +13,9 @@ It is built as a surface layer: the same drawing and text-edit logic works on Ob
 - Reading view adds a note pen that uses fountain-pen dynamics while reserving clean Markdown flow space beneath the stroke.
 - The original watercolor brush remains available, with text-aligned and auto-straight variants.
 - Stroke selection, multi-select, movement, resize handles, and delete.
-- Floating text, button-style text boxes, magnetic rectangles and circles, and three-point curved arrows.
+- Floating text, magnetic rectangles and circles, and three-point curved arrows.
 - Text style toggles for bold, italic, underline, and boxed text.
-- Text, title, code, file, style, and shape tools are grouped under the Text panel instead of being spread across the main toolbar.
+- Text, rectangles, circles, and arrows are grouped under one Text and links section.
 - Text and shape tools can select existing drawing elements before creating new ones.
 - Text elements can be double-clicked to edit again, and text-panel style buttons apply to active rendered Markdown text when possible.
 - Circular toolbar buttons sized for quick touch or mouse use.
@@ -222,4 +222,4 @@ The current package focuses on the local Obsidian plugin runtime. The API and DO
 
 ## Version
 
-Current version: `3.3.3`.
+Current version: `3.3.4`.

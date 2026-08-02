@@ -159,15 +159,18 @@ test("mind map import creates editable NoteDraw nodes and magnetically bound con
   assert.match(source, /ctx\.quadraticCurveTo\(points\[1\]\.x, points\[1\]\.y, points\[2\]\.x, points\[2\]\.y\)/);
 });
 
-test("text shapes use one magnetic rectangle, circle, and three-point arrow system", async () => {
+test("text and links keeps only text, rectangle, circle, and the three-point arrow in one group", async () => {
   const source = await readFile(sourceUrl, "utf8");
   const panelStart = source.indexOf("  createTextPanel() {");
   const panelSource = source.slice(panelStart, source.indexOf("  scheduleMindMapFilePicker()", panelStart));
 
+  assert.match(panelSource, /labelKey: "textGroup"/);
+  assert.match(panelSource, /\{ id: "plain", labelKey: "textPlain", icon: "type" \}/);
   assert.match(panelSource, /\{ id: "rectangle", labelKey: "outlineButton", icon: "square" \}/);
   assert.match(panelSource, /\{ id: "circle", labelKey: "pillButton", icon: "circle" \}/);
   assert.match(panelSource, /\{ id: "arrow", labelKey: "arrow", icon: "move-up-right" \}/);
-  assert.doesNotMatch(panelSource, /id: "buttonPrimary"|id: "arrowUp"|id: "arrowDown"|id: "arrowLeft"|id: "arrowRight"/);
+  assert.doesNotMatch(panelSource, /labelKey: "buttonGroup"|id: "title"|id: "code"|id: "file"|id: "button"|id: "buttonPrimary"|id: "arrowUp"|id: "arrowDown"|id: "arrowLeft"|id: "arrowRight"/);
+  assert.match(source, /title: "plain"[\s\S]*code: "plain"[\s\S]*file: "plain"[\s\S]*button: "plain"/);
   assert.match(source, /startConnectorGesture\(event, point, routed\)/);
   assert.match(source, /findSnapElementIdAtPoint\(point/);
   assert.match(source, /return \[from, control, to\]\.map/);

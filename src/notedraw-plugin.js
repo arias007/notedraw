@@ -171,7 +171,7 @@ var I18N = {
     advancedColor: "Advanced color",
     penWidth: "Pen width",
     penOpacity: "Pen opacity",
-    textGroup: "Text",
+    textGroup: "Text and links",
     buttonGroup: "Buttons and connectors",
     textPlain: "Text",
     title: "Title",
@@ -312,7 +312,7 @@ var I18N = {
     advancedColor: "高级颜色",
     penWidth: "笔宽",
     penOpacity: "笔透明度",
-    textGroup: "文字",
+    textGroup: "文字链接",
     buttonGroup: "按钮/连接",
     textPlain: "普通文字",
     title: "标题",
@@ -447,7 +447,7 @@ var I18N = {
     advancedColor: "進階顏色",
     penWidth: "筆寬",
     penOpacity: "筆透明度",
-    textGroup: "文字",
+    textGroup: "文字連結",
     buttonGroup: "按鈕/連接",
     textPlain: "普通文字",
     title: "標題",
@@ -566,7 +566,7 @@ var I18N = {
     advancedColor: "تەپسىلىي رەڭ",
     penWidth: "قەلەم كەڭلىكى",
     penOpacity: "قەلەم سۈزۈكلۈكى",
-    textGroup: "تېكىست",
+    textGroup: "تېكىست ۋە ئۇلانمىلار",
     buttonGroup: "كۇنۇپكا/يۆنىلىش",
     textPlain: "تېكىست",
     title: "ماۋزۇ",
@@ -661,7 +661,7 @@ var I18N = {
     advancedColor: "Расширенный цвет",
     penWidth: "Толщина пера",
     penOpacity: "Прозрачность пера",
-    textGroup: "Текст",
+    textGroup: "Текст и ссылки",
     buttonGroup: "Кнопки/стрелки",
     textPlain: "Текст",
     title: "Заголовок",
@@ -755,7 +755,7 @@ Object.assign(I18N, {
     redoDrawing: "إعادة الرسم",
     deleteSelectedDrawing: "حذف المحدد",
     penSettings: "إعدادات القلم",
-    textGroup: "نص",
+    textGroup: "النص والروابط",
     importGroup: "استيراد",
     image: "صورة",
     video: "فيديو",
@@ -797,7 +797,7 @@ Object.assign(I18N, {
     deleteSelectedDrawing: "Eliminar seleccionado",
     penSettings: "Ajustes de pluma",
     advancedColor: "Color avanzado",
-    textGroup: "Texto",
+    textGroup: "Texto y enlaces",
     importGroup: "Importar",
     previewGroup: "Vista previa",
     bold: "Negrita",
@@ -835,7 +835,7 @@ Object.assign(I18N, {
     deleteSelectedDrawing: "Supprimer la sélection",
     penSettings: "Réglages du stylo",
     advancedColor: "Couleur avancée",
-    textGroup: "Texte",
+    textGroup: "Texte et liens",
     importGroup: "Importer",
     previewGroup: "Aperçu",
     bold: "Gras",
@@ -873,7 +873,7 @@ Object.assign(I18N, {
     deleteSelectedDrawing: "Auswahl löschen",
     penSettings: "Stifteinstellungen",
     advancedColor: "Erweiterte Farbe",
-    textGroup: "Text",
+    textGroup: "Text und Links",
     importGroup: "Import",
     previewGroup: "Vorschau",
     bold: "Fett",
@@ -911,7 +911,7 @@ Object.assign(I18N, {
     deleteSelectedDrawing: "選択を削除",
     penSettings: "ペン設定",
     advancedColor: "詳細カラー",
-    textGroup: "文字",
+    textGroup: "テキストとリンク",
     importGroup: "インポート",
     previewGroup: "プレビュー",
     bold: "太字",
@@ -949,7 +949,7 @@ Object.assign(I18N, {
     deleteSelectedDrawing: "선택 삭제",
     penSettings: "펜 설정",
     advancedColor: "고급 색상",
-    textGroup: "텍스트",
+    textGroup: "텍스트 및 링크",
     importGroup: "가져오기",
     previewGroup: "미리보기",
     bold: "굵게",
@@ -987,7 +987,7 @@ Object.assign(I18N, {
     deleteSelectedDrawing: "Seçileni sil",
     penSettings: "Kalem ayarları",
     advancedColor: "Gelişmiş renk",
-    textGroup: "Metin",
+    textGroup: "Metin ve bağlantılar",
     importGroup: "İçe aktar",
     previewGroup: "Önizleme",
     bold: "Kalın",
@@ -1772,7 +1772,7 @@ var NoteDrawPlugin = class extends Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.3.3",
+      version: "3.3.4",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -4299,15 +4299,6 @@ var PreviewDrawingController = class {
         labelKey: "textGroup",
         items: [
           { id: "plain", labelKey: "textPlain", icon: "type" },
-          { id: "title", labelKey: "title", icon: "type" },
-          { id: "code", labelKey: "code", icon: "code-2" },
-          { id: "file", labelKey: "fileTag", icon: "file-text" }
-        ]
-      },
-      {
-        labelKey: "buttonGroup",
-        items: [
-          { id: "button", labelKey: "button", icon: "square" },
           { id: "rectangle", labelKey: "outlineButton", icon: "square" },
           { id: "circle", labelKey: "pillButton", icon: "circle" },
           { id: "arrow", labelKey: "arrow", icon: "move-up-right" }
@@ -10630,11 +10621,23 @@ function normalizeToolMode(value) {
 }
 function normalizeTextPreset(value) {
   const preset = String(value || "plain");
+  const migrated = {
+    title: "plain",
+    code: "plain",
+    file: "plain",
+    button: "plain",
+    buttonPrimary: "plain",
+    buttonOutline: "rectangle",
+    buttonPill: "circle",
+    arrowUp: "arrow",
+    arrowDown: "arrow",
+    arrowLeft: "arrow",
+    arrowRight: "arrow"
+  }[preset] || preset;
   return [
-    "plain", "title", "code", "file", "button", "rectangle", "circle", "arrow", "buttonPrimary", "buttonOutline", "buttonPill",
-    "arrowUp", "arrowDown", "arrowLeft", "arrowRight", "image", "video", "attachment",
+    "plain", "rectangle", "circle", "arrow", "image", "video", "attachment",
     "markdown", "html", "note", "mindMap"
-  ].includes(preset) ? preset : "plain";
+  ].includes(migrated) ? migrated : "plain";
 }
 function normalizeConnector(value) {
   if (!value || typeof value !== "object") {

@@ -1929,7 +1929,7 @@ var I18N = {
     advancedColor: "Advanced color",
     penWidth: "Pen width",
     penOpacity: "Pen opacity",
-    textGroup: "Text",
+    textGroup: "Text and links",
     buttonGroup: "Buttons and connectors",
     textPlain: "Text",
     title: "Title",
@@ -2070,7 +2070,7 @@ var I18N = {
     advancedColor: "\u9AD8\u7EA7\u989C\u8272",
     penWidth: "\u7B14\u5BBD",
     penOpacity: "\u7B14\u900F\u660E\u5EA6",
-    textGroup: "\u6587\u5B57",
+    textGroup: "\u6587\u5B57\u94FE\u63A5",
     buttonGroup: "\u6309\u94AE/\u8FDE\u63A5",
     textPlain: "\u666E\u901A\u6587\u5B57",
     title: "\u6807\u9898",
@@ -2205,7 +2205,7 @@ var I18N = {
     advancedColor: "\u9032\u968E\u984F\u8272",
     penWidth: "\u7B46\u5BEC",
     penOpacity: "\u7B46\u900F\u660E\u5EA6",
-    textGroup: "\u6587\u5B57",
+    textGroup: "\u6587\u5B57\u9023\u7D50",
     buttonGroup: "\u6309\u9215/\u9023\u63A5",
     textPlain: "\u666E\u901A\u6587\u5B57",
     title: "\u6A19\u984C",
@@ -2324,7 +2324,7 @@ var I18N = {
     advancedColor: "\u062A\u06D5\u067E\u0633\u0649\u0644\u0649\u064A \u0631\u06D5\u06AD",
     penWidth: "\u0642\u06D5\u0644\u06D5\u0645 \u0643\u06D5\u06AD\u0644\u0649\u0643\u0649",
     penOpacity: "\u0642\u06D5\u0644\u06D5\u0645 \u0633\u06C8\u0632\u06C8\u0643\u0644\u06C8\u0643\u0649",
-    textGroup: "\u062A\u06D0\u0643\u0649\u0633\u062A",
+    textGroup: "\u062A\u06D0\u0643\u0649\u0633\u062A \u06CB\u06D5 \u0626\u06C7\u0644\u0627\u0646\u0645\u0649\u0644\u0627\u0631",
     buttonGroup: "\u0643\u06C7\u0646\u06C7\u067E\u0643\u0627/\u064A\u06C6\u0646\u0649\u0644\u0649\u0634",
     textPlain: "\u062A\u06D0\u0643\u0649\u0633\u062A",
     title: "\u0645\u0627\u06CB\u0632\u06C7",
@@ -2419,7 +2419,7 @@ var I18N = {
     advancedColor: "\u0420\u0430\u0441\u0448\u0438\u0440\u0435\u043D\u043D\u044B\u0439 \u0446\u0432\u0435\u0442",
     penWidth: "\u0422\u043E\u043B\u0449\u0438\u043D\u0430 \u043F\u0435\u0440\u0430",
     penOpacity: "\u041F\u0440\u043E\u0437\u0440\u0430\u0447\u043D\u043E\u0441\u0442\u044C \u043F\u0435\u0440\u0430",
-    textGroup: "\u0422\u0435\u043A\u0441\u0442",
+    textGroup: "\u0422\u0435\u043A\u0441\u0442 \u0438 \u0441\u0441\u044B\u043B\u043A\u0438",
     buttonGroup: "\u041A\u043D\u043E\u043F\u043A\u0438/\u0441\u0442\u0440\u0435\u043B\u043A\u0438",
     textPlain: "\u0422\u0435\u043A\u0441\u0442",
     title: "\u0417\u0430\u0433\u043E\u043B\u043E\u0432\u043E\u043A",
@@ -2513,7 +2513,7 @@ Object.assign(I18N, {
     redoDrawing: "\u0625\u0639\u0627\u062F\u0629 \u0627\u0644\u0631\u0633\u0645",
     deleteSelectedDrawing: "\u062D\u0630\u0641 \u0627\u0644\u0645\u062D\u062F\u062F",
     penSettings: "\u0625\u0639\u062F\u0627\u062F\u0627\u062A \u0627\u0644\u0642\u0644\u0645",
-    textGroup: "\u0646\u0635",
+    textGroup: "\u0627\u0644\u0646\u0635 \u0648\u0627\u0644\u0631\u0648\u0627\u0628\u0637",
     importGroup: "\u0627\u0633\u062A\u064A\u0631\u0627\u062F",
     image: "\u0635\u0648\u0631\u0629",
     video: "\u0641\u064A\u062F\u064A\u0648",
@@ -2555,7 +2555,7 @@ Object.assign(I18N, {
     deleteSelectedDrawing: "Eliminar seleccionado",
     penSettings: "Ajustes de pluma",
     advancedColor: "Color avanzado",
-    textGroup: "Texto",
+    textGroup: "Texto y enlaces",
     importGroup: "Importar",
     previewGroup: "Vista previa",
     bold: "Negrita",
@@ -2593,7 +2593,7 @@ Object.assign(I18N, {
     deleteSelectedDrawing: "Supprimer la s\xE9lection",
     penSettings: "R\xE9glages du stylo",
     advancedColor: "Couleur avanc\xE9e",
-    textGroup: "Texte",
+    textGroup: "Texte et liens",
     importGroup: "Importer",
     previewGroup: "Aper\xE7u",
     bold: "Gras",
@@ -2631,7 +2631,7 @@ Object.assign(I18N, {
     deleteSelectedDrawing: "Auswahl l\xF6schen",
     penSettings: "Stifteinstellungen",
     advancedColor: "Erweiterte Farbe",
-    textGroup: "Text",
+    textGroup: "Text und Links",
     importGroup: "Import",
     previewGroup: "Vorschau",
     bold: "Fett",
@@ -2669,7 +2669,7 @@ Object.assign(I18N, {
     deleteSelectedDrawing: "\u9078\u629E\u3092\u524A\u9664",
     penSettings: "\u30DA\u30F3\u8A2D\u5B9A",
     advancedColor: "\u8A73\u7D30\u30AB\u30E9\u30FC",
-    textGroup: "\u6587\u5B57",
+    textGroup: "\u30C6\u30AD\u30B9\u30C8\u3068\u30EA\u30F3\u30AF",
     importGroup: "\u30A4\u30F3\u30DD\u30FC\u30C8",
     previewGroup: "\u30D7\u30EC\u30D3\u30E5\u30FC",
     bold: "\u592A\u5B57",
@@ -2707,7 +2707,7 @@ Object.assign(I18N, {
     deleteSelectedDrawing: "\uC120\uD0DD \uC0AD\uC81C",
     penSettings: "\uD39C \uC124\uC815",
     advancedColor: "\uACE0\uAE09 \uC0C9\uC0C1",
-    textGroup: "\uD14D\uC2A4\uD2B8",
+    textGroup: "\uD14D\uC2A4\uD2B8 \uBC0F \uB9C1\uD06C",
     importGroup: "\uAC00\uC838\uC624\uAE30",
     previewGroup: "\uBBF8\uB9AC\uBCF4\uAE30",
     bold: "\uAD75\uAC8C",
@@ -2745,7 +2745,7 @@ Object.assign(I18N, {
     deleteSelectedDrawing: "Se\xE7ileni sil",
     penSettings: "Kalem ayarlar\u0131",
     advancedColor: "Geli\u015Fmi\u015F renk",
-    textGroup: "Metin",
+    textGroup: "Metin ve ba\u011Flant\u0131lar",
     importGroup: "\u0130\xE7e aktar",
     previewGroup: "\xD6nizleme",
     bold: "Kal\u0131n",
@@ -3521,7 +3521,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.3.3",
+      version: "3.3.4",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -6042,15 +6042,6 @@ var PreviewDrawingController = class {
         labelKey: "textGroup",
         items: [
           { id: "plain", labelKey: "textPlain", icon: "type" },
-          { id: "title", labelKey: "title", icon: "type" },
-          { id: "code", labelKey: "code", icon: "code-2" },
-          { id: "file", labelKey: "fileTag", icon: "file-text" }
-        ]
-      },
-      {
-        labelKey: "buttonGroup",
-        items: [
-          { id: "button", labelKey: "button", icon: "square" },
           { id: "rectangle", labelKey: "outlineButton", icon: "square" },
           { id: "circle", labelKey: "pillButton", icon: "circle" },
           { id: "arrow", labelKey: "arrow", icon: "move-up-right" }
@@ -12360,22 +12351,24 @@ function normalizeToolMode(value) {
 }
 function normalizeTextPreset(value) {
   const preset = String(value || "plain");
+  const migrated = {
+    title: "plain",
+    code: "plain",
+    file: "plain",
+    button: "plain",
+    buttonPrimary: "plain",
+    buttonOutline: "rectangle",
+    buttonPill: "circle",
+    arrowUp: "arrow",
+    arrowDown: "arrow",
+    arrowLeft: "arrow",
+    arrowRight: "arrow"
+  }[preset] || preset;
   return [
     "plain",
-    "title",
-    "code",
-    "file",
-    "button",
     "rectangle",
     "circle",
     "arrow",
-    "buttonPrimary",
-    "buttonOutline",
-    "buttonPill",
-    "arrowUp",
-    "arrowDown",
-    "arrowLeft",
-    "arrowRight",
     "image",
     "video",
     "attachment",
@@ -12383,7 +12376,7 @@ function normalizeTextPreset(value) {
     "html",
     "note",
     "mindMap"
-  ].includes(preset) ? preset : "plain";
+  ].includes(migrated) ? migrated : "plain";
 }
 function normalizeConnector(value) {
   if (!value || typeof value !== "object") {
