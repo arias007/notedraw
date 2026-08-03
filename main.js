@@ -3988,7 +3988,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.3.13",
+      version: "3.3.14",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -5413,6 +5413,8 @@ var PreviewDrawingController = class {
     this.pendingMindMapFile = null;
     this.pendingMindMapOptions = null;
     this.noteFlowFrameId = null;
+    this.noteFlowResizeTimer = null;
+    this.noteFlowSuppressResizeUntil = 0;
     this.noteFlowStyledElements = /* @__PURE__ */ new Map();
     this.noteFlowLayoutSignature = "";
     const sharedToolbarState = this.plugin.controllerToolbarState(this);
@@ -6125,7 +6127,8 @@ var PreviewDrawingController = class {
     }
   }
   scheduleResize(options = {}) {
-    this.resizeNeedsLayout = this.resizeNeedsLayout || options.layout !== false && !this.draggingStroke;
+    const noteFlowResizeSuppressed = Date.now() < this.noteFlowSuppressResizeUntil;
+    this.resizeNeedsLayout = this.resizeNeedsLayout || options.layout !== false && !this.draggingStroke && !noteFlowResizeSuppressed;
     if (this.resizeFrameId !== null) {
       return;
     }
@@ -11018,14 +11021,19 @@ var PreviewDrawingController = class {
     return candidates[0] || null;
   }
   clearNoteFlowLayout() {
+    if (this.noteFlowStyledElements?.size) {
+      this.markNoteFlowLayoutMutation();
+    }
     for (const [element, states] of this.noteFlowStyledElements || []) {
       if (!element?.style) {
         continue;
       }
       for (const state of states.values()) {
         if (state.value) {
+          this.markNoteFlowLayoutMutation();
           element.style.setProperty(state.property, state.value, state.priority || "");
         } else {
+          this.markNoteFlowLayoutMutation();
           element.style.removeProperty(state.property);
         }
       }
@@ -11212,6 +11220,7 @@ var PreviewDrawingController = class {
         const appliedValue = Math.ceil(state.base + offset);
         const nextValue = `${appliedValue}px`;
         if (element.style.getPropertyValue(property) !== nextValue || element.style.getPropertyPriority(property) !== "important") {
+          this.markNoteFlowLayoutMutation();
           element.style.setProperty(property, nextValue, "important");
         }
         state.applied = Math.max(0, appliedValue - state.base);
@@ -11224,6 +11233,30 @@ var PreviewDrawingController = class {
     const changed = migratedAnchor || restoredStaleAnchor || signature !== this.noteFlowLayoutSignature;
     this.noteFlowLayoutSignature = signature;
     return changed;
+  }
+  markNoteFlowLayoutMutation() {
+    this.noteFlowSuppressResizeUntil = Math.max(this.noteFlowSuppressResizeUntil, Date.now() + 180);
+    if (!this.destroyed && this.resizeFrameId !== null && this.resizeNeedsLayout) {
+      this.cancelResizeFrame();
+      this.scheduleResize({ layout: false });
+    }
+  }
+  scheduleNoteFlowSettleResize() {
+    if (this.destroyed || this.noteFlowResizeTimer !== null) {
+      return;
+    }
+    const delay = Math.max(34, this.noteFlowSuppressResizeUntil - Date.now() + 20);
+    this.noteFlowResizeTimer = window.setTimeout(() => {
+      this.noteFlowResizeTimer = null;
+      if (this.destroyed) {
+        return;
+      }
+      if (this.draggingStroke || Date.now() < this.noteFlowSuppressResizeUntil) {
+        this.scheduleNoteFlowSettleResize();
+        return;
+      }
+      this.scheduleResize({ layout: true });
+    }, delay);
   }
   queueDraggedNoteFlowRefresh(indexes) {
     for (const index of indexes || []) {
@@ -11271,7 +11304,7 @@ var PreviewDrawingController = class {
       const refreshedDraggedFlow = this.refreshDraggedNoteFlowAnchors();
       const layoutChanged = this.applyNoteFlowLayout() || refreshedDraggedFlow;
       if (layoutChanged && !this.draggingStroke) {
-        this.scheduleResize({ layout: true });
+        this.scheduleNoteFlowSettleResize();
       }
     });
   }
@@ -11279,6 +11312,10 @@ var PreviewDrawingController = class {
     if (this.noteFlowFrameId !== null) {
       window.cancelAnimationFrame(this.noteFlowFrameId);
       this.noteFlowFrameId = null;
+    }
+    if (this.noteFlowResizeTimer !== null) {
+      window.clearTimeout(this.noteFlowResizeTimer);
+      this.noteFlowResizeTimer = null;
     }
   }
   getSelectedStrokeIndexes() {

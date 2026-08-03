@@ -167,6 +167,7 @@ test("moving inserted note elements refreshes Markdown avoidance once per animat
   const source = await readFile(sourceUrl, "utf8");
   const dragSource = source.slice(source.indexOf("  startSelectedStrokeDrag("), source.indexOf("  startSelectedStrokeResize("));
   const refreshSource = source.slice(source.indexOf("  queueDraggedNoteFlowRefresh("), source.indexOf("  cancelNoteFlowLayout()"));
+  const settleSource = source.slice(source.indexOf("  markNoteFlowLayoutMutation("), source.indexOf("  queueDraggedNoteFlowRefresh("));
   const moveSource = dragSource.slice(dragSource.indexOf("  moveSelectedStroke("), dragSource.indexOf("  finishSelectedStrokeDrag("));
 
   assert.match(dragSource, /this\.dragStrokeOriginalNoteFlows = new Map/);
@@ -180,8 +181,15 @@ test("moving inserted note elements refreshes Markdown avoidance once per animat
   assert.match(refreshSource, /layoutChanged && !this\.draggingStroke/);
   assert.match(dragSource, /stroke\.noteFlow = originalNoteFlow \? \{ \.\.\.originalNoteFlow \} : null/);
   assert.match(source, /onResize\(\)[\s\S]*this\.scheduleResize\(\{ layout: !this\.draggingStroke \}\)/);
-  assert.match(source, /this\.resizeNeedsLayout = this\.resizeNeedsLayout \|\| options\.layout !== false && !this\.draggingStroke/);
+  assert.match(source, /const noteFlowResizeSuppressed = Date\.now\(\) < this\.noteFlowSuppressResizeUntil/);
+  assert.match(source, /options\.layout !== false && !this\.draggingStroke && !noteFlowResizeSuppressed/);
   assert.match(dragSource, /this\.cancelResizeFrame\(\);\s*this\.draggingStroke = true/);
+  assert.match(settleSource, /markNoteFlowLayoutMutation\(\)[\s\S]*Date\.now\(\) \+ 180/);
+  assert.match(settleSource, /this\.resizeFrameId !== null && this\.resizeNeedsLayout[\s\S]*this\.cancelResizeFrame\(\)[\s\S]*this\.scheduleResize\(\{ layout: false \}\)/);
+  assert.match(settleSource, /scheduleNoteFlowSettleResize\(\)[\s\S]*this\.scheduleResize\(\{ layout: true \}\)/);
+  assert.match(refreshSource, /layoutChanged && !this\.draggingStroke[\s\S]*this\.scheduleNoteFlowSettleResize\(\)/);
+  assert.doesNotMatch(refreshSource, /layoutChanged && !this\.draggingStroke[\s\S]{0,120}this\.scheduleResize\(\{ layout: true \}\)/);
+  assert.match(source, /window\.clearTimeout\(this\.noteFlowResizeTimer\)/);
 });
 
 test("mind map import creates editable NoteDraw nodes and magnetically bound connectors", async () => {
