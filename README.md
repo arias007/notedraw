@@ -146,11 +146,20 @@ const noteDraw = api.v1;
 noteDraw.apiVersion;       // "1.0"
 noteDraw.capabilities;
 noteDraw.listSurfaces();
+await noteDraw.getState();
 await noteDraw.activate({ tool: "edit-md" });
+await noteDraw.toggle();
+await noteDraw.setVisibility(true);
 noteDraw.setTool("pen");
 noteDraw.setTool({ tool: "draw", brush: "pen", variant: "fountain" });
 noteDraw.setTool({ tool: "draw", brush: "watercolor", variant: "text-highlight" });
+noteDraw.setBrush({ brush: "pen", variant: "fountain", color: "#e53935", width: 4, opacity: 0.9 });
+noteDraw.setTextPreset("rectangle");
 noteDraw.setZoom(1.25);
+await noteDraw.selectElements({ ids: ["element-id"] });
+await noteDraw.updateElements({ ids: ["element-id"], patch: { color: "#43a047", locked: true } });
+await noteDraw.reorderElements({ ids: ["element-id"], direction: "front" });
+await noteDraw.undo();
 await noteDraw.readDrawings("Notes/example.md");
 await noteDraw.writeDrawings("Notes/example.md", drawingData);
 await noteDraw.replaceText({
@@ -160,7 +169,12 @@ await noteDraw.replaceText({
 });
 await noteDraw.insertStroke("Notes/example.md", stroke);
 const unsubscribe = noteDraw.on("markdown-changed", (event) => console.log(event));
+await noteDraw.execute("set-tool", { tool: "select" });
 ```
+
+The structured methods cover surface state, visibility, tools, brush settings, text presets, element selection and mutation, layers, locking, note flow, history, clipboard, settings, imports, exports, and lifecycle events. `execute(action, options)` provides a compact action router for Cancip and other agents without depending on internal controller method names.
+
+Magic-wand actions are maintained on Markdown, Canvas, PDF, image, Base/database, HTML/webview, and other supported main-workspace pages. State-backed plugin pages use a stable NoteDraw storage identity even when they do not expose a Vault file.
 
 The original top-level methods remain available for compatibility.
 
@@ -224,4 +238,4 @@ The current package focuses on the local Obsidian plugin runtime. The API and DO
 
 ## Version
 
-Current version: `3.3.14`.
+Current version: `3.3.15`.

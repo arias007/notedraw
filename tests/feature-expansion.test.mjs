@@ -307,7 +307,7 @@ test("fountain rendering stays continuous and palette ranges cover fine through 
   assert.match(fountainSource, /ctx\.lineWidth = Math\.max\(0\.7,[\s\S]*ctx\.stroke\(\)/);
 });
 
-test("file-backed workspace views remount drawings and header controls after internal rerenders", async () => {
+test("main workspace views remount drawings and header controls after internal rerenders", async () => {
   const [source, styles] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(stylesUrl, "utf8")
@@ -316,6 +316,9 @@ test("file-backed workspace views remount drawings and header controls after int
   assert.match(source, /this\.workspaceControllers = \/\* @__PURE__ \*\/ new Map\(\)/);
   assert.match(source, /syncWorkspaceControllers\(\)/);
   assert.match(source, /surfaceType: "workspace",\s*workspaceSurface: true/);
+  assert.match(source, /isMainWorkspaceView\(view\)/);
+  assert.match(source, /createWorkspaceDrawingFile\(view, viewType\)/);
+  assert.match(source, /function workspaceSurfaceStoragePath\(view, viewType\)/);
   assert.match(source, /if \(!existing\.button\?\.isConnected\) \{\s*existing\.button = this\.installHeaderButton\(existing\)/);
   assert.match(source, /isWorkspaceSurfaceMutation\(mutation\)/);
   assert.match(styles, /\.notedraw-shell\.is-notedraw-workspace-shell \.notedraw-static-canvas/);

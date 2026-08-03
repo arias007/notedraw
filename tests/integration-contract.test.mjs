@@ -32,17 +32,28 @@ test("the stable v1 API exposes Cancip-friendly capabilities and events", async 
   assert.match(source, /setTool: v1\.setTool/);
   assert.match(source, /getZoom: v1\.getZoom/);
   assert.match(source, /setZoom: v1\.setZoom/);
+  assert.match(source, /persistentHeaderActions: true/);
+  assert.match(source, /stateBackedWorkspaceSurfaces: true/);
+  assert.match(source, /getState: v1\.getState/);
+  assert.match(source, /setVisibility: v1\.setVisibility/);
+  assert.match(source, /setBrush: v1\.setBrush/);
+  assert.match(source, /getElements: v1\.getElements/);
+  assert.match(source, /updateElements: v1\.updateElements/);
+  assert.match(source, /setElementsNoteFlow: v1\.setElementsNoteFlow/);
+  assert.match(source, /execute: v1\.execute/);
+  assert.match(source, /phase: "mounted"/);
+  assert.match(source, /phase: "unmounted"/);
 });
 
-test("3.3.14 preserves bottom coordinates and cross-view frames without eager hidden-view refresh", async () => {
+test("3.3.15 preserves bottom coordinates and cross-view frames without eager hidden-view refresh", async () => {
   const [source, manifestText] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(manifestUrl, "utf8")
   ]);
   const manifest = JSON.parse(manifestText);
 
-  assert.equal(manifest.version, "3.3.14");
-  assert.match(source, /version: "3\.3\.14"/);
+  assert.equal(manifest.version, "3.3.15");
+  assert.match(source, /version: "3\.3\.15"/);
   assert.match(source, /if \(!this\.responsivePointsInitialized \|\| signature !== this\.responsiveLayoutSignature\)/);
   assert.match(source, /captureElementLayoutForStroke/);
   assert.match(source, /projectElementPoints\(stroke\.points, layout, box/);

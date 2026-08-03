@@ -2262,6 +2262,7 @@ var PLUGIN_ID = "notedraw";
 var DRAWING_DIR = `${PLUGIN_ID}/drawings`;
 var ASSET_DIR = `${PLUGIN_ID}/assets`;
 var WEBVIEW_DRAWING_PREFIX = "webviews";
+var WORKSPACE_DRAWING_PREFIX = "workspaces";
 var LEGACY_PLUGIN_ID = "note-doodle-preview";
 var LEGACY_DRAWING_DIR = `${LEGACY_PLUGIN_ID}/doodles`;
 var DEBUG_LOG_FILE = "debug-log.jsonl";
@@ -3927,12 +3928,18 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       readingNoteFlow: true,
       editableMindMaps: true,
       boundConnectors: true,
+      persistentHeaderActions: true,
+      stateBackedWorkspaceSurfaces: true,
+      settingsApi: true,
       brushVariants: {
         [BRUSH_PEN]: [BRUSH_VARIANT_DEFAULT, PEN_VARIANT_FOUNTAIN, PEN_VARIANT_NOTE],
         [BRUSH_WATERCOLOR]: [BRUSH_VARIANT_DEFAULT, WATERCOLOR_VARIANT_TEXT, WATERCOLOR_VARIANT_STRAIGHT]
       },
       events: ["drawings-changed", "markdown-changed", "surface-changed"],
-      tools: [TOOL_DRAW, TOOL_SELECT, TOOL_EDIT_MD, TOOL_TEXT]
+      tools: [TOOL_DRAW, TOOL_SELECT, TOOL_EDIT_MD, TOOL_TEXT],
+      surfaceActions: ["activate", "deactivate", "toggle", "set-visibility", "refresh"],
+      elementActions: ["get", "select", "update", "delete", "reorder", "set-locked", "set-note-flow", "copy", "paste"],
+      historyActions: ["undo", "redo"]
     });
     const v1 = {
       apiVersion: "1.0",
@@ -3940,10 +3947,28 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       resolveFile: (fileOrPath, sourcePath = "") => this.resolveApiFile(fileOrPath, sourcePath),
       listSurfaces: () => this.getAllControllers().map((controller) => this.describeController(controller)),
       getActiveSurface: () => this.describeController(this.getActiveController()),
+      getState: (options = {}) => this.getApiState(options),
       activate: async (options = {}) => this.activateApi(options),
+      deactivate: (options = {}) => this.deactivateApi(options),
+      toggle: async (options = {}) => this.toggleApi(options),
+      setVisibility: async (visible, options = {}) => this.setApiVisibility(visible, options),
       setTool: (tool, options = {}) => this.setApiTool(tool, options),
+      setBrush: (options = {}) => this.setApiBrush(options),
+      setTextPreset: (preset, options = {}) => this.setApiTextPreset(preset, options),
       getZoom: (options = {}) => this.describeController(this.findApiController(options))?.zoom ?? 1,
       setZoom: (zoom, options = {}) => this.setApiZoom(zoom, options),
+      getElements: async (options = {}) => this.getApiElements(options),
+      selectElements: async (options = {}) => this.selectApiElements(options),
+      updateElements: async (options = {}) => this.updateApiElements(options),
+      deleteElements: async (options = {}) => this.deleteApiElements(options),
+      reorderElements: async (options = {}) => this.reorderApiElements(options),
+      setElementsLocked: async (options = {}) => this.setApiElementsLocked(options),
+      setElementsNoteFlow: async (options = {}) => this.setApiElementsNoteFlow(options),
+      undo: async (options = {}) => this.runApiHistory("undo", options),
+      redo: async (options = {}) => this.runApiHistory("redo", options),
+      getSettings: () => ({ ...this.noteDrawSettings }),
+      updateSettings: async (patch = {}) => this.updateApiSettings(patch),
+      execute: async (action, options = {}) => this.executeApiAction(action, options),
       readDrawings: async (fileOrPath) => {
         const file = this.resolveApiFile(fileOrPath);
         if (!file) {
@@ -3988,17 +4013,35 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.3.14",
+      version: "3.3.15",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
       resolveFile: v1.resolveFile,
       listSurfaces: v1.listSurfaces,
       getActiveSurface: v1.getActiveSurface,
+      getState: v1.getState,
       activate: v1.activate,
+      deactivate: v1.deactivate,
+      toggle: v1.toggle,
+      setVisibility: v1.setVisibility,
       setTool: v1.setTool,
+      setBrush: v1.setBrush,
+      setTextPreset: v1.setTextPreset,
       getZoom: v1.getZoom,
       setZoom: v1.setZoom,
+      getElements: v1.getElements,
+      selectElements: v1.selectElements,
+      updateElements: v1.updateElements,
+      deleteElements: v1.deleteElements,
+      reorderElements: v1.reorderElements,
+      setElementsLocked: v1.setElementsLocked,
+      setElementsNoteFlow: v1.setElementsNoteFlow,
+      undo: v1.undo,
+      redo: v1.redo,
+      getSettings: v1.getSettings,
+      updateSettings: v1.updateSettings,
+      execute: v1.execute,
       getActiveController: () => this.getActiveController(),
       readDrawings: v1.readDrawings,
       writeDrawings: v1.writeDrawings,
@@ -4021,7 +4064,8 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     if (!path) {
       return null;
     }
-    return getVaultFileByPath(this.app.vault, path) || this.app.metadataCache.getFirstLinkpathDest?.(path, sourcePath || "") || null;
+    const surfaceFile = this.getAllControllers().find((controller) => normalizeVaultPath(controller.file?.path) === path)?.file;
+    return getVaultFileByPath(this.app.vault, path) || surfaceFile || this.app.metadataCache.getFirstLinkpathDest?.(path, sourcePath || "") || null;
   }
   describeController(controller) {
     if (!controller || controller.destroyed) {
@@ -4036,7 +4080,10 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       brush: controller.brushMode,
       variant: controller.currentBrushVariant?.() || BRUSH_VARIANT_DEFAULT,
       zoom: controller.readingZoom || 1,
+      visible: Boolean(controller.drawingsVisible),
       drawingsLoaded: Boolean(controller.drawingsLoaded),
+      strokeCount: controller.drawingData?.strokes?.length || 0,
+      selected: controller.getSelectedStrokeIndexes?.() || [],
       coordinateBasis: RESPONSIVE_POINT_BASIS
     };
   }
@@ -4100,6 +4147,305 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       this.emitApiEvent("surface-changed", surface);
     }
     return { ok, surface };
+  }
+  async getLoadedApiController(options = {}) {
+    const controller = this.findApiController(options);
+    if (!controller) {
+      return null;
+    }
+    await controller.ensureDrawingsLoaded();
+    return controller;
+  }
+  async getApiState(options = {}) {
+    const controller = await this.getLoadedApiController(options);
+    return controller ? { ok: true, surface: this.describeController(controller) } : { ok: false, reason: "surface-not-found" };
+  }
+  deactivateApi(options = {}) {
+    const controller = this.findApiController(options);
+    if (!controller) {
+      return { ok: false, reason: "surface-not-found" };
+    }
+    this.setControllerActivation(controller, false);
+    const surface = this.describeController(controller);
+    this.emitApiEvent("surface-changed", { ...surface, phase: "updated" });
+    return { ok: true, surface };
+  }
+  async toggleApi(options = {}) {
+    const controller = this.findApiController(options);
+    if (!controller) {
+      return { ok: false, reason: "surface-not-found" };
+    }
+    await controller.toggle();
+    const surface = this.describeController(controller);
+    this.emitApiEvent("surface-changed", { ...surface, phase: "updated" });
+    return { ok: true, surface };
+  }
+  async setApiVisibility(visible, options = {}) {
+    if (visible && typeof visible === "object") {
+      options = { ...visible, ...options };
+      visible = options.visible;
+    }
+    const controller = await this.getLoadedApiController(options);
+    if (!controller) {
+      return { ok: false, reason: "surface-not-found" };
+    }
+    controller.setDrawingsVisible(visible !== false);
+    const surface = this.describeController(controller);
+    this.emitApiEvent("surface-changed", { ...surface, phase: "updated" });
+    return { ok: true, surface };
+  }
+  setApiBrush(options = {}) {
+    const controller = this.findApiController(options);
+    if (!controller) {
+      return { ok: false, reason: "surface-not-found" };
+    }
+    if (options.color !== void 0 && !isCssColor(options.color)) {
+      return { ok: false, reason: "invalid-color" };
+    }
+    const brush = options.brush === BRUSH_WATERCOLOR ? BRUSH_WATERCOLOR : BRUSH_PEN;
+    controller.brushVariants[brush] = normalizeBrushVariant(brush, options.variant ?? controller.brushVariants[brush]);
+    controller.setBrushMode(brush);
+    const settings = controller.currentBrushSettings();
+    if (options.color !== void 0) {
+      settings.color = options.color;
+    }
+    if (options.width !== void 0 && Number.isFinite(Number(options.width))) {
+      settings.width = clamp9(Number(options.width), MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH);
+    }
+    if (options.opacity !== void 0 && Number.isFinite(Number(options.opacity))) {
+      settings.opacity = clamp9(Number(options.opacity), 0, 1);
+    }
+    if (options.count !== void 0 && Number.isFinite(Number(options.count))) {
+      settings.count = clamp9(Math.round(Number(options.count)), 1, MAX_PEN_COUNT);
+    }
+    controller.syncCurrentBrushFields();
+    controller.syncPaletteInputs();
+    controller.updateToolButtons();
+    controller.persistCurrentBrushSettings();
+    controller.persistInteractionSettings();
+    controller.syncSharedToolbarState();
+    controller.render();
+    const surface = this.describeController(controller);
+    this.emitApiEvent("surface-changed", { ...surface, phase: "updated" });
+    return { ok: true, surface, brush: { brush, variant: controller.currentBrushVariant(), ...settings } };
+  }
+  setApiTextPreset(preset, options = {}) {
+    if (preset && typeof preset === "object") {
+      options = { ...preset, ...options };
+      preset = options.preset;
+    }
+    const controller = this.findApiController(options);
+    if (!controller) {
+      return { ok: false, reason: "surface-not-found" };
+    }
+    controller.textPreset = normalizeTextPreset(preset);
+    controller.setTextMode();
+    controller.syncTextPanelButtons();
+    controller.syncSharedToolbarState();
+    const surface = this.describeController(controller);
+    this.emitApiEvent("surface-changed", { ...surface, phase: "updated" });
+    return { ok: true, surface, preset: controller.textPreset };
+  }
+  resolveApiElementIndexes(controller, options = {}, fallbackToSelection = true) {
+    if (!controller?.drawingData?.strokes) {
+      return [];
+    }
+    if (options.clear) {
+      return [];
+    }
+    const selection = options.selection ?? options;
+    if (selection === "all" || options.all === true || selection?.all === true) {
+      return controller.drawingData.strokes.map((_, index) => index);
+    }
+    const rawIndexes = Array.isArray(selection) ? selection.filter((value) => Number.isInteger(Number(value))).map(Number) : selection?.indexes ?? options.indexes;
+    const rawIds = Array.isArray(selection) ? selection.filter((value) => typeof value === "string") : selection?.ids ?? selection?.elementIds ?? options.ids ?? options.elementIds;
+    const indexes = Array.isArray(rawIndexes) ? rawIndexes.map(Number).filter((index) => Number.isInteger(index) && index >= 0 && index < controller.drawingData.strokes.length) : [];
+    const ids = new Set(Array.isArray(rawIds) ? rawIds.map(String) : []);
+    if (ids.size) {
+      controller.drawingData.strokes.forEach((stroke, index) => {
+        if (ids.has(strokeElementId(stroke))) {
+          indexes.push(index);
+        }
+      });
+    }
+    if (Array.isArray(rawIndexes) || Array.isArray(rawIds)) {
+      return Array.from(new Set(indexes)).sort((a, b) => a - b);
+    }
+    return fallbackToSelection ? controller.getSelectedStrokeIndexes() : [];
+  }
+  async getApiElements(options = {}) {
+    const controller = await this.getLoadedApiController(options);
+    if (!controller) {
+      return { ok: false, reason: "surface-not-found", elements: [] };
+    }
+    const selected = new Set(controller.getSelectedStrokeIndexes());
+    const requested = this.resolveApiElementIndexes(controller, options, false);
+    const indexes = options.all === true || options.selection === "all" || requested.length ? requested : controller.drawingData.strokes.map((_, index) => index);
+    return {
+      ok: true,
+      surface: this.describeController(controller),
+      elements: indexes.map((index) => ({ index, selected: selected.has(index), ...JSON.parse(JSON.stringify(controller.drawingData.strokes[index])) }))
+    };
+  }
+  async selectApiElements(options = {}) {
+    const controller = await this.getLoadedApiController(options);
+    if (!controller) {
+      return { ok: false, reason: "surface-not-found" };
+    }
+    const indexes = this.resolveApiElementIndexes(controller, options, false);
+    if (options.tool !== false && controller.toolMode !== TOOL_SELECT) {
+      controller.toggleSelectMode();
+    }
+    controller.setSelectedStrokes(indexes);
+    controller.render();
+    const surface = this.describeController(controller);
+    this.emitApiEvent("surface-changed", { ...surface, phase: "updated" });
+    return { ok: true, selected: indexes, surface };
+  }
+  commitApiDrawingMutation(controller, before, indexes = []) {
+    controller.redoStack = [];
+    controller.rebuildElementRelations();
+    controller.invalidateStaticCache();
+    controller.setSelectedStrokes(indexes);
+    this.scheduleDrawingSave(controller.file, controller.drawingData);
+    controller.recordDrawingHistory(before);
+    controller.scheduleNoteFlowLayout();
+    controller.scheduleLayoutRefresh({ settle: false });
+    controller.render();
+  }
+  async updateApiElements(options = {}) {
+    const controller = await this.getLoadedApiController(options);
+    const patch = options.patch;
+    if (!controller) {
+      return { ok: false, reason: "surface-not-found" };
+    }
+    if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
+      return { ok: false, reason: "missing-patch" };
+    }
+    const indexes = this.resolveApiElementIndexes(controller, options);
+    if (!indexes.length) {
+      return { ok: false, reason: "selection-not-found" };
+    }
+    const before = controller.captureDrawingHistorySnapshot();
+    for (const index of indexes) {
+      const current = controller.drawingData.strokes[index];
+      controller.drawingData.strokes[index] = normalizeStroke({ ...current, ...patch });
+    }
+    this.commitApiDrawingMutation(controller, before, indexes);
+    return { ok: true, updated: indexes.length, selected: indexes, surface: this.describeController(controller) };
+  }
+  async deleteApiElements(options = {}) {
+    const controller = await this.getLoadedApiController(options);
+    if (!controller) {
+      return { ok: false, reason: "surface-not-found" };
+    }
+    const indexes = this.resolveApiElementIndexes(controller, options);
+    if (!indexes.length) {
+      return { ok: false, reason: "selection-not-found" };
+    }
+    const before = controller.drawingData.strokes.length;
+    controller.setSelectedStrokes(indexes);
+    controller.deleteSelectedStroke();
+    return { ok: true, deleted: before - controller.drawingData.strokes.length, surface: this.describeController(controller) };
+  }
+  async reorderApiElements(options = {}) {
+    const controller = await this.getLoadedApiController(options);
+    const direction = String(options.direction || "front").toLowerCase();
+    if (!controller) {
+      return { ok: false, reason: "surface-not-found" };
+    }
+    if (!["front", "forward", "backward", "back"].includes(direction)) {
+      return { ok: false, reason: "invalid-direction" };
+    }
+    const indexes = this.resolveApiElementIndexes(controller, options);
+    if (!indexes.length) {
+      return { ok: false, reason: "selection-not-found" };
+    }
+    controller.setSelectedStrokes(indexes);
+    controller.reorderSelectedStrokes(direction);
+    return { ok: true, direction, selected: controller.getSelectedStrokeIndexes(), surface: this.describeController(controller) };
+  }
+  async setApiElementsLocked(options = {}) {
+    return this.updateApiElements({ ...options, patch: { ...options.patch || {}, locked: options.locked !== false } });
+  }
+  async setApiElementsNoteFlow(options = {}) {
+    const controller = await this.getLoadedApiController(options);
+    if (!controller) {
+      return { ok: false, reason: "surface-not-found" };
+    }
+    if (!controller.supportsNoteFlow()) {
+      return { ok: false, reason: "note-flow-not-supported" };
+    }
+    const indexes = this.resolveApiElementIndexes(controller, options).filter((index) => !controller.drawingData.strokes[index]?.locked && !isConnectorStroke(controller.drawingData.strokes[index]));
+    if (!indexes.length) {
+      return { ok: false, reason: "selection-not-found" };
+    }
+    const before = controller.captureDrawingHistorySnapshot();
+    const enabled = options.enabled !== false;
+    controller.clearNoteFlowLayout();
+    for (const index of indexes) {
+      const stroke = controller.drawingData.strokes[index];
+      stroke.noteFlow = enabled ? controller.captureNoteFlowAnchor(stroke) : null;
+    }
+    controller.captureResponsiveAnchorsForIndexes(indexes);
+    this.commitApiDrawingMutation(controller, before, indexes);
+    return { ok: true, enabled, selected: indexes, surface: this.describeController(controller) };
+  }
+  async runApiHistory(direction, options = {}) {
+    const controller = await this.getLoadedApiController(options);
+    if (!controller) {
+      return { ok: false, reason: "surface-not-found" };
+    }
+    if (direction === "redo") {
+      await controller.redoLastStroke();
+    } else {
+      await controller.undoLastStroke();
+    }
+    return { ok: true, direction, surface: this.describeController(controller) };
+  }
+  async updateApiSettings(patch = {}) {
+    if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
+      return { ok: false, reason: "invalid-settings" };
+    }
+    this.noteDrawSettings = sanitizeSettings({ ...this.noteDrawSettings, ...patch });
+    await this.saveData(this.noteDrawSettings);
+    for (const controller of this.getAllControllers()) {
+      controller.applySettings();
+    }
+    return { ok: true, settings: { ...this.noteDrawSettings } };
+  }
+  async executeApiAction(action, options = {}) {
+    const name = String(action || "").trim().toLowerCase().replace(/[\s_]+/g, "-");
+    if (name === "activate") return this.activateApi(options);
+    if (name === "deactivate") return this.deactivateApi(options);
+    if (name === "toggle") return this.toggleApi(options);
+    if (name === "get-state") return this.getApiState(options);
+    if (name === "set-visibility") return this.setApiVisibility(options.visible, options);
+    if (name === "set-tool") return this.setApiTool(options.tool, options);
+    if (name === "set-brush") return this.setApiBrush(options);
+    if (name === "set-text-preset") return this.setApiTextPreset(options.preset, options);
+    if (name === "set-zoom") return this.setApiZoom(options.zoom, options);
+    if (name === "get-elements") return this.getApiElements(options);
+    if (name === "select-elements") return this.selectApiElements(options);
+    if (name === "clear-selection") return this.selectApiElements({ ...options, clear: true });
+    if (name === "update-elements") return this.updateApiElements(options);
+    if (name === "delete-elements") return this.deleteApiElements(options);
+    if (name === "reorder-elements") return this.reorderApiElements(options);
+    if (name === "set-elements-locked") return this.setApiElementsLocked(options);
+    if (name === "set-elements-note-flow") return this.setApiElementsNoteFlow(options);
+    if (name === "undo" || name === "redo") return this.runApiHistory(name, options);
+    if (name === "copy") return this.copyElementsApi(options);
+    if (name === "paste") return this.pasteElementsApi(options);
+    if (name === "get-settings") return { ok: true, settings: { ...this.noteDrawSettings } };
+    if (name === "update-settings") return this.updateApiSettings(options.patch || options.settings || {});
+    if (name === "refresh") {
+      const controller = this.findApiController(options);
+      const file = controller?.file || this.resolveApiFile(options.file || options.path);
+      if (!file) return { ok: false, reason: "missing-file" };
+      const data = await this.readDrawings(file);
+      return { ok: true, refreshed: this.refreshControllersForFile(file, data) };
+    }
+    return { ok: false, reason: "unknown-action", action: name };
   }
   async replaceTextApi(options = {}) {
     const file = this.resolveApiFile(options.file || options.path, options.sourcePath || "");
@@ -4441,12 +4787,12 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     for (const leaf of collectWorkspaceLeaves(this.app)) {
       const view = leaf?.view;
       const viewType = String(view?.getViewType?.() || view?.containerEl?.querySelector?.(".workspace-leaf-content")?.dataset?.type || "").toLowerCase();
-      if (!view?.containerEl || view instanceof import_obsidian.MarkdownView || viewType === "markdown" || isWebviewWorkspaceType(viewType)) {
+      if (!view?.containerEl || !isMainWorkspaceView(view) || view instanceof import_obsidian.MarkdownView || viewType === "markdown" || viewType === "empty" || isWebviewWorkspaceType(viewType)) {
         continue;
       }
-      const file = view.file && typeof view.file.path === "string" ? view.file : null;
-      const surface = file ? findWorkspaceDrawingSurface(view) : null;
-      if (!file || !surface?.isConnected) {
+      const file = view.file && typeof view.file.path === "string" ? view.file : createWorkspaceDrawingFile(view, viewType);
+      const surface = findWorkspaceDrawingSurface(view);
+      if (!surface?.isConnected) {
         continue;
       }
       activeViews.add(view);
@@ -5687,6 +6033,7 @@ var PreviewDrawingController = class {
     await this.ensureDrawingsLoaded();
     this.resizeCanvas();
     this.render();
+    this.plugin.emitApiEvent("surface-changed", { ...this.plugin.describeController(this), phase: "mounted" });
   }
   applySettings() {
     const settings = sanitizeSettings(this.plugin?.noteDrawSettings || {});
@@ -5879,6 +6226,7 @@ var PreviewDrawingController = class {
     if (this.destroyed) {
       return;
     }
+    const surfaceBeforeDestroy = this.plugin.describeController(this);
     this.endTextEdit();
     this.endFloatingTextInput(true);
     this.destroyed = true;
@@ -5978,6 +6326,9 @@ var PreviewDrawingController = class {
       this.plugin.workspaceControllers.delete(this.view);
     }
     this.plugin.liveControllers?.delete(this);
+    if (surfaceBeforeDestroy) {
+      this.plugin.emitApiEvent("surface-changed", { ...surfaceBeforeDestroy, phase: "unmounted" });
+    }
   }
   async toggle() {
     if (this.destroyed) {
@@ -12941,8 +13292,40 @@ function collectWorkspaceLeaves(app) {
   }
   return leaves;
 }
+function isMainWorkspaceView(view) {
+  const container = view?.containerEl;
+  if (!container?.isConnected || container.closest?.(".workspace-drawer, .mod-sidedock")) {
+    return false;
+  }
+  return Boolean(container.closest?.(".workspace-split.mod-root"));
+}
 function isWebviewWorkspaceType(viewType) {
   return /(webview|web-view|browser|iframe)/i.test(String(viewType || ""));
+}
+function createWorkspaceDrawingFile(view, viewType) {
+  const sourcePath = workspaceSurfaceStoragePath(view, viewType);
+  return {
+    path: sourcePath,
+    name: sourcePath.split("/").pop() || "workspace.md",
+    extension: "md"
+  };
+}
+function workspaceSurfaceStoragePath(view, viewType) {
+  let state = {};
+  try {
+    state = view?.getState?.() || {};
+  } catch (error) {
+    void error;
+  }
+  const title = viewTitle(view) || viewType || "workspace";
+  let serializedState = "";
+  try {
+    serializedState = JSON.stringify(state);
+  } catch (error) {
+    void error;
+  }
+  const identity = `${viewType || "workspace"}|${title}|${serializedState}`;
+  return `${WORKSPACE_DRAWING_PREFIX}/${safeStorageName(title)}__${hashString(identity)}.md`;
 }
 function findWorkspaceDrawingSurface(view) {
   const candidates = [
