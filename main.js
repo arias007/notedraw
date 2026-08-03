@@ -1341,26 +1341,217 @@ function calculatePinchPanScroll({
   previousCenter = null,
   nextCenter = null,
   zoomRatio = 1,
+  movementEpsilon = 0.35,
   maxScrollLeft = Number.POSITIVE_INFINITY,
   maxScrollTop = Number.POSITIVE_INFINITY
 } = {}) {
   const previous = previousCenter || nextCenter || { x: 0, y: 0 };
   const next = nextCenter || previousCenter || { x: 0, y: 0 };
   const ratio = Math.max(0.01, finite5(zoomRatio, 1));
+  const epsilon = Math.max(0, finite5(movementEpsilon, 0.35));
+  const previousX = finite5(previous.x);
+  const previousY = finite5(previous.y);
+  const nextX = Math.abs(finite5(next.x) - previousX) < epsilon ? previousX : finite5(next.x);
+  const nextY = Math.abs(finite5(next.y) - previousY) < epsilon ? previousY : finite5(next.y);
   const maxLeft = Math.max(0, finite5(maxScrollLeft, Number.MAX_SAFE_INTEGER));
   const maxTop = Math.max(0, finite5(maxScrollTop, Number.MAX_SAFE_INTEGER));
   return {
-    left: clamp5((finite5(scrollLeft) + finite5(previous.x)) * ratio - finite5(next.x), 0, maxLeft),
-    top: clamp5((finite5(scrollTop) + finite5(previous.y)) * ratio - finite5(next.y), 0, maxTop)
+    left: clamp5((finite5(scrollLeft) + previousX) * ratio - nextX, 0, maxLeft),
+    top: clamp5((finite5(scrollTop) + previousY) * ratio - nextY, 0, maxTop)
   };
 }
 
-// src/stroke-dynamics.mjs
+// src/note-flow-layout.mjs
 function finite6(value, fallback = 0) {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
 }
 function clamp6(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+function normalizeBounds(bounds) {
+  const minY = finite6(bounds?.minY, 0);
+  const maxY = Math.max(minY, finite6(bounds?.maxY, minY));
+  return { ...bounds, minY, maxY };
+}
+function stabilizeNoteFlowBounds({
+  bounds,
+  layout,
+  contentWidth,
+  viewportHeight
+} = {}) {
+  const current = normalizeBounds(bounds);
+  const box = layout?.box;
+  const sourceFrame = layout?.sourceFrame;
+  const sourceContentWidth = finite6(sourceFrame?.contentWidth, 0);
+  const boxY = finite6(box?.y, Number.NaN);
+  const boxHeight = finite6(box?.height, Number.NaN);
+  if (!(sourceContentWidth > 0) || !Number.isFinite(boxY) || !(boxHeight >= 0)) {
+    return {
+      bounds: current,
+      runaway: false,
+      referenceHeight: Math.max(1, finite6(viewportHeight, 1))
+    };
+  }
+  const widthScale = clamp6(finite6(contentWidth, sourceContentWidth) / sourceContentWidth, 0.2, 5);
+  const sameContentLane = widthScale >= 0.82 && widthScale <= 1.2;
+  const positionScale = sameContentLane ? 1 : clamp6(1 / widthScale, 0.48, 2.2);
+  const heightScale = sameContentLane ? widthScale : clamp6(Math.max(positionScale, widthScale), 0.42, 2.8);
+  const stableMinY = Math.max(0, boxY * positionScale);
+  const stableMaxY = Math.max(stableMinY, stableMinY + boxHeight * heightScale);
+  const sourceDocumentHeight = Math.max(1, finite6(sourceFrame?.documentHeight, 1) * positionScale);
+  const referenceHeight = Math.max(1, finite6(viewportHeight, 1), sourceDocumentHeight, stableMaxY);
+  const viewport = Math.max(1, finite6(viewportHeight, 1));
+  const runawayThreshold = Math.max(viewport * 4, stableMaxY * 4, stableMaxY + viewport * 2);
+  const runaway = current.minY > runawayThreshold || current.maxY > runawayThreshold;
+  return {
+    bounds: { ...current, minY: stableMinY, maxY: stableMaxY },
+    runaway,
+    referenceHeight
+  };
+}
+function noteFlowSurfaceRepairLimits(referenceHeight, viewportHeight) {
+  const viewport = Math.max(1, finite6(viewportHeight, 1));
+  const stableHeight = Math.ceil(clamp6(Math.max(viewport, finite6(referenceHeight, viewport) * 1.5), viewport, 2e5));
+  return {
+    stableHeight,
+    runawayThreshold: Math.max(8e3, stableHeight * 4)
+  };
+}
+function selectNoteFlowAnchorPlacement(candidates, {
+  strokeTop,
+  tolerance = 4
+} = {}) {
+  const top = finite6(strokeTop, Number.NaN);
+  if (!Number.isFinite(top)) {
+    return null;
+  }
+  const ordered = (Array.isArray(candidates) ? candidates : []).filter((candidate) => {
+    return candidate && Number.isFinite(Number(candidate.top)) && Number.isFinite(Number(candidate.bottom)) && Number.isFinite(Number(candidate.start));
+  }).map((candidate, index) => ({
+    ...candidate,
+    top: finite6(candidate.top),
+    bottom: Math.max(finite6(candidate.top), finite6(candidate.bottom)),
+    start: finite6(candidate.start),
+    end: Math.max(finite6(candidate.start), finite6(candidate.end, candidate.start)),
+    order: Number.isFinite(Number(candidate.order)) ? Number(candidate.order) : index
+  })).sort((a, b) => a.top - b.top || a.bottom - b.bottom || a.order - b.order);
+  if (!ordered.length) {
+    return null;
+  }
+  const below = ordered.find((candidate) => candidate.bottom > top + finite6(tolerance, 4));
+  if (below) {
+    return { candidate: below, side: "before", line: below.start };
+  }
+  const last = ordered[ordered.length - 1];
+  return { candidate: last, side: "after", line: last.end };
+}
+function noteFlowRequiredOffset({
+  side,
+  anchorTop,
+  anchorBottom,
+  desiredBottom,
+  applied = 0,
+  scale = 1
+} = {}) {
+  const safeScale = Math.max(0.01, finite6(scale, 1));
+  const edge = side === "after" ? finite6(anchorBottom) : finite6(anchorTop) - Math.max(0, finite6(applied)) * safeScale;
+  return Math.max(0, (finite6(desiredBottom) - edge) / safeScale);
+}
+
+// src/preview-lifecycle.mjs
+function shouldMountRootPreview({
+  sourceMode,
+  visible,
+  hasSurface,
+  sourceHasContent,
+  renderedContent
+} = {}) {
+  return Boolean(
+    hasSurface && visible && !sourceMode && (!sourceHasContent || renderedContent)
+  );
+}
+function shouldResetDormantRootPreview({
+  sourceMode,
+  visible,
+  sourceHasContent,
+  renderedContent
+} = {}) {
+  return Boolean(sourceHasContent && !renderedContent && (sourceMode || visible));
+}
+
+// src/connector-binding.mjs
+function finite7(value, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+function clamp01(value) {
+  return Math.min(1, Math.max(0, finite7(value)));
+}
+function boundsCenter(bounds) {
+  return {
+    x: (finite7(bounds?.minX) + finite7(bounds?.maxX)) / 2,
+    y: (finite7(bounds?.minY) + finite7(bounds?.maxY)) / 2
+  };
+}
+function canvasPoint(point, width, height) {
+  return {
+    x: clamp01(point?.x) * width,
+    y: clamp01(point?.y) * height
+  };
+}
+function attachmentPoint(bounds, toward) {
+  const center = boundsCenter(bounds);
+  const dx = finite7(toward?.x, center.x) - center.x;
+  const dy = finite7(toward?.y, center.y) - center.y;
+  const horizontal = Math.abs(dx) >= Math.abs(dy) * 0.62;
+  return horizontal ? {
+    x: dx >= 0 ? finite7(bounds?.maxX, center.x) : finite7(bounds?.minX, center.x),
+    y: center.y
+  } : {
+    x: center.x,
+    y: dy >= 0 ? finite7(bounds?.maxY, center.y) : finite7(bounds?.minY, center.y)
+  };
+}
+function normalizePoint(point, width, height, timestamp) {
+  return {
+    x: clamp01(finite7(point?.x) / width),
+    y: clamp01(finite7(point?.y) / height),
+    t: timestamp,
+    anchor: null
+  };
+}
+function connectorSnapThreshold(hitPaddingPx = 0) {
+  return Math.max(28, Math.max(0, finite7(hitPaddingPx)) * 1.75);
+}
+function buildSnappedConnectorPoints({
+  fromBounds = null,
+  toBounds = null,
+  fromPoint = null,
+  toPoint = null,
+  canvasWidth = 1,
+  canvasHeight = 1,
+  timestamp = Date.now()
+} = {}) {
+  const width = Math.max(1, finite7(canvasWidth, 1));
+  const height = Math.max(1, finite7(canvasHeight, 1));
+  const freeFrom = canvasPoint(fromPoint, width, height);
+  const freeTo = canvasPoint(toPoint, width, height);
+  const fromTarget = toBounds ? boundsCenter(toBounds) : freeTo;
+  const toTarget = fromBounds ? boundsCenter(fromBounds) : freeFrom;
+  const from = fromBounds ? attachmentPoint(fromBounds, fromTarget) : freeFrom;
+  const to = toBounds ? attachmentPoint(toBounds, toTarget) : freeTo;
+  const horizontal = Math.abs(to.x - from.x) >= Math.abs(to.y - from.y) * 0.62;
+  const control = horizontal ? { x: (from.x + to.x) / 2, y: from.y } : { x: from.x, y: (from.y + to.y) / 2 };
+  return [from, control, to].map((point) => normalizePoint(point, width, height, timestamp));
+}
+
+// src/stroke-dynamics.mjs
+function finite8(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+function clamp7(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 function mix(from, to, amount) {
@@ -1375,35 +1566,35 @@ function buildFountainPenSegments(points, {
   if (!Array.isArray(points) || points.length < 2) {
     return [];
   }
-  const width = Math.max(1, finite6(canvasWidth, 1));
-  const height = Math.max(1, finite6(canvasHeight, 1));
-  const strokeWidth = Math.max(0.25, finite6(baseWidth, 3));
-  const strokeOpacity = clamp6(finite6(baseOpacity, 1), 0, 1);
+  const width = Math.max(1, finite8(canvasWidth, 1));
+  const height = Math.max(1, finite8(canvasHeight, 1));
+  const strokeWidth = Math.max(0.25, finite8(baseWidth, 3));
+  const strokeOpacity = clamp7(finite8(baseOpacity, 1), 0, 1);
   const minimumVisibleWidth = Math.min(strokeWidth, Math.max(0.8, strokeWidth * 0.7));
   const samples = [];
   for (let index = 1; index < points.length; index += 1) {
     const from = points[index - 1];
     const to = points[index];
-    const dx = (finite6(to?.x) - finite6(from?.x)) * width;
-    const dy = (finite6(to?.y) - finite6(from?.y)) * height;
+    const dx = (finite8(to?.x) - finite8(from?.x)) * width;
+    const dy = (finite8(to?.y) - finite8(from?.y)) * height;
     const distance = Math.hypot(dx, dy);
     if (distance <= 0.01) {
       continue;
     }
     let sampleStart = index - 1;
     let sampleDistance = distance;
-    let sampleElapsed = finite6(to?.t, index * 16) - finite6(from?.t, (index - 1) * 16);
+    let sampleElapsed = finite8(to?.t, index * 16) - finite8(from?.t, (index - 1) * 16);
     while (sampleStart > 0 && sampleElapsed < 22) {
       const previous = points[sampleStart - 1];
       const current = points[sampleStart];
       sampleDistance += Math.hypot(
-        (finite6(current?.x) - finite6(previous?.x)) * width,
-        (finite6(current?.y) - finite6(previous?.y)) * height
+        (finite8(current?.x) - finite8(previous?.x)) * width,
+        (finite8(current?.y) - finite8(previous?.y)) * height
       );
       sampleStart -= 1;
-      sampleElapsed = finite6(to?.t, index * 16) - finite6(previous?.t, sampleStart * 16);
+      sampleElapsed = finite8(to?.t, index * 16) - finite8(previous?.t, sampleStart * 16);
     }
-    const elapsed = clamp6(sampleElapsed > 0 ? sampleElapsed : 4, 1, 250);
+    const elapsed = clamp7(sampleElapsed > 0 ? sampleElapsed : 4, 1, 250);
     samples.push({
       from,
       to,
@@ -1430,12 +1621,12 @@ function buildFountainPenSegments(points, {
   const maximumWidthStep = Math.max(0.12, strokeWidth * 0.09);
   for (let index = 0; index < samples.length; index += 1) {
     const sample = samples[index];
-    const speedRatio = clamp6((smoothedSpeeds[index] - 0.12) / 1.8, 0, 1);
+    const speedRatio = clamp7((smoothedSpeeds[index] - 0.12) / 1.8, 0, 1);
     const easedSpeed = speedRatio * speedRatio * (3 - 2 * speedRatio);
     const targetWidth = strokeWidth * mix(1.36, 0.76, easedSpeed);
     const blendedWidth = previousWidth === null ? targetWidth : mix(previousWidth, targetWidth, 0.24);
-    const width2 = previousWidth === null ? blendedWidth : clamp6(blendedWidth, previousWidth - maximumWidthStep, previousWidth + maximumWidthStep);
-    const stableWidth = clamp6(width2, minimumVisibleWidth, strokeWidth * 1.42);
+    const width2 = previousWidth === null ? blendedWidth : clamp7(blendedWidth, previousWidth - maximumWidthStep, previousWidth + maximumWidthStep);
+    const stableWidth = clamp7(width2, minimumVisibleWidth, strokeWidth * 1.42);
     previousWidth = stableWidth;
     segments.push({
       from: sample.from,
@@ -1476,38 +1667,38 @@ function straightenWatercolorPoints(points, {
   if (!Array.isArray(points) || points.length < 2) {
     return { axis: null, points: Array.isArray(points) ? points.slice() : [] };
   }
-  const width = Math.max(1, finite6(canvasWidth, 1));
-  const height = Math.max(1, finite6(canvasHeight, 1));
+  const width = Math.max(1, finite8(canvasWidth, 1));
+  const height = Math.max(1, finite8(canvasHeight, 1));
   const start = points[0];
   const end = points[points.length - 1];
-  const dx = (finite6(end?.x) - finite6(start?.x)) * width;
-  const dy = (finite6(end?.y) - finite6(start?.y)) * height;
+  const dx = (finite8(end?.x) - finite8(start?.x)) * width;
+  const dy = (finite8(end?.y) - finite8(start?.y)) * height;
   const distance = Math.hypot(dx, dy);
-  if (distance < Math.max(0, finite6(minDistance, 18))) {
+  if (distance < Math.max(0, finite8(minDistance, 18))) {
     return { axis: null, points: points.slice() };
   }
-  const tolerance = Math.sin(clamp6(finite6(angleTolerance, 12), 1, 45) * Math.PI / 180);
+  const tolerance = Math.sin(clamp7(finite8(angleTolerance, 12), 1, 45) * Math.PI / 180);
   const horizontal = Math.abs(dy) / distance <= tolerance;
   const vertical = Math.abs(dx) / distance <= tolerance;
   if (!horizontal && !vertical) {
     return { axis: null, points: points.slice() };
   }
   const axis = horizontal ? "horizontal" : "vertical";
-  const centerX = (finite6(start?.x) + finite6(end?.x)) / 2;
-  const centerY = (finite6(start?.y) + finite6(end?.y)) / 2;
+  const centerX = (finite8(start?.x) + finite8(end?.x)) / 2;
+  const centerY = (finite8(start?.y) + finite8(end?.y)) / 2;
   return {
     axis,
     points: points.map((point) => ({
       ...point,
-      x: axis === "vertical" ? centerX : finite6(point?.x),
-      y: axis === "horizontal" ? centerY : finite6(point?.y)
+      x: axis === "vertical" ? centerX : finite8(point?.x),
+      y: axis === "horizontal" ? centerY : finite8(point?.y)
     }))
   };
 }
 
 // src/mind-map.mjs
 var DEFAULT_MAX_NODES = 240;
-function clamp7(value, min, max) {
+function clamp8(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 function stripInlineMarkdown(value) {
@@ -1813,7 +2004,7 @@ function layoutMindMap(model, {
   const availableWidth = Math.max(240, Number(canvasWidth) - Number(originX) - 20);
   const naturalWidth = nodeWidth + maxDepth * (nodeWidth + columnGap);
   const horizontalScale = Math.min(1, availableWidth / Math.max(1, naturalWidth));
-  const effectiveWidth = clamp7(nodeWidth * horizontalScale, 104, nodeWidth);
+  const effectiveWidth = clamp8(nodeWidth * horizontalScale, 104, nodeWidth);
   const columnStep = maxDepth > 0 ? Math.max(effectiveWidth + 24, (availableWidth - effectiveWidth) / maxDepth) : effectiveWidth;
   for (const node of byId.values()) {
     node.fontSize = node.type === "root" ? 18 : node.type === "heading" ? 15 : 13;
@@ -2004,7 +2195,7 @@ var I18N = {
     button: "Button",
     primaryButton: "Primary",
     outlineButton: "Rectangle",
-    pillButton: "Circle",
+    pillButton: "Solid rectangle",
     arrowUp: "Up",
     arrowDown: "Down",
     arrowLeft: "Left",
@@ -2145,7 +2336,7 @@ var I18N = {
     button: "\u6309\u94AE",
     primaryButton: "\u4E3B\u6309\u94AE",
     outlineButton: "\u77E9\u5F62",
-    pillButton: "\u5706\u5F62",
+    pillButton: "\u5B9E\u5FC3\u77E9\u5F62",
     arrowUp: "\u4E0A",
     arrowDown: "\u4E0B",
     arrowLeft: "\u5DE6",
@@ -2280,7 +2471,7 @@ var I18N = {
     button: "\u6309\u9215",
     primaryButton: "\u4E3B\u6309\u9215",
     outlineButton: "\u77E9\u5F62",
-    pillButton: "\u5713\u5F62",
+    pillButton: "\u5BE6\u5FC3\u77E9\u5F62",
     arrowUp: "\u4E0A",
     arrowDown: "\u4E0B",
     arrowLeft: "\u5DE6",
@@ -2399,7 +2590,7 @@ var I18N = {
     button: "\u0643\u06C7\u0646\u06C7\u067E\u0643\u0627",
     primaryButton: "\u0626\u0627\u0633\u0627\u0633\u0649\u064A",
     outlineButton: "Rectangle",
-    pillButton: "Circle",
+    pillButton: "Solid rectangle",
     arrowUp: "\u0626\u06C8\u0633\u062A\u0649",
     arrowDown: "\u0626\u0627\u0633\u062A\u0649",
     arrowLeft: "\u0633\u0648\u0644",
@@ -2494,7 +2685,7 @@ var I18N = {
     button: "\u041A\u043D\u043E\u043F\u043A\u0430",
     primaryButton: "\u041E\u0441\u043D\u043E\u0432\u043D\u0430\u044F",
     outlineButton: "\u041F\u0440\u044F\u043C\u043E\u0443\u0433\u043E\u043B\u044C\u043D\u0438\u043A",
-    pillButton: "\u041A\u0440\u0443\u0433",
+    pillButton: "\u0417\u0430\u043F\u043E\u043B\u043D\u0435\u043D\u043D\u044B\u0439 \u043F\u0440\u044F\u043C\u043E\u0443\u0433\u043E\u043B\u044C\u043D\u0438\u043A",
     arrowUp: "\u0412\u0432\u0435\u0440\u0445",
     arrowDown: "\u0412\u043D\u0438\u0437",
     arrowLeft: "\u0412\u043B\u0435\u0432\u043E",
@@ -3082,10 +3273,15 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
         return;
       }
       const existingController = this.controllers.get(preview) || preview._noteDrawController;
-      if (existingController?.plugin === this && !existingController.destroyed) {
+      if (existingController?.plugin === this && !existingController.destroyed && !isSourceMode(view)) {
         existingController.setFile(view.file).catch((error) => {
           console.error(`[${PLUGIN_ID}] Failed to switch preview controller file`, error);
         });
+        return;
+      }
+      if (!isRootPreviewReady(view, preview)) {
+        existingController?.destroy?.();
+        resetDormantRootPreview(view, preview);
         return;
       }
       if (existingController?.destroy) {
@@ -3588,7 +3784,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.3.7",
+      version: "3.3.9",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -3905,14 +4101,29 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       const sourceController = source ? this.controllers.get(source) || source._noteDrawController : null;
       const previewVisible = isElementVisibleEnough(preview);
       const sourceVisible = isElementVisibleEnough(source);
-      if (sourceVisible) {
-        previewController?.destroy();
-        continue;
-      }
-      if (isSourceMode(view) && !previewVisible) {
+      if (isSourceMode(view)) {
+        if (sourceVisible) {
+          for (const rootPreview of findRootPreviewsForView(view)) {
+            const controller = this.controllers.get(rootPreview) || rootPreview._noteDrawController;
+            controller?.destroy?.();
+            resetDormantRootPreview(view, rootPreview);
+          }
+        }
         continue;
       }
       sourceController?.syncFloatingControlClasses();
+      if (!previewVisible) {
+        continue;
+      }
+      if (previewController?.plugin === this && !previewController.destroyed && previewController.file?.path === view.file?.path) {
+        previewController.syncFloatingControlClasses();
+        continue;
+      }
+      if (!isRootPreviewReady(view, preview)) {
+        previewController?.destroy();
+        resetDormantRootPreview(view, preview);
+        continue;
+      }
       if (previewVisible && (!previewController || previewController.destroyed || previewController.file?.path !== view.file?.path)) {
         previewController?.destroy();
         previewController = this.resolveLivePreviewController(view);
@@ -4218,6 +4429,10 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     if (existing?.plugin === this && !existing.destroyed && existing.previewEl?.isConnected && existing.surfaceType === "preview") {
       return existing;
     }
+    if (!isRootPreviewReady(view, preview)) {
+      resetDormantRootPreview(view, preview);
+      return null;
+    }
     const registered = controllers.find((controller2) => controller2.surfaceType === "preview" && controller2.previewEl === preview);
     if (registered) {
       return registered;
@@ -4514,7 +4729,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     canvas.className = "notedraw-export-image-canvas";
     canvas.width = Math.ceil(boxWidth * scale);
     canvas.height = Math.ceil(boxHeight * scale);
-    const opacity = clamp8(Number(stroke.opacity ?? 1), 0, 1);
+    const opacity = clamp9(Number(stroke.opacity ?? 1), 0, 1);
     canvas.dataset.notedrawAssetPath = stroke.assetPath || "";
     canvas.dataset.notedrawAssetName = stroke.assetName || "";
     canvas.dataset.notedrawAssetMime = stroke.assetMime || "";
@@ -5004,7 +5219,7 @@ var PreviewDrawingController = class {
       this.brushPanelMode = [BRUSH_PEN, BRUSH_WATERCOLOR].includes(sharedToolbarState.brushPanelMode) ? sharedToolbarState.brushPanelMode : this.brushPanelMode;
       this.textPanelOpen = Boolean(sharedToolbarState.textPanelOpen);
       this.textPreset = sharedToolbarState.textPreset || this.textPreset;
-      this.readingZoom = clamp8(Number(sharedToolbarState.readingZoom) || 1, MIN_READING_ZOOM, MAX_READING_ZOOM);
+      this.readingZoom = clamp9(Number(sharedToolbarState.readingZoom) || 1, MIN_READING_ZOOM, MAX_READING_ZOOM);
       for (const mode of [BRUSH_PEN, BRUSH_WATERCOLOR]) {
         if (sharedToolbarState.brushSettings?.[mode]) {
           this.brushSettings[mode] = { ...this.brushSettings[mode], ...sharedToolbarState.brushSettings[mode] };
@@ -5692,8 +5907,7 @@ var PreviewDrawingController = class {
         if (this.destroyed) {
           return;
         }
-        this.scheduleMarkdownAnnotationRefresh({ layout: true });
-        this.scheduleResize({ layout: true });
+        this.scheduleResize({ layout: false });
       }, 90);
     }
   }
@@ -5827,20 +6041,20 @@ var PreviewDrawingController = class {
       headerBottom
     );
     const compactViewport = isMobileRuntime() || viewportWidth < 640;
-    const right = compactViewport ? "auto" : clamp8(viewportRight - anchorRight + 10, 8, Math.max(8, viewportWidth - 48));
+    const right = compactViewport ? "auto" : clamp9(viewportRight - anchorRight + 10, 8, Math.max(8, viewportWidth - 48));
     const left = compactViewport ? viewportLeft + 8 : "auto";
     const minTop = Math.max(viewportTop + 8, headerBottom + 6);
     const maxTop = Math.max(minTop, viewportTop + viewportHeight - toolbarHeight - 8);
     const topOffset = sanitizeSettings(this.plugin?.noteDrawSettings || {}).toolbarTopOffset;
-    const top = clamp8(anchorBottom + topOffset, minTop, maxTop);
+    const top = clamp9(anchorBottom + topOffset, minTop, maxTop);
     const panelTop = top + toolbarHeight + 6;
     const panelLeft = (button, panel, fallbackWidth) => {
       const buttonBounds = button?.getBoundingClientRect?.();
       const measuredWidth = panel?.getBoundingClientRect?.().width || fallbackWidth;
-      const width = clamp8(measuredWidth, 34, Math.max(34, viewportWidth - 16));
+      const width = clamp9(measuredWidth, 34, Math.max(34, viewportWidth - 16));
       const rightInset = typeof right === "number" ? right : 8;
       const anchorX = buttonBounds?.width > 0 ? buttonBounds.left + buttonBounds.width / 2 : viewportRight - rightInset - 14;
-      return clamp8(anchorX - width / 2, viewportLeft + 8, Math.max(viewportLeft + 8, viewportRight - width - 8));
+      return clamp9(anchorX - width / 2, viewportLeft + 8, Math.max(viewportLeft + 8, viewportRight - width - 8));
     };
     const props = {
       "--notedraw-toolbar-right": typeof right === "number" ? `${Math.round(right)}px` : right,
@@ -6007,7 +6221,7 @@ var PreviewDrawingController = class {
     this.brushPanelMode = [BRUSH_PEN, BRUSH_WATERCOLOR].includes(state.brushPanelMode) ? state.brushPanelMode : this.brushPanelMode;
     this.textPanelOpen = Boolean(state.textPanelOpen);
     this.textPreset = state.textPreset || this.textPreset;
-    this.readingZoom = clamp8(Number(state.readingZoom) || this.readingZoom || 1, MIN_READING_ZOOM, MAX_READING_ZOOM);
+    this.readingZoom = clamp9(Number(state.readingZoom) || this.readingZoom || 1, MIN_READING_ZOOM, MAX_READING_ZOOM);
     this.syncCurrentBrushFields();
     this.previewEl.toggleClass("is-select-mode", this.toolMode === TOOL_SELECT);
     this.previewEl.toggleClass("is-palette-open", this.paletteOpen);
@@ -6106,7 +6320,7 @@ var PreviewDrawingController = class {
     noteDrawSettings.lastPenVariant = normalizeBrushVariant(BRUSH_PEN, this.brushVariants[BRUSH_PEN]);
     noteDrawSettings.lastWatercolorVariant = normalizeBrushVariant(BRUSH_WATERCOLOR, this.brushVariants[BRUSH_WATERCOLOR]);
     noteDrawSettings.lastTextPreset = normalizeTextPreset(this.textPreset);
-    noteDrawSettings.lastReadingZoom = clamp8(Number(this.readingZoom) || 1, MIN_READING_ZOOM, MAX_READING_ZOOM);
+    noteDrawSettings.lastReadingZoom = clamp9(Number(this.readingZoom) || 1, MIN_READING_ZOOM, MAX_READING_ZOOM);
     this.plugin.noteDrawSettings = noteDrawSettings;
     this.plugin.scheduleSettingsSave?.();
   }
@@ -6133,7 +6347,7 @@ var PreviewDrawingController = class {
         items: [
           { id: "plain", labelKey: "textPlain", icon: "type" },
           { id: "rectangle", labelKey: "outlineButton", icon: "square" },
-          { id: "circle", labelKey: "pillButton", icon: "circle" },
+          { id: "circle", labelKey: "pillButton", icon: "square" },
           { id: "arrow", labelKey: "arrow", icon: "move-up-right" }
         ]
       },
@@ -6293,8 +6507,8 @@ var PreviewDrawingController = class {
     const viewportWidth = Math.max(160, viewport?.width || window.innerWidth || 160);
     const viewportHeight = Math.max(120, viewport?.height || window.innerHeight || 120);
     const width = Math.min(desiredWidth, Math.max(144, viewportWidth - 16));
-    const left = clamp8(Math.round(x - width / 2), viewportLeft + 8, Math.max(viewportLeft + 8, viewportLeft + viewportWidth - width - 8));
-    const top = clamp8(Math.round(y - height - 14), viewportTop + 8, Math.max(viewportTop + 8, viewportTop + viewportHeight - height - 8));
+    const left = clamp9(Math.round(x - width / 2), viewportLeft + 8, Math.max(viewportLeft + 8, viewportLeft + viewportWidth - width - 8));
+    const top = clamp9(Math.round(y - height - 14), viewportTop + 8, Math.max(viewportTop + 8, viewportTop + viewportHeight - height - 8));
     setNoteDrawCssProps(this.selectionMenu, {
       "--notedraw-selection-menu-left": `${left}px`,
       "--notedraw-selection-menu-top": `${top}px`
@@ -6459,10 +6673,10 @@ var PreviewDrawingController = class {
     const maxTop = Math.max(minTop, viewportTop + viewportHeight - height - 8);
     const gap = 14;
     const preferredLeft = rect.left + rect.width / 2 - width / 2;
-    const left = clamp8(Math.round(preferredLeft), viewportLeft + 8, Math.max(viewportLeft + 8, viewportLeft + viewportWidth - width - 8));
+    const left = clamp9(Math.round(preferredLeft), viewportLeft + 8, Math.max(viewportLeft + 8, viewportLeft + viewportWidth - width - 8));
     if (this.formatToolbarManualPosition) {
-      const top2 = clamp8(Math.round(this.formatToolbarManualPosition.top), minTop, maxTop);
-      const manualLeft = clamp8(Math.round(this.formatToolbarManualPosition.left), viewportLeft + 8, Math.max(viewportLeft + 8, viewportLeft + viewportWidth - width - 8));
+      const top2 = clamp9(Math.round(this.formatToolbarManualPosition.top), minTop, maxTop);
+      const manualLeft = clamp9(Math.round(this.formatToolbarManualPosition.left), viewportLeft + 8, Math.max(viewportLeft + 8, viewportLeft + viewportWidth - width - 8));
       this.formatToolbarManualPosition = { top: top2, left: manualLeft };
       setNoteDrawCssProps(this.formatToolbar, {
         "--notedraw-format-top": `${top2}px`,
@@ -6474,7 +6688,7 @@ var PreviewDrawingController = class {
     const belowOneLine = rect.bottom + gap + lineStep;
     const above = rect.top - height - gap;
     const below = rect.bottom + gap;
-    const top = belowOneLine <= maxTop ? belowOneLine : below <= maxTop ? below : above >= minTop ? above : clamp8(Math.round(belowOneLine), minTop, maxTop);
+    const top = belowOneLine <= maxTop ? belowOneLine : below <= maxTop ? below : above >= minTop ? above : clamp9(Math.round(belowOneLine), minTop, maxTop);
     setNoteDrawCssProps(this.formatToolbar, {
       "--notedraw-format-top": `${top}px`,
       "--notedraw-format-left": `${left}px`
@@ -6512,12 +6726,12 @@ var PreviewDrawingController = class {
     const viewportLeft = viewport?.offsetLeft || 0;
     const viewportHeight = Math.max(120, viewport?.height || window.innerHeight || 120);
     const viewportWidth = Math.max(160, viewport?.width || window.innerWidth || 160);
-    const top = clamp8(
+    const top = clamp9(
       this.formatToolbarDrag.startTop + event.clientY - this.formatToolbarDrag.startY,
       viewportTop + 8,
       Math.max(viewportTop + 8, viewportTop + viewportHeight - toolbarRect.height - 8)
     );
-    const left = clamp8(
+    const left = clamp9(
       this.formatToolbarDrag.startLeft + event.clientX - this.formatToolbarDrag.startX,
       viewportLeft + 8,
       Math.max(viewportLeft + 8, viewportLeft + viewportWidth - toolbarRect.width - 8)
@@ -7003,8 +7217,8 @@ var PreviewDrawingController = class {
     return (clientY - canvasRect.top) / Math.max(0.01, canvasScaleY) + this.canvasWindowTop;
   }
   captureResponsivePoint(point, context = this.getResponsiveLayoutContext()) {
-    const canvasX = clamp8(Number(point?.x || 0), 0, 1) * this.canvasWidth();
-    const canvasY = clamp8(Number(point?.y || 0), 0, 1) * this.canvasHeight();
+    const canvasX = clamp9(Number(point?.x || 0), 0, 1) * this.canvasWidth();
+    const canvasY = clamp9(Number(point?.y || 0), 0, 1) * this.canvasHeight();
     const lineLocation = this.captureLineLocation(canvasX, canvasY, context);
     return {
       ...point,
@@ -7044,8 +7258,8 @@ var PreviewDrawingController = class {
       return false;
     }
     stroke.points = stroke.points.map((point) => {
-      const canvasX = clamp8(Number(point?.x || 0), 0, 1) * this.canvasWidth();
-      const canvasY = clamp8(Number(point?.y || 0), 0, 1) * this.canvasHeight();
+      const canvasX = clamp9(Number(point?.x || 0), 0, 1) * this.canvasWidth();
+      const canvasY = clamp9(Number(point?.y || 0), 0, 1) * this.canvasHeight();
       return {
         ...point,
         ...createResponsivePoint({
@@ -7161,7 +7375,7 @@ var PreviewDrawingController = class {
       }
       return {
         ...projected,
-        x: clamp8(Number(point.x), 0, 1)
+        x: clamp9(Number(point.x), 0, 1)
       };
     });
   }
@@ -7226,8 +7440,8 @@ var PreviewDrawingController = class {
     }
     const projectedById = new Map(stabilizeElementRelations(projected, layoutsById).map((box) => [box.id, {
       ...box,
-      x: clamp8(box.x, 0, Math.max(0, this.canvasWidth() - box.width)),
-      y: clamp8(box.y, 0, Math.max(0, this.canvasHeight() - box.height))
+      x: clamp9(box.x, 0, Math.max(0, this.canvasWidth() - box.width)),
+      y: clamp9(box.y, 0, Math.max(0, this.canvasHeight() - box.height))
     }]));
     for (const stroke of this.drawingData?.strokes || []) {
       if (isConnectorStroke(stroke)) {
@@ -7263,7 +7477,7 @@ var PreviewDrawingController = class {
         }));
       }
     }
-    this.syncBoundConnectors();
+    this.syncBoundConnectors({ recover: true });
     if (this.currentStroke?.points?.length) {
       this.currentStroke.points = this.currentStroke.points.map((point) => projectResponsivePoint(point, {
         canvasWidth: this.canvasWidth(),
@@ -7602,6 +7816,7 @@ var PreviewDrawingController = class {
         enabled: true,
         path: this.file?.path || "",
         line: null,
+        side: null,
         gap: 12
       } : null,
       points: [this.pointerStartPoint]
@@ -7613,6 +7828,9 @@ var PreviewDrawingController = class {
     this.endFloatingTextInput(true);
     this.endTextEdit();
     this.clearSelectedStrokes();
+    this.ensureSnapElementIds();
+    const snapTargets = this.collectSnapTargets();
+    const snapBoundsById = new Map(snapTargets.map((target) => [target.id, target.bounds]));
     this.pointerDown = true;
     this.didMove = false;
     this.pointerStartPoint = { ...point };
@@ -7620,18 +7838,20 @@ var PreviewDrawingController = class {
     this.pointerStartEditable = null;
     this.pointerStartSourceText = false;
     this.activePointerId = event.pointerId;
-    const fromId = this.findSnapElementIdAtPoint(point);
+    const fromId = this.findSnapElementIdAtPoint(point, "", snapTargets);
     const brush = this.currentBrushSettings();
     this.connectorGesture = {
       fromId,
+      snapTargets,
+      snapBoundsById,
       historyBefore: this.captureDrawingHistorySnapshot()
     };
     this.currentStroke = {
       elementId: createElementLayoutId(this.drawingData.strokes.length),
       brush: BRUSH_PEN,
       color: brush.color || this.penColor,
-      width: clamp8(Number(brush.width || 2.5), 1, 8),
-      opacity: clamp8(Number(brush.opacity ?? 0.9), 0, 1),
+      width: clamp9(Number(brush.width || 2.5), 1, 8),
+      opacity: clamp9(Number(brush.opacity ?? 0.9), 0, 1),
       count: 1,
       connector: { kind: "connector", fromId, toId: "", style: "curve", arrow: true },
       points: buildFreeConnectorPoints(point, point, this.canvasWidth(), this.canvasHeight())
@@ -7651,7 +7871,16 @@ var PreviewDrawingController = class {
     const movedDistance = this.pointerStartClient ? pointerDistance(this.pointerStartClient, { x: event.clientX, y: event.clientY }) : 0;
     this.didMove = movedDistance > this.tapDistancePx();
     if (this.currentStroke && this.pointerStartPoint) {
-      this.currentStroke.points = buildFreeConnectorPoints(this.pointerStartPoint, endPoint, this.canvasWidth(), this.canvasHeight());
+      const snapTargets = this.connectorGesture?.snapTargets;
+      const fromId = this.connectorGesture?.fromId || this.findSnapElementIdAtPoint(this.pointerStartPoint, "", snapTargets);
+      let toId = this.findSnapElementIdAtPoint(endPoint, fromId, snapTargets);
+      if (toId === fromId) {
+        toId = "";
+      }
+      this.connectorGesture.fromId = fromId;
+      this.connectorGesture.toId = toId;
+      this.currentStroke.connector = { kind: "connector", fromId, toId, style: "curve", arrow: true };
+      this.currentStroke.points = this.buildConnectorPointsForBindings(fromId, toId, this.pointerStartPoint, endPoint, this.connectorGesture?.snapBoundsById);
       this.requestRender();
     }
     event.preventDefault();
@@ -7663,20 +7892,21 @@ var PreviewDrawingController = class {
     if (!this.didMove) {
       endPoint = {
         ...startPoint,
-        x: clamp8(startPoint.x + Math.min(0.22, 96 / this.canvasWidth()), 0, 1),
+        x: clamp9(startPoint.x + Math.min(0.22, 96 / this.canvasWidth()), 0, 1),
         t: Date.now(),
         anchor: null
       };
     }
-    const fromId = this.connectorGesture?.fromId || this.findSnapElementIdAtPoint(startPoint);
-    let toId = this.findSnapElementIdAtPoint(endPoint, fromId);
+    const snapTargets = this.connectorGesture?.snapTargets;
+    const fromId = this.connectorGesture?.fromId || this.findSnapElementIdAtPoint(startPoint, "", snapTargets);
+    let toId = this.connectorGesture?.toId || this.findSnapElementIdAtPoint(endPoint, fromId, snapTargets);
     if (toId === fromId) {
       toId = "";
     }
     const stroke = normalizeStroke({
       ...this.currentStroke,
       connector: { kind: "connector", fromId, toId, style: "curve", arrow: true },
-      points: buildFreeConnectorPoints(startPoint, endPoint, this.canvasWidth(), this.canvasHeight())
+      points: this.buildConnectorPointsForBindings(fromId, toId, startPoint, endPoint, this.connectorGesture?.snapBoundsById)
     });
     this.drawingData.strokes.push(stroke);
     const insertedIndex = this.drawingData.strokes.length - 1;
@@ -7691,28 +7921,84 @@ var PreviewDrawingController = class {
     this.pointerDown = false;
     this.finishPointerInteraction(event);
   }
-  findSnapElementIdAtPoint(point, excludeId = "") {
-    const canvasPoint = this.pointToCanvas(point);
-    const threshold = Math.max(18, this.selectionHitPaddingPx() * 1.5);
+  findSnapElementIdAtPoint(point, excludeId = "", targets = null) {
+    const canvasPoint2 = this.pointToCanvas(point);
+    const threshold = connectorSnapThreshold(this.selectionHitPaddingPx());
     let best = null;
-    for (let index = this.drawingData.strokes.length - 1; index >= 0; index -= 1) {
-      const stroke = this.drawingData.strokes[index];
-      const id = strokeElementId(stroke);
-      if (!id || id === excludeId || isConnectorStroke(stroke) || !isSnapStroke(stroke)) {
+    const candidates = Array.isArray(targets) ? targets : this.collectSnapTargets();
+    for (const target of candidates) {
+      if (target.id === excludeId) {
         continue;
       }
-      const bounds = getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight());
-      if (!bounds) {
-        continue;
-      }
-      const dx = Math.max(bounds.minX - canvasPoint.x, 0, canvasPoint.x - bounds.maxX);
-      const dy = Math.max(bounds.minY - canvasPoint.y, 0, canvasPoint.y - bounds.maxY);
+      const dx = Math.max(target.bounds.minX - canvasPoint2.x, 0, canvasPoint2.x - target.bounds.maxX);
+      const dy = Math.max(target.bounds.minY - canvasPoint2.y, 0, canvasPoint2.y - target.bounds.maxY);
       const distance = Math.hypot(dx, dy);
       if (distance <= threshold && (!best || distance < best.distance)) {
-        best = { id, distance };
+        best = { id: target.id, distance };
       }
     }
     return best?.id || "";
+  }
+  collectSnapTargets() {
+    const targets = [];
+    for (let index = (this.drawingData?.strokes?.length || 0) - 1; index >= 0; index -= 1) {
+      const stroke = this.drawingData.strokes[index];
+      const id = strokeElementId(stroke);
+      if (!id || isConnectorStroke(stroke) || !isSnapStroke(stroke)) {
+        continue;
+      }
+      const bounds = getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight());
+      if (bounds) {
+        targets.push({ id, bounds });
+      }
+    }
+    return targets;
+  }
+  ensureSnapElementIds() {
+    const strokes = this.drawingData?.strokes || [];
+    const idCounts = /* @__PURE__ */ new Map();
+    for (const stroke of strokes) {
+      const id = strokeElementId(stroke);
+      if (id) {
+        idCounts.set(id, (idCounts.get(id) || 0) + 1);
+      }
+    }
+    const occupied = new Set(idCounts.keys());
+    let changed = false;
+    for (const [index, stroke] of strokes.entries()) {
+      if (!stroke || isConnectorStroke(stroke) || !isSnapStroke(stroke)) {
+        continue;
+      }
+      const existingId = strokeElementId(stroke);
+      let elementId = existingId;
+      if (!elementId || (idCounts.get(elementId) || 0) > 1) {
+        do {
+          elementId = createElementLayoutId(index);
+        } while (occupied.has(elementId));
+        occupied.add(elementId);
+      }
+      if (stroke.elementId !== elementId) {
+        stroke.elementId = elementId;
+        changed = true;
+      }
+      const layout = normalizeElementLayout(stroke.layout);
+      if (layout && layout.id !== elementId) {
+        stroke.layout = { ...layout, id: elementId };
+        changed = true;
+      }
+    }
+    return changed;
+  }
+  buildConnectorPointsForBindings(fromId, toId, fromPoint, toPoint, boundsById = null) {
+    const resolvedBounds = boundsById || new Map(this.collectSnapTargets().map((target) => [target.id, target.bounds]));
+    return buildSnappedConnectorPoints({
+      fromBounds: fromId ? resolvedBounds.get(fromId) || null : null,
+      toBounds: toId ? resolvedBounds.get(toId) || null : null,
+      fromPoint,
+      toPoint,
+      canvasWidth: this.canvasWidth(),
+      canvasHeight: this.canvasHeight()
+    });
   }
   shouldPassThroughHeaderPoint(event) {
     if (this.surfaceType !== "preview" || !isAppleMobileRuntime()) {
@@ -7962,13 +8248,13 @@ var PreviewDrawingController = class {
     return distance <= this.tapDistancePx() * 2;
   }
   floatingTextPointToClient(point) {
-    const canvasPoint = this.pointToCanvas(point);
+    const canvasPoint2 = this.pointToCanvas(point);
     const canvasRect = this.canvas.getBoundingClientRect();
     const scaleX = canvasRect.width > 0 ? canvasRect.width / this.canvasWidth() : 1;
     const scaleY = canvasRect.height > 0 ? canvasRect.height / Math.max(1, this.canvasRenderHeight) : 1;
     return {
-      x: canvasRect.left + canvasPoint.x * scaleX,
-      y: canvasRect.top + (canvasPoint.y - this.canvasWindowTop) * scaleY
+      x: canvasRect.left + canvasPoint2.x * scaleX,
+      y: canvasRect.top + (canvasPoint2.y - this.canvasWindowTop) * scaleY
     };
   }
   floatingTextEditorInsets(element) {
@@ -8036,7 +8322,7 @@ var PreviewDrawingController = class {
   floatingTextContentWidth(element) {
     const rect = element.getBoundingClientRect();
     const insets = this.floatingTextEditorInsets(element);
-    return clamp8(rect.width - insets.horizontal, 24, 900);
+    return clamp9(rect.width - insets.horizontal, 24, 900);
   }
   openFloatingTextInput(point, index = -1) {
     this.endFloatingTextInput(true);
@@ -8056,7 +8342,7 @@ var PreviewDrawingController = class {
     textarea.value = isTextLikeStroke(existing) ? existing.text : "";
     applyElementStyles(textarea, {
       color: isTextLikeStroke(existing) ? existing.color : brushColor,
-      fontSize: `${isTextLikeStroke(existing) ? clamp8(Number(existing.fontSize || 18), 10, 72) : 18}px`,
+      fontSize: `${isTextLikeStroke(existing) ? clamp9(Number(existing.fontSize || 18), 10, 72) : 18}px`,
       fontWeight: isTextLikeStroke(existing) && existing.bold ? "700" : "400",
       fontFamily: isTextLikeStroke(existing) && existing.code ? "monospace" : "sans-serif"
     });
@@ -8149,7 +8435,7 @@ var PreviewDrawingController = class {
       const textChanged = stroke.text !== text;
       stroke.text = text;
       stroke.render = normalizeTextRenderMode(stroke.render);
-      stroke.fontSize = clamp8(Number(stroke.fontSize || 18), 10, 72);
+      stroke.fontSize = clamp9(Number(stroke.fontSize || 18), 10, 72);
       if (isRichTextStroke(stroke)) {
         stroke.previewWidth = stroke.previewWidth || 300;
         stroke.previewHeight = stroke.previewHeight || 180;
@@ -8172,7 +8458,7 @@ var PreviewDrawingController = class {
         count: 1,
         text: preset.text,
         render: preset.render || TEXT_RENDER_PLAIN,
-        fontSize: clamp8(Number(preset.fontSize || 18), 10, 72),
+        fontSize: clamp9(Number(preset.fontSize || 18), 10, 72),
         bold: preset.bold,
         code: preset.code,
         boxed: preset.boxed,
@@ -8282,8 +8568,8 @@ var PreviewDrawingController = class {
     const width = this.canvasWidth();
     const height = this.canvasHeight();
     const frame = this.getResponsiveContentFrame();
-    const originX = clamp8(Number(point?.x) * width, Math.max(8, frame.left + 8), Math.max(8, width - 260));
-    const originY = clamp8(Number(point?.y) * height, 12, Math.max(12, height - 80));
+    const originX = clamp9(Number(point?.x) * width, Math.max(8, frame.left + 8), Math.max(8, width - 260));
+    const originY = clamp9(Number(point?.y) * height, 12, Math.max(12, height - 80));
     const geometry = layoutMindMap(model, {
       originX,
       originY,
@@ -8336,8 +8622,8 @@ var PreviewDrawingController = class {
           affectsSource
         },
         points: [{
-          x: clamp8(node.x / width, 0, 1),
-          y: clamp8(node.y / height, 0, 1),
+          x: clamp9(node.x / width, 0, 1),
+          y: clamp9(node.y / height, 0, 1),
           t: Date.now(),
           anchor: null
         }]
@@ -8357,8 +8643,8 @@ var PreviewDrawingController = class {
         arrow: true
       },
       points: [
-        { x: clamp8(originX / width, 0, 1), y: clamp8(originY / height, 0, 1), t: Date.now(), anchor: null },
-        { x: clamp8((originX + 1) / width, 0, 1), y: clamp8((originY + 1) / height, 0, 1), t: Date.now(), anchor: null }
+        { x: clamp9(originX / width, 0, 1), y: clamp9(originY / height, 0, 1), t: Date.now(), anchor: null },
+        { x: clamp9((originX + 1) / width, 0, 1), y: clamp9((originY + 1) / height, 0, 1), t: Date.now(), anchor: null }
       ]
     }));
     const startIndex = this.drawingData.strokes.length;
@@ -8442,7 +8728,7 @@ var PreviewDrawingController = class {
       count: 1,
       text: preset.text,
       render: preset.render || TEXT_RENDER_PLAIN,
-      fontSize: clamp8(Number(preset.fontSize || 18), 10, 72),
+      fontSize: clamp9(Number(preset.fontSize || 18), 10, 72),
       bold: preset.bold,
       code: preset.code,
       boxed: preset.boxed,
@@ -8543,7 +8829,7 @@ var PreviewDrawingController = class {
       return;
     }
     if ((event.ctrlKey || event.metaKey) && this.canZoomReadingSurface()) {
-      const factor = Math.exp(-clamp8(Number(event.deltaY) || 0, -80, 80) * 25e-4);
+      const factor = Math.exp(-clamp9(Number(event.deltaY) || 0, -80, 80) * 25e-4);
       this.setReadingZoom(this.readingZoom * factor, { x: event.clientX, y: event.clientY });
       event.preventDefault();
       event.stopPropagation();
@@ -8558,7 +8844,7 @@ var PreviewDrawingController = class {
     return this.surfaceType === "preview" && !this.embeddedSurface;
   }
   readingZoomScale() {
-    return this.canZoomReadingSurface() ? clamp8(Number(this.readingZoom) || 1, MIN_READING_ZOOM, MAX_READING_ZOOM) : 1;
+    return this.canZoomReadingSurface() ? clamp9(Number(this.readingZoom) || 1, MIN_READING_ZOOM, MAX_READING_ZOOM) : 1;
   }
   readingZoomElements(target = this.readingZoomTarget) {
     const elements = [target, this.staticCanvas, this.canvas, this.embedLayer].filter((element) => element?.isConnected);
@@ -8649,15 +8935,19 @@ var PreviewDrawingController = class {
     if (!target) {
       return false;
     }
-    this.restoreReadingZoomStyles();
+    const previousTarget = this.readingZoomTarget;
     this.readingZoomTarget = target;
     const zoom = this.readingZoomScale();
     this.readingZoom = zoom;
     const elements = this.readingZoomElements(target);
     if (Math.abs(zoom - 1) < 1e-3) {
+      this.restoreReadingZoomStyles();
       this.previewEl.removeClass("is-reading-zoomed");
       this.previewEl.removeClass("is-editing-layout-zoomed");
     } else {
+      if (previousTarget && previousTarget !== target) {
+        this.restoreReadingZoomStyles();
+      }
       if (this.usesVisualReadingZoom()) {
         for (const element of elements) {
           this.applyVisualReadingZoomElement(element, zoom);
@@ -8696,7 +8986,7 @@ var PreviewDrawingController = class {
     if (!this.canZoomReadingSurface()) {
       return false;
     }
-    const next = clamp8(Number(value) || 1, MIN_READING_ZOOM, MAX_READING_ZOOM);
+    const next = clamp9(Number(value) || 1, MIN_READING_ZOOM, MAX_READING_ZOOM);
     const previous = this.readingZoom || 1;
     const zoomChanged = Math.abs(next - previous) >= 1e-3;
     const previousClientPoint = options.previousClientPoint || clientPoint;
@@ -8728,8 +9018,12 @@ var PreviewDrawingController = class {
         maxScrollLeft: Math.max(0, scroller.scrollWidth - scroller.clientWidth),
         maxScrollTop: Math.max(0, scroller.scrollHeight - scroller.clientHeight)
       });
-      scroller.scrollLeft = scroll.left;
-      scroller.scrollTop = scroll.top;
+      if (Math.abs(scroller.scrollLeft - scroll.left) >= 0.25) {
+        scroller.scrollLeft = scroll.left;
+      }
+      if (Math.abs(scroller.scrollTop - scroll.top) >= 0.25) {
+        scroller.scrollTop = scroll.top;
+      }
     }
     if (zoomChanged) {
       this.responsiveLayoutContext = null;
@@ -8767,7 +9061,10 @@ var PreviewDrawingController = class {
     if (!this.touchPointers.has(pointerId)) {
       return false;
     }
-    this.flushMultiTouchGesture();
+    const finishingMultiTouch = this.multiTouchScrolling || this.multiTouchPinching || this.suppressTouchDrawing;
+    if (this.multiTouchScrolling && this.touchPointers.size >= 2) {
+      this.flushMultiTouchGesture();
+    }
     this.touchPointers.delete(pointerId);
     if (this.touchPointers.size < 2) {
       this.multiTouchScrolling = false;
@@ -8779,14 +9076,15 @@ var PreviewDrawingController = class {
     }
     if (this.touchPointers.size === 0) {
       this.suppressTouchDrawing = false;
-      if (this.multiTouchPinching) {
+      if (finishingMultiTouch && this.multiTouchPinching) {
         this.persistInteractionSettings();
         this.syncSharedToolbarState();
       }
       this.multiTouchPinching = false;
-      this.scheduleMarkdownAnnotationRefresh({ layout: false });
-      this.scheduleResize({ layout: false });
-      this.requestRender(true);
+      if (finishingMultiTouch) {
+        this.scheduleResize({ layout: false });
+        this.requestRender(true);
+      }
     }
     return true;
   }
@@ -8803,6 +9101,9 @@ var PreviewDrawingController = class {
     this.previewEl?.removeClass("is-two-finger-scroll");
   }
   handleMultiTouchScroll(event) {
+    if (!this.multiTouchScrolling || this.touchPointers.size < 2) {
+      return;
+    }
     this.multiTouchPendingCenter = this.getTouchCenter();
     this.multiTouchPendingDistance = this.getTouchDistance();
     if (this.multiTouchFrameId === null) {
@@ -8828,7 +9129,7 @@ var PreviewDrawingController = class {
     const previousDistance = this.multiTouchLastDistance;
     this.multiTouchPendingCenter = null;
     this.multiTouchPendingDistance = null;
-    if (!center || !previous) {
+    if (!this.multiTouchScrolling || this.touchPointers.size < 2 || !center || !previous) {
       return;
     }
     let nextZoom = this.readingZoom;
@@ -8982,6 +9283,24 @@ var PreviewDrawingController = class {
     event.preventDefault();
     event.stopPropagation();
   }
+  connectorTargetIdsForStrokeIndexes(indexes) {
+    const ids = /* @__PURE__ */ new Set();
+    for (const index of indexes || []) {
+      const stroke = this.drawingData?.strokes?.[index];
+      const elementId = strokeElementId(stroke);
+      if (elementId) {
+        ids.add(elementId);
+      }
+      const connector = normalizeConnector(stroke?.connector);
+      if (connector?.fromId) {
+        ids.add(connector.fromId);
+      }
+      if (connector?.toId) {
+        ids.add(connector.toId);
+      }
+    }
+    return ids;
+  }
   moveSelectedStroke(event) {
     if (!this.dragStrokeStartPoint || !this.dragStrokeOriginalPoints?.size) {
       return;
@@ -8999,8 +9318,8 @@ var PreviewDrawingController = class {
         maxY = Math.max(maxY, strokePoint.y);
       }
     }
-    const dx = clamp8(point.x - this.dragStrokeStartPoint.x, -minX, 1 - maxX);
-    const dy = clamp8(point.y - this.dragStrokeStartPoint.y, -minY, 1 - maxY);
+    const dx = clamp9(point.x - this.dragStrokeStartPoint.x, -minX, 1 - maxX);
+    const dy = clamp9(point.y - this.dragStrokeStartPoint.y, -minY, 1 - maxY);
     const movedDistance = pointDistanceOnCanvas(
       this.dragStrokeStartPoint,
       point,
@@ -9015,8 +9334,8 @@ var PreviewDrawingController = class {
     let snappedDy = dy;
     if (this.shouldSnapStrokeIndexes(Array.from(this.dragStrokeOriginalPoints.keys())) && this.dragStrokeOriginalBounds) {
       const snap = this.computeSnapDeltaForNormalizedBounds(translateNormalizedBounds(this.dragStrokeOriginalBounds, dx, dy), Array.from(this.dragStrokeOriginalPoints.keys()));
-      snappedDx = clamp8(dx + snap.dx, -minX, 1 - maxX);
-      snappedDy = clamp8(dy + snap.dy, -minY, 1 - maxY);
+      snappedDx = clamp9(dx + snap.dx, -minX, 1 - maxX);
+      snappedDy = clamp9(dy + snap.dy, -minY, 1 - maxY);
     }
     for (const [index, points] of this.dragStrokeOriginalPoints.entries()) {
       const stroke = this.drawingData.strokes[index];
@@ -9025,11 +9344,12 @@ var PreviewDrawingController = class {
       }
       stroke.points = points.map((strokePoint) => ({
         ...strokePoint,
-        x: clamp8(strokePoint.x + snappedDx, 0, 1),
-        y: clamp8(strokePoint.y + snappedDy, 0, 1)
+        x: clamp9(strokePoint.x + snappedDx, 0, 1),
+        y: clamp9(strokePoint.y + snappedDy, 0, 1)
       }));
     }
-    if (this.syncBoundConnectors()) {
+    const movedElementIds = this.connectorTargetIdsForStrokeIndexes(this.dragStrokeOriginalPoints.keys());
+    if (this.syncBoundConnectors({ elementIds: movedElementIds })) {
       this.invalidateStaticCache();
     }
     this.scheduleNoteFlowLayout();
@@ -9049,7 +9369,7 @@ var PreviewDrawingController = class {
         }
       }
       this.captureResponsiveAnchorsForIndexes(movedIndexes);
-      this.syncBoundConnectors();
+      this.syncBoundConnectors({ elementIds: this.connectorTargetIdsForStrokeIndexes(movedIndexes) });
       this.lastTextTap = null;
       this.redoStack = [];
       this.plugin.scheduleDrawingSave(this.file, this.drawingData);
@@ -9167,15 +9487,15 @@ var PreviewDrawingController = class {
     let scaleY = originalDy === 0 ? 1 : (point.y - anchor.y) / originalDy;
     scaleX = Math.max(0.12, scaleX);
     scaleY = Math.max(0.12, scaleY);
-    const strokeScale = clamp8((Math.abs(scaleX) + Math.abs(scaleY)) / 2, 0.2, 8);
+    const strokeScale = clamp9((Math.abs(scaleX) + Math.abs(scaleY)) / 2, 0.2, 8);
     const nextByIndex = /* @__PURE__ */ new Map();
     for (const [index, original] of originalStrokes.entries()) {
       nextByIndex.set(index, {
-        width: clamp8((original.width || this.penWidth) * strokeScale, MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH),
-        fontSize: clamp8((original.fontSize || 18) * strokeScale, 10, 72),
-        textWidth: Number(original.textWidth) > 0 ? clamp8(original.textWidth * Math.abs(scaleX), 24, 900) : null,
-        previewWidth: clamp8((original.previewWidth || 260) * Math.abs(scaleX), 80, 900),
-        previewHeight: clamp8((original.previewHeight || 160) * Math.abs(scaleY), 40, 700),
+        width: clamp9((original.width || this.penWidth) * strokeScale, MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH),
+        fontSize: clamp9((original.fontSize || 18) * strokeScale, 10, 72),
+        textWidth: Number(original.textWidth) > 0 ? clamp9(original.textWidth * Math.abs(scaleX), 24, 900) : null,
+        previewWidth: clamp9((original.previewWidth || 260) * Math.abs(scaleX), 80, 900),
+        previewHeight: clamp9((original.previewHeight || 160) * Math.abs(scaleY), 40, 700),
         points: original.points.map((strokePoint) => ({
           ...strokePoint,
           x: anchor.x + (strokePoint.x - anchor.x) * scaleX,
@@ -9200,11 +9520,12 @@ var PreviewDrawingController = class {
       }
       stroke.points = next.points.map((strokePoint) => ({
         ...strokePoint,
-        x: clamp8(strokePoint.x, 0, 1),
-        y: clamp8(strokePoint.y, 0, 1)
+        x: clamp9(strokePoint.x, 0, 1),
+        y: clamp9(strokePoint.y, 0, 1)
       }));
     }
-    if (this.syncBoundConnectors()) {
+    const resizedElementIds = this.connectorTargetIdsForStrokeIndexes(this.resizeSelectionOriginalStrokes.keys());
+    if (this.syncBoundConnectors({ elementIds: resizedElementIds })) {
       this.invalidateStaticCache();
     }
     this.scheduleNoteFlowLayout();
@@ -9213,7 +9534,7 @@ var PreviewDrawingController = class {
     if (this.resizeSelectionMoved) {
       const resizedIndexes = Array.from(this.resizeSelectionOriginalStrokes?.keys() || []);
       this.captureResponsiveAnchorsForIndexes(resizedIndexes);
-      this.syncBoundConnectors();
+      this.syncBoundConnectors({ elementIds: this.connectorTargetIdsForStrokeIndexes(resizedIndexes) });
       this.redoStack = [];
       this.plugin.scheduleDrawingSave(this.file, this.drawingData);
       this.recordDrawingHistory(this.resizeDrawingHistoryBefore);
@@ -9306,12 +9627,12 @@ var PreviewDrawingController = class {
     ];
     let lineRect = null;
     for (const point of candidates) {
-      const canvasPoint = this.pointToCanvas(point);
+      const canvasPoint2 = this.pointToCanvas(point);
       lineRect = findTextLineRectBelowCanvas(
         this.canvas,
         this.previewEl,
-        canvasRect.left + canvasPoint.x * scaleX,
-        canvasRect.top + (canvasPoint.y - this.canvasWindowTop) * scaleY
+        canvasRect.left + canvasPoint2.x * scaleX,
+        canvasRect.top + (canvasPoint2.y - this.canvasWindowTop) * scaleY
       );
       if (lineRect) {
         break;
@@ -9321,14 +9642,14 @@ var PreviewDrawingController = class {
       return false;
     }
     const lineCenterY = (lineRect.top + lineRect.height * 0.58 - canvasRect.top) / scaleY + this.canvasWindowTop;
-    const minX = clamp8((lineRect.left - canvasRect.left) / scaleX / canvasWidth, 0, 1);
-    const maxX = clamp8((lineRect.right - canvasRect.left) / scaleX / canvasWidth, 0, 1);
+    const minX = clamp9((lineRect.left - canvasRect.left) / scaleX / canvasWidth, 0, 1);
+    const maxX = clamp9((lineRect.right - canvasRect.left) / scaleX / canvasWidth, 0, 1);
     stroke.points = stroke.points.map((point) => ({
       ...point,
-      x: clamp8(Number(point.x), minX, maxX),
-      y: clamp8(lineCenterY / this.canvasHeight(), 0, 1)
+      x: clamp9(Number(point.x), minX, maxX),
+      y: clamp9(lineCenterY / this.canvasHeight(), 0, 1)
     }));
-    stroke.width = clamp8(lineRect.height / scaleY * 0.48, 4, 24);
+    stroke.width = clamp9(lineRect.height / scaleY * 0.48, 4, 24);
     return true;
   }
   addPointerSamples(event) {
@@ -9520,7 +9841,7 @@ var PreviewDrawingController = class {
         top: `${Math.round(bounds.minY)}px`,
         width: `${Math.max(32, Math.round(bounds.maxX - bounds.minX))}px`,
         height: `${Math.max(28, Math.round(bounds.maxY - bounds.minY))}px`,
-        opacity: String(clamp8(Number(stroke.opacity ?? 1), 0, 1))
+        opacity: String(clamp9(Number(stroke.opacity ?? 1), 0, 1))
       });
       this.renderEmbedNode(node, stroke, index);
     }
@@ -9635,8 +9956,8 @@ var PreviewDrawingController = class {
       this.drawFountainPenStrokeOn(ctx, stroke, alpha);
       return;
     }
-    const count = clamp8(Math.round(Number(stroke.count || 1)), 1, MAX_PEN_COUNT);
-    const opacity = clamp8(Number(stroke.opacity ?? DEFAULT_PEN_OPACITY), 0, 1);
+    const count = clamp9(Math.round(Number(stroke.count || 1)), 1, MAX_PEN_COUNT);
+    const opacity = clamp9(Number(stroke.opacity ?? DEFAULT_PEN_OPACITY), 0, 1);
     const offsets = getPenOffsets(count, stroke.width || this.penWidth);
     ctx.save();
     ctx.globalAlpha = alpha * opacity;
@@ -9656,24 +9977,56 @@ var PreviewDrawingController = class {
     }
     ctx.restore();
   }
-  syncBoundConnectors() {
+  syncBoundConnectors(options = {}) {
     const strokes = this.drawingData?.strokes || [];
+    const recover = options.recover === true;
+    const targetIds = options.elementIds instanceof Set ? options.elementIds : null;
+    let changed = recover ? this.ensureSnapElementIds() : false;
     const byId = new Map(strokes.map((stroke) => [strokeElementId(stroke), stroke]).filter(([id]) => id));
-    let changed = false;
+    const snapTargets = recover ? this.collectSnapTargets() : null;
     for (const stroke of strokes) {
-      const connector = normalizeConnector(stroke.connector);
+      let connector = normalizeConnector(stroke.connector);
       if (!connector) {
         continue;
       }
-      if (!connector.fromId || !connector.toId || connector.fromId === connector.toId) {
+      if (targetIds && !targetIds.has(connector.fromId) && !targetIds.has(connector.toId)) {
         continue;
       }
-      const fromBounds = getStrokeBounds(byId.get(connector.fromId), this.canvasWidth(), this.canvasHeight());
-      const toBounds = getStrokeBounds(byId.get(connector.toId), this.canvasWidth(), this.canvasHeight());
-      if (!fromBounds || !toBounds) {
+      let fromBounds = getStrokeBounds(byId.get(connector.fromId), this.canvasWidth(), this.canvasHeight());
+      let toBounds = getStrokeBounds(byId.get(connector.toId), this.canvasWidth(), this.canvasHeight());
+      if (recover && !fromBounds && stroke.points?.[0]) {
+        const recoveredId = this.findSnapElementIdAtPoint(stroke.points[0], toBounds ? connector.toId : "", snapTargets);
+        if (recoveredId) {
+          connector = { ...connector, fromId: recoveredId };
+          fromBounds = getStrokeBounds(byId.get(recoveredId), this.canvasWidth(), this.canvasHeight());
+        }
+      }
+      if (recover && !toBounds && stroke.points?.length) {
+        const recoveredId = this.findSnapElementIdAtPoint(stroke.points[stroke.points.length - 1], fromBounds ? connector.fromId : "", snapTargets);
+        if (recoveredId && recoveredId !== connector.fromId) {
+          connector = { ...connector, toId: recoveredId };
+          toBounds = getStrokeBounds(byId.get(recoveredId), this.canvasWidth(), this.canvasHeight());
+        }
+      }
+      if (connector.fromId === connector.toId) {
+        connector = { ...connector, toId: "" };
+        toBounds = null;
+      }
+      if (stroke.connector?.fromId !== connector.fromId || stroke.connector?.toId !== connector.toId) {
+        stroke.connector = connector;
+        changed = true;
+      }
+      if (!fromBounds && !toBounds) {
         continue;
       }
-      const nextPoints = buildBoundConnectorPoints(fromBounds, toBounds, this.canvasWidth(), this.canvasHeight());
+      const nextPoints = buildSnappedConnectorPoints({
+        fromBounds,
+        toBounds,
+        fromPoint: stroke.points?.[0],
+        toPoint: stroke.points?.[stroke.points.length - 1],
+        canvasWidth: this.canvasWidth(),
+        canvasHeight: this.canvasHeight()
+      });
       if (!sameStrokePointPath(stroke.points, nextPoints)) {
         stroke.points = nextPoints;
         changed = true;
@@ -9685,8 +10038,8 @@ var PreviewDrawingController = class {
     if (!stroke.points?.length) {
       return;
     }
-    const opacity = clamp8(Number(stroke.opacity ?? 0.9), 0, 1);
-    const width = clamp8(Number(stroke.width || 2.25), 1, 8);
+    const opacity = clamp9(Number(stroke.opacity ?? 0.9), 0, 1);
+    const width = clamp9(Number(stroke.width || 2.25), 1, 8);
     const points = stroke.points.map((point) => this.pointToCanvas(point));
     ctx.save();
     ctx.globalAlpha = alpha * opacity;
@@ -9824,7 +10177,7 @@ var PreviewDrawingController = class {
     const height = Math.max(1, Math.round(bounds.maxY - bounds.minY));
     const fit = objectFitContain(image.naturalWidth, image.naturalHeight, width, height);
     ctx.save();
-    ctx.globalAlpha = clamp8(Number(stroke.opacity ?? 1), 0, 1);
+    ctx.globalAlpha = clamp9(Number(stroke.opacity ?? 1), 0, 1);
     ctx.fillStyle = "#fff";
     ctx.fillRect(x, y, width, height);
     ctx.imageSmoothingEnabled = true;
@@ -9870,8 +10223,8 @@ var PreviewDrawingController = class {
       return;
     }
     const point = this.pointToCanvas(stroke.points[0]);
-    const fontSize = clamp8(Number(stroke.fontSize || 18), 10, 72);
-    const opacity = clamp8(Number(stroke.opacity ?? 1), 0, 1);
+    const fontSize = clamp9(Number(stroke.fontSize || 18), 10, 72);
+    const opacity = clamp9(Number(stroke.opacity ?? 1), 0, 1);
     ctx.save();
     ctx.globalAlpha = alpha * opacity;
     ctx.font = `${stroke.bold ? "700 " : ""}${fontSize}px ${stroke.code ? "monospace" : "sans-serif"}`;
@@ -9913,7 +10266,7 @@ var PreviewDrawingController = class {
       return;
     }
     const width = Math.max(MIN_BRUSH_WIDTH, stroke.width || this.penWidth);
-    const opacity = clamp8(Number(stroke.opacity ?? 0.45), 0, 1);
+    const opacity = clamp9(Number(stroke.opacity ?? 0.45), 0, 1);
     ctx.save();
     ctx.globalAlpha = alpha * opacity;
     ctx.lineCap = "round";
@@ -10104,8 +10457,8 @@ var PreviewDrawingController = class {
   }
   visibleCanvasPastePoint() {
     const frame = this.getResponsiveContentFrame();
-    const x = clamp8((frame.left + Math.min(frame.width * 0.16, 72)) / this.canvasWidth(), 0.02, 0.92);
-    const y = clamp8((this.canvasWindowTop + Math.min(this.canvasRenderHeight * 0.22, 140)) / this.canvasHeight(), 0.01, 0.96);
+    const x = clamp9((frame.left + Math.min(frame.width * 0.16, 72)) / this.canvasWidth(), 0.02, 0.92);
+    const y = clamp9((this.canvasWindowTop + Math.min(this.canvasRenderHeight * 0.22, 140)) / this.canvasHeight(), 0.01, 0.96);
     return { x, y, t: Date.now() };
   }
   pasteCopiedElements(options = {}) {
@@ -10123,10 +10476,10 @@ var PreviewDrawingController = class {
     const sourceHeight = Math.max(1, Number(clipboard.sourceHeight) || 1);
     const sourceBounds = clipboard.bounds;
     const selectedBounds = this.getSelectedStrokeBounds();
-    const requested = options.point && Number.isFinite(Number(options.point.x)) && Number.isFinite(Number(options.point.y)) ? { x: clamp8(Number(options.point.x), 0, 1), y: clamp8(Number(options.point.y), 0, 1) } : null;
+    const requested = options.point && Number.isFinite(Number(options.point.x)) && Number.isFinite(Number(options.point.y)) ? { x: clamp9(Number(options.point.x), 0, 1), y: clamp9(Number(options.point.y), 0, 1) } : null;
     const defaultPoint = selectedBounds ? {
-      x: clamp8((selectedBounds.minX + 22) / targetWidth, 0, 0.96),
-      y: clamp8((selectedBounds.minY + 22) / targetHeight, 0, 0.96)
+      x: clamp9((selectedBounds.minX + 22) / targetWidth, 0, 0.96),
+      y: clamp9((selectedBounds.minY + 22) / targetHeight, 0, 0.96)
     } : this.visibleCanvasPastePoint();
     const targetPoint = requested || defaultPoint;
     const groupWidth = Math.max(1, sourceBounds.maxX - sourceBounds.minX);
@@ -10136,8 +10489,8 @@ var PreviewDrawingController = class {
       Math.max(0.12, (targetWidth - 24) / groupWidth),
       Math.max(0.12, (targetHeight - 24) / groupHeight)
     );
-    const targetX = clamp8(targetPoint.x * targetWidth, 12, Math.max(12, targetWidth - groupWidth * fitScale - 12));
-    const targetY = clamp8(targetPoint.y * targetHeight, 12, Math.max(12, targetHeight - groupHeight * fitScale - 12));
+    const targetX = clamp9(targetPoint.x * targetWidth, 12, Math.max(12, targetWidth - groupWidth * fitScale - 12));
+    const targetY = clamp9(targetPoint.y * targetHeight, 12, Math.max(12, targetHeight - groupHeight * fitScale - 12));
     const idMap = /* @__PURE__ */ new Map();
     for (const sourceStroke of clipboard.strokes) {
       const sourceId = strokeElementId(sourceStroke);
@@ -10152,8 +10505,8 @@ var PreviewDrawingController = class {
       stroke.layout = null;
       stroke.locked = false;
       stroke.points = (stroke.points || []).map((point) => ({
-        x: clamp8((targetX + (Number(point.x) * sourceWidth - sourceBounds.minX) * fitScale) / targetWidth, 0, 1),
-        y: clamp8((targetY + (Number(point.y) * sourceHeight - sourceBounds.minY) * fitScale) / targetHeight, 0, 1),
+        x: clamp9((targetX + (Number(point.x) * sourceWidth - sourceBounds.minX) * fitScale) / targetWidth, 0, 1),
+        y: clamp9((targetY + (Number(point.y) * sourceHeight - sourceBounds.minY) * fitScale) / targetHeight, 0, 1),
         t: Date.now(),
         anchor: null
       }));
@@ -10163,10 +10516,10 @@ var PreviewDrawingController = class {
         stroke.connector = fromId && toId ? { ...stroke.connector, fromId, toId } : null;
       }
       if (Number.isFinite(Number(stroke.width))) {
-        stroke.width = clamp8(Number(stroke.width) * fitScale, MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH);
+        stroke.width = clamp9(Number(stroke.width) * fitScale, MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH);
       }
       if (Number.isFinite(Number(stroke.fontSize))) {
-        stroke.fontSize = clamp8(Number(stroke.fontSize) * fitScale, 10, 72);
+        stroke.fontSize = clamp9(Number(stroke.fontSize) * fitScale, 10, 72);
       }
       for (const key of ["textWidth", "previewWidth", "previewHeight"]) {
         if (Number.isFinite(Number(stroke[key]))) {
@@ -10216,24 +10569,18 @@ var PreviewDrawingController = class {
     const bounds = getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight());
     const canvasRect = this.canvas?.getBoundingClientRect?.();
     if (!bounds || !canvasRect) {
-      return { enabled: true, path: this.file?.path || "", line: null, gap: 12 };
+      return { enabled: true, path: this.file?.path || "", line: null, side: null, gap: 12 };
     }
     const scaleY = canvasRect.height > 0 ? canvasRect.height / Math.max(1, this.canvasRenderHeight) : 1;
     const strokeTop = canvasRect.top + (bounds.minY - this.canvasWindowTop) * scaleY;
-    const candidates = Array.from(this.previewEl.querySelectorAll?.("[data-note-draw-line-start]") || []).map((element) => ({
-      element,
-      rect: element.getBoundingClientRect(),
-      path: normalizeVaultPath(element.dataset.noteDrawSourcePath || this.file?.path || ""),
-      start: parseInteger(element.dataset.noteDrawLineStart),
-      end: parseInteger(element.dataset.noteDrawLineEnd) ?? parseInteger(element.dataset.noteDrawLineStart)
-    })).filter((item) => Number.isFinite(item.start) && item.rect.height > 0 && item.rect.bottom <= strokeTop + 8 && !item.element.closest?.(".notedraw-body-control, .notedraw-embed-layer"));
-    candidates.sort((a, b) => b.rect.bottom - a.rect.bottom || a.rect.height - b.rect.height);
-    const anchor = candidates[0];
+    const placement = selectNoteFlowAnchorPlacement(this.noteFlowCandidates(), { strokeTop });
+    const anchor = placement?.candidate;
     return {
       enabled: true,
       path: anchor?.path || this.file?.path || "",
-      line: Number.isFinite(anchor?.end) ? anchor.end : null,
-      gap: clamp8(Number(stroke?.noteFlow?.gap) || 12, 4, 64)
+      line: Number.isFinite(placement?.line) ? placement.line : null,
+      side: placement?.side || null,
+      gap: clamp9(Number(stroke?.noteFlow?.gap) || 12, 4, 64)
     };
   }
   toggleSelectedNoteFlow() {
@@ -10257,116 +10604,241 @@ var PreviewDrawingController = class {
     this.scheduleLayoutRefresh({ settle: false });
     this.render();
   }
+  noteFlowLayoutElement(element) {
+    if (!element || !this.previewEl?.contains?.(element)) {
+      return null;
+    }
+    const promoted = element.closest?.(".internal-embed, .markdown-embed, .callout, table, li, blockquote");
+    return promoted && this.previewEl.contains(promoted) ? promoted : element;
+  }
+  noteFlowCandidates() {
+    const grouped = /* @__PURE__ */ new Map();
+    let order = 0;
+    for (const sourceElement of this.previewEl.querySelectorAll?.("[data-note-draw-line-start]") || []) {
+      if (sourceElement.closest?.(".notedraw-body-control, .notedraw-embed-layer")) {
+        continue;
+      }
+      const start = parseInteger(sourceElement.dataset.noteDrawLineStart);
+      const end = parseInteger(sourceElement.dataset.noteDrawLineEnd) ?? start;
+      const element = this.noteFlowLayoutElement(sourceElement);
+      const rect = element?.getBoundingClientRect?.();
+      if (!element || !Number.isFinite(start) || !rect || rect.width <= 1 || rect.height <= 1) {
+        continue;
+      }
+      const path = normalizeVaultPath(sourceElement.dataset.noteDrawSourcePath || this.file?.path || "");
+      let byPath = grouped.get(element);
+      if (!byPath) {
+        byPath = /* @__PURE__ */ new Map();
+        grouped.set(element, byPath);
+      }
+      const existing = byPath.get(path);
+      if (existing) {
+        existing.start = Math.min(existing.start, start);
+        existing.end = Math.max(existing.end, end);
+        continue;
+      }
+      byPath.set(path, {
+        element,
+        sourceElement,
+        path,
+        start,
+        end,
+        top: rect.top,
+        bottom: rect.bottom,
+        order: order++
+      });
+    }
+    return Array.from(grouped.values()).flatMap((byPath) => Array.from(byPath.values()));
+  }
   noteFlowAnchorElement(noteFlow) {
     const path = normalizeVaultPath(noteFlow?.path || this.file?.path || "");
     const line = Number(noteFlow?.line);
     if (!Number.isFinite(line)) {
       return null;
     }
-    const candidates = Array.from(this.previewEl.querySelectorAll?.("[data-note-draw-line-start]") || []).filter((element) => {
-      const start = parseInteger(element.dataset.noteDrawLineStart);
-      const end = parseInteger(element.dataset.noteDrawLineEnd) ?? start;
-      const elementPath = normalizeVaultPath(element.dataset.noteDrawSourcePath || this.file?.path || "");
-      return elementPath === path && Number.isFinite(start) && line >= start && line <= end;
+    const candidates = this.noteFlowCandidates().filter((candidate) => {
+      return candidate.path === path && line >= candidate.start && line <= candidate.end;
     });
-    candidates.sort((a, b) => a.getBoundingClientRect().height - b.getBoundingClientRect().height);
+    candidates.sort((a, b) => a.bottom - a.top - (b.bottom - b.top) || a.order - b.order);
     return candidates[0] || null;
   }
   clearNoteFlowLayout() {
-    for (const [element, state] of this.noteFlowStyledElements || []) {
+    for (const [element, states] of this.noteFlowStyledElements || []) {
       if (!element?.style) {
         continue;
       }
-      if (state.value) {
-        element.style.setProperty(state.property, state.value, state.priority || "");
-      } else {
-        element.style.removeProperty(state.property);
+      for (const state of states.values()) {
+        if (state.value) {
+          element.style.setProperty(state.property, state.value, state.priority || "");
+        } else {
+          element.style.removeProperty(state.property);
+        }
       }
       element.classList.remove("notedraw-note-flow-anchor");
     }
     this.noteFlowStyledElements?.clear();
+  }
+  repairRunawayNoteFlowSurface(referenceHeight) {
+    const viewportHeight = Math.max(1, this.previewEl?.clientHeight || this.canvasRenderHeight || 1);
+    const { stableHeight, runawayThreshold } = noteFlowSurfaceRepairLimits(referenceHeight, viewportHeight);
+    let repaired = false;
+    for (const element of this.previewEl.querySelectorAll?.(".markdown-preview-sizer, .markdown-preview-section") || []) {
+      const minHeight = Number.parseFloat(element.style?.minHeight) || 0;
+      if (minHeight > runawayThreshold) {
+        element.style.removeProperty("min-height");
+        repaired = true;
+      }
+    }
+    for (const element of this.previewEl.querySelectorAll?.(".notedraw-note-flow-anchor") || []) {
+      for (const property of ["margin-top", "margin-bottom"]) {
+        if ((Number.parseFloat(element.style.getPropertyValue(property)) || 0) > runawayThreshold) {
+          element.style.removeProperty(property);
+          repaired = true;
+        }
+      }
+    }
+    if (this.canvasCssHeight > runawayThreshold) {
+      this.canvasCssHeight = stableHeight;
+      this.canvasWindowTop = clamp9(this.canvasWindowTop, 0, Math.max(0, stableHeight - Math.min(stableHeight, this.canvasRenderHeight)));
+      repaired = true;
+    }
+    for (const element of [this.embedLayer, this.readingZoomExtent]) {
+      if ((Number.parseFloat(element?.style?.height) || 0) > runawayThreshold) {
+        element.style.setProperty("height", `${Math.ceil(stableHeight * (element === this.readingZoomExtent ? this.readingZoomScale() : 1))}px`);
+        repaired = true;
+      }
+    }
+    if (repaired) {
+      this.responsivePointsInitialized = false;
+      this.responsiveLayoutContext = null;
+      this.responsiveLayoutSignature = "";
+    }
+    return repaired;
   }
   applyNoteFlowLayout() {
     if (!this.supportsNoteFlow() || !this.drawingsVisible || !this.canvas?.isConnected) {
       this.clearNoteFlowLayout();
       return false;
     }
-    const flows = (this.drawingData?.strokes || []).filter((stroke) => stroke?.noteFlow?.enabled && !isConnectorStroke(stroke)).map((stroke) => ({
-      stroke,
-      bounds: getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight())
-    })).filter((item) => item.bounds).sort((a, b) => a.bounds.minY - b.bounds.minY);
+    const contentFrame = this.getResponsiveContentFrame();
+    const viewportHeight = Math.max(1, this.previewEl?.clientHeight || this.canvasRenderHeight || 1);
+    const flows = (this.drawingData?.strokes || []).filter((stroke) => stroke?.noteFlow?.enabled && !isConnectorStroke(stroke)).map((stroke) => {
+      const bounds = getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight());
+      if (!bounds) {
+        return null;
+      }
+      const stabilized = stabilizeNoteFlowBounds({
+        bounds,
+        layout: normalizeElementLayout(stroke.layout),
+        contentWidth: contentFrame.width,
+        viewportHeight
+      });
+      return { stroke, ...stabilized };
+    }).filter(Boolean).sort((a, b) => a.bounds.minY - b.bounds.minY);
     if (!flows.length) {
       const changed2 = Boolean(this.noteFlowLayoutSignature);
       this.clearNoteFlowLayout();
       this.noteFlowLayoutSignature = "";
       return changed2;
     }
+    const runawayReferenceHeight = flows.filter((item) => item.runaway).reduce((height, item) => Math.max(height, item.referenceHeight), 0);
+    if (runawayReferenceHeight > 0) {
+      this.repairRunawayNoteFlowSurface(runawayReferenceHeight);
+    }
     const canvasRect = this.canvas.getBoundingClientRect();
     const scaleY = canvasRect.height > 0 ? canvasRect.height / Math.max(1, this.canvasRenderHeight) : 1;
     const offsets = /* @__PURE__ */ new Map();
+    let migratedAnchor = false;
     for (const item of flows) {
-      if (!Number.isFinite(item.stroke.noteFlow?.line)) {
+      if (!Number.isFinite(item.stroke.noteFlow?.line) || !["before", "after"].includes(item.stroke.noteFlow?.side)) {
         item.stroke.noteFlow = this.captureNoteFlowAnchor(item.stroke);
+        migratedAnchor = true;
       }
-      const anchor = this.noteFlowAnchorElement(item.stroke.noteFlow);
-      const first = anchor || Array.from(this.previewEl.querySelectorAll?.("[data-note-draw-line-start]") || [])[0] || null;
-      if (!first) {
+      let anchor = this.noteFlowAnchorElement(item.stroke.noteFlow);
+      if (!anchor) {
+        const recaptured = this.captureNoteFlowAnchor(item.stroke);
+        anchor = this.noteFlowAnchorElement(recaptured);
+        if (anchor) {
+          item.stroke.noteFlow = recaptured;
+          migratedAnchor = true;
+        }
+      }
+      const element = anchor?.element || null;
+      if (!element) {
         continue;
       }
-      const property = anchor ? "margin-bottom" : "margin-top";
-      const previousState = this.noteFlowStyledElements.get(first);
-      if (previousState && previousState.property !== property) {
-        if (previousState.value) {
-          first.style.setProperty(previousState.property, previousState.value, previousState.priority || "");
-        } else {
-          first.style.removeProperty(previousState.property);
-        }
-        this.noteFlowStyledElements.delete(first);
+      const side = item.stroke.noteFlow.side;
+      const property = side === "after" ? "margin-bottom" : "margin-top";
+      let states = this.noteFlowStyledElements.get(element);
+      if (!states) {
+        states = /* @__PURE__ */ new Map();
+        this.noteFlowStyledElements.set(element, states);
       }
-      if (!this.noteFlowStyledElements.has(first)) {
-        const value = first.style.getPropertyValue(property);
-        const priority = first.style.getPropertyPriority(property);
-        this.noteFlowStyledElements.set(first, {
+      if (!states.has(property)) {
+        const value = element.style.getPropertyValue(property);
+        const priority = element.style.getPropertyPriority(property);
+        states.set(property, {
           property,
           value,
           priority,
-          base: Number.parseFloat(window.getComputedStyle(first).getPropertyValue(property)) || 0,
+          base: Number.parseFloat(window.getComputedStyle(element).getPropertyValue(property)) || 0,
           applied: 0
         });
       }
-      const state = this.noteFlowStyledElements.get(first);
-      const rect = first.getBoundingClientRect();
+      const state = states.get(property);
+      const rect = element.getBoundingClientRect();
       const desiredBottom = canvasRect.top + (item.bounds.maxY - this.canvasWindowTop) * scaleY + Number(item.stroke.noteFlow.gap || 12) * scaleY;
-      const edge = anchor ? rect.bottom : rect.top - state.applied * scaleY;
-      const required = Math.max(0, (desiredBottom - edge) / Math.max(0.01, scaleY));
-      const offset = Math.max(offsets.get(first) || 0, required);
-      offsets.set(first, offset);
+      const required = noteFlowRequiredOffset({
+        side,
+        anchorTop: rect.top,
+        anchorBottom: rect.bottom,
+        desiredBottom,
+        applied: state.applied,
+        scale: scaleY
+      });
+      let elementOffsets = offsets.get(element);
+      if (!elementOffsets) {
+        elementOffsets = /* @__PURE__ */ new Map();
+        offsets.set(element, elementOffsets);
+      }
+      elementOffsets.set(property, Math.max(elementOffsets.get(property) || 0, required));
     }
     let restoredStaleAnchor = false;
-    for (const [element, state] of Array.from(this.noteFlowStyledElements.entries())) {
-      if (offsets.has(element)) {
-        continue;
+    for (const [element, states] of Array.from(this.noteFlowStyledElements.entries())) {
+      const elementOffsets = offsets.get(element);
+      for (const [property, state] of Array.from(states.entries())) {
+        if (elementOffsets?.has(property)) {
+          continue;
+        }
+        if (state.value) {
+          element.style.setProperty(state.property, state.value, state.priority || "");
+        } else {
+          element.style.removeProperty(state.property);
+        }
+        states.delete(property);
+        restoredStaleAnchor = true;
       }
-      if (state.value) {
-        element.style.setProperty(state.property, state.value, state.priority || "");
-      } else {
-        element.style.removeProperty(state.property);
+      if (!states.size) {
+        element.classList.remove("notedraw-note-flow-anchor");
+        this.noteFlowStyledElements.delete(element);
       }
-      element.classList.remove("notedraw-note-flow-anchor");
-      this.noteFlowStyledElements.delete(element);
-      restoredStaleAnchor = true;
     }
-    for (const [element, offset] of offsets) {
-      const state = this.noteFlowStyledElements.get(element);
-      const nextValue = `${Math.ceil(state.base + offset)}px`;
-      if (element.style.getPropertyValue(state.property) !== nextValue || element.style.getPropertyPriority(state.property) !== "important") {
-        element.style.setProperty(state.property, nextValue, "important");
+    for (const [element, elementOffsets] of offsets) {
+      const states = this.noteFlowStyledElements.get(element);
+      for (const [property, offset] of elementOffsets) {
+        const state = states.get(property);
+        const nextValue = `${Math.ceil(state.base + offset)}px`;
+        if (element.style.getPropertyValue(property) !== nextValue || element.style.getPropertyPriority(property) !== "important") {
+          element.style.setProperty(property, nextValue, "important");
+        }
+        state.applied = offset;
       }
-      state.applied = offset;
       element.classList.add("notedraw-note-flow-anchor");
     }
-    const signature = Array.from(offsets, ([element, offset]) => `${element.dataset.noteDrawSourcePath || ""}:${element.dataset.noteDrawLineStart || ""}:${Math.round(offset)}`).join("|");
-    const changed = restoredStaleAnchor || signature !== this.noteFlowLayoutSignature;
+    const signature = Array.from(offsets, ([element, elementOffsets]) => {
+      return Array.from(elementOffsets, ([property, offset]) => `${property}:${Math.round(offset)}`).join(",");
+    }).join("|");
+    const changed = migratedAnchor || restoredStaleAnchor || signature !== this.noteFlowLayoutSignature;
     this.noteFlowLayoutSignature = signature;
     return changed;
   }
@@ -10433,10 +10905,10 @@ var PreviewDrawingController = class {
       return null;
     }
     return {
-      minX: clamp8(bounds.minX / width, 0, 1),
-      minY: clamp8(bounds.minY / height, 0, 1),
-      maxX: clamp8(bounds.maxX / width, 0, 1),
-      maxY: clamp8(bounds.maxY / height, 0, 1)
+      minX: clamp9(bounds.minX / width, 0, 1),
+      minY: clamp9(bounds.minY / height, 0, 1),
+      maxX: clamp9(bounds.maxX / width, 0, 1),
+      maxY: clamp9(bounds.maxY / height, 0, 1)
     };
   }
   getSelectedStrokeNormalizedBounds() {
@@ -10483,8 +10955,8 @@ var PreviewDrawingController = class {
     const delta = this.computeSnapDeltaForNormalizedBounds(bounds, []);
     return {
       ...point,
-      x: clamp8((x + delta.dx * width) / width, 0, 1),
-      y: clamp8((y + delta.dy * height) / height, 0, 1)
+      x: clamp9((x + delta.dx * width) / width, 0, 1),
+      y: clamp9((y + delta.dy * height) / height, 0, 1)
     };
   }
   reorderSelectedStrokes(direction) {
@@ -11301,27 +11773,27 @@ function sanitizeSettings(settings) {
   return {
     language: normalizeLanguageCode(input.language ?? DEFAULT_SETTINGS.language),
     defaultPenColor: isCssColor(input.defaultPenColor) ? input.defaultPenColor : DEFAULT_SETTINGS.defaultPenColor,
-    defaultPenWidth: clamp8(Number(input.defaultPenWidth ?? DEFAULT_SETTINGS.defaultPenWidth), MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH),
-    defaultPenOpacity: clamp8(Number(input.defaultPenOpacity ?? DEFAULT_SETTINGS.defaultPenOpacity), 0, 1),
+    defaultPenWidth: clamp9(Number(input.defaultPenWidth ?? DEFAULT_SETTINGS.defaultPenWidth), MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH),
+    defaultPenOpacity: clamp9(Number(input.defaultPenOpacity ?? DEFAULT_SETTINGS.defaultPenOpacity), 0, 1),
     defaultWatercolorColor: isCssColor(input.defaultWatercolorColor) ? input.defaultWatercolorColor : DEFAULT_SETTINGS.defaultWatercolorColor,
-    defaultWatercolorWidth: clamp8(Number(input.defaultWatercolorWidth ?? DEFAULT_SETTINGS.defaultWatercolorWidth), MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH),
-    defaultWatercolorOpacity: clamp8(Number(input.defaultWatercolorOpacity ?? DEFAULT_SETTINGS.defaultWatercolorOpacity), 0, 1),
+    defaultWatercolorWidth: clamp9(Number(input.defaultWatercolorWidth ?? DEFAULT_SETTINGS.defaultWatercolorWidth), MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH),
+    defaultWatercolorOpacity: clamp9(Number(input.defaultWatercolorOpacity ?? DEFAULT_SETTINGS.defaultWatercolorOpacity), 0, 1),
     lastToolMode: normalizeToolMode(input.lastToolMode),
     lastBrushMode: input.lastBrushMode === BRUSH_WATERCOLOR ? BRUSH_WATERCOLOR : BRUSH_PEN,
     lastPenVariant: normalizeBrushVariant(BRUSH_PEN, input.lastPenVariant),
     lastWatercolorVariant: normalizeBrushVariant(BRUSH_WATERCOLOR, input.lastWatercolorVariant),
     lastTextPreset: normalizeTextPreset(input.lastTextPreset),
-    lastReadingZoom: clamp8(Number(input.lastReadingZoom ?? DEFAULT_SETTINGS.lastReadingZoom), MIN_READING_ZOOM, MAX_READING_ZOOM),
+    lastReadingZoom: clamp9(Number(input.lastReadingZoom ?? DEFAULT_SETTINGS.lastReadingZoom), MIN_READING_ZOOM, MAX_READING_ZOOM),
     mindMapAffectsSource: input.mindMapAffectsSource !== false,
-    toolbarTopOffset: clamp8(Number(input.toolbarTopOffset ?? DEFAULT_SETTINGS.toolbarTopOffset), 0, 48),
-    longPressMs: clamp8(Number(input.longPressMs ?? DEFAULT_SETTINGS.longPressMs), MIN_LONG_PRESS_MS, MAX_LONG_PRESS_MS),
-    selectTapDistance: clamp8(Number(input.selectTapDistance ?? DEFAULT_SETTINGS.selectTapDistance), MIN_SELECT_TAP_DISTANCE, MAX_SELECT_TAP_DISTANCE),
-    selectStrokePadding: clamp8(Number(input.selectStrokePadding ?? DEFAULT_SETTINGS.selectStrokePadding), MIN_SELECT_STROKE_PADDING, MAX_SELECT_STROKE_PADDING),
-    selectedStrokeAlpha: clamp8(Number(input.selectedStrokeAlpha ?? DEFAULT_SETTINGS.selectedStrokeAlpha), MIN_SELECTED_STROKE_ALPHA, MAX_SELECTED_STROKE_ALPHA),
-    drawingInterpolationStep: clamp8(Number(input.drawingInterpolationStep ?? DEFAULT_SETTINGS.drawingInterpolationStep), MIN_DRAWING_INTERPOLATION_STEP_PX, MAX_DRAWING_INTERPOLATION_STEP_PX),
-    drawingMinPointDistance: clamp8(Number(input.drawingMinPointDistance ?? DEFAULT_SETTINGS.drawingMinPointDistance), MIN_DRAWING_MIN_POINT_DISTANCE_PX, MAX_DRAWING_MIN_POINT_DISTANCE_PX),
-    drawingCompactDistance: clamp8(Number(input.drawingCompactDistance ?? DEFAULT_SETTINGS.drawingCompactDistance), MIN_DRAWING_COMPACT_DISTANCE_PX, MAX_DRAWING_COMPACT_DISTANCE_PX),
-    autoSaveDelayMs: clamp8(Number(input.autoSaveDelayMs ?? DEFAULT_SETTINGS.autoSaveDelayMs), MIN_AUTO_SAVE_DELAY_MS, MAX_AUTO_SAVE_DELAY_MS),
+    toolbarTopOffset: clamp9(Number(input.toolbarTopOffset ?? DEFAULT_SETTINGS.toolbarTopOffset), 0, 48),
+    longPressMs: clamp9(Number(input.longPressMs ?? DEFAULT_SETTINGS.longPressMs), MIN_LONG_PRESS_MS, MAX_LONG_PRESS_MS),
+    selectTapDistance: clamp9(Number(input.selectTapDistance ?? DEFAULT_SETTINGS.selectTapDistance), MIN_SELECT_TAP_DISTANCE, MAX_SELECT_TAP_DISTANCE),
+    selectStrokePadding: clamp9(Number(input.selectStrokePadding ?? DEFAULT_SETTINGS.selectStrokePadding), MIN_SELECT_STROKE_PADDING, MAX_SELECT_STROKE_PADDING),
+    selectedStrokeAlpha: clamp9(Number(input.selectedStrokeAlpha ?? DEFAULT_SETTINGS.selectedStrokeAlpha), MIN_SELECTED_STROKE_ALPHA, MAX_SELECTED_STROKE_ALPHA),
+    drawingInterpolationStep: clamp9(Number(input.drawingInterpolationStep ?? DEFAULT_SETTINGS.drawingInterpolationStep), MIN_DRAWING_INTERPOLATION_STEP_PX, MAX_DRAWING_INTERPOLATION_STEP_PX),
+    drawingMinPointDistance: clamp9(Number(input.drawingMinPointDistance ?? DEFAULT_SETTINGS.drawingMinPointDistance), MIN_DRAWING_MIN_POINT_DISTANCE_PX, MAX_DRAWING_MIN_POINT_DISTANCE_PX),
+    drawingCompactDistance: clamp9(Number(input.drawingCompactDistance ?? DEFAULT_SETTINGS.drawingCompactDistance), MIN_DRAWING_COMPACT_DISTANCE_PX, MAX_DRAWING_COMPACT_DISTANCE_PX),
+    autoSaveDelayMs: clamp9(Number(input.autoSaveDelayMs ?? DEFAULT_SETTINGS.autoSaveDelayMs), MIN_AUTO_SAVE_DELAY_MS, MAX_AUTO_SAVE_DELAY_MS),
     enableDebugLog: Boolean(input.enableDebugLog)
   };
 }
@@ -11477,20 +11949,20 @@ function contrastTextColor(hexColor) {
   return luminance > 0.58 ? "#111827" : "#ffffff";
 }
 function brushWidthToPaletteSlider(value) {
-  const width = clamp8(Number(value) || MIN_BRUSH_WIDTH, MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH);
+  const width = clamp9(Number(value) || MIN_BRUSH_WIDTH, MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH);
   const ratio = Math.log(width / MIN_BRUSH_WIDTH) / Math.log(MAX_BRUSH_WIDTH / MIN_BRUSH_WIDTH);
-  return Math.round(clamp8(ratio, 0, 1) * 1e3);
+  return Math.round(clamp9(ratio, 0, 1) * 1e3);
 }
 function paletteSliderToBrushWidth(value) {
-  const ratio = clamp8(Number(value) / 1e3, 0, 1);
+  const ratio = clamp9(Number(value) / 1e3, 0, 1);
   const width = MIN_BRUSH_WIDTH * Math.pow(MAX_BRUSH_WIDTH / MIN_BRUSH_WIDTH, ratio);
   return Math.round(width * 100) / 100;
 }
 function opacityToPaletteSlider(value) {
-  return Math.round(Math.sqrt(clamp8(Number(value), 0, 1)) * 1e3);
+  return Math.round(Math.sqrt(clamp9(Number(value), 0, 1)) * 1e3);
 }
 function paletteSliderToOpacity(value) {
-  const normalized = clamp8(Number(value) / 1e3, 0, 1);
+  const normalized = clamp9(Number(value) / 1e3, 0, 1);
   return Math.round(normalized * normalized * 1e4) / 1e4;
 }
 function isSourceTextTarget(target, previewEl) {
@@ -11766,7 +12238,7 @@ function normalizeCssColor(value) {
   if (!rgb) {
     return "";
   }
-  const toHex = (part) => clamp8(Math.round(Number(part)), 0, 255).toString(16).padStart(2, "0");
+  const toHex = (part) => clamp9(Math.round(Number(part)), 0, 255).toString(16).padStart(2, "0");
   return `#${toHex(rgb[1])}${toHex(rgb[2])}${toHex(rgb[3])}`;
 }
 function isSafeCssSize(value) {
@@ -12017,9 +12489,76 @@ function findWorkspaceDrawingSurface(view) {
   ].filter((element) => element?.isConnected && !element.closest?.(".notedraw-body-control"));
   return candidates.find((element) => element.getBoundingClientRect?.().width > 8 && element.getBoundingClientRect?.().height > 8) || candidates[0] || null;
 }
+function findRootPreviewsForView(view) {
+  const rendererPreview = view?.previewMode?.renderer?.previewEl;
+  const candidates = [rendererPreview, ...Array.from(view?.containerEl?.querySelectorAll(".markdown-preview-view") || [])];
+  return Array.from(new Set(candidates)).filter((preview) => preview?.isConnected && !isEmbeddedPreview(preview));
+}
 function findRootPreviewForView(view) {
-  const previews = Array.from(view?.containerEl?.querySelectorAll(".markdown-preview-view") || []);
-  return previews.find((preview) => !isEmbeddedPreview(preview) && isElementVisibleEnough(preview)) || previews.find((preview) => !isEmbeddedPreview(preview)) || null;
+  const previews = findRootPreviewsForView(view);
+  const rendererPreview = view?.previewMode?.renderer?.previewEl;
+  return previews.find((preview) => preview === rendererPreview) || previews.find((preview) => isElementVisibleEnough(preview)) || previews[0] || null;
+}
+function rootPreviewSizer(preview) {
+  return preview?.querySelector?.(":scope > .markdown-preview-sizer") || preview?.querySelector?.(".markdown-preview-sizer") || null;
+}
+function rootPreviewHasRenderedContent(preview) {
+  const sizer = rootPreviewSizer(preview);
+  if (!sizer) {
+    return false;
+  }
+  const ignored = ".mod-ui, .mod-header, .mod-footer, .markdown-preview-pusher, .notedraw-reading-zoom-extent, .notedraw-embed-layer, .notedraw-static-canvas, .notedraw-canvas";
+  for (const section of sizer.querySelectorAll?.(".markdown-preview-section") || []) {
+    if (Array.from(section.children || []).some((element) => !element.matches?.(ignored))) {
+      return true;
+    }
+  }
+  return Array.from(sizer.children || []).some((element) => {
+    return !element.matches?.(`${ignored}, .markdown-preview-section`);
+  });
+}
+function markdownViewHasSourceContent(view) {
+  const candidates = [view?.data];
+  try {
+    candidates.push(view?.editor?.getValue?.());
+  } catch (error) {
+    void error;
+  }
+  if (candidates.some((value) => typeof value === "string" && value.trim().length > 0)) {
+    return true;
+  }
+  return Number(view?.file?.stat?.size) > 0;
+}
+function rootPreviewLifecycleState(view, preview) {
+  return {
+    sourceMode: isSourceMode(view),
+    visible: isElementVisibleEnough(preview),
+    hasSurface: Boolean(preview && rootPreviewSizer(preview)),
+    sourceHasContent: markdownViewHasSourceContent(view),
+    renderedContent: rootPreviewHasRenderedContent(preview)
+  };
+}
+function isRootPreviewReady(view, preview) {
+  return shouldMountRootPreview(rootPreviewLifecycleState(view, preview));
+}
+function resetDormantRootPreview(view, preview) {
+  if (!preview || !shouldResetDormantRootPreview(rootPreviewLifecycleState(view, preview))) {
+    return false;
+  }
+  cleanupDrawingUi(preview);
+  const sizer = rootPreviewSizer(preview);
+  for (const property of ["min-height", "padding-bottom"]) {
+    sizer?.style?.removeProperty(property);
+  }
+  for (const anchor of preview.querySelectorAll?.(".notedraw-note-flow-anchor") || []) {
+    anchor.style?.removeProperty("margin-top");
+    anchor.style?.removeProperty("margin-bottom");
+    anchor.classList?.remove("notedraw-note-flow-anchor");
+  }
+  if (Number(preview.scrollTop) !== 0) {
+    preview.scrollTop = 0;
+  }
+  return true;
 }
 function findPrimaryMarkdownSurface(view) {
   const source = findSourceSurfaceForView(view);
@@ -12584,7 +13123,8 @@ function normalizeNoteFlow(value) {
     enabled: true,
     path: normalizeVaultPath(value.path || ""),
     line: Number.isFinite(line) && line >= 0 ? line : null,
-    gap: clamp8(Number(value.gap) || 12, 4, 64)
+    side: ["before", "after"].includes(value.side) ? value.side : null,
+    gap: clamp9(Number(value.gap) || 12, 4, 64)
   };
 }
 function normalizeMindMapNode(value) {
@@ -12810,9 +13350,9 @@ function normalizeStroke(stroke) {
     brush,
     variant: normalizeBrushVariant(brush, stroke?.variant),
     color: typeof stroke?.color === "string" ? stroke.color : "#e53935",
-    width: Number.isFinite(Number(stroke?.width)) ? clamp8(Number(stroke.width), MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH) : 3,
-    opacity: clamp8(Number(stroke?.opacity ?? DEFAULT_PEN_OPACITY), 0, 1),
-    count: clamp8(Math.round(Number(stroke?.count) || 1), 1, MAX_PEN_COUNT),
+    width: Number.isFinite(Number(stroke?.width)) ? clamp9(Number(stroke.width), MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH) : 3,
+    opacity: clamp9(Number(stroke?.opacity ?? DEFAULT_PEN_OPACITY), 0, 1),
+    count: clamp9(Math.round(Number(stroke?.count) || 1), 1, MAX_PEN_COUNT),
     text: typeof stroke?.text === "string" ? stroke.text : "",
     render: normalizeTextRenderMode(stroke?.render),
     assetPath: normalizeVaultPath(stroke?.assetPath || ""),
@@ -12820,10 +13360,10 @@ function normalizeStroke(stroke) {
     assetMime: typeof stroke?.assetMime === "string" ? stroke.assetMime : "",
     assetSize: Number.isFinite(Number(stroke?.assetSize)) ? Math.max(0, Number(stroke.assetSize)) : 0,
     exportImageDataUrl: normalizeImageDataUrl(stroke?.exportImageDataUrl),
-    previewWidth: Number.isFinite(Number(stroke?.previewWidth)) ? clamp8(Number(stroke.previewWidth), 80, 900) : 260,
-    previewHeight: Number.isFinite(Number(stroke?.previewHeight)) ? clamp8(Number(stroke.previewHeight), 40, 700) : 160,
-    textWidth: Number.isFinite(Number(stroke?.textWidth)) && Number(stroke.textWidth) > 0 ? clamp8(Number(stroke.textWidth), 24, 900) : null,
-    fontSize: Number.isFinite(Number(stroke?.fontSize)) ? clamp8(Number(stroke.fontSize), 10, 72) : 18,
+    previewWidth: Number.isFinite(Number(stroke?.previewWidth)) ? clamp9(Number(stroke.previewWidth), 80, 900) : 260,
+    previewHeight: Number.isFinite(Number(stroke?.previewHeight)) ? clamp9(Number(stroke.previewHeight), 40, 700) : 160,
+    textWidth: Number.isFinite(Number(stroke?.textWidth)) && Number(stroke.textWidth) > 0 ? clamp9(Number(stroke.textWidth), 24, 900) : null,
+    fontSize: Number.isFinite(Number(stroke?.fontSize)) ? clamp9(Number(stroke.fontSize), 10, 72) : 18,
     bold: Boolean(stroke?.bold),
     code: Boolean(stroke?.code),
     boxed: Boolean(stroke?.boxed),
@@ -12837,8 +13377,8 @@ function normalizeStroke(stroke) {
     mindMapNode: normalizeMindMapNode(stroke?.mindMapNode),
     layout,
     points: points.map((point) => ({
-      x: clamp8(Number(point?.x), 0, 1),
-      y: clamp8(Number(point?.y), 0, 1),
+      x: clamp9(Number(point?.x), 0, 1),
+      y: clamp9(Number(point?.y), 0, 1),
       t: Number.isFinite(Number(point?.t)) ? Number(point.t) : Date.now(),
       anchor: normalizeResponsiveAnchor(point?.anchor)
     })).filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
@@ -12906,7 +13446,7 @@ function createTextPreset(preset, text, color) {
     return { kind: TOOL_TEXT, text: normalized, render: TEXT_RENDER_PLAIN, color: "#2563eb", fontSize: 17, bold: true, code: false, boxed: true, file: false, uiRole: "button", buttonStyle: "outline", snap: true };
   }
   if (["circle", "buttonPill"].includes(preset)) {
-    return { kind: TOOL_TEXT, text: normalized, render: TEXT_RENDER_PLAIN, color: "#7c3aed", fontSize: 17, bold: true, code: false, boxed: true, file: false, uiRole: "button", buttonStyle: preset === "circle" ? "circle" : "pill", snap: true };
+    return { kind: TOOL_TEXT, text: normalized, render: TEXT_RENDER_PLAIN, color: "#7c3aed", fontSize: 17, bold: true, code: false, boxed: true, file: false, uiRole: "button", buttonStyle: preset === "circle" ? "solid" : "pill", snap: true };
   }
   if (["arrowUp", "arrowDown", "arrowLeft", "arrowRight"].includes(preset)) {
     return { kind: TOOL_TEXT, text: normalized, render: TEXT_RENDER_PLAIN, color: "#111827", fontSize: 28, bold: true, code: false, boxed: false, file: false, uiRole: "arrow", buttonStyle: "", snap: true };
@@ -13463,7 +14003,7 @@ function collectRenderedLineAnchors(root, canvas, canvasWindowTop, visualScale =
       bottom: (rect.bottom - canvasRect.top) / scale + canvasWindowTop,
       height: rect.height / scale,
       area: rect.width * rect.height / (scale * scale),
-      confidence: clamp8(Number(element.dataset.noteDrawLineConfidence ?? 1), 0, 1)
+      confidence: clamp9(Number(element.dataset.noteDrawLineConfidence ?? 1), 0, 1)
     });
   }
   return anchors;
@@ -13509,13 +14049,13 @@ function captureRenderedLineLocation(anchors, canvasX, canvasY, { maxDistance = 
   if (!anchor) {
     return null;
   }
-  const ratio = clamp8((canvasY - anchor.top) / Math.max(1, anchor.height), 0, 0.999999);
+  const ratio = clamp9((canvasY - anchor.top) / Math.max(1, anchor.height), 0, 0.999999);
   const distance = Number(anchor.distance || 0);
   const inside = canvasY >= anchor.top && canvasY <= anchor.bottom;
   return {
     path: anchor.path,
     line: anchor.start + ratio * Math.max(1, anchor.end - anchor.start + 1),
-    lineConfidence: inside ? anchor.confidence : Math.min(anchor.confidence, clamp8(1 - distance / Math.max(1, maxDistance), 0, 0.55))
+    lineConfidence: inside ? anchor.confidence : Math.min(anchor.confidence, clamp9(1 - distance / Math.max(1, maxDistance), 0, 0.55))
   };
 }
 function projectRenderedLineLocation(anchors, path, line) {
@@ -13530,7 +14070,7 @@ function projectRenderedLineLocation(anchors, path, line) {
   if (!anchor) {
     return NaN;
   }
-  const ratio = clamp8((lineNumber - anchor.start) / Math.max(1, anchor.end - anchor.start + 1), 0, 1);
+  const ratio = clamp9((lineNumber - anchor.start) / Math.max(1, anchor.end - anchor.start + 1), 0, 1);
   return anchor.top + ratio * anchor.height;
 }
 function captureCodeMirrorLineLocation(codeMirror, clientX, clientY, sourcePath) {
@@ -13545,7 +14085,7 @@ function captureCodeMirrorLineLocation(codeMirror, clientX, clientY, sourcePath)
     const endRect = codeMirror.coordsAtPos?.(line.to);
     const top = Math.min(startRect?.top ?? clientY, endRect?.top ?? startRect?.top ?? clientY);
     const bottom = Math.max(startRect?.bottom ?? clientY + 1, endRect?.bottom ?? startRect?.bottom ?? clientY + 1);
-    const ratio = clamp8((clientY - top) / Math.max(1, bottom - top), 0, 0.999999);
+    const ratio = clamp9((clientY - top) / Math.max(1, bottom - top), 0, 0.999999);
     return {
       path: normalizeVaultPath(sourcePath),
       line: Math.max(0, line.number - 1) + ratio,
@@ -13575,7 +14115,7 @@ function projectCodeMirrorLineLocation(codeMirror, linePosition) {
     }
     const top = Math.min(startRect?.top ?? endRect.top, endRect?.top ?? startRect.top);
     const bottom = Math.max(startRect?.bottom ?? endRect.bottom, endRect?.bottom ?? startRect.bottom);
-    return top + clamp8(lineNumber - Math.floor(lineNumber), 0, 1) * Math.max(1, bottom - top);
+    return top + clamp9(lineNumber - Math.floor(lineNumber), 0, 1) * Math.max(1, bottom - top);
   } catch (error) {
     void error;
     return NaN;
@@ -13625,7 +14165,7 @@ function measureVisibleSurfaceWindow(previewEl, scrollContainer, documentHeight,
   if (scrollContainer === previewEl) {
     const viewportHeight = Math.max(1, (previewEl.clientHeight || previewRect?.height || window.innerHeight || 1) / scale);
     return {
-      top: clamp8((Number(previewEl.scrollTop) || 0) / scale, 0, Math.max(0, height - viewportHeight)),
+      top: clamp9((Number(previewEl.scrollTop) || 0) / scale, 0, Math.max(0, height - viewportHeight)),
       height: Math.min(height, viewportHeight)
     };
   }
@@ -13644,7 +14184,7 @@ function measureVisibleSurfaceWindow(previewEl, scrollContainer, documentHeight,
   const clientHeight = Number(scrollContainer?.clientHeight) || Number(viewportRect.height) || 0;
   const atScrollEnd = scrollHeight > clientHeight && scrollTop + clientHeight >= scrollHeight - 3;
   return {
-    top: atScrollEnd ? Math.max(0, height - visibleHeight) : clamp8(viewportTop, 0, Math.max(0, height - visibleHeight)),
+    top: atScrollEnd ? Math.max(0, height - visibleHeight) : clamp9(viewportTop, 0, Math.max(0, height - visibleHeight)),
     height: visibleHeight
   };
 }
@@ -13768,56 +14308,22 @@ function pointDistanceOnCanvas(a, b, width, height) {
     ((a?.y || 0) - (b?.y || 0)) * Math.max(1, height || 1)
   );
 }
-function buildBoundConnectorPoints(fromBounds, toBounds, canvasWidth, canvasHeight) {
-  const fromCenter = {
-    x: (fromBounds.minX + fromBounds.maxX) / 2,
-    y: (fromBounds.minY + fromBounds.maxY) / 2
-  };
-  const toCenter = {
-    x: (toBounds.minX + toBounds.maxX) / 2,
-    y: (toBounds.minY + toBounds.maxY) / 2
-  };
-  const dx = toCenter.x - fromCenter.x;
-  const dy = toCenter.y - fromCenter.y;
-  const horizontal = Math.abs(dx) >= Math.abs(dy) * 0.62;
-  const from = horizontal ? {
-    x: dx >= 0 ? fromBounds.maxX : fromBounds.minX,
-    y: fromCenter.y
-  } : {
-    x: fromCenter.x,
-    y: dy >= 0 ? fromBounds.maxY : fromBounds.minY
-  };
-  const to = horizontal ? {
-    x: dx >= 0 ? toBounds.minX : toBounds.maxX,
-    y: toCenter.y
-  } : {
-    x: toCenter.x,
-    y: dy >= 0 ? toBounds.minY : toBounds.maxY
-  };
-  const control = horizontal ? { x: (from.x + to.x) / 2, y: from.y } : { x: from.x, y: (from.y + to.y) / 2 };
-  return [from, control, to].map((point) => ({
-    x: clamp8(point.x / Math.max(1, canvasWidth), 0, 1),
-    y: clamp8(point.y / Math.max(1, canvasHeight), 0, 1),
-    t: Date.now(),
-    anchor: null
-  }));
-}
 function buildFreeConnectorPoints(fromPoint, toPoint, canvasWidth, canvasHeight) {
   const width = Math.max(1, Number(canvasWidth) || 1);
   const height = Math.max(1, Number(canvasHeight) || 1);
   const from = {
-    x: clamp8(Number(fromPoint?.x) || 0, 0, 1) * width,
-    y: clamp8(Number(fromPoint?.y) || 0, 0, 1) * height
+    x: clamp9(Number(fromPoint?.x) || 0, 0, 1) * width,
+    y: clamp9(Number(fromPoint?.y) || 0, 0, 1) * height
   };
   const to = {
-    x: clamp8(Number(toPoint?.x) || 0, 0, 1) * width,
-    y: clamp8(Number(toPoint?.y) || 0, 0, 1) * height
+    x: clamp9(Number(toPoint?.x) || 0, 0, 1) * width,
+    y: clamp9(Number(toPoint?.y) || 0, 0, 1) * height
   };
   const horizontal = Math.abs(to.x - from.x) >= Math.abs(to.y - from.y);
   const control = horizontal ? { x: (from.x + to.x) / 2, y: from.y } : { x: from.x, y: (from.y + to.y) / 2 };
   return [from, control, to].map((point) => ({
-    x: clamp8(point.x / width, 0, 1),
-    y: clamp8(point.y / height, 0, 1),
+    x: clamp9(point.x / width, 0, 1),
+    y: clamp9(point.y / height, 0, 1),
     t: Date.now(),
     anchor: null
   }));
@@ -13830,10 +14336,10 @@ function sameStrokePointPath(left, right, tolerance = 1e-6) {
 }
 function getTextStrokeLayout(stroke, width, measureText = null) {
   const point = stroke?.points?.[0] || { x: 0, y: 0 };
-  const fontSize = clamp8(Number(stroke?.fontSize || 18), 10, 72);
+  const fontSize = clamp9(Number(stroke?.fontSize || 18), 10, 72);
   const uiArrow = stroke?.uiRole === "arrow";
   const padded = !uiArrow && (stroke?.boxed || stroke?.code || stroke?.file || isButtonLikeStroke(stroke));
-  const canvasX = clamp8(Number(point.x || 0), 0, 1) * Math.max(1, Number(width) || 1);
+  const canvasX = clamp9(Number(point.x || 0), 0, 1) * Math.max(1, Number(width) || 1);
   const maxWidth = Math.max(fontSize, Math.max(1, Number(width) || 1) - canvasX - Math.max(8, fontSize * 0.45) - 8);
   const layout = computeTextLayout({
     text: String(stroke?.text || "").trim(),
@@ -13861,8 +14367,8 @@ function getStrokeBounds(stroke, width, height) {
   }
   if (isEmbedStroke(stroke) || isRichTextStroke(stroke)) {
     const point = stroke.points[0];
-    const previewWidth = clamp8(Number(stroke.previewWidth || 260), 80, 900);
-    const previewHeight = clamp8(Number(stroke.previewHeight || 160), 40, 700);
+    const previewWidth = clamp9(Number(stroke.previewWidth || 260), 80, 900);
+    const previewHeight = clamp9(Number(stroke.previewHeight || 160), 40, 700);
     const x = point.x * width;
     const y = point.y * height;
     return {
@@ -14079,7 +14585,7 @@ function distanceToSegment(point, start, end) {
   if (dx === 0 && dy === 0) {
     return pointerDistance(point, start);
   }
-  const t = clamp8(((point.x - start.x) * dx + (point.y - start.y) * dy) / (dx * dx + dy * dy), 0, 1);
+  const t = clamp9(((point.x - start.x) * dx + (point.y - start.y) * dy) / (dx * dx + dy * dy), 0, 1);
   const projection = {
     x: start.x + t * dx,
     y: start.y + t * dy
@@ -14138,7 +14644,7 @@ function formatReplacementBlock(originalBlock, editedText) {
   }
   return edited;
 }
-function clamp8(value, min, max) {
+function clamp9(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 

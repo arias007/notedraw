@@ -44,3 +44,17 @@ test("pinch-pan coordinates cannot move into a blank area outside the scroll ext
 
   assert.deepEqual(scroll, { left: 980, top: 2100 });
 });
+
+test("subpixel touch jitter cannot slowly drift the note", () => {
+  const scroll = calculatePinchPanScroll({
+    scrollLeft: 120,
+    scrollTop: 640,
+    previousCenter: { x: 200, y: 300 },
+    nextCenter: { x: 200.2, y: 299.8 },
+    zoomRatio: 1,
+    maxScrollLeft: 800,
+    maxScrollTop: 1800
+  });
+
+  assert.deepEqual(scroll, { left: 120, top: 640 });
+});

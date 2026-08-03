@@ -34,15 +34,15 @@ test("the stable v1 API exposes Cancip-friendly capabilities and events", async 
   assert.match(source, /setZoom: v1\.setZoom/);
 });
 
-test("3.3.7 preserves bottom coordinates and cross-view frames without eager hidden-view refresh", async () => {
+test("3.3.9 preserves bottom coordinates and cross-view frames without eager hidden-view refresh", async () => {
   const [source, manifestText] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(manifestUrl, "utf8")
   ]);
   const manifest = JSON.parse(manifestText);
 
-  assert.equal(manifest.version, "3.3.7");
-  assert.match(source, /version: "3\.3\.7"/);
+  assert.equal(manifest.version, "3.3.9");
+  assert.match(source, /version: "3\.3\.9"/);
   assert.match(source, /if \(!this\.responsivePointsInitialized \|\| signature !== this\.responsiveLayoutSignature\)/);
   assert.match(source, /migratedDrawingData\.version = Math\.max\(3/);
   assert.match(source, /captureElementLayoutForStroke/);
@@ -164,8 +164,24 @@ test("reading controllers survive zero-sized view transitions until the source s
   const syncSource = source.slice(syncStart, source.indexOf("  syncEmbeddedMarkdownControllers()", syncStart));
 
   assert.match(syncSource, /const sourceVisible = isElementVisibleEnough\(source\)/);
-  assert.match(syncSource, /if \(sourceVisible\) \{\s*previewController\?\.destroy\(\)/);
-  assert.match(syncSource, /if \(isSourceMode\(view\) && !previewVisible\) \{\s*continue;/);
+  assert.match(syncSource, /if \(isSourceMode\(view\)\) \{\s*if \(sourceVisible\) \{\s*for \(const rootPreview of findRootPreviewsForView\(view\)\)/);
+  assert.match(syncSource, /sourceController\?\.syncFloatingControlClasses\(\);\s*if \(!previewVisible\) \{\s*continue;/);
+  assert.match(syncSource, /if \(previewController\?\.plugin === this && !previewController\.destroyed[\s\S]*continue;\s*}\s*if \(!isRootPreviewReady/);
+  assert.match(syncSource, /if \(!isRootPreviewReady\(view, preview\)\) \{\s*previewController\?\.destroy\(\);\s*resetDormantRootPreview\(view, preview\);\s*continue;/);
+});
+
+test("scrolling and touch completion cannot trigger a full Markdown layout loop", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const scrollStart = source.indexOf("  onScroll() {");
+  const scrollSource = source.slice(scrollStart, source.indexOf("  scheduleResize(options = {})", scrollStart));
+  const touchStart = source.indexOf("  completeTrackedTouch(pointerId) {");
+  const touchSource = source.slice(touchStart, source.indexOf("  resetTouchGestureState()", touchStart));
+
+  assert.doesNotMatch(scrollSource, /scheduleMarkdownAnnotationRefresh/);
+  assert.doesNotMatch(scrollSource, /scheduleResize\(\{ layout: true \}\)/);
+  assert.match(scrollSource, /scheduleResize\(\{ layout: false \}\)/);
+  assert.doesNotMatch(touchSource, /scheduleMarkdownAnnotationRefresh/);
+  assert.match(touchSource, /if \(finishingMultiTouch\) \{\s*this\.scheduleResize\(\{ layout: false \}\)/s);
 });
 
 test("deactivating the wand promotes selected text and drawings back into the static canvas", async () => {

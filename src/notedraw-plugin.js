@@ -52,6 +52,14 @@ import {
 } from "./text-layout.mjs";
 import { calculatePinchPanScroll } from "./viewport-gesture.mjs";
 import {
+  noteFlowRequiredOffset,
+  noteFlowSurfaceRepairLimits,
+  selectNoteFlowAnchorPlacement,
+  stabilizeNoteFlowBounds
+} from "./note-flow-layout.mjs";
+import { shouldMountRootPreview, shouldResetDormantRootPreview } from "./preview-lifecycle.mjs";
+import { buildSnappedConnectorPoints, connectorSnapThreshold } from "./connector-binding.mjs";
+import {
   buildFountainPenSegments,
   straightenWatercolorPoints
 } from "./stroke-dynamics.mjs";
@@ -181,7 +189,7 @@ var I18N = {
     button: "Button",
     primaryButton: "Primary",
     outlineButton: "Rectangle",
-    pillButton: "Circle",
+    pillButton: "Solid rectangle",
     arrowUp: "Up",
     arrowDown: "Down",
     arrowLeft: "Left",
@@ -322,7 +330,7 @@ var I18N = {
     button: "按钮",
     primaryButton: "主按钮",
     outlineButton: "矩形",
-    pillButton: "圆形",
+    pillButton: "实心矩形",
     arrowUp: "上",
     arrowDown: "下",
     arrowLeft: "左",
@@ -457,7 +465,7 @@ var I18N = {
     button: "按鈕",
     primaryButton: "主按鈕",
     outlineButton: "矩形",
-    pillButton: "圓形",
+    pillButton: "實心矩形",
     arrowUp: "上",
     arrowDown: "下",
     arrowLeft: "左",
@@ -576,7 +584,7 @@ var I18N = {
     button: "كۇنۇپكا",
     primaryButton: "ئاساسىي",
     outlineButton: "Rectangle",
-    pillButton: "Circle",
+    pillButton: "Solid rectangle",
     arrowUp: "ئۈستى",
     arrowDown: "ئاستى",
     arrowLeft: "سول",
@@ -671,7 +679,7 @@ var I18N = {
     button: "Кнопка",
     primaryButton: "Основная",
     outlineButton: "Прямоугольник",
-    pillButton: "Круг",
+    pillButton: "Заполненный прямоугольник",
     arrowUp: "Вверх",
     arrowDown: "Вниз",
     arrowLeft: "Влево",
@@ -1261,10 +1269,15 @@ var NoteDrawPlugin = class extends Plugin {
         return;
       }
       const existingController = this.controllers.get(preview) || preview._noteDrawController;
-      if (existingController?.plugin === this && !existingController.destroyed) {
+      if (existingController?.plugin === this && !existingController.destroyed && !isSourceMode(view)) {
         existingController.setFile(view.file).catch((error) => {
           console.error(`[${PLUGIN_ID}] Failed to switch preview controller file`, error);
         });
+        return;
+      }
+      if (!isRootPreviewReady(view, preview)) {
+        existingController?.destroy?.();
+        resetDormantRootPreview(view, preview);
         return;
       }
       if (existingController?.destroy) {
@@ -1774,7 +1787,7 @@ var NoteDrawPlugin = class extends Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.3.7",
+      version: "3.3.9",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -2097,14 +2110,29 @@ var NoteDrawPlugin = class extends Plugin {
       const sourceController = source ? this.controllers.get(source) || source._noteDrawController : null;
       const previewVisible = isElementVisibleEnough(preview);
       const sourceVisible = isElementVisibleEnough(source);
-      if (sourceVisible) {
-        previewController?.destroy();
-        continue;
-      }
-      if (isSourceMode(view) && !previewVisible) {
+      if (isSourceMode(view)) {
+        if (sourceVisible) {
+          for (const rootPreview of findRootPreviewsForView(view)) {
+            const controller = this.controllers.get(rootPreview) || rootPreview._noteDrawController;
+            controller?.destroy?.();
+            resetDormantRootPreview(view, rootPreview);
+          }
+        }
         continue;
       }
       sourceController?.syncFloatingControlClasses();
+      if (!previewVisible) {
+        continue;
+      }
+      if (previewController?.plugin === this && !previewController.destroyed && previewController.file?.path === view.file?.path) {
+        previewController.syncFloatingControlClasses();
+        continue;
+      }
+      if (!isRootPreviewReady(view, preview)) {
+        previewController?.destroy();
+        resetDormantRootPreview(view, preview);
+        continue;
+      }
       if (previewVisible && (!previewController || previewController.destroyed || previewController.file?.path !== view.file?.path)) {
         previewController?.destroy();
         previewController = this.resolveLivePreviewController(view);
@@ -2409,6 +2437,10 @@ var NoteDrawPlugin = class extends Plugin {
     const existing = this.controllers.get(preview) || preview._noteDrawController;
     if (existing?.plugin === this && !existing.destroyed && existing.previewEl?.isConnected && existing.surfaceType === "preview") {
       return existing;
+    }
+    if (!isRootPreviewReady(view, preview)) {
+      resetDormantRootPreview(view, preview);
+      return null;
     }
     const registered = controllers.find((controller) => controller.surfaceType === "preview" && controller.previewEl === preview);
     if (registered) {
@@ -3884,8 +3916,7 @@ var PreviewDrawingController = class {
         if (this.destroyed) {
           return;
         }
-        this.scheduleMarkdownAnnotationRefresh({ layout: true });
-        this.scheduleResize({ layout: true });
+        this.scheduleResize({ layout: false });
       }, 90);
     }
   }
@@ -4325,7 +4356,7 @@ var PreviewDrawingController = class {
         items: [
           { id: "plain", labelKey: "textPlain", icon: "type" },
           { id: "rectangle", labelKey: "outlineButton", icon: "square" },
-          { id: "circle", labelKey: "pillButton", icon: "circle" },
+          { id: "circle", labelKey: "pillButton", icon: "square" },
           { id: "arrow", labelKey: "arrow", icon: "move-up-right" }
         ]
       },
@@ -5457,7 +5488,7 @@ var PreviewDrawingController = class {
         }));
       }
     }
-    this.syncBoundConnectors();
+    this.syncBoundConnectors({ recover: true });
     if (this.currentStroke?.points?.length) {
       this.currentStroke.points = this.currentStroke.points.map((point) => projectResponsivePoint(point, {
         canvasWidth: this.canvasWidth(),
@@ -5799,6 +5830,7 @@ var PreviewDrawingController = class {
         enabled: true,
         path: this.file?.path || "",
         line: null,
+        side: null,
         gap: 12
       } : null,
       points: [this.pointerStartPoint]
@@ -5810,6 +5842,9 @@ var PreviewDrawingController = class {
     this.endFloatingTextInput(true);
     this.endTextEdit();
     this.clearSelectedStrokes();
+    this.ensureSnapElementIds();
+    const snapTargets = this.collectSnapTargets();
+    const snapBoundsById = new Map(snapTargets.map((target) => [target.id, target.bounds]));
     this.pointerDown = true;
     this.didMove = false;
     this.pointerStartPoint = { ...point };
@@ -5817,10 +5852,12 @@ var PreviewDrawingController = class {
     this.pointerStartEditable = null;
     this.pointerStartSourceText = false;
     this.activePointerId = event.pointerId;
-    const fromId = this.findSnapElementIdAtPoint(point);
+    const fromId = this.findSnapElementIdAtPoint(point, "", snapTargets);
     const brush = this.currentBrushSettings();
     this.connectorGesture = {
       fromId,
+      snapTargets,
+      snapBoundsById,
       historyBefore: this.captureDrawingHistorySnapshot()
     };
     this.currentStroke = {
@@ -5848,7 +5885,16 @@ var PreviewDrawingController = class {
     const movedDistance = this.pointerStartClient ? pointerDistance(this.pointerStartClient, { x: event.clientX, y: event.clientY }) : 0;
     this.didMove = movedDistance > this.tapDistancePx();
     if (this.currentStroke && this.pointerStartPoint) {
-      this.currentStroke.points = buildFreeConnectorPoints(this.pointerStartPoint, endPoint, this.canvasWidth(), this.canvasHeight());
+      const snapTargets = this.connectorGesture?.snapTargets;
+      const fromId = this.connectorGesture?.fromId || this.findSnapElementIdAtPoint(this.pointerStartPoint, "", snapTargets);
+      let toId = this.findSnapElementIdAtPoint(endPoint, fromId, snapTargets);
+      if (toId === fromId) {
+        toId = "";
+      }
+      this.connectorGesture.fromId = fromId;
+      this.connectorGesture.toId = toId;
+      this.currentStroke.connector = { kind: "connector", fromId, toId, style: "curve", arrow: true };
+      this.currentStroke.points = this.buildConnectorPointsForBindings(fromId, toId, this.pointerStartPoint, endPoint, this.connectorGesture?.snapBoundsById);
       this.requestRender();
     }
     event.preventDefault();
@@ -5865,15 +5911,16 @@ var PreviewDrawingController = class {
         anchor: null
       };
     }
-    const fromId = this.connectorGesture?.fromId || this.findSnapElementIdAtPoint(startPoint);
-    let toId = this.findSnapElementIdAtPoint(endPoint, fromId);
+    const snapTargets = this.connectorGesture?.snapTargets;
+    const fromId = this.connectorGesture?.fromId || this.findSnapElementIdAtPoint(startPoint, "", snapTargets);
+    let toId = this.connectorGesture?.toId || this.findSnapElementIdAtPoint(endPoint, fromId, snapTargets);
     if (toId === fromId) {
       toId = "";
     }
     const stroke = normalizeStroke({
       ...this.currentStroke,
       connector: { kind: "connector", fromId, toId, style: "curve", arrow: true },
-      points: buildFreeConnectorPoints(startPoint, endPoint, this.canvasWidth(), this.canvasHeight())
+      points: this.buildConnectorPointsForBindings(fromId, toId, startPoint, endPoint, this.connectorGesture?.snapBoundsById)
     });
     this.drawingData.strokes.push(stroke);
     const insertedIndex = this.drawingData.strokes.length - 1;
@@ -5888,28 +5935,84 @@ var PreviewDrawingController = class {
     this.pointerDown = false;
     this.finishPointerInteraction(event);
   }
-  findSnapElementIdAtPoint(point, excludeId = "") {
+  findSnapElementIdAtPoint(point, excludeId = "", targets = null) {
     const canvasPoint = this.pointToCanvas(point);
-    const threshold = Math.max(18, this.selectionHitPaddingPx() * 1.5);
+    const threshold = connectorSnapThreshold(this.selectionHitPaddingPx());
     let best = null;
-    for (let index = this.drawingData.strokes.length - 1; index >= 0; index -= 1) {
-      const stroke = this.drawingData.strokes[index];
-      const id = strokeElementId(stroke);
-      if (!id || id === excludeId || isConnectorStroke(stroke) || !isSnapStroke(stroke)) {
+    const candidates = Array.isArray(targets) ? targets : this.collectSnapTargets();
+    for (const target of candidates) {
+      if (target.id === excludeId) {
         continue;
       }
-      const bounds = getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight());
-      if (!bounds) {
-        continue;
-      }
-      const dx = Math.max(bounds.minX - canvasPoint.x, 0, canvasPoint.x - bounds.maxX);
-      const dy = Math.max(bounds.minY - canvasPoint.y, 0, canvasPoint.y - bounds.maxY);
+      const dx = Math.max(target.bounds.minX - canvasPoint.x, 0, canvasPoint.x - target.bounds.maxX);
+      const dy = Math.max(target.bounds.minY - canvasPoint.y, 0, canvasPoint.y - target.bounds.maxY);
       const distance = Math.hypot(dx, dy);
       if (distance <= threshold && (!best || distance < best.distance)) {
-        best = { id, distance };
+        best = { id: target.id, distance };
       }
     }
     return best?.id || "";
+  }
+  collectSnapTargets() {
+    const targets = [];
+    for (let index = (this.drawingData?.strokes?.length || 0) - 1; index >= 0; index -= 1) {
+      const stroke = this.drawingData.strokes[index];
+      const id = strokeElementId(stroke);
+      if (!id || isConnectorStroke(stroke) || !isSnapStroke(stroke)) {
+        continue;
+      }
+      const bounds = getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight());
+      if (bounds) {
+        targets.push({ id, bounds });
+      }
+    }
+    return targets;
+  }
+  ensureSnapElementIds() {
+    const strokes = this.drawingData?.strokes || [];
+    const idCounts = new Map();
+    for (const stroke of strokes) {
+      const id = strokeElementId(stroke);
+      if (id) {
+        idCounts.set(id, (idCounts.get(id) || 0) + 1);
+      }
+    }
+    const occupied = new Set(idCounts.keys());
+    let changed = false;
+    for (const [index, stroke] of strokes.entries()) {
+      if (!stroke || isConnectorStroke(stroke) || !isSnapStroke(stroke)) {
+        continue;
+      }
+      const existingId = strokeElementId(stroke);
+      let elementId = existingId;
+      if (!elementId || (idCounts.get(elementId) || 0) > 1) {
+        do {
+          elementId = createElementLayoutId(index);
+        } while (occupied.has(elementId));
+        occupied.add(elementId);
+      }
+      if (stroke.elementId !== elementId) {
+        stroke.elementId = elementId;
+        changed = true;
+      }
+      const layout = normalizeElementLayout(stroke.layout);
+      if (layout && layout.id !== elementId) {
+        stroke.layout = { ...layout, id: elementId };
+        changed = true;
+      }
+    }
+    return changed;
+  }
+  buildConnectorPointsForBindings(fromId, toId, fromPoint, toPoint, boundsById = null) {
+    const resolvedBounds = boundsById || new Map(this.collectSnapTargets().map((target) => [target.id, target.bounds]));
+    return buildSnappedConnectorPoints({
+      fromBounds: fromId ? resolvedBounds.get(fromId) || null : null,
+      toBounds: toId ? resolvedBounds.get(toId) || null : null,
+      fromPoint,
+      toPoint,
+      canvasWidth: this.canvasWidth(),
+      canvasHeight: this.canvasHeight()
+    });
   }
   shouldPassThroughHeaderPoint(event) {
     if (this.surfaceType !== "preview" || !isAppleMobileRuntime()) {
@@ -6855,15 +6958,19 @@ var PreviewDrawingController = class {
     if (!target) {
       return false;
     }
-    this.restoreReadingZoomStyles();
+    const previousTarget = this.readingZoomTarget;
     this.readingZoomTarget = target;
     const zoom = this.readingZoomScale();
     this.readingZoom = zoom;
     const elements = this.readingZoomElements(target);
     if (Math.abs(zoom - 1) < 0.001) {
+      this.restoreReadingZoomStyles();
       this.previewEl.removeClass("is-reading-zoomed");
       this.previewEl.removeClass("is-editing-layout-zoomed");
     } else {
+      if (previousTarget && previousTarget !== target) {
+        this.restoreReadingZoomStyles();
+      }
       if (this.usesVisualReadingZoom()) {
         for (const element of elements) {
           this.applyVisualReadingZoomElement(element, zoom);
@@ -6934,8 +7041,12 @@ var PreviewDrawingController = class {
         maxScrollLeft: Math.max(0, scroller.scrollWidth - scroller.clientWidth),
         maxScrollTop: Math.max(0, scroller.scrollHeight - scroller.clientHeight)
       });
-      scroller.scrollLeft = scroll.left;
-      scroller.scrollTop = scroll.top;
+      if (Math.abs(scroller.scrollLeft - scroll.left) >= 0.25) {
+        scroller.scrollLeft = scroll.left;
+      }
+      if (Math.abs(scroller.scrollTop - scroll.top) >= 0.25) {
+        scroller.scrollTop = scroll.top;
+      }
     }
     if (zoomChanged) {
       this.responsiveLayoutContext = null;
@@ -6973,7 +7084,10 @@ var PreviewDrawingController = class {
     if (!this.touchPointers.has(pointerId)) {
       return false;
     }
-    this.flushMultiTouchGesture();
+    const finishingMultiTouch = this.multiTouchScrolling || this.multiTouchPinching || this.suppressTouchDrawing;
+    if (this.multiTouchScrolling && this.touchPointers.size >= 2) {
+      this.flushMultiTouchGesture();
+    }
     this.touchPointers.delete(pointerId);
     if (this.touchPointers.size < 2) {
       this.multiTouchScrolling = false;
@@ -6985,14 +7099,15 @@ var PreviewDrawingController = class {
     }
     if (this.touchPointers.size === 0) {
       this.suppressTouchDrawing = false;
-      if (this.multiTouchPinching) {
+      if (finishingMultiTouch && this.multiTouchPinching) {
         this.persistInteractionSettings();
         this.syncSharedToolbarState();
       }
       this.multiTouchPinching = false;
-      this.scheduleMarkdownAnnotationRefresh({ layout: false });
-      this.scheduleResize({ layout: false });
-      this.requestRender(true);
+      if (finishingMultiTouch) {
+        this.scheduleResize({ layout: false });
+        this.requestRender(true);
+      }
     }
     return true;
   }
@@ -7009,6 +7124,9 @@ var PreviewDrawingController = class {
     this.previewEl?.removeClass("is-two-finger-scroll");
   }
   handleMultiTouchScroll(event) {
+    if (!this.multiTouchScrolling || this.touchPointers.size < 2) {
+      return;
+    }
     this.multiTouchPendingCenter = this.getTouchCenter();
     this.multiTouchPendingDistance = this.getTouchDistance();
     if (this.multiTouchFrameId === null) {
@@ -7034,7 +7152,7 @@ var PreviewDrawingController = class {
     const previousDistance = this.multiTouchLastDistance;
     this.multiTouchPendingCenter = null;
     this.multiTouchPendingDistance = null;
-    if (!center || !previous) {
+    if (!this.multiTouchScrolling || this.touchPointers.size < 2 || !center || !previous) {
       return;
     }
     let nextZoom = this.readingZoom;
@@ -7188,6 +7306,24 @@ var PreviewDrawingController = class {
     event.preventDefault();
     event.stopPropagation();
   }
+  connectorTargetIdsForStrokeIndexes(indexes) {
+    const ids = new Set();
+    for (const index of indexes || []) {
+      const stroke = this.drawingData?.strokes?.[index];
+      const elementId = strokeElementId(stroke);
+      if (elementId) {
+        ids.add(elementId);
+      }
+      const connector = normalizeConnector(stroke?.connector);
+      if (connector?.fromId) {
+        ids.add(connector.fromId);
+      }
+      if (connector?.toId) {
+        ids.add(connector.toId);
+      }
+    }
+    return ids;
+  }
   moveSelectedStroke(event) {
     if (!this.dragStrokeStartPoint || !this.dragStrokeOriginalPoints?.size) {
       return;
@@ -7235,7 +7371,8 @@ var PreviewDrawingController = class {
         y: clamp(strokePoint.y + snappedDy, 0, 1)
       }));
     }
-    if (this.syncBoundConnectors()) {
+    const movedElementIds = this.connectorTargetIdsForStrokeIndexes(this.dragStrokeOriginalPoints.keys());
+    if (this.syncBoundConnectors({ elementIds: movedElementIds })) {
       this.invalidateStaticCache();
     }
     this.scheduleNoteFlowLayout();
@@ -7255,7 +7392,7 @@ var PreviewDrawingController = class {
         }
       }
       this.captureResponsiveAnchorsForIndexes(movedIndexes);
-      this.syncBoundConnectors();
+      this.syncBoundConnectors({ elementIds: this.connectorTargetIdsForStrokeIndexes(movedIndexes) });
       this.lastTextTap = null;
       this.redoStack = [];
       this.plugin.scheduleDrawingSave(this.file, this.drawingData);
@@ -7410,7 +7547,8 @@ var PreviewDrawingController = class {
         y: clamp(strokePoint.y, 0, 1)
       }));
     }
-    if (this.syncBoundConnectors()) {
+    const resizedElementIds = this.connectorTargetIdsForStrokeIndexes(this.resizeSelectionOriginalStrokes.keys());
+    if (this.syncBoundConnectors({ elementIds: resizedElementIds })) {
       this.invalidateStaticCache();
     }
     this.scheduleNoteFlowLayout();
@@ -7419,7 +7557,7 @@ var PreviewDrawingController = class {
     if (this.resizeSelectionMoved) {
       const resizedIndexes = Array.from(this.resizeSelectionOriginalStrokes?.keys() || []);
       this.captureResponsiveAnchorsForIndexes(resizedIndexes);
-      this.syncBoundConnectors();
+      this.syncBoundConnectors({ elementIds: this.connectorTargetIdsForStrokeIndexes(resizedIndexes) });
       this.redoStack = [];
       this.plugin.scheduleDrawingSave(this.file, this.drawingData);
       this.recordDrawingHistory(this.resizeDrawingHistoryBefore);
@@ -7863,24 +8001,56 @@ var PreviewDrawingController = class {
     }
     ctx.restore();
   }
-  syncBoundConnectors() {
+  syncBoundConnectors(options = {}) {
     const strokes = this.drawingData?.strokes || [];
+    const recover = options.recover === true;
+    const targetIds = options.elementIds instanceof Set ? options.elementIds : null;
+    let changed = recover ? this.ensureSnapElementIds() : false;
     const byId = new Map(strokes.map((stroke) => [strokeElementId(stroke), stroke]).filter(([id]) => id));
-    let changed = false;
+    const snapTargets = recover ? this.collectSnapTargets() : null;
     for (const stroke of strokes) {
-      const connector = normalizeConnector(stroke.connector);
+      let connector = normalizeConnector(stroke.connector);
       if (!connector) {
         continue;
       }
-      if (!connector.fromId || !connector.toId || connector.fromId === connector.toId) {
+      if (targetIds && !targetIds.has(connector.fromId) && !targetIds.has(connector.toId)) {
         continue;
       }
-      const fromBounds = getStrokeBounds(byId.get(connector.fromId), this.canvasWidth(), this.canvasHeight());
-      const toBounds = getStrokeBounds(byId.get(connector.toId), this.canvasWidth(), this.canvasHeight());
-      if (!fromBounds || !toBounds) {
+      let fromBounds = getStrokeBounds(byId.get(connector.fromId), this.canvasWidth(), this.canvasHeight());
+      let toBounds = getStrokeBounds(byId.get(connector.toId), this.canvasWidth(), this.canvasHeight());
+      if (recover && !fromBounds && stroke.points?.[0]) {
+        const recoveredId = this.findSnapElementIdAtPoint(stroke.points[0], toBounds ? connector.toId : "", snapTargets);
+        if (recoveredId) {
+          connector = { ...connector, fromId: recoveredId };
+          fromBounds = getStrokeBounds(byId.get(recoveredId), this.canvasWidth(), this.canvasHeight());
+        }
+      }
+      if (recover && !toBounds && stroke.points?.length) {
+        const recoveredId = this.findSnapElementIdAtPoint(stroke.points[stroke.points.length - 1], fromBounds ? connector.fromId : "", snapTargets);
+        if (recoveredId && recoveredId !== connector.fromId) {
+          connector = { ...connector, toId: recoveredId };
+          toBounds = getStrokeBounds(byId.get(recoveredId), this.canvasWidth(), this.canvasHeight());
+        }
+      }
+      if (connector.fromId === connector.toId) {
+        connector = { ...connector, toId: "" };
+        toBounds = null;
+      }
+      if (stroke.connector?.fromId !== connector.fromId || stroke.connector?.toId !== connector.toId) {
+        stroke.connector = connector;
+        changed = true;
+      }
+      if (!fromBounds && !toBounds) {
         continue;
       }
-      const nextPoints = buildBoundConnectorPoints(fromBounds, toBounds, this.canvasWidth(), this.canvasHeight());
+      const nextPoints = buildSnappedConnectorPoints({
+        fromBounds,
+        toBounds,
+        fromPoint: stroke.points?.[0],
+        toPoint: stroke.points?.[stroke.points.length - 1],
+        canvasWidth: this.canvasWidth(),
+        canvasHeight: this.canvasHeight()
+      });
       if (!sameStrokePointPath(stroke.points, nextPoints)) {
         stroke.points = nextPoints;
         changed = true;
@@ -8425,23 +8595,17 @@ var PreviewDrawingController = class {
     const bounds = getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight());
     const canvasRect = this.canvas?.getBoundingClientRect?.();
     if (!bounds || !canvasRect) {
-      return { enabled: true, path: this.file?.path || "", line: null, gap: 12 };
+      return { enabled: true, path: this.file?.path || "", line: null, side: null, gap: 12 };
     }
     const scaleY = canvasRect.height > 0 ? canvasRect.height / Math.max(1, this.canvasRenderHeight) : 1;
     const strokeTop = canvasRect.top + (bounds.minY - this.canvasWindowTop) * scaleY;
-    const candidates = Array.from(this.previewEl.querySelectorAll?.("[data-note-draw-line-start]") || []).map((element) => ({
-      element,
-      rect: element.getBoundingClientRect(),
-      path: normalizeVaultPath(element.dataset.noteDrawSourcePath || this.file?.path || ""),
-      start: parseInteger(element.dataset.noteDrawLineStart),
-      end: parseInteger(element.dataset.noteDrawLineEnd) ?? parseInteger(element.dataset.noteDrawLineStart)
-    })).filter((item) => Number.isFinite(item.start) && item.rect.height > 0 && item.rect.bottom <= strokeTop + 8 && !item.element.closest?.(".notedraw-body-control, .notedraw-embed-layer"));
-    candidates.sort((a, b) => b.rect.bottom - a.rect.bottom || a.rect.height - b.rect.height);
-    const anchor = candidates[0];
+    const placement = selectNoteFlowAnchorPlacement(this.noteFlowCandidates(), { strokeTop });
+    const anchor = placement?.candidate;
     return {
       enabled: true,
       path: anchor?.path || this.file?.path || "",
-      line: Number.isFinite(anchor?.end) ? anchor.end : null,
+      line: Number.isFinite(placement?.line) ? placement.line : null,
+      side: placement?.side || null,
       gap: clamp(Number(stroke?.noteFlow?.gap) || 12, 4, 64)
     };
   }
@@ -8466,116 +8630,241 @@ var PreviewDrawingController = class {
     this.scheduleLayoutRefresh({ settle: false });
     this.render();
   }
+  noteFlowLayoutElement(element) {
+    if (!element || !this.previewEl?.contains?.(element)) {
+      return null;
+    }
+    const promoted = element.closest?.(".internal-embed, .markdown-embed, .callout, table, li, blockquote");
+    return promoted && this.previewEl.contains(promoted) ? promoted : element;
+  }
+  noteFlowCandidates() {
+    const grouped = /* @__PURE__ */ new Map();
+    let order = 0;
+    for (const sourceElement of this.previewEl.querySelectorAll?.("[data-note-draw-line-start]") || []) {
+      if (sourceElement.closest?.(".notedraw-body-control, .notedraw-embed-layer")) {
+        continue;
+      }
+      const start = parseInteger(sourceElement.dataset.noteDrawLineStart);
+      const end = parseInteger(sourceElement.dataset.noteDrawLineEnd) ?? start;
+      const element = this.noteFlowLayoutElement(sourceElement);
+      const rect = element?.getBoundingClientRect?.();
+      if (!element || !Number.isFinite(start) || !rect || rect.width <= 1 || rect.height <= 1) {
+        continue;
+      }
+      const path = normalizeVaultPath(sourceElement.dataset.noteDrawSourcePath || this.file?.path || "");
+      let byPath = grouped.get(element);
+      if (!byPath) {
+        byPath = /* @__PURE__ */ new Map();
+        grouped.set(element, byPath);
+      }
+      const existing = byPath.get(path);
+      if (existing) {
+        existing.start = Math.min(existing.start, start);
+        existing.end = Math.max(existing.end, end);
+        continue;
+      }
+      byPath.set(path, {
+        element,
+        sourceElement,
+        path,
+        start,
+        end,
+        top: rect.top,
+        bottom: rect.bottom,
+        order: order++
+      });
+    }
+    return Array.from(grouped.values()).flatMap((byPath) => Array.from(byPath.values()));
+  }
   noteFlowAnchorElement(noteFlow) {
     const path = normalizeVaultPath(noteFlow?.path || this.file?.path || "");
     const line = Number(noteFlow?.line);
     if (!Number.isFinite(line)) {
       return null;
     }
-    const candidates = Array.from(this.previewEl.querySelectorAll?.("[data-note-draw-line-start]") || []).filter((element) => {
-      const start = parseInteger(element.dataset.noteDrawLineStart);
-      const end = parseInteger(element.dataset.noteDrawLineEnd) ?? start;
-      const elementPath = normalizeVaultPath(element.dataset.noteDrawSourcePath || this.file?.path || "");
-      return elementPath === path && Number.isFinite(start) && line >= start && line <= end;
+    const candidates = this.noteFlowCandidates().filter((candidate) => {
+      return candidate.path === path && line >= candidate.start && line <= candidate.end;
     });
-    candidates.sort((a, b) => a.getBoundingClientRect().height - b.getBoundingClientRect().height);
+    candidates.sort((a, b) => (a.bottom - a.top) - (b.bottom - b.top) || a.order - b.order);
     return candidates[0] || null;
   }
   clearNoteFlowLayout() {
-    for (const [element, state] of this.noteFlowStyledElements || []) {
+    for (const [element, states] of this.noteFlowStyledElements || []) {
       if (!element?.style) {
         continue;
       }
-      if (state.value) {
-        element.style.setProperty(state.property, state.value, state.priority || "");
-      } else {
-        element.style.removeProperty(state.property);
+      for (const state of states.values()) {
+        if (state.value) {
+          element.style.setProperty(state.property, state.value, state.priority || "");
+        } else {
+          element.style.removeProperty(state.property);
+        }
       }
       element.classList.remove("notedraw-note-flow-anchor");
     }
     this.noteFlowStyledElements?.clear();
+  }
+  repairRunawayNoteFlowSurface(referenceHeight) {
+    const viewportHeight = Math.max(1, this.previewEl?.clientHeight || this.canvasRenderHeight || 1);
+    const { stableHeight, runawayThreshold } = noteFlowSurfaceRepairLimits(referenceHeight, viewportHeight);
+    let repaired = false;
+    for (const element of this.previewEl.querySelectorAll?.(".markdown-preview-sizer, .markdown-preview-section") || []) {
+      const minHeight = Number.parseFloat(element.style?.minHeight) || 0;
+      if (minHeight > runawayThreshold) {
+        element.style.removeProperty("min-height");
+        repaired = true;
+      }
+    }
+    for (const element of this.previewEl.querySelectorAll?.(".notedraw-note-flow-anchor") || []) {
+      for (const property of ["margin-top", "margin-bottom"]) {
+        if ((Number.parseFloat(element.style.getPropertyValue(property)) || 0) > runawayThreshold) {
+          element.style.removeProperty(property);
+          repaired = true;
+        }
+      }
+    }
+    if (this.canvasCssHeight > runawayThreshold) {
+      this.canvasCssHeight = stableHeight;
+      this.canvasWindowTop = clamp(this.canvasWindowTop, 0, Math.max(0, stableHeight - Math.min(stableHeight, this.canvasRenderHeight)));
+      repaired = true;
+    }
+    for (const element of [this.embedLayer, this.readingZoomExtent]) {
+      if ((Number.parseFloat(element?.style?.height) || 0) > runawayThreshold) {
+        element.style.setProperty("height", `${Math.ceil(stableHeight * (element === this.readingZoomExtent ? this.readingZoomScale() : 1))}px`);
+        repaired = true;
+      }
+    }
+    if (repaired) {
+      this.responsivePointsInitialized = false;
+      this.responsiveLayoutContext = null;
+      this.responsiveLayoutSignature = "";
+    }
+    return repaired;
   }
   applyNoteFlowLayout() {
     if (!this.supportsNoteFlow() || !this.drawingsVisible || !this.canvas?.isConnected) {
       this.clearNoteFlowLayout();
       return false;
     }
-    const flows = (this.drawingData?.strokes || []).filter((stroke) => stroke?.noteFlow?.enabled && !isConnectorStroke(stroke)).map((stroke) => ({
-      stroke,
-      bounds: getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight())
-    })).filter((item) => item.bounds).sort((a, b) => a.bounds.minY - b.bounds.minY);
+    const contentFrame = this.getResponsiveContentFrame();
+    const viewportHeight = Math.max(1, this.previewEl?.clientHeight || this.canvasRenderHeight || 1);
+    const flows = (this.drawingData?.strokes || []).filter((stroke) => stroke?.noteFlow?.enabled && !isConnectorStroke(stroke)).map((stroke) => {
+      const bounds = getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight());
+      if (!bounds) {
+        return null;
+      }
+      const stabilized = stabilizeNoteFlowBounds({
+        bounds,
+        layout: normalizeElementLayout(stroke.layout),
+        contentWidth: contentFrame.width,
+        viewportHeight
+      });
+      return { stroke, ...stabilized };
+    }).filter(Boolean).sort((a, b) => a.bounds.minY - b.bounds.minY);
     if (!flows.length) {
       const changed = Boolean(this.noteFlowLayoutSignature);
       this.clearNoteFlowLayout();
       this.noteFlowLayoutSignature = "";
       return changed;
     }
+    const runawayReferenceHeight = flows.filter((item) => item.runaway).reduce((height, item) => Math.max(height, item.referenceHeight), 0);
+    if (runawayReferenceHeight > 0) {
+      this.repairRunawayNoteFlowSurface(runawayReferenceHeight);
+    }
     const canvasRect = this.canvas.getBoundingClientRect();
     const scaleY = canvasRect.height > 0 ? canvasRect.height / Math.max(1, this.canvasRenderHeight) : 1;
-    const offsets = new Map();
+    const offsets = /* @__PURE__ */ new Map();
+    let migratedAnchor = false;
     for (const item of flows) {
-      if (!Number.isFinite(item.stroke.noteFlow?.line)) {
+      if (!Number.isFinite(item.stroke.noteFlow?.line) || !["before", "after"].includes(item.stroke.noteFlow?.side)) {
         item.stroke.noteFlow = this.captureNoteFlowAnchor(item.stroke);
+        migratedAnchor = true;
       }
-      const anchor = this.noteFlowAnchorElement(item.stroke.noteFlow);
-      const first = anchor || Array.from(this.previewEl.querySelectorAll?.("[data-note-draw-line-start]") || [])[0] || null;
-      if (!first) {
+      let anchor = this.noteFlowAnchorElement(item.stroke.noteFlow);
+      if (!anchor) {
+        const recaptured = this.captureNoteFlowAnchor(item.stroke);
+        anchor = this.noteFlowAnchorElement(recaptured);
+        if (anchor) {
+          item.stroke.noteFlow = recaptured;
+          migratedAnchor = true;
+        }
+      }
+      const element = anchor?.element || null;
+      if (!element) {
         continue;
       }
-      const property = anchor ? "margin-bottom" : "margin-top";
-      const previousState = this.noteFlowStyledElements.get(first);
-      if (previousState && previousState.property !== property) {
-        if (previousState.value) {
-          first.style.setProperty(previousState.property, previousState.value, previousState.priority || "");
-        } else {
-          first.style.removeProperty(previousState.property);
-        }
-        this.noteFlowStyledElements.delete(first);
+      const side = item.stroke.noteFlow.side;
+      const property = side === "after" ? "margin-bottom" : "margin-top";
+      let states = this.noteFlowStyledElements.get(element);
+      if (!states) {
+        states = /* @__PURE__ */ new Map();
+        this.noteFlowStyledElements.set(element, states);
       }
-      if (!this.noteFlowStyledElements.has(first)) {
-        const value = first.style.getPropertyValue(property);
-        const priority = first.style.getPropertyPriority(property);
-        this.noteFlowStyledElements.set(first, {
+      if (!states.has(property)) {
+        const value = element.style.getPropertyValue(property);
+        const priority = element.style.getPropertyPriority(property);
+        states.set(property, {
           property,
           value,
           priority,
-          base: Number.parseFloat(window.getComputedStyle(first).getPropertyValue(property)) || 0,
+          base: Number.parseFloat(window.getComputedStyle(element).getPropertyValue(property)) || 0,
           applied: 0
         });
       }
-      const state = this.noteFlowStyledElements.get(first);
-      const rect = first.getBoundingClientRect();
+      const state = states.get(property);
+      const rect = element.getBoundingClientRect();
       const desiredBottom = canvasRect.top + (item.bounds.maxY - this.canvasWindowTop) * scaleY + Number(item.stroke.noteFlow.gap || 12) * scaleY;
-      const edge = anchor ? rect.bottom : rect.top - state.applied * scaleY;
-      const required = Math.max(0, (desiredBottom - edge) / Math.max(0.01, scaleY));
-      const offset = Math.max(offsets.get(first) || 0, required);
-      offsets.set(first, offset);
+      const required = noteFlowRequiredOffset({
+        side,
+        anchorTop: rect.top,
+        anchorBottom: rect.bottom,
+        desiredBottom,
+        applied: state.applied,
+        scale: scaleY
+      });
+      let elementOffsets = offsets.get(element);
+      if (!elementOffsets) {
+        elementOffsets = /* @__PURE__ */ new Map();
+        offsets.set(element, elementOffsets);
+      }
+      elementOffsets.set(property, Math.max(elementOffsets.get(property) || 0, required));
     }
     let restoredStaleAnchor = false;
-    for (const [element, state] of Array.from(this.noteFlowStyledElements.entries())) {
-      if (offsets.has(element)) {
-        continue;
+    for (const [element, states] of Array.from(this.noteFlowStyledElements.entries())) {
+      const elementOffsets = offsets.get(element);
+      for (const [property, state] of Array.from(states.entries())) {
+        if (elementOffsets?.has(property)) {
+          continue;
+        }
+        if (state.value) {
+          element.style.setProperty(state.property, state.value, state.priority || "");
+        } else {
+          element.style.removeProperty(state.property);
+        }
+        states.delete(property);
+        restoredStaleAnchor = true;
       }
-      if (state.value) {
-        element.style.setProperty(state.property, state.value, state.priority || "");
-      } else {
-        element.style.removeProperty(state.property);
+      if (!states.size) {
+        element.classList.remove("notedraw-note-flow-anchor");
+        this.noteFlowStyledElements.delete(element);
       }
-      element.classList.remove("notedraw-note-flow-anchor");
-      this.noteFlowStyledElements.delete(element);
-      restoredStaleAnchor = true;
     }
-    for (const [element, offset] of offsets) {
-      const state = this.noteFlowStyledElements.get(element);
-      const nextValue = `${Math.ceil(state.base + offset)}px`;
-      if (element.style.getPropertyValue(state.property) !== nextValue || element.style.getPropertyPriority(state.property) !== "important") {
-        element.style.setProperty(state.property, nextValue, "important");
+    for (const [element, elementOffsets] of offsets) {
+      const states = this.noteFlowStyledElements.get(element);
+      for (const [property, offset] of elementOffsets) {
+        const state = states.get(property);
+        const nextValue = `${Math.ceil(state.base + offset)}px`;
+        if (element.style.getPropertyValue(property) !== nextValue || element.style.getPropertyPriority(property) !== "important") {
+          element.style.setProperty(property, nextValue, "important");
+        }
+        state.applied = offset;
       }
-      state.applied = offset;
       element.classList.add("notedraw-note-flow-anchor");
     }
-    const signature = Array.from(offsets, ([element, offset]) => `${element.dataset.noteDrawSourcePath || ""}:${element.dataset.noteDrawLineStart || ""}:${Math.round(offset)}`).join("|");
-    const changed = restoredStaleAnchor || signature !== this.noteFlowLayoutSignature;
+    const signature = Array.from(offsets, ([element, elementOffsets]) => {
+      return Array.from(elementOffsets, ([property, offset]) => `${property}:${Math.round(offset)}`).join(",");
+    }).join("|");
+    const changed = migratedAnchor || restoredStaleAnchor || signature !== this.noteFlowLayoutSignature;
     this.noteFlowLayoutSignature = signature;
     return changed;
   }
@@ -10222,9 +10511,76 @@ function findWorkspaceDrawingSurface(view) {
   ].filter((element) => element?.isConnected && !element.closest?.(".notedraw-body-control"));
   return candidates.find((element) => element.getBoundingClientRect?.().width > 8 && element.getBoundingClientRect?.().height > 8) || candidates[0] || null;
 }
+function findRootPreviewsForView(view) {
+  const rendererPreview = view?.previewMode?.renderer?.previewEl;
+  const candidates = [rendererPreview, ...Array.from(view?.containerEl?.querySelectorAll(".markdown-preview-view") || [])];
+  return Array.from(new Set(candidates)).filter((preview) => preview?.isConnected && !isEmbeddedPreview(preview));
+}
 function findRootPreviewForView(view) {
-  const previews = Array.from(view?.containerEl?.querySelectorAll(".markdown-preview-view") || []);
-  return previews.find((preview) => !isEmbeddedPreview(preview) && isElementVisibleEnough(preview)) || previews.find((preview) => !isEmbeddedPreview(preview)) || null;
+  const previews = findRootPreviewsForView(view);
+  const rendererPreview = view?.previewMode?.renderer?.previewEl;
+  return previews.find((preview) => preview === rendererPreview) || previews.find((preview) => isElementVisibleEnough(preview)) || previews[0] || null;
+}
+function rootPreviewSizer(preview) {
+  return preview?.querySelector?.(":scope > .markdown-preview-sizer") || preview?.querySelector?.(".markdown-preview-sizer") || null;
+}
+function rootPreviewHasRenderedContent(preview) {
+  const sizer = rootPreviewSizer(preview);
+  if (!sizer) {
+    return false;
+  }
+  const ignored = ".mod-ui, .mod-header, .mod-footer, .markdown-preview-pusher, .notedraw-reading-zoom-extent, .notedraw-embed-layer, .notedraw-static-canvas, .notedraw-canvas";
+  for (const section of sizer.querySelectorAll?.(".markdown-preview-section") || []) {
+    if (Array.from(section.children || []).some((element) => !element.matches?.(ignored))) {
+      return true;
+    }
+  }
+  return Array.from(sizer.children || []).some((element) => {
+    return !element.matches?.(`${ignored}, .markdown-preview-section`);
+  });
+}
+function markdownViewHasSourceContent(view) {
+  const candidates = [view?.data];
+  try {
+    candidates.push(view?.editor?.getValue?.());
+  } catch (error) {
+    void error;
+  }
+  if (candidates.some((value) => typeof value === "string" && value.trim().length > 0)) {
+    return true;
+  }
+  return Number(view?.file?.stat?.size) > 0;
+}
+function rootPreviewLifecycleState(view, preview) {
+  return {
+    sourceMode: isSourceMode(view),
+    visible: isElementVisibleEnough(preview),
+    hasSurface: Boolean(preview && rootPreviewSizer(preview)),
+    sourceHasContent: markdownViewHasSourceContent(view),
+    renderedContent: rootPreviewHasRenderedContent(preview)
+  };
+}
+function isRootPreviewReady(view, preview) {
+  return shouldMountRootPreview(rootPreviewLifecycleState(view, preview));
+}
+function resetDormantRootPreview(view, preview) {
+  if (!preview || !shouldResetDormantRootPreview(rootPreviewLifecycleState(view, preview))) {
+    return false;
+  }
+  cleanupDrawingUi(preview);
+  const sizer = rootPreviewSizer(preview);
+  for (const property of ["min-height", "padding-bottom"]) {
+    sizer?.style?.removeProperty(property);
+  }
+  for (const anchor of preview.querySelectorAll?.(".notedraw-note-flow-anchor") || []) {
+    anchor.style?.removeProperty("margin-top");
+    anchor.style?.removeProperty("margin-bottom");
+    anchor.classList?.remove("notedraw-note-flow-anchor");
+  }
+  if (Number(preview.scrollTop) !== 0) {
+    preview.scrollTop = 0;
+  }
+  return true;
 }
 function findPrimaryMarkdownSurface(view) {
   const source = findSourceSurfaceForView(view);
@@ -10784,6 +11140,7 @@ function normalizeNoteFlow(value) {
     enabled: true,
     path: normalizeVaultPath(value.path || ""),
     line: Number.isFinite(line) && line >= 0 ? line : null,
+    side: ["before", "after"].includes(value.side) ? value.side : null,
     gap: clamp(Number(value.gap) || 12, 4, 64)
   };
 }
@@ -11106,7 +11463,7 @@ function createTextPreset(preset, text, color) {
     return { kind: TOOL_TEXT, text: normalized, render: TEXT_RENDER_PLAIN, color: "#2563eb", fontSize: 17, bold: true, code: false, boxed: true, file: false, uiRole: "button", buttonStyle: "outline", snap: true };
   }
   if (["circle", "buttonPill"].includes(preset)) {
-    return { kind: TOOL_TEXT, text: normalized, render: TEXT_RENDER_PLAIN, color: "#7c3aed", fontSize: 17, bold: true, code: false, boxed: true, file: false, uiRole: "button", buttonStyle: preset === "circle" ? "circle" : "pill", snap: true };
+    return { kind: TOOL_TEXT, text: normalized, render: TEXT_RENDER_PLAIN, color: "#7c3aed", fontSize: 17, bold: true, code: false, boxed: true, file: false, uiRole: "button", buttonStyle: preset === "circle" ? "solid" : "pill", snap: true };
   }
   if (["arrowUp", "arrowDown", "arrowLeft", "arrowRight"].includes(preset)) {
     return { kind: TOOL_TEXT, text: normalized, render: TEXT_RENDER_PLAIN, color: "#111827", fontSize: 28, bold: true, code: false, boxed: false, file: false, uiRole: "arrow", buttonStyle: "", snap: true };
@@ -11969,40 +12326,7 @@ function pointDistanceOnCanvas(a, b, width, height) {
   );
 }
 function buildBoundConnectorPoints(fromBounds, toBounds, canvasWidth, canvasHeight) {
-  const fromCenter = {
-    x: (fromBounds.minX + fromBounds.maxX) / 2,
-    y: (fromBounds.minY + fromBounds.maxY) / 2
-  };
-  const toCenter = {
-    x: (toBounds.minX + toBounds.maxX) / 2,
-    y: (toBounds.minY + toBounds.maxY) / 2
-  };
-  const dx = toCenter.x - fromCenter.x;
-  const dy = toCenter.y - fromCenter.y;
-  const horizontal = Math.abs(dx) >= Math.abs(dy) * 0.62;
-  const from = horizontal ? {
-    x: dx >= 0 ? fromBounds.maxX : fromBounds.minX,
-    y: fromCenter.y
-  } : {
-    x: fromCenter.x,
-    y: dy >= 0 ? fromBounds.maxY : fromBounds.minY
-  };
-  const to = horizontal ? {
-    x: dx >= 0 ? toBounds.minX : toBounds.maxX,
-    y: toCenter.y
-  } : {
-    x: toCenter.x,
-    y: dy >= 0 ? toBounds.minY : toBounds.maxY
-  };
-  const control = horizontal
-    ? { x: (from.x + to.x) / 2, y: from.y }
-    : { x: from.x, y: (from.y + to.y) / 2 };
-  return [from, control, to].map((point) => ({
-    x: clamp(point.x / Math.max(1, canvasWidth), 0, 1),
-    y: clamp(point.y / Math.max(1, canvasHeight), 0, 1),
-    t: Date.now(),
-    anchor: null
-  }));
+  return buildSnappedConnectorPoints({ fromBounds, toBounds, canvasWidth, canvasHeight });
 }
 function buildFreeConnectorPoints(fromPoint, toPoint, canvasWidth, canvasHeight) {
   const width = Math.max(1, Number(canvasWidth) || 1);

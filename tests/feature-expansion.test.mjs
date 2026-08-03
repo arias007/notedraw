@@ -35,7 +35,7 @@ test("scrolling refreshes only the canvas window while real layout changes can r
   const source = await readFile(sourceUrl, "utf8");
 
   assert.match(source, /onScroll\(\) \{\s*this\.lastScrollAt = Date\.now\(\);[\s\S]*this\.scheduleResize\(\{ layout: false \}\)/);
-  assert.match(source, /this\.scrollSettleTimer = window\.setTimeout\([\s\S]*this\.scheduleMarkdownAnnotationRefresh\(\{ layout: true \}\);[\s\S]*this\.scheduleResize\(\{ layout: true \}\)/);
+  assert.match(source, /this\.scrollSettleTimer = window\.setTimeout\([\s\S]*this\.scheduleResize\(\{ layout: false \}\)/);
   assert.match(source, /const atScrollEnd = scrollHeight > clientHeight && scrollTop \+ clientHeight >= scrollHeight - 3/);
   assert.match(source, /scheduleMarkdownAnnotationRefresh\(\{ layout: Date\.now\(\) - this\.lastScrollAt > 220 \}\)/);
   assert.match(source, /resizeCanvas\(options = \{\}\)[\s\S]*const refreshLayout = options\.layout !== false/);
@@ -129,13 +129,19 @@ test("reading-only note pen and selected elements can reserve Markdown flow spac
   assert.match(source, /captureNoteFlowResponsiveAnchors\(stroke, context/);
   assert.match(source, /lineOffsetY: canvasY - anchorY/);
   assert.match(source, /applyNoteFlowLayout\(\)/);
+  assert.match(source, /selectNoteFlowAnchorPlacement\(this\.noteFlowCandidates\(\), \{ strokeTop \}\)/);
   const flowLayout = source.slice(source.indexOf("  applyNoteFlowLayout()"), source.indexOf("  scheduleNoteFlowLayout()"));
   assert.match(flowLayout, /const nextValue = `\$\{Math\.ceil\(state\.base \+ offset\)\}px`/);
-  assert.match(flowLayout, /const edge = anchor \? rect\.bottom : rect\.top - state\.applied \* scaleY/);
+  assert.match(flowLayout, /const property = side === "after" \? "margin-bottom" : "margin-top"/);
+  assert.match(flowLayout, /noteFlowRequiredOffset\(\{[\s\S]*applied: state\.applied/);
   assert.match(flowLayout, /state\.applied = offset/);
+  assert.match(flowLayout, /stabilizeNoteFlowBounds\(\{/);
+  assert.match(flowLayout, /this\.repairRunawayNoteFlowSurface\(runawayReferenceHeight\)/);
   assert.doesNotMatch(flowLayout, /this\.clearNoteFlowLayout\(\);\s*const flows/);
+  assert.doesNotMatch(flowLayout, /querySelectorAll\?\.\("\[data-note-draw-line-start\]"\)[\s\S]*\[0\]/);
   assert.doesNotMatch(flowLayout, /item\.stroke\.noteFlow = this\.captureNoteFlowAnchor\(item\.stroke\);\s*const anchor/);
   assert.doesNotMatch(flowLayout, /vault\.modify|app\.vault\.process/);
+  assert.doesNotMatch(flowLayout, /scheduleDrawingSave/);
   assert.match(styles, /\.notedraw-note-flow-anchor/);
 });
 
@@ -161,7 +167,7 @@ test("mind map import creates editable NoteDraw nodes and magnetically bound con
   assert.match(source, /ctx\.quadraticCurveTo\(points\[1\]\.x, points\[1\]\.y, points\[2\]\.x, points\[2\]\.y\)/);
 });
 
-test("text and links keeps only text, rectangle, circle, and the three-point arrow in one group", async () => {
+test("text and links keeps only text, outline and solid rectangles, and the magnetic arrow in one group", async () => {
   const source = await readFile(sourceUrl, "utf8");
   const panelStart = source.indexOf("  createTextPanel() {");
   const panelSource = source.slice(panelStart, source.indexOf("  scheduleMindMapFilePicker()", panelStart));
@@ -169,14 +175,33 @@ test("text and links keeps only text, rectangle, circle, and the three-point arr
   assert.match(panelSource, /labelKey: "textGroup"/);
   assert.match(panelSource, /\{ id: "plain", labelKey: "textPlain", icon: "type" \}/);
   assert.match(panelSource, /\{ id: "rectangle", labelKey: "outlineButton", icon: "square" \}/);
-  assert.match(panelSource, /\{ id: "circle", labelKey: "pillButton", icon: "circle" \}/);
+  assert.match(panelSource, /\{ id: "circle", labelKey: "pillButton", icon: "square" \}/);
   assert.match(panelSource, /\{ id: "arrow", labelKey: "arrow", icon: "move-up-right" \}/);
   assert.doesNotMatch(panelSource, /labelKey: "buttonGroup"|id: "title"|id: "code"|id: "file"|id: "button"|id: "buttonPrimary"|id: "arrowUp"|id: "arrowDown"|id: "arrowLeft"|id: "arrowRight"/);
   assert.match(source, /title: "plain"[\s\S]*code: "plain"[\s\S]*file: "plain"[\s\S]*button: "plain"/);
   assert.match(source, /startConnectorGesture\(event, point, routed\)/);
   assert.match(source, /findSnapElementIdAtPoint\(point/);
-  assert.match(source, /return \[from, control, to\]\.map/);
+  assert.match(source, /connectorSnapThreshold\(this\.selectionHitPaddingPx\(\)\)/);
+  assert.match(source, /buildSnappedConnectorPoints\(\{/);
+  assert.match(source, /ensureSnapElementIds\(\)/);
+  assert.match(source, /buttonStyle: preset === "circle" \? "solid" : "pill"/);
   assert.match(source, /this\.syncBoundConnectors\(\)/);
+});
+
+test("connector dragging caches snap geometry and ordinary renders skip legacy recovery scans", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const start = source.slice(source.indexOf("  startConnectorGesture"), source.indexOf("  findSnapElementIdAtPoint"));
+  const sync = source.slice(source.indexOf("  syncBoundConnectors(options = {})"), source.indexOf("  drawBoundConnectorOn", source.indexOf("  syncBoundConnectors(options = {})")));
+  const render = source.slice(source.indexOf("  render() {"), source.indexOf("  renderStaticCanvas()", source.indexOf("  render() {")));
+
+  assert.match(start, /const snapTargets = this\.collectSnapTargets\(\)/);
+  assert.match(start, /snapBoundsById/);
+  assert.match(start, /findSnapElementIdAtPoint\(endPoint, fromId, snapTargets\)/);
+  assert.match(sync, /const recover = options\.recover === true/);
+  assert.match(sync, /if \(recover && !fromBounds/);
+  assert.match(sync, /if \(targetIds && !targetIds\.has\(connector\.fromId\)/);
+  assert.doesNotMatch(render, /recover: true/);
+  assert.match(source, /syncBoundConnectors\(\{ elementIds: movedElementIds \}\)/);
 });
 
 test("selected text elements enter their editor before selection drag starts", async () => {
