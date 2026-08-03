@@ -79,6 +79,7 @@ var DRAWING_DIR = `${PLUGIN_ID}/drawings`;
 var ASSET_DIR = `${PLUGIN_ID}/assets`;
 var WEBVIEW_DRAWING_PREFIX = "webviews";
 var WORKSPACE_DRAWING_PREFIX = "workspaces";
+var REGISTERED_SURFACE_PREFIX = "registered-surfaces";
 var LEGACY_PLUGIN_ID = "note-doodle-preview";
 var LEGACY_DRAWING_DIR = `${LEGACY_PLUGIN_ID}/doodles`;
 var DEBUG_LOG_FILE = "debug-log.jsonl";
@@ -1195,6 +1196,8 @@ var NoteDrawPlugin = class extends Plugin {
     this.embeddedControllers = /* @__PURE__ */ new Map();
     this.webviewControllers = /* @__PURE__ */ new Map();
     this.workspaceControllers = /* @__PURE__ */ new Map();
+    this.registeredSurfaceControllers = /* @__PURE__ */ new Map();
+    this.registeredSurfaceRecords = /* @__PURE__ */ new Map();
     this.headerActions = /* @__PURE__ */ new Map();
     this.saveTimers = /* @__PURE__ */ new Map();
     this.pendingDrawingSaves = /* @__PURE__ */ new Map();
@@ -1331,6 +1334,8 @@ var NoteDrawPlugin = class extends Plugin {
     this.embeddedControllers.clear();
     this.webviewControllers.clear();
     this.workspaceControllers.clear();
+    this.registeredSurfaceControllers?.clear();
+    this.registeredSurfaceRecords?.clear();
     for (const state of this.headerActions.values()) {
       state.button?.remove();
     }
@@ -1479,6 +1484,155 @@ var NoteDrawPlugin = class extends Plugin {
         controller.destroy();
       }
     }
+  }
+  registeredSurfaceSelector(record) {
+    return {
+      owner: record.owner,
+      id: record.id,
+      surfaceId: record.id,
+      surfaceKey: record.key,
+      surface: "registered",
+      path: record.file?.path
+    };
+  }
+  mergeRegisteredSurfaceOptions(record, options = {}) {
+    return { ...this.registeredSurfaceSelector(record), ...options };
+  }
+  registerApiSurface(options = {}) {
+    const record = normalizeRegisteredSurfaceOptions(this.app, options);
+    const existing = this.registeredSurfaceControllers.get(record.key);
+    if (existing && !existing.destroyed && existing.previewEl !== record.host) {
+      existing.destroy();
+    }
+    const active = this.registeredSurfaceControllers.get(record.key);
+    if (active && !active.destroyed && active.previewEl === record.host) {
+      active.registeredSurfaceOwner = record.owner;
+      active.registeredSurfaceId = record.id;
+      active.registeredSurfaceKey = record.key;
+      active.registeredSurfaceSource = record.source;
+      active.registeredSurfaceCapabilities = record.capabilities;
+      active.registeredSurfaceViewport = record.viewport;
+      active.disposeRegisteredSurfaceViewport?.();
+      active.disposeRegisteredSurfaceViewport = this.bindRegisteredSurfaceViewport(active, record.viewport);
+      const ready = active.setFile(record.file).catch((error) => {
+        console.error(`[${PLUGIN_ID}] Failed to update registered surface file`, error);
+        throw error;
+      });
+      const handle = this.createRegisteredSurfaceHandle(record, active, ready);
+      record.controller = active;
+      record.handle = handle;
+      this.registeredSurfaceRecords.set(record.key, record);
+      return handle;
+    }
+    const mountedOnElement = this.controllers.get(record.host) || record.host._noteDrawController;
+    if (mountedOnElement?.plugin === this && mountedOnElement !== active) {
+      mountedOnElement.destroy();
+    }
+    cleanupDrawingUi(record.host);
+    const controller = new PreviewDrawingController(this, record.host, record.view, record.file, {
+      allowTextEdit: record.capabilities.textEditing !== false,
+      surfaceType: "registered",
+      registeredSurface: true,
+      registeredSurfaceOwner: record.owner,
+      registeredSurfaceId: record.id,
+      registeredSurfaceKey: record.key,
+      registeredSurfaceSource: record.source,
+      registeredSurfaceCapabilities: record.capabilities,
+      registeredSurfaceViewport: record.viewport
+    });
+    this.controllers.set(record.host, controller);
+    this.registeredSurfaceControllers.set(record.key, controller);
+    controller.disposeRegisteredSurfaceViewport = this.bindRegisteredSurfaceViewport(controller, record.viewport);
+    record.controller = controller;
+    const ready = controller.mount().catch((error) => {
+      console.error(`[${PLUGIN_ID}] Failed to mount registered surface`, error);
+      this.destroyRegisteredSurface(record.key);
+      throw error;
+    });
+    const handle = this.createRegisteredSurfaceHandle(record, controller, ready);
+    record.handle = handle;
+    this.registeredSurfaceRecords.set(record.key, record);
+    return handle;
+  }
+  createRegisteredSurfaceHandle(record, controller, ready) {
+    const plugin = this;
+    const withSurface = (options = {}) => plugin.mergeRegisteredSurfaceOptions(record, options);
+    return {
+      apiVersion: "1.0",
+      ready: Promise.resolve(ready).then(() => void 0),
+      capabilities: { ...record.capabilities },
+      get surface() {
+        return plugin.describeController(controller);
+      },
+      activate: async (toolOrOptions = {}) => {
+        const options = typeof toolOrOptions === "string" ? { tool: toolOrOptions } : toolOrOptions || {};
+        return plugin.activateApi(withSurface(options));
+      },
+      deactivate: () => plugin.deactivateApi(withSurface()),
+      toggle: async (options = {}) => plugin.toggleApi(withSurface(options)),
+      getState: async (options = {}) => plugin.getApiState(withSurface(options)),
+      setVisibility: async (visible, options = {}) => plugin.setApiVisibility(visible, withSurface(options)),
+      setTool: (tool, options = {}) => plugin.setApiTool(tool, withSurface(options)),
+      setBrush: (options = {}) => plugin.setApiBrush(withSurface(options)),
+      setTextPreset: (preset, options = {}) => plugin.setApiTextPreset(preset, withSurface(options)),
+      getZoom: () => plugin.describeController(controller)?.zoom ?? 1,
+      setZoom: (zoom, options = {}) => plugin.setApiZoom(zoom, withSurface(options)),
+      execute: async (actions, options = {}) => plugin.executeApiAction(actions, withSurface(options)),
+      getElements: async (options = {}) => plugin.getApiElements(withSurface(options)),
+      selectElements: async (options = {}) => plugin.selectApiElements(withSurface(options)),
+      updateElements: async (options = {}) => plugin.updateApiElements(withSurface(options)),
+      deleteElements: async (options = {}) => plugin.deleteApiElements(withSurface(options)),
+      reorderElements: async (options = {}) => plugin.reorderApiElements(withSurface(options)),
+      setElementsLocked: async (options = {}) => plugin.setApiElementsLocked(withSurface(options)),
+      setElementsNoteFlow: async (options = {}) => plugin.setApiElementsNoteFlow(withSurface(options)),
+      undo: async (options = {}) => plugin.runApiHistory("undo", withSurface(options)),
+      redo: async (options = {}) => plugin.runApiHistory("redo", withSurface(options)),
+      copyElements: (options = {}) => plugin.copyElementsApi(withSurface(options)),
+      pasteElements: (options = {}) => plugin.pasteElementsApi(withSurface(options)),
+      insertMindMap: async (options = {}) => plugin.insertMindMapApi(withSurface(options)),
+      refresh: async () => {
+        const data = await plugin.readDrawings(record.file);
+        return { ok: true, refreshed: plugin.refreshControllersForFile(record.file, data) };
+      },
+      on: (eventName, listener) => plugin.onApiEvent(eventName, (detail) => {
+        if (typeof listener !== "function") {
+          return;
+        }
+        if (detail?.surfaceKey === record.key || detail?.owner === record.owner && detail?.id === record.id) {
+          listener(detail);
+        }
+      }),
+      destroy: () => plugin.destroyRegisteredSurface(record.key)
+    };
+  }
+  bindRegisteredSurfaceViewport(controller, viewport = {}) {
+    if (typeof viewport?.onChange !== "function") {
+      return () => void 0;
+    }
+    try {
+      const dispose = viewport.onChange(() => {
+        if (controller.destroyed) {
+          return;
+        }
+        controller.scheduleLayoutRefresh({ settle: false });
+        controller.requestRender(true);
+        this.emitApiEvent("surface-changed", { ...this.describeController(controller), phase: "viewport" });
+      });
+      return typeof dispose === "function" ? dispose : () => void 0;
+    } catch (error) {
+      console.error(`[${PLUGIN_ID}] Failed to subscribe to registered surface viewport`, error);
+      return () => void 0;
+    }
+  }
+  destroyRegisteredSurface(key) {
+    const normalizedKey = String(key || "");
+    const controller = this.registeredSurfaceControllers?.get(normalizedKey);
+    this.registeredSurfaceControllers?.delete(normalizedKey);
+    this.registeredSurfaceRecords?.delete(normalizedKey);
+    if (controller && !controller.destroyed) {
+      controller.destroy();
+    }
+    return { ok: true };
   }
   controllerActivationState(controller) {
     const key = this.controllerStateKey(controller);
@@ -1749,12 +1903,15 @@ var NoteDrawPlugin = class extends Plugin {
       readingViewZoom: true,
       sourceViewLayoutZoom: true,
       workspaceSurfaces: true,
+      registeredSurfaces: true,
+      surfaceHandles: true,
       elementClipboard: true,
       readingNoteFlow: true,
       editableMindMaps: true,
       boundConnectors: true,
       persistentHeaderActions: true,
       stateBackedWorkspaceSurfaces: true,
+      agentActions: true,
       settingsApi: true,
       brushVariants: {
         [BRUSH_PEN]: [BRUSH_VARIANT_DEFAULT, PEN_VARIANT_FOUNTAIN, PEN_VARIANT_NOTE],
@@ -1762,6 +1919,7 @@ var NoteDrawPlugin = class extends Plugin {
       },
       events: ["drawings-changed", "markdown-changed", "surface-changed"],
       tools: [TOOL_DRAW, TOOL_SELECT, TOOL_EDIT_MD, TOOL_TEXT],
+      sources: ["vault", "url", "virtual"],
       surfaceActions: ["activate", "deactivate", "toggle", "set-visibility", "refresh"],
       elementActions: ["get", "select", "update", "delete", "reorder", "set-locked", "set-note-flow", "copy", "paste"],
       historyActions: ["undo", "redo"]
@@ -1770,6 +1928,7 @@ var NoteDrawPlugin = class extends Plugin {
       apiVersion: "1.0",
       capabilities,
       resolveFile: (fileOrPath, sourcePath = "") => this.resolveApiFile(fileOrPath, sourcePath),
+      registerSurface: (options = {}) => this.registerApiSurface(options),
       listSurfaces: () => this.getAllControllers().map((controller) => this.describeController(controller)),
       getActiveSurface: () => this.describeController(this.getActiveController()),
       getState: (options = {}) => this.getApiState(options),
@@ -1838,11 +1997,12 @@ var NoteDrawPlugin = class extends Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.3.17",
+      version: "3.3.18",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
       resolveFile: v1.resolveFile,
+      registerSurface: v1.registerSurface,
       listSurfaces: v1.listSurfaces,
       getActiveSurface: v1.getActiveSurface,
       getState: v1.getState,
@@ -1892,10 +2052,39 @@ var NoteDrawPlugin = class extends Plugin {
     const surfaceFile = this.getAllControllers().find((controller) => normalizeVaultPath(controller.file?.path) === path)?.file;
     return getVaultFileByPath(this.app.vault, path) || surfaceFile || this.app.metadataCache.getFirstLinkpathDest?.(path, sourcePath || "") || null;
   }
+  registeredSurfaceViewportState(controller) {
+    const viewport = controller?.registeredSurfaceViewport;
+    if (!viewport) {
+      return null;
+    }
+    let zoom = null;
+    let scroll = null;
+    try {
+      if (typeof viewport.getZoom === "function") {
+        const value = Number(viewport.getZoom());
+        zoom = Number.isFinite(value) && value > 0 ? value : null;
+      }
+    } catch (error) {
+      void error;
+    }
+    try {
+      if (typeof viewport.getScroll === "function") {
+        const value = viewport.getScroll() || {};
+        scroll = {
+          left: Number.isFinite(Number(value.left)) ? Number(value.left) : 0,
+          top: Number.isFinite(Number(value.top)) ? Number(value.top) : 0
+        };
+      }
+    } catch (error) {
+      void error;
+    }
+    return { zoom, scroll };
+  }
   describeController(controller) {
     if (!controller || controller.destroyed) {
       return null;
     }
+    const viewport = this.registeredSurfaceViewportState(controller);
     return {
       file: controller.file?.path || "",
       surface: controller.surfaceType,
@@ -1904,17 +2093,29 @@ var NoteDrawPlugin = class extends Plugin {
       tool: controller.toolMode,
       brush: controller.brushMode,
       variant: controller.currentBrushVariant?.() || BRUSH_VARIANT_DEFAULT,
-      zoom: controller.readingZoom || 1,
+      zoom: viewport?.zoom ?? (controller.readingZoom || 1),
+      scroll: viewport?.scroll || null,
       visible: Boolean(controller.drawingsVisible),
       drawingsLoaded: Boolean(controller.drawingsLoaded),
       strokeCount: controller.drawingData?.strokes?.length || 0,
       selected: controller.getSelectedStrokeIndexes?.() || [],
+      owner: controller.registeredSurfaceOwner || "",
+      id: controller.registeredSurfaceId || "",
+      surfaceId: controller.registeredSurfaceId || "",
+      surfaceKey: controller.registeredSurfaceKey || "",
+      source: controller.registeredSurfaceSource ? { ...controller.registeredSurfaceSource } : null,
+      capabilities: controller.registeredSurfaceCapabilities ? { ...controller.registeredSurfaceCapabilities } : null,
+      customSurface: Boolean(controller.registeredSurface),
       coordinateBasis: RESPONSIVE_POINT_BASIS
     };
   }
   findApiController(options = {}) {
     const requestedPath = normalizeVaultPath(options.file?.path || options.path || options.file || "");
     const requestedSurface = String(options.surface || "").trim();
+    const requestedOwner = String(options.owner || options.surfaceOwner || "").trim();
+    const requestedId = String(options.id || options.surfaceId || "").trim();
+    const requestedKey = String(options.surfaceKey || "").trim();
+    const requestedSource = normalizeRegisteredSurfaceSource(options.source || {});
     const controllers = this.getAllControllers();
     const matches = controllers.filter((controller) => {
       if (requestedPath && normalizeVaultPath(controller.file?.path) !== requestedPath) {
@@ -1922,6 +2123,30 @@ var NoteDrawPlugin = class extends Plugin {
       }
       if (requestedSurface && controller.surfaceType !== requestedSurface) {
         return false;
+      }
+      if (requestedOwner && controller.registeredSurfaceOwner !== requestedOwner) {
+        return false;
+      }
+      if (requestedId && controller.registeredSurfaceId !== requestedId && controller.registeredSurfaceKey !== requestedId) {
+        return false;
+      }
+      if (requestedKey && controller.registeredSurfaceKey !== requestedKey) {
+        return false;
+      }
+      if (requestedSource.kind) {
+        const source = controller.registeredSurfaceSource || {};
+        if (requestedSource.kind !== source.kind) {
+          return false;
+        }
+        if (requestedSource.path && normalizeVaultPath(requestedSource.path) !== normalizeVaultPath(source.path || controller.file?.path || "")) {
+          return false;
+        }
+        if (requestedSource.url && requestedSource.url !== source.url) {
+          return false;
+        }
+        if (requestedSource.key && requestedSource.key !== source.key) {
+          return false;
+        }
       }
       return controller.previewEl?.isConnected;
     });
@@ -1963,6 +2188,23 @@ var NoteDrawPlugin = class extends Plugin {
   }
   setApiZoom(zoom, options = {}) {
     const controller = this.findApiController(options);
+    const viewport = controller?.registeredSurfaceViewport;
+    if (controller && typeof viewport?.setZoom === "function") {
+      const nextZoom = Number(zoom);
+      if (!Number.isFinite(nextZoom) || nextZoom <= 0) {
+        return { ok: false, reason: "invalid-zoom" };
+      }
+      try {
+        viewport.setZoom(nextZoom);
+        controller.scheduleLayoutRefresh({ settle: false });
+        controller.requestRender(true);
+        const surface = this.describeController(controller);
+        this.emitApiEvent("surface-changed", { ...surface, phase: "viewport" });
+        return { ok: true, surface };
+      } catch (error) {
+        return { ok: false, reason: "viewport-set-zoom-failed", message: String(error?.message || error) };
+      }
+    }
     if (!controller || !controller.canZoomReadingSurface?.()) {
       return { ok: false, reason: "reading-surface-not-found" };
     }
@@ -2241,6 +2483,29 @@ var NoteDrawPlugin = class extends Plugin {
     return { ok: true, settings: { ...this.noteDrawSettings } };
   }
   async executeApiAction(action, options = {}) {
+    if (Array.isArray(action)) {
+      const results = [];
+      for (const item of action) {
+        results.push(await this.executeApiAction(item, options));
+      }
+      return {
+        ok: results.every((result) => result?.ok !== false),
+        count: results.length,
+        results,
+        surface: this.describeController(this.findApiController(options))
+      };
+    }
+    if (action && typeof action === "object") {
+      const actionOptions = { ...options, ...(action.options || {}), ...action };
+      const name = action.op || action.action || action.type || action.name || action.command || "";
+      delete actionOptions.op;
+      delete actionOptions.action;
+      delete actionOptions.type;
+      delete actionOptions.name;
+      delete actionOptions.command;
+      delete actionOptions.options;
+      return this.executeApiAction(name, actionOptions);
+    }
     const name = String(action || "").trim().toLowerCase().replace(/[\s_]+/g, "-");
     if (name === "activate") return this.activateApi(options);
     if (name === "deactivate") return this.deactivateApi(options);
@@ -2262,6 +2527,8 @@ var NoteDrawPlugin = class extends Plugin {
     if (name === "undo" || name === "redo") return this.runApiHistory(name, options);
     if (name === "copy") return this.copyElementsApi(options);
     if (name === "paste") return this.pasteElementsApi(options);
+    if (name === "insert-stroke" || name === "insert-element" || name === "insert-elements") return this.insertApiElements(options);
+    if (name === "insert-mind-map" || name === "insert-mindmap") return this.insertMindMapApi(options);
     if (name === "get-settings") return { ok: true, settings: { ...this.noteDrawSettings } };
     if (name === "update-settings") return this.updateApiSettings(options.patch || options.settings || {});
     if (name === "refresh") {
@@ -2301,6 +2568,37 @@ var NoteDrawPlugin = class extends Plugin {
       this.refreshControllersForFile(file, data);
     }
     return data;
+  }
+  async insertApiElements(options = {}) {
+    const controller = await this.getLoadedApiController(options);
+    if (!controller) {
+      return { ok: false, reason: "surface-not-found" };
+    }
+    const rawElements = Array.isArray(options.elements) ? options.elements : Array.isArray(options.strokes) ? options.strokes : options.stroke ? [options.stroke] : [];
+    if (!rawElements.length) {
+      return { ok: false, reason: "missing-elements" };
+    }
+    const before = controller.captureDrawingHistorySnapshot();
+    const inserted = [];
+    for (const raw of rawElements) {
+      const normalized = normalizeStroke(raw);
+      if (!normalized.points.length) {
+        continue;
+      }
+      controller.drawingData.strokes.push(normalized);
+      inserted.push(controller.drawingData.strokes.length - 1);
+    }
+    if (!inserted.length) {
+      return { ok: false, reason: "empty-elements" };
+    }
+    this.commitApiDrawingMutation(controller, before, inserted);
+    return {
+      ok: true,
+      inserted: inserted.length,
+      selected: inserted,
+      elementIds: inserted.map((index) => strokeElementId(controller.drawingData.strokes[index])),
+      surface: this.describeController(controller)
+    };
   }
   copyElementsApi(options = {}) {
     const controller = this.findApiController(options);
@@ -2387,6 +2685,10 @@ var NoteDrawPlugin = class extends Plugin {
       }
     }
     if (activeContainer) {
+      const activeRegistered = Array.from(this.registeredSurfaceControllers.values()).find((controller) => controller.previewEl?.isConnected && activeContainer.contains(controller.previewEl));
+      if (activeRegistered) {
+        return activeRegistered;
+      }
       const activeWebview = Array.from(this.webviewControllers.values()).find((controller) => controller.previewEl?.isConnected && activeContainer.contains(controller.previewEl));
       if (activeWebview) {
         return activeWebview;
@@ -2665,7 +2967,7 @@ var NoteDrawPlugin = class extends Plugin {
     }
   }
   installHeaderButton(controller) {
-    if (controller.surfaceType === "webview") {
+    if (controller.surfaceType === "webview" || controller.registeredSurface) {
       return this.installSurfaceButton(controller);
     }
     const view = controller.view;
@@ -2734,7 +3036,7 @@ var NoteDrawPlugin = class extends Plugin {
       button.classList.add("view-action");
     }
     setIcon(button, "wand-sparkles");
-    this.setAccessibleLabel(button, "editWebviewDraw");
+    this.setAccessibleLabel(button, controller.surfaceType === "webview" ? "editWebviewDraw" : "editTextDraw");
     button.addEventListener("click", (event) => controller.onButtonClick(event));
     button.addEventListener("pointerdown", (event) => controller.onButtonPointerDown(event));
     button.addEventListener("pointerup", () => controller.onButtonPointerUp());
@@ -2752,7 +3054,7 @@ var NoteDrawPlugin = class extends Plugin {
     return button;
   }
   releaseHeaderButton(controller) {
-    if (controller.surfaceType === "webview") {
+    if (controller.surfaceType === "webview" || controller.registeredSurface) {
       controller.button?.remove();
       return;
     }
@@ -3476,6 +3778,13 @@ var PreviewDrawingController = class {
     this.embeddedSurface = Boolean(options.embeddedSurface);
     this.workspaceSurface = Boolean(options.workspaceSurface);
     this.workspaceViewType = String(options.workspaceViewType || "");
+    this.registeredSurface = Boolean(options.registeredSurface);
+    this.registeredSurfaceOwner = String(options.registeredSurfaceOwner || "");
+    this.registeredSurfaceId = String(options.registeredSurfaceId || "");
+    this.registeredSurfaceKey = String(options.registeredSurfaceKey || "");
+    this.registeredSurfaceSource = options.registeredSurfaceSource || null;
+    this.registeredSurfaceCapabilities = options.registeredSurfaceCapabilities || null;
+    this.registeredSurfaceViewport = options.registeredSurfaceViewport || null;
     this.destroyed = false;
     this.plugin.liveControllers?.add(this);
     this.runtimeSettings = sanitizeSettings(this.plugin?.noteDrawSettings || {});
@@ -3683,6 +3992,7 @@ var PreviewDrawingController = class {
     this.previewEl.toggleClass("is-notedraw-webview-shell", this.surfaceType === "webview");
     this.previewEl.toggleClass("is-notedraw-embedded-shell", this.embeddedSurface);
     this.previewEl.toggleClass("is-notedraw-workspace-shell", this.workspaceSurface);
+    this.previewEl.toggleClass("is-notedraw-registered-shell", this.registeredSurface);
     this.floatingControlsInBody = shouldUseBodyFloatingControls(this.previewEl, this.surfaceType);
     this.floatingControlsHost = this.floatingControlsInBody ? activeDocument.body : this.previewEl;
     this.previewEl.toggleClass("has-notedraw-body-controls", this.floatingControlsInBody);
@@ -4123,6 +4433,8 @@ var PreviewDrawingController = class {
     this.embedGeometryTokens.clear();
     this.canvasImageCache.clear();
     this.clearReadingZoomStyles();
+    this.disposeRegisteredSurfaceViewport?.();
+    this.disposeRegisteredSurfaceViewport = null;
     this.readingZoomExtent?.remove();
     this.readingZoomExtent = null;
     this.staticCanvas?.remove();
@@ -4142,6 +4454,7 @@ var PreviewDrawingController = class {
     this.previewEl.removeClass("is-notedraw-source-shell");
     this.previewEl.removeClass("is-notedraw-webview-shell");
     this.previewEl.removeClass("is-notedraw-workspace-shell");
+    this.previewEl.removeClass("is-notedraw-registered-shell");
     this.previewEl.removeClass("has-notedraw-body-controls");
     this.previewEl.removeClass("has-notedraw-canvas");
     this.previewEl.removeClass("is-resizing-selection");
@@ -4163,6 +4476,10 @@ var PreviewDrawingController = class {
     }
     if (this.plugin.workspaceControllers?.get(this.view) === this) {
       this.plugin.workspaceControllers.delete(this.view);
+    }
+    if (this.registeredSurfaceKey && this.plugin.registeredSurfaceControllers?.get(this.registeredSurfaceKey) === this) {
+      this.plugin.registeredSurfaceControllers.delete(this.registeredSurfaceKey);
+      this.plugin.registeredSurfaceRecords?.delete(this.registeredSurfaceKey);
     }
     this.plugin.liveControllers?.delete(this);
     if (surfaceBeforeDestroy) {
@@ -11323,6 +11640,106 @@ function createWorkspaceDrawingFile(view, viewType) {
     extension: "md"
   };
 }
+function normalizeRegisteredSurfaceOptions(app, options = {}) {
+  const host = options.host || options.container || options.element;
+  if (!isHtmlElementLike(host)) {
+    throw new Error("NoteDraw registerSurface requires a host HTMLElement");
+  }
+  const owner = String(options.owner || "external").trim() || "external";
+  const id = String(options.id || options.surfaceId || options.key || options.name || "").trim() || `${safeStorageName(owner)}-${hashString(Date.now())}`;
+  const key = registeredSurfaceKey(owner, id);
+  const normalizedSource = normalizeRegisteredSurfaceSource(options.source || {
+    kind: options.kind,
+    path: options.path || options.file?.path,
+    url: options.url,
+    key: options.sourceKey,
+    title: options.title
+  }, { owner, id });
+  const source = normalizedSource.kind ? normalizedSource : {
+    kind: "virtual",
+    key: id,
+    title: String(options.title || id)
+  };
+  const capabilities = normalizeRegisteredSurfaceCapabilities(options.capabilities);
+  const file = createRegisteredSurfaceDrawingFile(app, { owner, id, key, source });
+  return {
+    owner,
+    id,
+    key,
+    host,
+    view: options.view || findOwningWorkspaceView(app, host) || { containerEl: host, getViewType: () => "notedraw-registered-surface" },
+    source,
+    capabilities,
+    viewport: options.viewport || {},
+    file
+  };
+}
+function normalizeRegisteredSurfaceSource(source = {}, fallback = {}) {
+  if (!source || typeof source !== "object") {
+    return {};
+  }
+  const hasSource = Boolean(source.kind || source.path || source.file?.path || source.url || source.href || source.key || source.title);
+  if (!hasSource) {
+    return {};
+  }
+  const kind = String(source.kind || (source.url || source.href ? "url" : source.path || source.file?.path ? "vault" : "virtual")).trim().toLowerCase();
+  const normalizedKind = ["vault", "url", "virtual"].includes(kind) ? kind : "virtual";
+  const result = {
+    kind: normalizedKind,
+    title: String(source.title || source.name || fallback.id || "").trim()
+  };
+  if (normalizedKind === "vault") {
+    result.path = normalizeVaultPath(source.path || source.file?.path || source.key || "");
+    result.key = result.path || String(source.key || fallback.id || "").trim();
+  } else if (normalizedKind === "url") {
+    result.url = canonicalizeWebviewUrl(source.url || source.href || source.key || "");
+    result.key = result.url || String(source.key || fallback.id || "").trim();
+  } else {
+    result.key = String(source.key || source.path || source.url || fallback.id || "").trim();
+  }
+  return result;
+}
+function normalizeRegisteredSurfaceCapabilities(capabilities = {}) {
+  return {
+    drawing: capabilities.drawing !== false,
+    textEditing: capabilities.textEditing !== false,
+    elements: capabilities.elements !== false,
+    attachments: capabilities.attachments !== false
+  };
+}
+function createRegisteredSurfaceDrawingFile(app, record) {
+  const source = record.source || {};
+  if (source.kind === "vault" && source.path) {
+    const file = getVaultFileByPath(app?.vault, source.path);
+    if (file) {
+      return file;
+    }
+    return {
+      path: source.path,
+      name: source.path.split("/").pop() || "registered-surface.md",
+      extension: source.path.split(".").pop() || "md"
+    };
+  }
+  const sourcePath = registeredSurfaceStoragePath(record);
+  return {
+    path: sourcePath,
+    name: sourcePath.split("/").pop() || "registered-surface.md",
+    extension: "md"
+  };
+}
+function registeredSurfaceStoragePath(record) {
+  const source = record.source || {};
+  const identity = [record.owner, record.id, source.kind, source.path, source.url, source.key, source.title].filter(Boolean).join("|") || `${record.owner}|${record.id}`;
+  const owner = safeStorageName(record.owner || "external");
+  const label = safeStorageName(source.title || source.url || source.path || source.key || record.id || "surface");
+  return `${REGISTERED_SURFACE_PREFIX}/${owner}/${label}__${hashString(identity)}.md`;
+}
+function registeredSurfaceKey(owner, id) {
+  return `${String(owner || "external").trim() || "external"}::${String(id || "surface").trim() || "surface"}`;
+}
+function isHtmlElementLike(value) {
+  return Boolean(value && value.nodeType === 1 && typeof value.querySelector === "function" && typeof value.appendChild === "function");
+}
 function workspaceSurfaceStoragePath(view, viewType) {
   let state = {};
   try {
@@ -11831,7 +12248,7 @@ function cleanupOrphanedNoteFlowLayout(preview) {
 function cleanupDrawingUi(preview) {
   cleanupOrphanedNoteFlowLayout(preview);
   preview.querySelectorAll(".notedraw-button, .notedraw-fallback-button, .notedraw-webview-button, .notedraw-toolbar, .notedraw-palette-panel, .notedraw-brush-panel, .notedraw-text-panel, .notedraw-selection-menu, .notedraw-format-toolbar, .notedraw-reading-zoom-extent, .notedraw-embed-layer, .notedraw-file-input, .notedraw-static-canvas, .notedraw-canvas").forEach((element) => element.remove());
-  preview.classList.remove("notedraw-shell", "is-drawing-active", "is-drawing-hidden", "is-select-mode", "is-palette-open", "is-brush-panel-open", "is-text-panel-open", "is-selection-menu-open", "is-watercolor-mode", "is-edit-md-mode", "is-selecting-strokes", "is-resizing-selection", "is-native-text-editing", "is-reading-zoomed", "is-editing-layout-zoomed", "is-notedraw-webview-shell", "is-notedraw-workspace-shell", "is-notedraw-embedded-shell", "is-notedraw-responsive-layout", "is-notedraw-controls-visible", "has-notedraw-body-controls", "has-notedraw-canvas");
+  preview.classList.remove("notedraw-shell", "is-drawing-active", "is-drawing-hidden", "is-select-mode", "is-palette-open", "is-brush-panel-open", "is-text-panel-open", "is-selection-menu-open", "is-watercolor-mode", "is-edit-md-mode", "is-selecting-strokes", "is-resizing-selection", "is-native-text-editing", "is-reading-zoomed", "is-editing-layout-zoomed", "is-notedraw-webview-shell", "is-notedraw-workspace-shell", "is-notedraw-embedded-shell", "is-notedraw-registered-shell", "is-notedraw-responsive-layout", "is-notedraw-controls-visible", "has-notedraw-body-controls", "has-notedraw-canvas");
 }
 function isNoteDrawOwnedMutation(mutation) {
   if (!mutation) {

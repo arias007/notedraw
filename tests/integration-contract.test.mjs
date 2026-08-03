@@ -34,6 +34,11 @@ test("the stable v1 API exposes Cancip-friendly capabilities and events", async 
   assert.match(source, /setZoom: v1\.setZoom/);
   assert.match(source, /persistentHeaderActions: true/);
   assert.match(source, /stateBackedWorkspaceSurfaces: true/);
+  assert.match(source, /registeredSurfaces: true/);
+  assert.match(source, /surfaceHandles: true/);
+  assert.match(source, /agentActions: true/);
+  assert.match(source, /registerSurface: \(options = \{\}\) => this\.registerApiSurface\(options\)/);
+  assert.match(source, /registerSurface: v1\.registerSurface/);
   assert.match(source, /getState: v1\.getState/);
   assert.match(source, /setVisibility: v1\.setVisibility/);
   assert.match(source, /setBrush: v1\.setBrush/);
@@ -45,15 +50,37 @@ test("the stable v1 API exposes Cancip-friendly capabilities and events", async 
   assert.match(source, /phase: "unmounted"/);
 });
 
-test("3.3.17 preserves bottom coordinates and cross-view frames without eager hidden-view refresh", async () => {
+test("registered surfaces expose stable handles and structured actions without controllers", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+
+  assert.match(source, /registerApiSurface\(options = \{\}\)/);
+  assert.match(source, /createRegisteredSurfaceHandle\(record, controller, ready\)/);
+  assert.match(source, /ready: Promise\.resolve\(ready\)\.then\(\(\) => void 0\)/);
+  assert.match(source, /activate: async \(toolOrOptions = \{\}\)/);
+  assert.match(source, /deactivate: \(\) => plugin\.deactivateApi/);
+  assert.match(source, /toggle: async \(options = \{\}\)/);
+  assert.match(source, /setTool: \(tool, options = \{\}\)/);
+  assert.match(source, /execute: async \(actions, options = \{\}\)/);
+  assert.match(source, /getElements: async \(options = \{\}\)/);
+  assert.match(source, /destroy: \(\) => plugin\.destroyRegisteredSurface/);
+  assert.doesNotMatch(source.slice(source.indexOf("  createRegisteredSurfaceHandle("), source.indexOf("  destroyRegisteredSurface(", source.indexOf("  createRegisteredSurfaceHandle("))), /controller:/);
+  assert.match(source, /if \(Array\.isArray\(action\)\)/);
+  assert.match(source, /action\.op \|\| action\.action \|\| action\.type/);
+  assert.match(source, /insertApiElements\(options = \{\}\)/);
+  assert.match(source, /registeredSurfaceOwner/);
+  assert.match(source, /registeredSurfaceId/);
+  assert.match(source, /registeredSurfaceSource/);
+});
+
+test("3.3.18 preserves bottom coordinates and cross-view frames without eager hidden-view refresh", async () => {
   const [source, manifestText] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(manifestUrl, "utf8")
   ]);
   const manifest = JSON.parse(manifestText);
 
-  assert.equal(manifest.version, "3.3.17");
-  assert.match(source, /version: "3\.3\.17"/);
+  assert.equal(manifest.version, "3.3.18");
+  assert.match(source, /version: "3\.3\.18"/);
   assert.match(source, /if \(!this\.responsivePointsInitialized \|\| signature !== this\.responsiveLayoutSignature\)/);
   assert.match(source, /captureElementLayoutForStroke/);
   assert.match(source, /projectElementPoints\(stroke\.points, layout, box/);

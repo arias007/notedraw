@@ -172,7 +172,45 @@ const unsubscribe = noteDraw.on("markdown-changed", (event) => console.log(event
 await noteDraw.execute("set-tool", { tool: "select" });
 ```
 
-The structured methods cover surface state, visibility, tools, brush settings, text presets, element selection and mutation, layers, locking, note flow, history, clipboard, settings, imports, exports, and lifecycle events. `execute(action, options)` provides a compact action router for Cancip and other agents without depending on internal controller method names.
+Custom views from Cancip, NoteWeb, or another plugin can register their visible surface without copying NoteDraw internals:
+
+~~~js
+const surface = noteDraw.registerSurface({
+  owner: "noteweb",
+  id: "tab:" + leaf.id,
+  host: webPageContainer,
+  source: {
+    kind: "url",
+    url: currentUrl,
+    title: documentTitle
+  },
+  capabilities: {
+    drawing: true,
+    textEditing: true,
+    elements: true,
+    attachments: true
+  },
+  viewport: {
+    getZoom: () => browserZoom,
+    setZoom: (zoom) => setBrowserZoom(zoom),
+    getScroll: () => ({ left: webPageContainer.scrollLeft, top: webPageContainer.scrollTop }),
+    onChange: (callback) => subscribeToViewport(callback)
+  }
+});
+
+await surface.ready;
+await surface.activate("draw");
+await surface.execute([
+  { op: "set-brush", brush: "watercolor", variant: "text-highlight", color: "#facc15" },
+  { op: "insert-elements", elements: generatedStrokes }
+]);
+
+surface.destroy();
+~~~
+
+Registering the same owner and id again updates its source on the same host. Vault paths, normalized URLs, and virtual keys receive separate persistent drawing storage. The returned handle exposes surface-scoped drawing, text, element, clipboard, history, mind-map, zoom, event, refresh, and lifecycle operations without exposing NoteDraw's internal controller.
+
+The structured methods cover surface state, visibility, tools, brush settings, text presets, element selection and mutation, layers, locking, note flow, history, clipboard, settings, imports, exports, and lifecycle events. `execute(action, options)` accepts a string, one structured action object, or an ordered action array, so Cancip and other agents do not depend on internal controller method names.
 
 Magic-wand actions are maintained on Markdown, Canvas, PDF, image, Base/database, HTML/webview, and other supported main-workspace pages. State-backed plugin pages use a stable NoteDraw storage identity even when they do not expose a Vault file.
 
@@ -238,4 +276,4 @@ The current package focuses on the local Obsidian plugin runtime. The API and DO
 
 ## Version
 
-Current version: `3.3.17`.
+Current version: `3.3.18`.
