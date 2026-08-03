@@ -154,6 +154,8 @@ test("reading-only note pen and selected elements can reserve Markdown flow spac
   assert.match(flowLayout, /stabilizeNoteFlowBounds\(\{/);
   assert.match(flowLayout, /preferCurrent: Boolean\(normalizeNoteFlow\(stroke\.noteFlow\)\?\.positionBasis\)/);
   assert.match(flowLayout, /this\.repairRunawayNoteFlowSurface\(runawayReferenceHeight\)/);
+  assert.match(flowLayout, /const hasStoredAnchor = hasStableNoteFlowAnchor\(currentNoteFlow\)/);
+  assert.match(flowLayout, /if \(!anchor && !hasStoredAnchor\)/);
   assert.match(source, /\["padding-top", "padding-bottom", "margin-top", "margin-bottom"\]/);
   assert.doesNotMatch(flowLayout, /this\.clearNoteFlowLayout\(\);\s*const flows/);
   assert.doesNotMatch(flowLayout, /querySelectorAll\?\.\("\[data-note-draw-line-start\]"\)[\s\S]*\[0\]/);
@@ -186,10 +188,13 @@ test("moving inserted note elements refreshes Markdown avoidance once per animat
   assert.match(dragSource, /this\.cancelResizeFrame\(\);\s*this\.draggingStroke = true/);
   assert.match(settleSource, /markNoteFlowLayoutMutation\(\)[\s\S]*Date\.now\(\) \+ 180/);
   assert.match(settleSource, /this\.resizeFrameId !== null && this\.resizeNeedsLayout[\s\S]*this\.cancelResizeFrame\(\)[\s\S]*this\.scheduleResize\(\{ layout: false \}\)/);
-  assert.match(settleSource, /scheduleNoteFlowSettleResize\(\)[\s\S]*this\.scheduleResize\(\{ layout: true \}\)/);
+  assert.match(settleSource, /scheduleNoteFlowSettleResize\(\)[\s\S]*this\.noteFlowSettlePasses >= 2[\s\S]*this\.scheduleResize\(\{ layout: true, preserveNoteFlowAbsolute: true \}\)/);
+  assert.match(source, /preserveAbsoluteNoteFlowPoints\(stroke\.points/);
   assert.match(refreshSource, /layoutChanged && !this\.draggingStroke[\s\S]*this\.scheduleNoteFlowSettleResize\(\)/);
   assert.doesNotMatch(refreshSource, /layoutChanged && !this\.draggingStroke[\s\S]{0,120}this\.scheduleResize\(\{ layout: true \}\)/);
   assert.match(source, /window\.clearTimeout\(this\.noteFlowResizeTimer\)/);
+  assert.match(source, /function cleanupOrphanedNoteFlowLayout\(preview\)/);
+  assert.doesNotMatch(source, /resetDormantRootPreview[\s\S]{0,900}preview\.scrollTop = 0/);
 });
 
 test("mind map import creates editable NoteDraw nodes and magnetically bound connectors", async () => {

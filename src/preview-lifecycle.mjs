@@ -19,5 +19,5 @@ export function shouldResetDormantRootPreview({
   sourceHasContent,
   renderedContent
 } = {}) {
-  return Boolean(sourceHasContent && !renderedContent && (sourceMode || visible));
+  return Boolean(sourceHasContent && !renderedContent && sourceMode && !visible);
 }

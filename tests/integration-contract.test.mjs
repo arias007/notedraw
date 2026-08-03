@@ -45,15 +45,15 @@ test("the stable v1 API exposes Cancip-friendly capabilities and events", async 
   assert.match(source, /phase: "unmounted"/);
 });
 
-test("3.3.15 preserves bottom coordinates and cross-view frames without eager hidden-view refresh", async () => {
+test("3.3.16 preserves bottom coordinates and cross-view frames without eager hidden-view refresh", async () => {
   const [source, manifestText] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(manifestUrl, "utf8")
   ]);
   const manifest = JSON.parse(manifestText);
 
-  assert.equal(manifest.version, "3.3.15");
-  assert.match(source, /version: "3\.3\.15"/);
+  assert.equal(manifest.version, "3.3.16");
+  assert.match(source, /version: "3\.3\.16"/);
   assert.match(source, /if \(!this\.responsivePointsInitialized \|\| signature !== this\.responsiveLayoutSignature\)/);
   assert.match(source, /captureElementLayoutForStroke/);
   assert.match(source, /projectElementPoints\(stroke\.points, layout, box/);
@@ -175,7 +175,7 @@ test("reading controllers survive zero-sized view transitions until the source s
   const syncSource = source.slice(syncStart, source.indexOf("  syncEmbeddedMarkdownControllers()", syncStart));
 
   assert.match(syncSource, /const sourceVisible = isElementVisibleEnough\(source\)/);
-  assert.match(syncSource, /if \(isSourceMode\(view\)\) \{\s*if \(sourceVisible\) \{\s*for \(const rootPreview of findRootPreviewsForView\(view\)\)/);
+  assert.match(syncSource, /if \(isSourceMode\(view\) && sourceVisible && !previewVisible\) \{\s*for \(const rootPreview of findRootPreviewsForView\(view\)\)/);
   assert.match(syncSource, /sourceController\?\.syncFloatingControlClasses\(\);\s*if \(!previewVisible\) \{\s*continue;/);
   assert.match(syncSource, /if \(previewController\?\.plugin === this && !previewController\.destroyed[\s\S]*continue;\s*}\s*if \(!isRootPreviewReady/);
   assert.match(syncSource, /if \(!isRootPreviewReady\(view, preview\)\) \{\s*previewController\?\.destroy\(\);\s*resetDormantRootPreview\(view, preview\);\s*continue;/);

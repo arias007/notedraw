@@ -2,14 +2,43 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  hasStableNoteFlowAnchor,
   noteFlowRequiredOffset,
   noteFlowSurfaceRepairLimits,
+  preserveAbsoluteNoteFlowPoints,
   projectNoteFlowDocumentPoint,
   selectNoteFlowAnchorPlacement,
   selectNoteFlowPositionAnchor,
   stabilizeNoteFlowPointProjection,
   stabilizeNoteFlowBounds
 } from "../src/note-flow-layout.mjs";
+
+test("saved note-flow anchors remain stable while their Markdown block is virtualized", () => {
+  assert.equal(hasStableNoteFlowAnchor({
+    line: 42,
+    side: "before",
+    positionBasis: "above",
+    positionVersion: 1
+  }), true);
+  assert.equal(hasStableNoteFlowAnchor({
+    line: null,
+    side: "before",
+    positionBasis: "above",
+    positionVersion: 1
+  }), false);
+  assert.equal(hasStableNoteFlowAnchor({
+    line: 42,
+    side: null,
+    positionBasis: "above",
+    positionVersion: 1
+  }), false);
+  assert.equal(hasStableNoteFlowAnchor({
+    line: 42,
+    side: "before",
+    positionBasis: "above",
+    positionVersion: 0
+  }), false);
+});
 
 const layout = {
   sourceFrame: { contentWidth: 520, documentHeight: 1360 },
@@ -194,6 +223,20 @@ test("document-anchored note-flow keeps an absolute vertical position as the not
 
   assert.equal(projected.x, 0.3);
   assert.equal(projected.y, 0.35);
+});
+
+test("note-flow settle resize preserves absolute ink coordinates", () => {
+  const source = [{ x: 0.25, y: 0.5, anchor: { offsetY: 600 } }];
+  const preserved = preserveAbsoluteNoteFlowPoints(source, {
+    previousWidth: 800,
+    previousHeight: 1200,
+    nextWidth: 800,
+    nextHeight: 2400
+  });
+
+  assert.equal(preserved[0].x * 800, 200);
+  assert.equal(preserved[0].y * 2400, 600);
+  assert.deepEqual(preserved[0].anchor, source[0].anchor);
 });
 
 test("note-flow padding keeps its required offset stable without moving upper content", () => {

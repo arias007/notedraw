@@ -29,13 +29,17 @@ test("source mode and hidden reading surfaces never mount a root preview control
   assert.equal(shouldMountRootPreview({ ...renderedPreview, visible: false }), false);
 });
 
-test("only empty non-empty-note surfaces are eligible for dormant geometry reset", () => {
+test("only hidden source-mode previews are eligible for dormant geometry reset", () => {
   assert.equal(shouldResetDormantRootPreview({
     ...renderedPreview,
     sourceMode: true,
     visible: false,
     renderedContent: false
   }), true);
+  assert.equal(shouldResetDormantRootPreview({
+    ...renderedPreview,
+    renderedContent: false
+  }), false);
   assert.equal(shouldResetDormantRootPreview(renderedPreview), false);
   assert.equal(shouldResetDormantRootPreview({
     ...renderedPreview,

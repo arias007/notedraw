@@ -179,6 +179,34 @@ export function projectNoteFlowDocumentPoint(sourcePoint, projectedPoint, {
   };
 }
 
+export function preserveAbsoluteNoteFlowPoints(points, {
+  previousWidth,
+  previousHeight,
+  nextWidth,
+  nextHeight
+} = {}) {
+  const oldWidth = Math.max(1, finite(previousWidth, 1));
+  const oldHeight = Math.max(1, finite(previousHeight, 1));
+  const width = Math.max(1, finite(nextWidth, oldWidth));
+  const height = Math.max(1, finite(nextHeight, oldHeight));
+  return (Array.isArray(points) ? points : []).map((point) => ({
+    ...point,
+    x: clamp(finite(point?.x, 0) * oldWidth / width, 0, 1),
+    y: clamp(finite(point?.y, 0) * oldHeight / height, 0, 1)
+  }));
+}
+
+export function hasStableNoteFlowAnchor(noteFlow) {
+  const line = noteFlow?.line;
+  return line !== null
+    && line !== undefined
+    && line !== ""
+    && Number.isFinite(Number(line))
+    && ["before", "after"].includes(noteFlow?.side)
+    && Boolean(noteFlow?.positionBasis)
+    && Number(noteFlow?.positionVersion) >= 1;
+}
+
 export function noteFlowRequiredOffset({
   side,
   anchorTop,

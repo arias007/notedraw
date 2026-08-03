@@ -22,7 +22,7 @@ test("canvas layers stay hidden until their backing stores are initialized", asy
 test("a visible source surface releases cached reading controllers after transitions settle", async () => {
   const source = await readFile(sourceUrl, "utf8");
 
-  assert.match(source, /if \(isSourceMode\(view\)\) \{\s*if \(sourceVisible\) \{\s*for \(const rootPreview of findRootPreviewsForView\(view\)\) \{[\s\S]*controller\?\.destroy\?\.\(\);\s*resetDormantRootPreview\(view, rootPreview\);/s);
+  assert.match(source, /if \(isSourceMode\(view\) && sourceVisible && !previewVisible\) \{\s*for \(const rootPreview of findRootPreviewsForView\(view\)\) \{[\s\S]*controller\?\.destroy\?\.\(\);\s*resetDormantRootPreview\(view, rootPreview\);/s);
   assert.match(source, /sourceController\?\.syncFloatingControlClasses\(\);\s*if \(!previewVisible\) \{\s*continue;/s);
   assert.match(source, /previewController\.file\?\.path !== view\.file\?\.path/s);
   assert.match(source, /previewController = this\.resolveLivePreviewController\(view\)/);
@@ -36,6 +36,7 @@ test("root reading controllers wait for Markdown and clear only dormant preview 
   assert.match(source, /if \(!isRootPreviewReady\(view, preview\)\) \{\s*resetDormantRootPreview\(view, preview\);\s*return null;/s);
   assert.match(source, /for \(const property of \["min-height", "padding-bottom"\]\)/);
   assert.match(source, /shouldResetDormantRootPreview\(rootPreviewLifecycleState\(view, preview\)\)/);
+  assert.doesNotMatch(source, /resetDormantRootPreview[\s\S]{0,900}preview\.scrollTop = 0/);
 });
 
 test("virtual Markdown recycling cannot discard a live reading controller", async () => {
