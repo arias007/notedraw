@@ -24,6 +24,9 @@ test("default brushes remain separate from opt-in fountain and watercolor varian
   assert.match(source, /\[PEN_VARIANT_FOUNTAIN, PEN_VARIANT_NOTE\]\.includes\(normalizeBrushVariant\(BRUSH_PEN, stroke\.variant\)\)/);
   assert.match(source, /straightenWatercolorPoints\(stroke\.points/);
   assert.match(source, /snapWatercolorStrokeToTextLine\(stroke\)/);
+  assert.match(source, /pickTextHighlightLine\(this\.textHighlightLineRects, \[clientPoint\]\)/);
+  assert.match(source, /this\.textHighlightTarget \? this\.alignTextHighlightPoint/);
+  assert.doesNotMatch(source, /stroke\.width = clamp\(lineRect\.height/);
   assert.match(source, /event\.composedPath\(\)/);
   const brushPanelStart = source.indexOf("  createBrushPanel() {");
   const brushPanelSource = source.slice(brushPanelStart, source.indexOf("syncBrushPanelButtons()", brushPanelStart));
@@ -36,6 +39,7 @@ test("scrolling refreshes only the canvas window while real layout changes can r
 
   assert.match(source, /onScroll\(\) \{\s*this\.lastScrollAt = Date\.now\(\);[\s\S]*this\.scheduleResize\(\{ layout: false \}\)/);
   assert.match(source, /this\.scrollSettleTimer = window\.setTimeout\([\s\S]*this\.scheduleResize\(\{ layout: false \}\)/);
+  assert.match(source, /if \(layout\) \{\s*this\.render\(\);\s*\} else \{\s*this\.renderCanvas\(\);/);
   assert.match(source, /const atScrollEnd = scrollHeight > clientHeight && scrollTop \+ clientHeight >= scrollHeight - 3/);
   assert.match(source, /scheduleMarkdownAnnotationRefresh\(\{ layout: Date\.now\(\) - this\.lastScrollAt > 220 \}\)/);
   assert.match(source, /resizeCanvas\(options = \{\}\)[\s\S]*const refreshLayout = options\.layout !== false/);
@@ -232,6 +236,10 @@ test("controller startup and tool choices remain stable across reloads", async (
   assert.match(source, /lastPenVariant/);
   assert.match(source, /lastTextPreset/);
   assert.doesNotMatch(source, /this\.brushVariants\[mode\] = BRUSH_VARIANT_DEFAULT;\s*this\.setBrushMode\(mode\)/);
+  const sharedState = source.slice(source.indexOf("  applySharedToolbarState(state)"), source.indexOf("  setToolFromApi", source.indexOf("  applySharedToolbarState(state)")));
+  assert.match(sharedState, /const zoomChanged = Math\.abs\(this\.readingZoom - previousReadingZoom\)/);
+  assert.match(sharedState, /previousToolMode !== this\.toolMode[\s\S]*this\.requestRender\(\)/);
+  assert.doesNotMatch(sharedState, /this\.render\(\)/);
 });
 
 test("brush, palette, and text controls use touch-safe taps and anchor below their buttons", async () => {
@@ -296,4 +304,7 @@ test("hidden and offscreen embeds avoid redundant controllers and scroll work", 
   assert.match(source, /function isElementLaidOut\(element\)/);
   assert.match(source, /function isElementNearViewport\(element, margin = 320\)/);
   assert.match(source, /function isEmbeddedSurfaceSyncMutation\(mutation\)/);
+  assert.match(source, /function isNoteDrawOwnedMutation\(mutation\)/);
+  assert.match(source, /isMarkdownContentMutation\(mutation\)[\s\S]*isNoteDrawOwnedMutation\(mutation\)/);
+  assert.match(source, /this\.embedGeometryTokens\.get\(key\) !== geometryToken/);
 });

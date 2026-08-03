@@ -67,6 +67,7 @@ import {
   buildFountainPenSegments,
   straightenWatercolorPoints
 } from "./stroke-dynamics.mjs";
+import { pickTextHighlightLine } from "./text-highlight.mjs";
 import { layoutMindMap, parseMarkdownMindMap, replaceMarkdownMindMapNodeText } from "./mind-map.mjs";
 const activeDocument = window.activeWindow?.document || window.document;
 var PLUGIN_ID = "notedraw";
@@ -1120,6 +1121,23 @@ var WEBVIEW_BLOCKED_EDIT_SELECTOR = [
   "webview",
   "iframe"
 ].join(",");
+var NOTEDRAW_OWNED_MUTATION_SELECTOR = [
+  ".notedraw-button",
+  ".notedraw-fallback-button",
+  ".notedraw-webview-button",
+  ".notedraw-toolbar",
+  ".notedraw-palette-panel",
+  ".notedraw-brush-panel",
+  ".notedraw-text-panel",
+  ".notedraw-selection-menu",
+  ".notedraw-format-toolbar",
+  ".notedraw-reading-zoom-extent",
+  ".notedraw-embed-layer",
+  ".notedraw-static-canvas",
+  ".notedraw-canvas",
+  ".notedraw-body-control",
+  ".notedraw-file-input"
+].join(",");
 var NoteDrawFileSuggestModal = class extends FuzzySuggestModal {
   constructor(app, currentFile, onChoose, options = {}) {
     super(app);
@@ -1791,7 +1809,7 @@ var NoteDrawPlugin = class extends Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.3.10",
+      version: "3.3.11",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -3167,6 +3185,8 @@ var PreviewDrawingController = class {
     this.pointerStartEditable = null;
     this.pointerStartSourceText = false;
     this.activePointerId = null;
+    this.textHighlightLineRects = [];
+    this.textHighlightTarget = null;
     this.connectorGesture = null;
     this.touchPointers = /* @__PURE__ */ new Map();
     this.multiTouchScrolling = false;
@@ -3244,6 +3264,7 @@ var PreviewDrawingController = class {
     this.embedLayer = null;
     this.embedNodes = /* @__PURE__ */ new Map();
     this.embedRenderTokens = /* @__PURE__ */ new Map();
+    this.embedGeometryTokens = /* @__PURE__ */ new Map();
     this.canvasImageCache = /* @__PURE__ */ new Map();
     this.hiddenFileInput = null;
     this.canvasCssWidth = 1;
@@ -3638,6 +3659,7 @@ var PreviewDrawingController = class {
     this.embedNodes.forEach((node) => node.remove());
     this.embedNodes.clear();
     this.embedRenderTokens.clear();
+    this.embedGeometryTokens.clear();
     this.canvasImageCache.clear();
     this.responsiveLayoutSignature = "";
     this.responsivePointsInitialized = false;
@@ -3732,6 +3754,7 @@ var PreviewDrawingController = class {
     this.embedLayer?.remove();
     this.embedNodes.clear();
     this.embedRenderTokens.clear();
+    this.embedGeometryTokens.clear();
     this.canvasImageCache.clear();
     this.clearReadingZoomStyles();
     this.readingZoomExtent?.remove();
@@ -3938,7 +3961,11 @@ var PreviewDrawingController = class {
       this.positionFormatToolbar();
       this.positionFloatingTextInput();
       if (canvasChanged) {
-        this.render();
+        if (layout) {
+          this.render();
+        } else {
+          this.renderCanvas();
+        }
       }
     });
   }
@@ -4219,6 +4246,8 @@ var PreviewDrawingController = class {
     if (!state || this.destroyed) {
       return;
     }
+    const previousToolMode = this.toolMode;
+    const previousReadingZoom = this.readingZoom;
     this.brushMode = [BRUSH_PEN, BRUSH_WATERCOLOR].includes(state.brushMode) ? state.brushMode : this.brushMode;
     for (const mode of [BRUSH_PEN, BRUSH_WATERCOLOR]) {
       this.brushVariants[mode] = normalizeBrushVariant(mode, state.brushVariants?.[mode] ?? this.brushVariants[mode]);
@@ -4243,11 +4272,16 @@ var PreviewDrawingController = class {
     this.syncPaletteInputs();
     this.syncBrushPanelButtons?.();
     this.syncTextPanelButtons?.();
-    this.applyReadingZoom();
+    const zoomChanged = Math.abs(this.readingZoom - previousReadingZoom) >= 0.001;
+    if (zoomChanged) {
+      this.applyReadingZoom();
+      this.responsiveLayoutContext = null;
+      this.scheduleResize({ layout: !this.usesVisualReadingZoom() });
+    }
     this.updateToolButtons();
     this.syncFloatingControlClasses();
-    if (this.ctx || this.drawingsLoaded) {
-      this.render();
+    if (previousToolMode !== this.toolMode && (this.ctx || this.drawingsLoaded)) {
+      this.requestRender();
     }
   }
   setToolFromApi(tool, options = {}) {
@@ -5880,6 +5914,9 @@ var PreviewDrawingController = class {
       } : null,
       points: [this.pointerStartPoint]
     };
+    if (this.isTextHighlightStroke(this.currentStroke)) {
+      this.prepareTextHighlightGesture({ x: event.clientX, y: event.clientY });
+    }
     event.preventDefault();
     event.stopPropagation();
   }
@@ -6257,6 +6294,7 @@ var PreviewDrawingController = class {
     this.pointerStartSourceText = false;
     this.activePointerId = null;
     this.didMove = false;
+    this.resetTextHighlightGesture();
     this.render();
     event?.preventDefault();
     event?.stopPropagation();
@@ -7257,6 +7295,7 @@ var PreviewDrawingController = class {
     this.pointerStartSourceText = false;
     this.activePointerId = null;
     this.didMove = false;
+    this.resetTextHighlightGesture();
     this.render();
   }
   startSelectionDrag(event, point) {
@@ -7679,6 +7718,59 @@ var PreviewDrawingController = class {
       this.snapWatercolorStrokeToTextLine(stroke);
     }
   }
+  isTextHighlightStroke(stroke) {
+    return stroke?.brush === BRUSH_WATERCOLOR && normalizeBrushVariant(stroke.brush, stroke.variant) === WATERCOLOR_VARIANT_TEXT;
+  }
+  prepareTextHighlightGesture(clientPoint) {
+    this.textHighlightLineRects = collectTextLineRectsBelowCanvas(this.canvas, this.previewEl);
+    this.textHighlightTarget = pickTextHighlightLine(this.textHighlightLineRects, [clientPoint]);
+    if (this.textHighlightTarget && this.currentStroke) {
+      this.alignTextHighlightStroke(this.currentStroke, this.textHighlightTarget);
+    }
+  }
+  resetTextHighlightGesture() {
+    this.textHighlightLineRects = [];
+    this.textHighlightTarget = null;
+  }
+  snapTextHighlightPoint(point, clientPoint) {
+    if (!this.isTextHighlightStroke(this.currentStroke)) {
+      return point;
+    }
+    if (!this.textHighlightLineRects.length) {
+      this.textHighlightLineRects = collectTextLineRectsBelowCanvas(this.canvas, this.previewEl);
+    }
+    if (!this.textHighlightTarget) {
+      this.textHighlightTarget = pickTextHighlightLine(this.textHighlightLineRects, [clientPoint]);
+      if (this.textHighlightTarget) {
+        this.alignTextHighlightStroke(this.currentStroke, this.textHighlightTarget);
+      }
+    }
+    return this.textHighlightTarget ? this.alignTextHighlightPoint(point, this.textHighlightTarget) : point;
+  }
+  alignTextHighlightPoint(point, lineRect) {
+    const canvasRect = this.canvas?.getBoundingClientRect?.();
+    if (!canvasRect || canvasRect.width <= 1 || canvasRect.height <= 1 || !lineRect) {
+      return point;
+    }
+    const canvasWidth = this.canvasWidth();
+    const scaleX = canvasRect.width / canvasWidth;
+    const scaleY = canvasRect.height / Math.max(1, this.canvasRenderHeight);
+    const canvasPoint = this.pointToCanvas(point);
+    const clientX = canvasRect.left + canvasPoint.x * scaleX;
+    const lineCenterY = lineRect.top + lineRect.height * 0.58;
+    return {
+      ...point,
+      x: clamp((clamp(clientX, lineRect.left, lineRect.right) - canvasRect.left) / scaleX / canvasWidth, 0, 1),
+      y: clamp(((lineCenterY - canvasRect.top) / scaleY + this.canvasWindowTop) / this.canvasHeight(), 0, 1)
+    };
+  }
+  alignTextHighlightStroke(stroke, lineRect) {
+    if (!stroke?.points?.length || !lineRect) {
+      return false;
+    }
+    stroke.points = stroke.points.map((point) => this.alignTextHighlightPoint(point, lineRect));
+    return true;
+  }
   snapWatercolorStrokeToTextLine(stroke) {
     if (!stroke?.points?.length || !this.canvas) {
       return false;
@@ -7688,37 +7780,24 @@ var PreviewDrawingController = class {
     const visibleHeight = Math.max(1, this.canvasRenderHeight);
     const scaleX = canvasRect.width > 0 ? canvasRect.width / canvasWidth : 1;
     const scaleY = canvasRect.height > 0 ? canvasRect.height / visibleHeight : 1;
-    const candidates = [
-      stroke.points[Math.floor(stroke.points.length / 2)],
-      stroke.points[0],
-      stroke.points[stroke.points.length - 1]
-    ];
-    let lineRect = null;
-    for (const point of candidates) {
+    const clientPoints = stroke.points.map((point) => {
       const canvasPoint = this.pointToCanvas(point);
-      lineRect = findTextLineRectBelowCanvas(
-        this.canvas,
-        this.previewEl,
-        canvasRect.left + canvasPoint.x * scaleX,
-        canvasRect.top + (canvasPoint.y - this.canvasWindowTop) * scaleY
-      );
-      if (lineRect) {
-        break;
-      }
-    }
+      return {
+        x: canvasRect.left + canvasPoint.x * scaleX,
+        y: canvasRect.top + (canvasPoint.y - this.canvasWindowTop) * scaleY
+      };
+    });
+    const lineRects = this.textHighlightLineRects.length
+      ? this.textHighlightLineRects
+      : collectTextLineRectsBelowCanvas(this.canvas, this.previewEl);
+    const lineRect = this.textHighlightTarget || pickTextHighlightLine(lineRects, clientPoints, {
+      maxVerticalDistance: Math.max(36, Number(stroke.width || 0) * 1.5),
+      maxHorizontalDistance: 160
+    });
     if (!lineRect) {
       return false;
     }
-    const lineCenterY = (lineRect.top + lineRect.height * 0.58 - canvasRect.top) / scaleY + this.canvasWindowTop;
-    const minX = clamp((lineRect.left - canvasRect.left) / scaleX / canvasWidth, 0, 1);
-    const maxX = clamp((lineRect.right - canvasRect.left) / scaleX / canvasWidth, 0, 1);
-    stroke.points = stroke.points.map((point) => ({
-      ...point,
-      x: clamp(Number(point.x), minX, maxX),
-      y: clamp(lineCenterY / this.canvasHeight(), 0, 1)
-    }));
-    stroke.width = clamp(lineRect.height / scaleY * 0.48, 4, 24);
-    return true;
+    return this.alignTextHighlightStroke(stroke, lineRect);
   }
   addPointerSamples(event) {
     const samples = typeof event.getCoalescedEvents === "function" ? event.getCoalescedEvents() : null;
@@ -7730,7 +7809,8 @@ var PreviewDrawingController = class {
       }) > this.tapDistancePx()) {
         this.didMove = true;
       }
-      this.addStrokePoint(this.eventToPoint(sample));
+      const point = this.eventToPoint(sample);
+      this.addStrokePoint(this.snapTextHighlightPoint(point, { x: sample.clientX, y: sample.clientY }));
     }
   }
   addStrokePoint(point) {
@@ -7904,14 +7984,19 @@ var PreviewDrawingController = class {
       node.toggleClass("is-asset", isEmbedStroke(stroke));
       node.toggleClass("is-locked", Boolean(stroke.locked));
       node.toggleClass("is-mind-map-node", Boolean(normalizeMindMapNode(stroke.mindMapNode)));
-      setNoteDrawCssProps(node, { "--notedraw-node-color": stroke.color || "#64748b" });
-      applyElementStyles(node, {
+      const geometry = {
         left: `${Math.round(bounds.minX)}px`,
         top: `${Math.round(bounds.minY)}px`,
         width: `${Math.max(32, Math.round(bounds.maxX - bounds.minX))}px`,
         height: `${Math.max(28, Math.round(bounds.maxY - bounds.minY))}px`,
         opacity: String(clamp(Number(stroke.opacity ?? 1), 0, 1))
-      });
+      };
+      const geometryToken = `${geometry.left}|${geometry.top}|${geometry.width}|${geometry.height}|${geometry.opacity}|${stroke.color || "#64748b"}`;
+      if (this.embedGeometryTokens.get(key) !== geometryToken) {
+        this.embedGeometryTokens.set(key, geometryToken);
+        setNoteDrawCssProps(node, { "--notedraw-node-color": stroke.color || "#64748b" });
+        applyElementStyles(node, geometry);
+      }
       this.renderEmbedNode(node, stroke, index);
     }
     for (const [key, node] of this.embedNodes.entries()) {
@@ -7919,6 +8004,7 @@ var PreviewDrawingController = class {
         node.remove();
         this.embedNodes.delete(key);
         this.embedRenderTokens.delete(key);
+        this.embedGeometryTokens.delete(key);
       }
     }
   }
@@ -10972,44 +11058,74 @@ function dispatchMouseClickThroughOverlay(canvas, clientPoint) {
   target.dispatchEvent(new MouseEvent("click", { ...eventInit, buttons: 0 }));
   return true;
 }
-function findTextLineRectBelowCanvas(canvas, root, clientX, clientY) {
+function collectTextLineRectsBelowCanvas(canvas, root) {
   const document = canvas?.ownerDocument || activeDocument;
-  if (!canvas || !root || !document?.elementFromPoint) {
-    return null;
-  }
-  const previousPointerEvents = canvas.style.pointerEvents;
-  applyElementStyles(canvas, { pointerEvents: "none" });
-  const hit = document.elementFromPoint(clientX, clientY);
-  applyElementStyles(canvas, { pointerEvents: previousPointerEvents || "" });
-  const textElement = hit?.closest?.(MARKDOWN_TEXT_SELECTOR);
-  if (!textElement || !root.contains(textElement) || textElement.closest?.(WEBVIEW_BLOCKED_EDIT_SELECTOR)) {
-    return null;
+  const canvasRect = canvas?.getBoundingClientRect?.();
+  if (!canvas || !root || !canvasRect || !document?.createTreeWalker) {
+    return [];
   }
   const nodeFilter = document.defaultView?.NodeFilter || window.NodeFilter;
   if (!nodeFilter) {
-    return textElement.getBoundingClientRect?.() || null;
+    return [];
   }
-  const walker = document.createTreeWalker(textElement, nodeFilter.SHOW_TEXT);
+  const seenNodes = /* @__PURE__ */ new Set();
+  const seenRects = /* @__PURE__ */ new Set();
   const rects = [];
-  let node = walker.nextNode();
-  while (node) {
-    if (String(node.nodeValue || "").trim()) {
-      const range = document.createRange();
-      range.selectNodeContents(node);
-      rects.push(...Array.from(range.getClientRects()).filter((rect) => rect.width > 1 && rect.height > 1));
+  const addRect = (rect, element) => {
+    if (
+      !rect || rect.width <= 1 || rect.height <= 1 ||
+      rect.bottom < canvasRect.top - 48 || rect.top > canvasRect.bottom + 48 ||
+      rect.right < canvasRect.left - 180 || rect.left > canvasRect.right + 180
+    ) {
+      return;
     }
-    node = walker.nextNode();
+    const key = [rect.left, rect.top, rect.right, rect.bottom].map((value) => Math.round(value * 2)).join(":");
+    if (seenRects.has(key)) {
+      return;
+    }
+    seenRects.add(key);
+    rects.push({
+      left: rect.left,
+      top: rect.top,
+      right: rect.right,
+      bottom: rect.bottom,
+      width: rect.width,
+      height: rect.height,
+      sourcePath: element.dataset.noteDrawSourcePath || "",
+      lineStart: parseInteger(element.dataset.noteDrawLineStart),
+      lineEnd: parseInteger(element.dataset.noteDrawLineEnd)
+    });
+  };
+  for (const textElement of root.querySelectorAll?.(MARKDOWN_TEXT_SELECTOR) || []) {
+    if (
+      textElement.closest?.(WEBVIEW_BLOCKED_EDIT_SELECTOR) ||
+      textElement.closest?.(NOTEDRAW_OWNED_MUTATION_SELECTOR) ||
+      textElement.querySelector?.(MARKDOWN_TEXT_SELECTOR)
+    ) {
+      continue;
+    }
+    const beforeCount = rects.length;
+    const walker = document.createTreeWalker(textElement, nodeFilter.SHOW_TEXT);
+    let node = walker.nextNode();
+    while (node && rects.length < 1200) {
+      if (!seenNodes.has(node) && String(node.nodeValue || "").trim()) {
+        seenNodes.add(node);
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        for (const rect of Array.from(range.getClientRects())) {
+          addRect(rect, textElement);
+        }
+      }
+      node = walker.nextNode();
+    }
+    if (beforeCount === rects.length) {
+      addRect(textElement.getBoundingClientRect?.(), textElement);
+    }
+    if (rects.length >= 1200) {
+      break;
+    }
   }
-  if (!rects.length) {
-    const rect = textElement.getBoundingClientRect?.();
-    return rect?.width > 1 && rect?.height > 1 ? rect : null;
-  }
-  return rects.reduce((best, rect) => {
-    const verticalDistance = clientY < rect.top ? rect.top - clientY : clientY > rect.bottom ? clientY - rect.bottom : 0;
-    const horizontalDistance = clientX < rect.left ? rect.left - clientX : clientX > rect.right ? clientX - rect.right : 0;
-    const score = verticalDistance * 4 + horizontalDistance;
-    return !best || score < best.score ? { rect, score } : best;
-  }, null)?.rect || null;
+  return rects;
 }
 function domPathForElement(element, root) {
   if (!element || !root?.contains(element) || element === root) {
@@ -11075,8 +11191,25 @@ function cleanupDrawingUi(preview) {
   preview.querySelectorAll(".notedraw-button, .notedraw-fallback-button, .notedraw-webview-button, .notedraw-toolbar, .notedraw-palette-panel, .notedraw-brush-panel, .notedraw-text-panel, .notedraw-selection-menu, .notedraw-format-toolbar, .notedraw-reading-zoom-extent, .notedraw-embed-layer, .notedraw-file-input, .notedraw-static-canvas, .notedraw-canvas").forEach((element) => element.remove());
   preview.classList.remove("notedraw-shell", "is-drawing-active", "is-drawing-hidden", "is-select-mode", "is-palette-open", "is-brush-panel-open", "is-text-panel-open", "is-selection-menu-open", "is-watercolor-mode", "is-edit-md-mode", "is-selecting-strokes", "is-resizing-selection", "is-native-text-editing", "is-reading-zoomed", "is-editing-layout-zoomed", "is-notedraw-webview-shell", "is-notedraw-workspace-shell", "is-notedraw-embedded-shell", "is-notedraw-responsive-layout", "is-notedraw-controls-visible", "has-notedraw-body-controls", "has-notedraw-canvas");
 }
+function isNoteDrawOwnedMutation(mutation) {
+  if (!mutation) {
+    return false;
+  }
+  const target = mutation.target;
+  if (target?.nodeType === Node.ELEMENT_NODE && (
+    target.matches?.(NOTEDRAW_OWNED_MUTATION_SELECTOR) || target.closest?.(NOTEDRAW_OWNED_MUTATION_SELECTOR)
+  )) {
+    return true;
+  }
+  const nodes = [...Array.from(mutation.addedNodes || []), ...Array.from(mutation.removedNodes || [])];
+  return nodes.length > 0 && nodes.every((node) => (
+    node?.nodeType !== Node.ELEMENT_NODE ||
+    node.matches?.(NOTEDRAW_OWNED_MUTATION_SELECTOR) ||
+    node.closest?.(NOTEDRAW_OWNED_MUTATION_SELECTOR)
+  ));
+}
 function isMarkdownContentMutation(mutation) {
-  if (mutation?.type !== "childList") {
+  if (mutation?.type !== "childList" || isNoteDrawOwnedMutation(mutation)) {
     return false;
   }
   const markdownRootSelector = ".markdown-preview-view, .markdown-embed-content, .internal-embed";
@@ -11089,7 +11222,7 @@ function isMarkdownContentMutation(mutation) {
   });
 }
 function isEmbeddedSurfaceSyncMutation(mutation) {
-  if (!mutation || mutation.target?.closest?.(".notedraw-body-control")) {
+  if (!mutation || isNoteDrawOwnedMutation(mutation)) {
     return false;
   }
   const selector = ".markdown-embed, .markdown-embed-content, .internal-embed";
@@ -11106,7 +11239,7 @@ function isEmbeddedSurfaceSyncMutation(mutation) {
   ));
 }
 function isWebviewSyncMutation(mutation) {
-  if (!mutation) {
+  if (!mutation || isNoteDrawOwnedMutation(mutation)) {
     return false;
   }
   if (mutation.type === "attributes") {
@@ -11118,7 +11251,7 @@ function isWebviewSyncMutation(mutation) {
   return [...Array.from(mutation.addedNodes || []), ...Array.from(mutation.removedNodes || [])].some((node) => isWebviewRelatedNode(node));
 }
 function isWorkspaceSurfaceMutation(mutation) {
-  if (!mutation || mutation.target?.closest?.(".notedraw-body-control")) {
+  if (!mutation || isNoteDrawOwnedMutation(mutation)) {
     return false;
   }
   if (mutation.type === "attributes") {
@@ -11138,7 +11271,7 @@ function isWorkspaceSurfaceMutation(mutation) {
   return Boolean(leafContent) && viewType !== "markdown" && !isWebviewWorkspaceType(viewType);
 }
 function isFloatingControlsVisibilityMutation(mutation) {
-  if (!mutation || mutation.target?.closest?.(".notedraw-body-control")) {
+  if (!mutation || isNoteDrawOwnedMutation(mutation)) {
     return false;
   }
   if (mutation.type === "attributes") {
