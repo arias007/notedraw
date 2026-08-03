@@ -147,12 +147,14 @@ test("reading-only note pen and selected elements can reserve Markdown flow spac
   const flowLayout = source.slice(source.indexOf("  applyNoteFlowLayout()"), source.indexOf("  scheduleNoteFlowLayout()"));
   assert.match(flowLayout, /const appliedValue = Math\.ceil\(state\.base \+ offset\)/);
   assert.match(flowLayout, /const nextValue = `\$\{appliedValue\}px`/);
-  assert.match(flowLayout, /const property = side === "after" \? "margin-bottom" : "margin-top"/);
+  assert.match(flowLayout, /const property = side === "after" \? "padding-bottom" : "padding-top"/);
+  assert.match(flowLayout, /anchor\.top < strokeTop - 4/);
   assert.match(flowLayout, /noteFlowRequiredOffset\(\{[\s\S]*applied: state\.applied/);
   assert.match(flowLayout, /state\.applied = Math\.max\(0, appliedValue - state\.base\)/);
   assert.match(flowLayout, /stabilizeNoteFlowBounds\(\{/);
   assert.match(flowLayout, /preferCurrent: Boolean\(normalizeNoteFlow\(stroke\.noteFlow\)\?\.positionBasis\)/);
   assert.match(flowLayout, /this\.repairRunawayNoteFlowSurface\(runawayReferenceHeight\)/);
+  assert.match(source, /\["padding-top", "padding-bottom", "margin-top", "margin-bottom"\]/);
   assert.doesNotMatch(flowLayout, /this\.clearNoteFlowLayout\(\);\s*const flows/);
   assert.doesNotMatch(flowLayout, /querySelectorAll\?\.\("\[data-note-draw-line-start\]"\)[\s\S]*\[0\]/);
   assert.doesNotMatch(flowLayout, /item\.stroke\.noteFlow = this\.captureNoteFlowAnchor\(item\.stroke\);\s*const anchor/);
@@ -175,7 +177,11 @@ test("moving inserted note elements refreshes Markdown avoidance once per animat
   assert.match(refreshSource, /this\.clearNoteFlowLayout\(\)/);
   assert.match(refreshSource, /path: captured\.path,[\s\S]*line: captured\.line,[\s\S]*side: captured\.side/);
   assert.match(refreshSource, /window\.requestAnimationFrame\(\(\) => \{[\s\S]*this\.refreshDraggedNoteFlowAnchors\(\)[\s\S]*this\.applyNoteFlowLayout\(\)/);
+  assert.match(refreshSource, /layoutChanged && !this\.draggingStroke/);
   assert.match(dragSource, /stroke\.noteFlow = originalNoteFlow \? \{ \.\.\.originalNoteFlow \} : null/);
+  assert.match(source, /onResize\(\)[\s\S]*this\.scheduleResize\(\{ layout: !this\.draggingStroke \}\)/);
+  assert.match(source, /this\.resizeNeedsLayout = this\.resizeNeedsLayout \|\| options\.layout !== false && !this\.draggingStroke/);
+  assert.match(dragSource, /this\.cancelResizeFrame\(\);\s*this\.draggingStroke = true/);
 });
 
 test("mind map import creates editable NoteDraw nodes and magnetically bound connectors", async () => {

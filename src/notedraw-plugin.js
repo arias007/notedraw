@@ -1809,7 +1809,7 @@ var NoteDrawPlugin = class extends Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.3.12",
+      version: "3.3.13",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -3918,7 +3918,7 @@ var PreviewDrawingController = class {
     this.syncFloatingControlClasses();
     this.applyReadingZoom();
     if (this.active || this.drawingsLoaded || this.ctx) {
-      this.scheduleResize();
+      this.scheduleResize({ layout: !this.draggingStroke });
     }
   }
   onScroll() {
@@ -3952,7 +3952,7 @@ var PreviewDrawingController = class {
     }
   }
   scheduleResize(options = {}) {
-    this.resizeNeedsLayout = this.resizeNeedsLayout || options.layout !== false;
+    this.resizeNeedsLayout = this.resizeNeedsLayout || options.layout !== false && !this.draggingStroke;
     if (this.resizeFrameId !== null) {
       return;
     }
@@ -7371,6 +7371,7 @@ var PreviewDrawingController = class {
       event.stopPropagation();
       return;
     }
+    this.cancelResizeFrame();
     this.draggingStroke = true;
     this.dragStrokeStartPoint = point;
     this.dragStrokeOriginalPoints = new Map(movableIndexes.map((index) => [
@@ -8900,7 +8901,7 @@ var PreviewDrawingController = class {
       }
     }
     for (const element of this.previewEl.querySelectorAll?.(".notedraw-note-flow-anchor") || []) {
-      for (const property of ["margin-top", "margin-bottom"]) {
+      for (const property of ["padding-top", "padding-bottom", "margin-top", "margin-bottom"]) {
         if ((Number.parseFloat(element.style.getPropertyValue(property)) || 0) > runawayThreshold) {
           element.style.removeProperty(property);
           repaired = true;
@@ -8978,6 +8979,18 @@ var PreviewDrawingController = class {
         }
       }
       let anchor = this.noteFlowAnchorElement(currentNoteFlow);
+      const strokeTop = canvasRect.top + (item.bounds.minY - this.canvasWindowTop) * scaleY;
+      if (anchor && currentNoteFlow?.side === "before" && anchor.top < strokeTop - 4) {
+        const recaptured = this.captureNoteFlowAnchor(item.stroke);
+        const correctedAnchor = this.noteFlowAnchorElement(recaptured);
+        if (correctedAnchor) {
+          item.stroke.noteFlow = recaptured;
+          currentNoteFlow = recaptured;
+          anchor = correctedAnchor;
+          this.captureNoteFlowResponsiveAnchors(item.stroke, this.getResponsiveLayoutContext(true));
+          migratedAnchor = true;
+        }
+      }
       if (!anchor) {
         const recaptured = this.captureNoteFlowAnchor(item.stroke);
         anchor = this.noteFlowAnchorElement(recaptured);
@@ -8993,7 +9006,7 @@ var PreviewDrawingController = class {
         continue;
       }
       const side = currentNoteFlow.side;
-      const property = side === "after" ? "margin-bottom" : "margin-top";
+      const property = side === "after" ? "padding-bottom" : "padding-top";
       let states = this.noteFlowStyledElements.get(element);
       if (!states) {
         states = /* @__PURE__ */ new Map();
@@ -9015,7 +9028,7 @@ var PreviewDrawingController = class {
       const desiredBottom = canvasRect.top + (item.bounds.maxY - this.canvasWindowTop) * scaleY + Number(currentNoteFlow.gap || 12) * scaleY;
       const required = noteFlowRequiredOffset({
         side,
-        anchorTop: rect.top,
+        anchorTop: rect.top + state.base * scaleY,
         anchorBottom: rect.bottom,
         desiredBottom,
         applied: state.applied,
@@ -9112,7 +9125,8 @@ var PreviewDrawingController = class {
     this.noteFlowFrameId = window.requestAnimationFrame(() => {
       this.noteFlowFrameId = null;
       const refreshedDraggedFlow = this.refreshDraggedNoteFlowAnchors();
-      if (this.applyNoteFlowLayout() || refreshedDraggedFlow) {
+      const layoutChanged = this.applyNoteFlowLayout() || refreshedDraggedFlow;
+      if (layoutChanged && !this.draggingStroke) {
         this.scheduleResize({ layout: true });
       }
     });

@@ -109,6 +109,16 @@ test("note-flow anchors to the first Markdown block below the stroke", () => {
   assert.equal(placement?.line, 5);
 });
 
+test("note-flow leaves an intersecting upper block in place", () => {
+  const intersecting = { id: "upper", top: 80, bottom: 180, start: 0, end: 3 };
+  const below = { id: "below", top: 210, bottom: 244, start: 4, end: 4 };
+  const placement = selectNoteFlowAnchorPlacement([intersecting, below], { strokeTop: 150 });
+
+  assert.equal(placement?.candidate.id, "below");
+  assert.equal(placement?.side, "before");
+  assert.equal(placement?.line, 4);
+});
+
 test("note-flow does not fall back to the first line for a middle stroke", () => {
   const placement = selectNoteFlowAnchorPlacement([
     { id: "first", top: 20, bottom: 52, start: 0, end: 0 },
@@ -120,7 +130,7 @@ test("note-flow does not fall back to the first line for a middle stroke", () =>
   assert.equal(placement?.line, 8);
 });
 
-test("note-flow uses the last block trailing margin only below the document", () => {
+test("note-flow reserves trailing space only below the document", () => {
   const placement = selectNoteFlowAnchorPlacement([
     { id: "first", top: 20, bottom: 52, start: 0, end: 0 },
     { id: "last", top: 120, bottom: 156, start: 4, end: 7 }
@@ -186,7 +196,7 @@ test("document-anchored note-flow keeps an absolute vertical position as the not
   assert.equal(projected.y, 0.35);
 });
 
-test("note-flow offset removes its own prior margin from layout feedback", () => {
+test("note-flow padding keeps its required offset stable without moving upper content", () => {
   assert.equal(noteFlowRequiredOffset({
     side: "before",
     anchorTop: 240,
@@ -194,7 +204,7 @@ test("note-flow offset removes its own prior margin from layout feedback", () =>
     desiredBottom: 260,
     applied: 40,
     scale: 1
-  }), 60);
+  }), 20);
   assert.equal(noteFlowRequiredOffset({
     side: "after",
     anchorTop: 120,
@@ -202,5 +212,5 @@ test("note-flow offset removes its own prior margin from layout feedback", () =>
     desiredBottom: 210,
     applied: 80,
     scale: 1
-  }), 54);
+  }), 134);
 });

@@ -86,9 +86,9 @@ export function selectNoteFlowAnchorPlacement(candidates, {
     return null;
   }
 
-  // A stroke intersecting a block belongs before that block. This keeps the
-  // content below the ink moving as one document-flow region.
-  const below = ordered.find((candidate) => candidate.bottom > top + finite(tolerance, 4));
+  // Only move blocks that begin below the ink. Moving an intersecting block
+  // can pull text from above the stroke down with the reserved space.
+  const below = ordered.find((candidate) => candidate.top >= top - finite(tolerance, 4));
   if (below) {
     return { candidate: below, side: "before", line: below.start };
   }
@@ -189,7 +189,7 @@ export function noteFlowRequiredOffset({
 } = {}) {
   const safeScale = Math.max(0.01, finite(scale, 1));
   const edge = side === "after"
-    ? finite(anchorBottom)
-    : finite(anchorTop) - Math.max(0, finite(applied)) * safeScale;
+    ? finite(anchorBottom) - Math.max(0, finite(applied)) * safeScale
+    : finite(anchorTop);
   return Math.max(0, (finite(desiredBottom) - edge) / safeScale);
 }
