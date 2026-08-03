@@ -7,8 +7,10 @@ import {
   noteFlowSurfaceRepairLimits,
   preserveAbsoluteNoteFlowPoints,
   projectNoteFlowDocumentPoint,
+  reflowNoteFlowIntervals,
   selectNoteFlowAnchorPlacement,
   selectNoteFlowPositionAnchor,
+  shouldRenderStrokeOnSurface,
   stabilizeNoteFlowPointProjection,
   stabilizeNoteFlowBounds
 } from "../src/note-flow-layout.mjs";
@@ -256,4 +258,25 @@ test("note-flow padding keeps its required offset stable without moving upper co
     applied: 80,
     scale: 1
   }), 134);
+});
+
+test("inserted note elements are excluded only from the source editing surface", () => {
+  const inserted = { noteFlow: { enabled: true } };
+  assert.equal(shouldRenderStrokeOnSurface(inserted, "preview"), true);
+  assert.equal(shouldRenderStrokeOnSurface(inserted, "source"), false);
+  assert.equal(shouldRenderStrokeOnSurface({}, "source"), true);
+});
+
+test("moving an inserted element pushes later elements and fills a usable upper vacancy", () => {
+  const placements = reflowNoteFlowIntervals([
+    { id: "moved", index: 0, minY: 240, maxY: 320, originalMinY: 240, previousMinY: 100, previousMaxY: 180, moved: true },
+    { id: "next", index: 1, minY: 220, maxY: 280, originalMinY: 220 },
+    { id: "later", index: 2, minY: 300, maxY: 350, originalMinY: 300 }
+  ], { gap: 12 });
+
+  assert.deepEqual(placements.map(({ id, minY, maxY }) => ({ id, minY, maxY })), [
+    { id: "next", minY: 100, maxY: 160 },
+    { id: "moved", minY: 240, maxY: 320 },
+    { id: "later", minY: 332, maxY: 382 }
+  ]);
 });

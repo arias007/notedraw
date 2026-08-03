@@ -45,15 +45,15 @@ test("the stable v1 API exposes Cancip-friendly capabilities and events", async 
   assert.match(source, /phase: "unmounted"/);
 });
 
-test("3.3.16 preserves bottom coordinates and cross-view frames without eager hidden-view refresh", async () => {
+test("3.3.17 preserves bottom coordinates and cross-view frames without eager hidden-view refresh", async () => {
   const [source, manifestText] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(manifestUrl, "utf8")
   ]);
   const manifest = JSON.parse(manifestText);
 
-  assert.equal(manifest.version, "3.3.16");
-  assert.match(source, /version: "3\.3\.16"/);
+  assert.equal(manifest.version, "3.3.17");
+  assert.match(source, /version: "3\.3\.17"/);
   assert.match(source, /if \(!this\.responsivePointsInitialized \|\| signature !== this\.responsiveLayoutSignature\)/);
   assert.match(source, /captureElementLayoutForStroke/);
   assert.match(source, /projectElementPoints\(stroke\.points, layout, box/);

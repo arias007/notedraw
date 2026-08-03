@@ -221,3 +221,70 @@ export function noteFlowRequiredOffset({
     : finite(anchorTop);
   return Math.max(0, (finite(desiredBottom) - edge) / safeScale);
 }
+
+export function shouldRenderStrokeOnSurface(stroke, surfaceType) {
+  return !(surfaceType === "source" && stroke?.noteFlow?.enabled);
+}
+
+export function reflowNoteFlowIntervals(items, { gap = 12 } = {}) {
+  const defaultGap = Math.max(0, finite(gap, 12));
+  const normalized = (Array.isArray(items) ? items : []).map((item, order) => {
+    const minY = finite(item?.minY, Number.NaN);
+    const maxY = finite(item?.maxY, Number.NaN);
+    if (!Number.isFinite(minY) || !Number.isFinite(maxY) || maxY < minY) {
+      return null;
+    }
+    const previousMinY = finite(item?.previousMinY, Number.NaN);
+    const previousMaxY = finite(item?.previousMaxY, Number.NaN);
+    return {
+      ...item,
+      order: Number.isFinite(Number(item?.order)) ? Number(item.order) : order,
+      minY,
+      maxY,
+      height: Math.max(0, maxY - minY),
+      gap: Math.max(0, finite(item?.gap, defaultGap)),
+      previousMinY,
+      previousMaxY,
+      movedDown: Boolean(item?.moved)
+        && Number.isFinite(previousMinY)
+        && Number.isFinite(previousMaxY)
+        && minY > previousMinY
+    };
+  }).filter(Boolean);
+
+  const vacancies = normalized.filter((item) => item.movedDown).map((item) => ({
+    minY: item.previousMinY,
+    maxY: Math.min(item.minY, item.previousMaxY),
+    used: false
+  })).filter((vacancy) => vacancy.maxY > vacancy.minY);
+
+  for (const item of normalized.filter((candidate) => !candidate.moved)) {
+    const overlapsMoved = normalized.some((candidate) => {
+      return candidate.movedDown && item.minY < candidate.maxY && item.maxY > candidate.minY;
+    });
+    if (!overlapsMoved) {
+      continue;
+    }
+    const vacancy = vacancies.find((candidate) => !candidate.used && candidate.maxY - candidate.minY >= item.height);
+    if (vacancy) {
+      item.minY = vacancy.minY;
+      item.maxY = vacancy.minY + item.height;
+      vacancy.used = true;
+    }
+  }
+
+  normalized.sort((a, b) => a.minY - b.minY || a.order - b.order);
+  let cursor = Number.NEGATIVE_INFINITY;
+  return normalized.map((item) => {
+    const minY = Math.max(item.minY, cursor);
+    const maxY = minY + item.height;
+    cursor = maxY + item.gap;
+    return {
+      id: item.id,
+      index: item.index,
+      minY,
+      maxY,
+      deltaY: minY - finite(item?.originalMinY, item.minY)
+    };
+  });
+}

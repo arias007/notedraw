@@ -32,3 +32,10 @@ export function calculatePinchPanScroll({
     top: clamp((finite(scrollTop) + previousY) * ratio - nextY, 0, maxTop)
   };
 }
+
+export function calculateReadingZoomMargin(baseMargin, targetHeight, zoom) {
+  const base = Number.isFinite(Number(baseMargin)) ? Number(baseMargin) : 0;
+  const height = Math.max(1, Number.isFinite(Number(targetHeight)) ? Number(targetHeight) : 1);
+  const scale = Math.max(0.01, Number.isFinite(Number(zoom)) ? Number(zoom) : 1);
+  return scale < 1 ? base - height * (1 - scale) : base;
+}

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { calculatePinchPanScroll } from "../src/viewport-gesture.mjs";
+import { calculatePinchPanScroll, calculateReadingZoomMargin } from "../src/viewport-gesture.mjs";
 
 test("two-finger translation pans without changing zoom", () => {
   const scroll = calculatePinchPanScroll({
@@ -57,4 +57,13 @@ test("subpixel touch jitter cannot slowly drift the note", () => {
   });
 
   assert.deepEqual(scroll, { left: 120, top: 640 });
+});
+
+test("reading zoom margin is derived from its stable baseline without cumulative drift", () => {
+  const first = calculateReadingZoomMargin(12, 1200, 0.6);
+  const repeated = calculateReadingZoomMargin(12, 1200, 0.6);
+
+  assert.equal(first, -468);
+  assert.equal(repeated, first);
+  assert.equal(calculateReadingZoomMargin(12, 1200, 1.2), 12);
 });

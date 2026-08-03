@@ -1400,6 +1400,12 @@ function calculatePinchPanScroll({
     top: clamp5((finite5(scrollTop) + previousY) * ratio - nextY, 0, maxTop)
   };
 }
+function calculateReadingZoomMargin(baseMargin, targetHeight, zoom) {
+  const base = Number.isFinite(Number(baseMargin)) ? Number(baseMargin) : 0;
+  const height = Math.max(1, Number.isFinite(Number(targetHeight)) ? Number(targetHeight) : 1);
+  const scale = Math.max(0.01, Number.isFinite(Number(zoom)) ? Number(zoom) : 1);
+  return scale < 1 ? base - height * (1 - scale) : base;
+}
 
 // src/note-flow-layout.mjs
 function finite6(value, fallback = 0) {
@@ -1594,6 +1600,65 @@ function noteFlowRequiredOffset({
   const safeScale = Math.max(0.01, finite6(scale, 1));
   const edge = side === "after" ? finite6(anchorBottom) - Math.max(0, finite6(applied)) * safeScale : finite6(anchorTop);
   return Math.max(0, (finite6(desiredBottom) - edge) / safeScale);
+}
+function shouldRenderStrokeOnSurface(stroke, surfaceType) {
+  return !(surfaceType === "source" && stroke?.noteFlow?.enabled);
+}
+function reflowNoteFlowIntervals(items, { gap = 12 } = {}) {
+  const defaultGap = Math.max(0, finite6(gap, 12));
+  const normalized = (Array.isArray(items) ? items : []).map((item, order) => {
+    const minY = finite6(item?.minY, Number.NaN);
+    const maxY = finite6(item?.maxY, Number.NaN);
+    if (!Number.isFinite(minY) || !Number.isFinite(maxY) || maxY < minY) {
+      return null;
+    }
+    const previousMinY = finite6(item?.previousMinY, Number.NaN);
+    const previousMaxY = finite6(item?.previousMaxY, Number.NaN);
+    return {
+      ...item,
+      order: Number.isFinite(Number(item?.order)) ? Number(item.order) : order,
+      minY,
+      maxY,
+      height: Math.max(0, maxY - minY),
+      gap: Math.max(0, finite6(item?.gap, defaultGap)),
+      previousMinY,
+      previousMaxY,
+      movedDown: Boolean(item?.moved) && Number.isFinite(previousMinY) && Number.isFinite(previousMaxY) && minY > previousMinY
+    };
+  }).filter(Boolean);
+  const vacancies = normalized.filter((item) => item.movedDown).map((item) => ({
+    minY: item.previousMinY,
+    maxY: Math.min(item.minY, item.previousMaxY),
+    used: false
+  })).filter((vacancy) => vacancy.maxY > vacancy.minY);
+  for (const item of normalized.filter((candidate) => !candidate.moved)) {
+    const overlapsMoved = normalized.some((candidate) => {
+      return candidate.movedDown && item.minY < candidate.maxY && item.maxY > candidate.minY;
+    });
+    if (!overlapsMoved) {
+      continue;
+    }
+    const vacancy = vacancies.find((candidate) => !candidate.used && candidate.maxY - candidate.minY >= item.height);
+    if (vacancy) {
+      item.minY = vacancy.minY;
+      item.maxY = vacancy.minY + item.height;
+      vacancy.used = true;
+    }
+  }
+  normalized.sort((a, b) => a.minY - b.minY || a.order - b.order);
+  let cursor = Number.NEGATIVE_INFINITY;
+  return normalized.map((item) => {
+    const minY = Math.max(item.minY, cursor);
+    const maxY = minY + item.height;
+    cursor = maxY + item.gap;
+    return {
+      id: item.id,
+      index: item.index,
+      minY,
+      maxY,
+      deltaY: minY - finite6(item?.originalMinY, item.minY)
+    };
+  });
 }
 
 // src/preview-lifecycle.mjs
@@ -4033,7 +4098,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.3.16",
+      version: "3.3.17",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -4620,7 +4685,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       const sourceEl = findSourceSurfaceForView(view);
       const previewVisible = isElementVisibleEnough(findRootPreviewForView(view));
       const sourceVisible = isElementVisibleEnough(sourceEl);
-      const shouldMount = Boolean(sourceEl) && !previewVisible && (isSourceMode(view) || sourceVisible);
+      const shouldMount = Boolean(sourceEl) && isSourceMode(view) && sourceVisible && !previewVisible;
       const existing = this.sourceControllers.get(view);
       if (!shouldMount) {
         if (existing) {
@@ -9538,9 +9603,11 @@ var PreviewDrawingController = class {
       return;
     }
     const properties = ["zoom", "transform", "transform-origin", "margin-bottom"];
+    const computedStyle = window.getComputedStyle(element);
     this.readingZoomStyleState.set(element, Object.fromEntries(properties.map((property) => [property, {
       value: element.style.getPropertyValue(property),
-      priority: element.style.getPropertyPriority(property)
+      priority: element.style.getPropertyPriority(property),
+      computedValue: computedStyle.getPropertyValue(property)
     }])));
   }
   restoreReadingZoomStyles() {
@@ -9625,10 +9692,10 @@ var PreviewDrawingController = class {
           this.applyVisualReadingZoomElement(element, zoom);
         }
         const targetState = this.readingZoomStyleState.get(target);
-        const originalMarginBottom = Number.parseFloat(window.getComputedStyle(target).marginBottom) || 0;
+        const originalMarginBottom = Number.parseFloat(targetState?.["margin-bottom"]?.computedValue || targetState?.["margin-bottom"]?.value) || 0;
         const targetHeight = Math.max(1, target?.offsetHeight || target?.scrollHeight || 1);
         if (zoom < 1) {
-          target.style.setProperty("margin-bottom", `${originalMarginBottom - targetHeight * (1 - zoom)}px`);
+          target.style.setProperty("margin-bottom", `${calculateReadingZoomMargin(originalMarginBottom, targetHeight, zoom)}px`);
         } else if (targetState?.["margin-bottom"]?.value) {
           target.style.setProperty("margin-bottom", targetState["margin-bottom"].value, targetState["margin-bottom"].priority || "");
         } else {
@@ -10042,14 +10109,16 @@ var PreviewDrawingController = class {
       const movedIndexes = Array.from(this.dragStrokeOriginalPoints?.keys() || []);
       this.resetNoteFlowSettle();
       this.clearNoteFlowLayout();
-      for (const index of movedIndexes) {
+      const flowedIndexes = this.reflowNoteFlowElementsAfterDrag(movedIndexes);
+      const affectedIndexes = Array.from(/* @__PURE__ */ new Set([...movedIndexes, ...flowedIndexes]));
+      for (const index of affectedIndexes) {
         const stroke = this.drawingData.strokes[index];
         if (stroke?.noteFlow?.enabled) {
           stroke.noteFlow = this.captureNoteFlowAnchor(stroke);
         }
       }
-      this.captureResponsiveAnchorsForIndexes(movedIndexes);
-      this.syncBoundConnectors({ elementIds: this.connectorTargetIdsForStrokeIndexes(movedIndexes) });
+      this.captureResponsiveAnchorsForIndexes(affectedIndexes);
+      this.syncBoundConnectors({ elementIds: this.connectorTargetIdsForStrokeIndexes(affectedIndexes) });
       this.lastTextTap = null;
       this.redoStack = [];
       this.plugin.scheduleDrawingSave(this.file, this.drawingData);
@@ -10490,7 +10559,7 @@ var PreviewDrawingController = class {
     clearCanvasContext(this.ctx, this.canvas);
     this.ensureStaticCache();
     for (const [index, stroke] of this.drawingData.strokes.entries()) {
-      if (this.isStrokeSelected(index) && this.isStrokeInCanvasWindow(stroke)) {
+      if (this.isStrokeVisibleOnSurface(stroke) && this.isStrokeSelected(index) && this.isStrokeInCanvasWindow(stroke)) {
         this.drawStroke(stroke, this.selectedStrokeAlpha());
       }
     }
@@ -10508,7 +10577,7 @@ var PreviewDrawingController = class {
     }
     clearCanvasContext(this.staticCtx, this.staticCanvas);
     for (const [index, stroke] of this.drawingData.strokes.entries()) {
-      if (!this.isStrokeSelected(index) && this.isStrokeInCanvasWindow(stroke)) {
+      if (this.isStrokeVisibleOnSurface(stroke) && !this.isStrokeSelected(index) && this.isStrokeInCanvasWindow(stroke)) {
         this.drawStrokeOn(this.staticCtx, stroke);
       }
     }
@@ -10530,6 +10599,9 @@ var PreviewDrawingController = class {
       maxY: this.canvasWindowTop + this.canvasRenderHeight + padding
     });
   }
+  isStrokeVisibleOnSurface(stroke) {
+    return shouldRenderStrokeOnSurface(stroke, this.surfaceType);
+  }
   drawStroke(stroke, alpha = 1) {
     this.drawStrokeOn(this.ctx, stroke, alpha);
   }
@@ -10541,6 +10613,9 @@ var PreviewDrawingController = class {
     const width = this.canvasWidth();
     const height = this.canvasHeight();
     for (const [index, stroke] of this.drawingData.strokes.entries()) {
+      if (!this.isStrokeVisibleOnSurface(stroke)) {
+        continue;
+      }
       if (!isEmbedStroke(stroke) && !isRichTextStroke(stroke)) {
         continue;
       }
@@ -11096,6 +11171,9 @@ var PreviewDrawingController = class {
     let boxHit = -1;
     for (let index = this.drawingData.strokes.length - 1; index >= 0; index -= 1) {
       const stroke = this.drawingData.strokes[index];
+      if (!this.isStrokeVisibleOnSurface(stroke)) {
+        continue;
+      }
       const padding = this.selectionHitPaddingPx();
       const threshold = Math.max(padding, (stroke.width || this.penWidth) / 2 + padding);
       if (!strokeHitTest(stroke, hitPoint, width, height, threshold)) {
@@ -11118,6 +11196,9 @@ var PreviewDrawingController = class {
     const indexes = [];
     for (let index = 0; index < this.drawingData.strokes.length; index += 1) {
       const stroke = this.drawingData.strokes[index];
+      if (!this.isStrokeVisibleOnSurface(stroke)) {
+        continue;
+      }
       const bounds = getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight());
       if (bounds && rectsIntersect(rect, bounds)) {
         indexes.push(index);
@@ -11417,13 +11498,13 @@ var PreviewDrawingController = class {
     }
     return Array.from(grouped.values()).flatMap((byPath) => Array.from(byPath.values()));
   }
-  noteFlowAnchorElement(noteFlow) {
+  noteFlowAnchorElement(noteFlow, allCandidates = null) {
     const path = normalizeVaultPath(noteFlow?.path || this.file?.path || "");
     const line = Number(noteFlow?.line);
     if (!Number.isFinite(line)) {
       return null;
     }
-    const candidates = this.noteFlowCandidates().filter((candidate) => {
+    const candidates = (allCandidates || this.noteFlowCandidates()).filter((candidate) => {
       return candidate.path === path && line >= candidate.start && line <= candidate.end;
     });
     candidates.sort((a, b) => a.bottom - a.top - (b.bottom - b.top) || a.order - b.order);
@@ -11523,8 +11604,10 @@ var PreviewDrawingController = class {
       return false;
     }
     const scaleY = canvasRect.height > 0 ? canvasRect.height / Math.max(1, this.canvasRenderHeight) : 1;
+    const candidates = this.noteFlowCandidates();
     const offsets = /* @__PURE__ */ new Map();
     let migratedAnchor = false;
+    let missingStableAnchor = false;
     for (const item of flows) {
       let currentNoteFlow = normalizeNoteFlow(item.stroke.noteFlow);
       const hasStoredAnchor = hasStableNoteFlowAnchor(currentNoteFlow);
@@ -11540,11 +11623,11 @@ var PreviewDrawingController = class {
           item.stroke.noteFlow = currentNoteFlow;
         }
       }
-      let anchor = this.noteFlowAnchorElement(currentNoteFlow);
+      let anchor = this.noteFlowAnchorElement(currentNoteFlow, candidates);
       const strokeTop = canvasRect.top + (item.bounds.minY - this.canvasWindowTop) * scaleY;
       if (!hasStoredAnchor && anchor && currentNoteFlow?.side === "before" && anchor.top < strokeTop - 4) {
         const recaptured = this.captureNoteFlowAnchor(item.stroke);
-        const correctedAnchor = this.noteFlowAnchorElement(recaptured);
+        const correctedAnchor = this.noteFlowAnchorElement(recaptured, candidates);
         if (correctedAnchor) {
           item.stroke.noteFlow = recaptured;
           currentNoteFlow = recaptured;
@@ -11555,7 +11638,7 @@ var PreviewDrawingController = class {
       }
       if (!anchor && !hasStoredAnchor) {
         const recaptured = this.captureNoteFlowAnchor(item.stroke);
-        anchor = this.noteFlowAnchorElement(recaptured);
+        anchor = this.noteFlowAnchorElement(recaptured, candidates);
         if (anchor && recaptured?.positionBasis) {
           item.stroke.noteFlow = recaptured;
           currentNoteFlow = recaptured;
@@ -11565,6 +11648,7 @@ var PreviewDrawingController = class {
       }
       const element = anchor?.element || null;
       if (!element) {
+        missingStableAnchor = missingStableAnchor || hasStoredAnchor;
         continue;
       }
       const side = currentNoteFlow.side;
@@ -11608,6 +11692,9 @@ var PreviewDrawingController = class {
       const elementOffsets = offsets.get(element);
       for (const [property, state] of Array.from(states.entries())) {
         if (elementOffsets?.has(property)) {
+          continue;
+        }
+        if (missingStableAnchor && this.noteFlowLayoutSignature) {
           continue;
         }
         if (state.value) {
@@ -11700,6 +11787,66 @@ var PreviewDrawingController = class {
       this.noteFlowSettlePasses += 1;
       this.scheduleResize({ layout: true, preserveNoteFlowAbsolute: true });
     }, delay);
+  }
+  reflowNoteFlowElementsAfterDrag(movedIndexes) {
+    if (!this.supportsNoteFlow() || !this.dragStrokeOriginalPoints?.size) {
+      return [];
+    }
+    const moved = new Set((movedIndexes || []).filter((index) => {
+      const stroke = this.drawingData?.strokes?.[index];
+      return normalizeNoteFlow(stroke?.noteFlow) && isTextLikeStroke(stroke);
+    }));
+    if (!moved.size) {
+      return [];
+    }
+    const canvasWidth = this.canvasWidth();
+    const canvasHeight = this.canvasHeight();
+    const items = [];
+    for (const [index, stroke] of (this.drawingData?.strokes || []).entries()) {
+      const noteFlow = normalizeNoteFlow(stroke?.noteFlow);
+      if (!noteFlow || !isTextLikeStroke(stroke) || isConnectorStroke(stroke)) {
+        continue;
+      }
+      const bounds = getStrokeBounds(stroke, canvasWidth, canvasHeight);
+      if (!bounds) {
+        continue;
+      }
+      const originalPoints = this.dragStrokeOriginalPoints.get(index);
+      const originalBounds = originalPoints ? getStrokeBounds({ ...stroke, points: originalPoints }, canvasWidth, canvasHeight) : null;
+      items.push({
+        id: strokeElementId(stroke) || String(index),
+        index,
+        order: index,
+        minY: bounds.minY,
+        maxY: bounds.maxY,
+        originalMinY: bounds.minY,
+        previousMinY: originalBounds?.minY,
+        previousMaxY: originalBounds?.maxY,
+        moved: moved.has(index),
+        gap: noteFlow.gap
+      });
+    }
+    const placements = reflowNoteFlowIntervals(items);
+    const changed = [];
+    for (const placement of placements) {
+      if (Math.abs(placement.deltaY) < 0.5) {
+        continue;
+      }
+      const stroke = this.drawingData.strokes[placement.index];
+      if (!stroke || stroke.locked) {
+        continue;
+      }
+      const deltaY = placement.deltaY / Math.max(1, canvasHeight);
+      stroke.points = stroke.points.map((point) => ({
+        ...point,
+        y: clamp9(Number(point.y) + deltaY, 0, 1)
+      }));
+      changed.push(placement.index);
+    }
+    if (changed.length) {
+      this.invalidateStaticCache();
+    }
+    return changed;
   }
   queueDraggedNoteFlowRefresh(indexes) {
     for (const index of indexes || []) {
@@ -13494,28 +13641,17 @@ function resetDormantRootPreview(view, preview) {
 function findPrimaryMarkdownSurface(view) {
   const source = findSourceSurfaceForView(view);
   const preview = findRootPreviewForView(view);
-  if (isElementVisibleEnough(preview)) {
-    return preview;
+  if (isSourceMode(view)) {
+    return source || preview;
   }
-  if (isElementVisibleEnough(source)) {
-    return source;
-  }
-  return isSourceMode(view) ? source || preview : preview || source;
+  return preview || source;
 }
 function currentMarkdownSurfaceType(view) {
-  const source = findSourceSurfaceForView(view);
-  const preview = findRootPreviewForView(view);
-  if (isElementVisibleEnough(preview)) {
-    return "preview";
-  }
-  if (isElementVisibleEnough(source)) {
-    return "source";
-  }
   return isSourceMode(view) ? "source" : "preview";
 }
 function isReadingSurfaceVisible(view) {
   const preview = findRootPreviewForView(view);
-  return isElementVisibleEnough(preview) && !isElementVisibleEnough(findSourceSurfaceForView(view));
+  return !isSourceMode(view) && isElementVisibleEnough(preview);
 }
 function isElementVisibleEnough(element) {
   if (!isElementLaidOut(element)) {
