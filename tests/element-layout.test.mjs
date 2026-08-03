@@ -12,7 +12,8 @@ import {
   projectElementLayout,
   projectElementPoints,
   scaleElementMetrics,
-  stabilizeElementRelations
+  stabilizeElementRelations,
+  stabilizeProjectedElementBox
 } from "../src/element-layout.mjs";
 
 function makeLayout(id, x, y, width, height) {
@@ -380,6 +381,23 @@ test("element relations cannot override a strong note-lane anchor", () => {
     assert.ok(Math.abs(after[index].x - before[index].x) <= 36);
     assert.ok(Math.abs(after[index].y - before[index].y) <= 40);
   }
+});
+
+test("subpixel element box jitter is suppressed without blocking real layout movement", () => {
+  const previous = { minX: 100, minY: 200, maxX: 220, maxY: 280 };
+  const tiny = stabilizeProjectedElementBox({
+    x: 100.3, y: 199.6, width: 120.4, height: 79.7, scale: 1, xScale: 1, yScale: 1
+  }, previous);
+  const moved = stabilizeProjectedElementBox({
+    x: 104, y: 206, width: 126, height: 88, scale: 1, xScale: 1, yScale: 1
+  }, previous);
+
+  assert.deepEqual({ x: tiny.x, y: tiny.y, width: tiny.width, height: tiny.height }, {
+    x: 100, y: 200, width: 120, height: 80
+  });
+  assert.deepEqual({ x: moved.x, y: moved.y, width: moved.width, height: moved.height }, {
+    x: 104, y: 206, width: 126, height: 88
+  });
 });
 
 test("reciprocal relation cycles reduce drift without diverging", () => {

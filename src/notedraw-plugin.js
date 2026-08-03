@@ -37,7 +37,8 @@ import {
   projectElementLayout,
   projectElementPoints,
   scaleElementMetrics,
-  stabilizeElementRelations
+  stabilizeElementRelations,
+  stabilizeProjectedElementBox
 } from "./element-layout.mjs";
 import { matchRenderedTextToMarkdown } from "./markdown-anchors.mjs";
 import { buildVirtualMarkdownSectionAnchors } from "./markdown-section-anchors.mjs";
@@ -54,7 +55,10 @@ import { calculatePinchPanScroll } from "./viewport-gesture.mjs";
 import {
   noteFlowRequiredOffset,
   noteFlowSurfaceRepairLimits,
+  projectNoteFlowDocumentPoint,
   selectNoteFlowAnchorPlacement,
+  selectNoteFlowPositionAnchor,
+  stabilizeNoteFlowPointProjection,
   stabilizeNoteFlowBounds
 } from "./note-flow-layout.mjs";
 import { shouldMountRootPreview, shouldResetDormantRootPreview } from "./preview-lifecycle.mjs";
@@ -1787,7 +1791,7 @@ var NoteDrawPlugin = class extends Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.3.9",
+      version: "3.3.10",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -5258,14 +5262,17 @@ var PreviewDrawingController = class {
   }
   captureNoteFlowResponsiveAnchors(stroke, context = this.getResponsiveLayoutContext()) {
     const noteFlow = normalizeNoteFlow(stroke?.noteFlow);
-    if (!noteFlow || !Number.isFinite(noteFlow.line) || !stroke?.points?.length) {
+    if (!noteFlow || !stroke?.points?.length) {
       return false;
     }
-    const linePosition = noteFlow.line + 0.999999;
-    const anchorY = this.projectLineLocation(noteFlow.path, linePosition, context);
-    if (!Number.isFinite(anchorY)) {
-      return false;
-    }
+    const linePosition = noteFlow.positionBasis === "above" && Number.isFinite(noteFlow.positionLine)
+      ? noteFlow.positionLine + 0.999999
+      : null;
+    const anchorY = linePosition === null
+      ? NaN
+      : this.projectLineLocation(noteFlow.positionPath, linePosition, context);
+    const useLineAnchor = linePosition !== null && Number.isFinite(anchorY);
+    const useDocumentAnchor = noteFlow.positionBasis === "document" && noteFlow.positionVersion >= 1;
     stroke.points = stroke.points.map((point) => {
       const canvasX = clamp(Number(point?.x || 0), 0, 1) * this.canvasWidth();
       const canvasY = clamp(Number(point?.y || 0), 0, 1) * this.canvasHeight();
@@ -5277,10 +5284,10 @@ var PreviewDrawingController = class {
           canvasWidth: this.canvasWidth(),
           canvasHeight: this.canvasHeight(),
           frame: context.frame,
-          sourcePath: noteFlow.path,
-          linePosition,
-          lineConfidence: 1,
-          lineOffsetY: canvasY - anchorY,
+          sourcePath: useLineAnchor ? noteFlow.positionPath : this.file?.path || "",
+          linePosition: useLineAnchor ? linePosition : null,
+          lineConfidence: useLineAnchor ? 1 : null,
+          lineOffsetY: useLineAnchor ? canvasY - anchorY : useDocumentAnchor ? canvasY : 0,
           time: point?.t
         })
       };
@@ -5329,7 +5336,7 @@ var PreviewDrawingController = class {
     const items = [];
     const layoutsById = new Map();
     for (const stroke of this.drawingData?.strokes || []) {
-      if (isConnectorStroke(stroke)) {
+      if (isConnectorStroke(stroke) || normalizeNoteFlow(stroke?.noteFlow)) {
         continue;
       }
       const layout = normalizeElementLayout(stroke.layout);
@@ -5358,7 +5365,7 @@ var PreviewDrawingController = class {
       }
       const layout = normalizeElementLayout(stroke.layout);
       if (layout?.id) {
-        layout.relations = relations.get(layout.id) || [];
+        layout.relations = normalizeNoteFlow(stroke?.noteFlow) ? [] : relations.get(layout.id) || [];
         stroke.layout = layout;
       }
     }
@@ -5401,6 +5408,14 @@ var PreviewDrawingController = class {
       if (isConnectorStroke(stroke)) {
         continue;
       }
+      const noteFlow = normalizeNoteFlow(stroke?.noteFlow);
+      if (noteFlow && (!noteFlow.positionBasis || noteFlow.positionVersion < 1)) {
+        const recaptured = this.captureNoteFlowAnchor(stroke, { preservePlacement: true });
+        stroke.noteFlow = recaptured;
+        if (recaptured?.positionBasis) {
+          this.captureNoteFlowResponsiveAnchors(stroke, context);
+        }
+      }
       const existingLayout = normalizeElementLayout(stroke.layout);
       const needsLayoutRepair = Boolean(existingLayout) && (
         elementLayoutNeedsRepair(existingLayout) || elementLayoutExceedsTarget(existingLayout, this.canvasHeight())
@@ -5424,18 +5439,26 @@ var PreviewDrawingController = class {
         elementIds.add(elementId);
       }
     }
-    let migratedDrawingData = null;
     if (migrated) {
       this.rebuildElementRelations();
-      migratedDrawingData = normalizeDrawingDataForStorage(this.drawingData, this.file);
     }
     const projected = [];
     const layoutsById = new Map();
+    const currentBoundsById = new Map();
     for (const stroke of this.drawingData?.strokes || []) {
       if (isConnectorStroke(stroke)) {
         continue;
       }
       const layout = normalizeElementLayout(stroke.layout);
+      if (layout?.id) {
+        const currentBounds = getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight());
+        if (currentBounds) {
+          currentBoundsById.set(layout.id, currentBounds);
+        }
+      }
+      if (normalizeNoteFlow(stroke?.noteFlow)) {
+        continue;
+      }
       const box = projectElementLayout(layout, {
         canvasWidth: this.canvasWidth(),
         canvasHeight: this.canvasHeight(),
@@ -5449,13 +5472,36 @@ var PreviewDrawingController = class {
         layoutsById.set(layout.id, layout);
       }
     }
-    const projectedById = new Map(stabilizeElementRelations(projected, layoutsById).map((box) => [box.id, {
-      ...box,
-      x: clamp(box.x, 0, Math.max(0, this.canvasWidth() - box.width)),
-      y: clamp(box.y, 0, Math.max(0, this.canvasHeight() - box.height))
-    }]));
+    const projectedById = new Map(stabilizeElementRelations(projected, layoutsById).map((box) => {
+      const stabilized = stabilizeProjectedElementBox(box, currentBoundsById.get(box.id));
+      return [box.id, {
+        ...stabilized,
+        x: clamp(stabilized.x, 0, Math.max(0, this.canvasWidth() - stabilized.width)),
+        y: clamp(stabilized.y, 0, Math.max(0, this.canvasHeight() - stabilized.height))
+      }];
+    }));
     for (const stroke of this.drawingData?.strokes || []) {
       if (isConnectorStroke(stroke)) {
+        continue;
+      }
+      if (normalizeNoteFlow(stroke?.noteFlow)) {
+        const noteFlow = normalizeNoteFlow(stroke.noteFlow);
+        const previousPoints = stroke.points;
+        const projectedPoints = stroke.points.map((point) => {
+          const projectedPoint = projectResponsivePoint(point, {
+            canvasWidth: this.canvasWidth(),
+            canvasHeight: this.canvasHeight(),
+            frame: context.frame,
+            lineToCanvasY
+          });
+          return noteFlow.positionBasis === "document" && noteFlow.positionVersion >= 1
+            ? projectNoteFlowDocumentPoint(point, projectedPoint, { canvasHeight: this.canvasHeight() })
+            : projectedPoint;
+        });
+        stroke.points = stabilizeNoteFlowPointProjection(previousPoints, projectedPoints, {
+          canvasWidth: this.canvasWidth(),
+          canvasHeight: this.canvasHeight()
+        });
         continue;
       }
       const layout = normalizeElementLayout(stroke.layout);
@@ -5499,10 +5545,6 @@ var PreviewDrawingController = class {
     }
     this.responsivePointsInitialized = true;
     this.responsiveLayoutSignature = signature;
-    if (migrated) {
-      migratedDrawingData.version = Math.max(3, Number(migratedDrawingData.version) || 1);
-      this.plugin.scheduleDrawingSave(this.file, migratedDrawingData, { excludeData: this.drawingData });
-    }
   }
   resizeCanvas(options = {}) {
     this.refreshScrollContainer();
@@ -5831,6 +5873,9 @@ var PreviewDrawingController = class {
         path: this.file?.path || "",
         line: null,
         side: null,
+        positionBasis: null,
+        positionPath: this.file?.path || "",
+        positionLine: null,
         gap: 12
       } : null,
       points: [this.pointerStartPoint]
@@ -8333,7 +8378,7 @@ var PreviewDrawingController = class {
     if (!bounds) {
       return;
     }
-    const padding = Math.max(this.selectionHitPaddingPx(), this.getSelectedStrokeMaxWidth() + 4);
+    const padding = this.selectionFramePaddingPx();
     const x = bounds.minX - padding;
     const y = bounds.minY - padding;
     const width = bounds.maxX - bounds.minX + padding * 2;
@@ -8591,21 +8636,57 @@ var PreviewDrawingController = class {
       event.stopPropagation();
     }
   }
-  captureNoteFlowAnchor(stroke) {
+  noteFlowCanvasRect() {
+    const rects = [this.canvas, this.staticCanvas].map((canvas) => canvas?.getBoundingClientRect?.()).filter(Boolean);
+    return rects.find((rect) => rect.width > 1 && rect.height > 1) || rects[0] || null;
+  }
+  captureNoteFlowAnchor(stroke, options = {}) {
+    const previous = normalizeNoteFlow(stroke?.noteFlow);
     const bounds = getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight());
-    const canvasRect = this.canvas?.getBoundingClientRect?.();
-    if (!bounds || !canvasRect) {
-      return { enabled: true, path: this.file?.path || "", line: null, side: null, gap: 12 };
+    const canvasRect = this.noteFlowCanvasRect();
+    if (!bounds || !canvasRect || canvasRect.width <= 1 || canvasRect.height <= 1) {
+      return previous || {
+        enabled: true,
+        path: this.file?.path || "",
+        line: null,
+        side: null,
+        positionBasis: null,
+        positionPath: this.file?.path || "",
+        positionLine: null,
+        positionVersion: 0,
+        gap: 12
+      };
     }
     const scaleY = canvasRect.height > 0 ? canvasRect.height / Math.max(1, this.canvasRenderHeight) : 1;
     const strokeTop = canvasRect.top + (bounds.minY - this.canvasWindowTop) * scaleY;
-    const placement = selectNoteFlowAnchorPlacement(this.noteFlowCandidates(), { strokeTop });
-    const anchor = placement?.candidate;
+    const candidates = this.noteFlowCandidates();
+    const placement = selectNoteFlowAnchorPlacement(candidates, { strokeTop });
+    const previousAnchor = options.preservePlacement === true && Number.isFinite(previous?.line) && ["before", "after"].includes(previous?.side)
+      ? candidates.filter((candidate) => {
+        return candidate.path === previous.path && previous.line >= candidate.start && previous.line <= candidate.end;
+      }).sort((a, b) => (a.bottom - a.top) - (b.bottom - b.top) || a.order - b.order)[0] || null
+      : null;
+    const preservePlacement = Boolean(previousAnchor);
+    const anchor = preservePlacement ? previousAnchor : placement?.candidate;
+    const side = preservePlacement ? previous.side : placement?.side || previous?.side || null;
+    const line = preservePlacement ? previous.line : Number.isFinite(placement?.line) ? placement.line : previous?.line ?? null;
+    const position = selectNoteFlowPositionAnchor(candidates, {
+      strokeTop,
+      maxOrderExclusive: side === "before" && anchor ? anchor.order : Number.POSITIVE_INFINITY
+    });
+    const positionAnchor = position?.candidate;
+    const candidatesReady = candidates.length > 0;
     return {
       enabled: true,
-      path: anchor?.path || this.file?.path || "",
-      line: Number.isFinite(placement?.line) ? placement.line : null,
-      side: placement?.side || null,
+      path: anchor?.path || previous?.path || this.file?.path || "",
+      line,
+      side,
+      positionBasis: positionAnchor ? "above" : candidatesReady ? "document" : previous?.positionBasis || null,
+      positionPath: positionAnchor?.path || previous?.positionPath || this.file?.path || "",
+      positionLine: positionAnchor && Number.isFinite(position?.line)
+        ? position.line
+        : candidatesReady ? null : previous?.positionLine ?? null,
+      positionVersion: 1,
       gap: clamp(Number(stroke?.noteFlow?.gap) || 12, 4, 64)
     };
   }
@@ -8757,7 +8838,8 @@ var PreviewDrawingController = class {
         bounds,
         layout: normalizeElementLayout(stroke.layout),
         contentWidth: contentFrame.width,
-        viewportHeight
+        viewportHeight,
+        preferCurrent: Boolean(normalizeNoteFlow(stroke.noteFlow)?.positionBasis)
       });
       return { stroke, ...stabilized };
     }).filter(Boolean).sort((a, b) => a.bounds.minY - b.bounds.minY);
@@ -8771,21 +8853,35 @@ var PreviewDrawingController = class {
     if (runawayReferenceHeight > 0) {
       this.repairRunawayNoteFlowSurface(runawayReferenceHeight);
     }
-    const canvasRect = this.canvas.getBoundingClientRect();
+    const canvasRect = this.noteFlowCanvasRect();
+    if (!canvasRect || canvasRect.width <= 1 || canvasRect.height <= 1) {
+      return false;
+    }
     const scaleY = canvasRect.height > 0 ? canvasRect.height / Math.max(1, this.canvasRenderHeight) : 1;
     const offsets = /* @__PURE__ */ new Map();
     let migratedAnchor = false;
     for (const item of flows) {
-      if (!Number.isFinite(item.stroke.noteFlow?.line) || !["before", "after"].includes(item.stroke.noteFlow?.side)) {
-        item.stroke.noteFlow = this.captureNoteFlowAnchor(item.stroke);
-        migratedAnchor = true;
+      let currentNoteFlow = normalizeNoteFlow(item.stroke.noteFlow);
+      if (!Number.isFinite(currentNoteFlow?.line) || !["before", "after"].includes(currentNoteFlow?.side) || !currentNoteFlow?.positionBasis || currentNoteFlow.positionVersion < 1) {
+        const recaptured = this.captureNoteFlowAnchor(item.stroke, { preservePlacement: true });
+        const resolved = Number.isFinite(recaptured?.line) && ["before", "after"].includes(recaptured?.side) && Boolean(recaptured?.positionBasis);
+        if (resolved) {
+          item.stroke.noteFlow = recaptured;
+          currentNoteFlow = recaptured;
+          this.captureNoteFlowResponsiveAnchors(item.stroke, this.getResponsiveLayoutContext(true));
+          migratedAnchor = true;
+        } else {
+          item.stroke.noteFlow = currentNoteFlow;
+        }
       }
-      let anchor = this.noteFlowAnchorElement(item.stroke.noteFlow);
+      let anchor = this.noteFlowAnchorElement(currentNoteFlow);
       if (!anchor) {
         const recaptured = this.captureNoteFlowAnchor(item.stroke);
         anchor = this.noteFlowAnchorElement(recaptured);
-        if (anchor) {
+        if (anchor && recaptured?.positionBasis) {
           item.stroke.noteFlow = recaptured;
+          currentNoteFlow = recaptured;
+          this.captureNoteFlowResponsiveAnchors(item.stroke, this.getResponsiveLayoutContext(true));
           migratedAnchor = true;
         }
       }
@@ -8793,7 +8889,7 @@ var PreviewDrawingController = class {
       if (!element) {
         continue;
       }
-      const side = item.stroke.noteFlow.side;
+      const side = currentNoteFlow.side;
       const property = side === "after" ? "margin-bottom" : "margin-top";
       let states = this.noteFlowStyledElements.get(element);
       if (!states) {
@@ -8813,7 +8909,7 @@ var PreviewDrawingController = class {
       }
       const state = states.get(property);
       const rect = element.getBoundingClientRect();
-      const desiredBottom = canvasRect.top + (item.bounds.maxY - this.canvasWindowTop) * scaleY + Number(item.stroke.noteFlow.gap || 12) * scaleY;
+      const desiredBottom = canvasRect.top + (item.bounds.maxY - this.canvasWindowTop) * scaleY + Number(currentNoteFlow.gap || 12) * scaleY;
       const required = noteFlowRequiredOffset({
         side,
         anchorTop: rect.top,
@@ -8853,11 +8949,12 @@ var PreviewDrawingController = class {
       const states = this.noteFlowStyledElements.get(element);
       for (const [property, offset] of elementOffsets) {
         const state = states.get(property);
-        const nextValue = `${Math.ceil(state.base + offset)}px`;
+        const appliedValue = Math.ceil(state.base + offset);
+        const nextValue = `${appliedValue}px`;
         if (element.style.getPropertyValue(property) !== nextValue || element.style.getPropertyPriority(property) !== "important") {
           element.style.setProperty(property, nextValue, "important");
         }
-        state.applied = offset;
+        state.applied = Math.max(0, appliedValue - state.base);
       }
       element.classList.add("notedraw-note-flow-anchor");
     }
@@ -9042,6 +9139,9 @@ var PreviewDrawingController = class {
   getSelectedStrokeMaxWidth() {
     return this.getSelectedStrokeIndexes().map((index) => this.drawingData.strokes[index]?.width || this.penWidth).reduce((max, width) => Math.max(max, width), this.penWidth);
   }
+  selectionFramePaddingPx() {
+    return Math.max(3, this.getSelectedStrokeMaxWidth() / 2 + 2);
+  }
   getSelectedFrameCanvasRect() {
     if (!this.getSelectedStrokeIndexes().length) {
       return null;
@@ -9050,7 +9150,7 @@ var PreviewDrawingController = class {
     if (!bounds) {
       return null;
     }
-    const padding = Math.max(this.selectionHitPaddingPx(), this.getSelectedStrokeMaxWidth() + 4);
+    const padding = this.selectionFramePaddingPx();
     return {
       x: bounds.minX - padding,
       y: bounds.minY - padding,
@@ -9080,7 +9180,9 @@ var PreviewDrawingController = class {
       return false;
     }
     const hitPoint = this.pointToCanvas(point);
-    return hitPoint.x >= rect.x && hitPoint.x <= rect.x + rect.width && hitPoint.y >= rect.y && hitPoint.y <= rect.y + rect.height;
+    const hitPadding = this.selectionHitPaddingPx();
+    return hitPoint.x >= rect.x - hitPadding && hitPoint.x <= rect.x + rect.width + hitPadding &&
+      hitPoint.y >= rect.y - hitPadding && hitPoint.y <= rect.y + rect.height + hitPadding;
   }
   startTextEdit(element, clientPoint = null) {
     if (this.currentEditor === element) {
@@ -11136,11 +11238,19 @@ function normalizeNoteFlow(value) {
     return null;
   }
   const line = value.line === null || value.line === void 0 || value.line === "" ? NaN : Number(value.line);
+  const positionLine = value.positionLine === null || value.positionLine === void 0 || value.positionLine === "" ? NaN : Number(value.positionLine);
+  const positionBasis = value.positionBasis === "document"
+    ? "document"
+    : value.positionBasis === "above" && Number.isFinite(positionLine) && positionLine >= 0 ? "above" : null;
   return {
     enabled: true,
     path: normalizeVaultPath(value.path || ""),
     line: Number.isFinite(line) && line >= 0 ? line : null,
     side: ["before", "after"].includes(value.side) ? value.side : null,
+    positionBasis,
+    positionPath: normalizeVaultPath(value.positionPath || value.path || ""),
+    positionLine: positionBasis === "above" ? positionLine : null,
+    positionVersion: Number(value.positionVersion) >= 1 ? 1 : 0,
     gap: clamp(Number(value.gap) || 12, 4, 64)
   };
 }

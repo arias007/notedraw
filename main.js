@@ -756,6 +756,46 @@ function projectElementLayout(layoutInput, {
     primaryAnchoredToLine: primary.lineAnchored
   };
 }
+function stabilizeProjectedElementBox(projectedInput, previousInput, {
+  positionThreshold = 0.65,
+  sizeThreshold = 0.65
+} = {}) {
+  if (!projectedInput || !previousInput) {
+    return projectedInput;
+  }
+  const previous = {
+    x: finite2(previousInput.x, previousInput.minX),
+    y: finite2(previousInput.y, previousInput.minY),
+    width: Math.max(0.01, finite2(previousInput.width, finite2(previousInput.maxX) - finite2(previousInput.minX))),
+    height: Math.max(0.01, finite2(previousInput.height, finite2(previousInput.maxY) - finite2(previousInput.minY)))
+  };
+  const projected = {
+    x: finite2(projectedInput.x),
+    y: finite2(projectedInput.y),
+    width: Math.max(0.01, finite2(projectedInput.width, 0.01)),
+    height: Math.max(0.01, finite2(projectedInput.height, 0.01))
+  };
+  const positionLimit = Math.max(0, finite2(positionThreshold, 0.65));
+  const sizeLimit = Math.max(0, finite2(sizeThreshold, 0.65));
+  const x = Math.abs(projected.x - previous.x) < positionLimit ? previous.x : projected.x;
+  const y = Math.abs(projected.y - previous.y) < positionLimit ? previous.y : projected.y;
+  const width = Math.abs(projected.width - previous.width) < sizeLimit ? previous.width : projected.width;
+  const height = Math.abs(projected.height - previous.height) < sizeLimit ? previous.height : projected.height;
+  const widthRatio = width / projected.width;
+  const heightRatio = height / projected.height;
+  return {
+    ...projectedInput,
+    x,
+    y,
+    width,
+    height,
+    xScale: finite2(projectedInput.xScale, projectedInput.scale) * widthRatio,
+    yScale: finite2(projectedInput.yScale, projectedInput.scale) * heightRatio,
+    scale: finite2(projectedInput.scale, 1) * Math.sqrt(widthRatio * heightRatio),
+    anchorX: Number.isFinite(Number(projectedInput.anchorX)) ? Number(projectedInput.anchorX) + x - projected.x : projectedInput.anchorX,
+    anchorY: Number.isFinite(Number(projectedInput.anchorY)) ? Number(projectedInput.anchorY) + y - projected.y : projectedInput.anchorY
+  };
+}
 function rectGap(a, b) {
   const dx = Math.max(0, a.x - (b.x + b.width), b.x - (a.x + a.width));
   const dy = Math.max(0, a.y - (b.y + b.height), b.y - (a.y + a.height));
@@ -1378,7 +1418,8 @@ function stabilizeNoteFlowBounds({
   bounds,
   layout,
   contentWidth,
-  viewportHeight
+  viewportHeight,
+  preferCurrent = false
 } = {}) {
   const current = normalizeBounds(bounds);
   const box = layout?.box;
@@ -1405,7 +1446,7 @@ function stabilizeNoteFlowBounds({
   const runawayThreshold = Math.max(viewport * 4, stableMaxY * 4, stableMaxY + viewport * 2);
   const runaway = current.minY > runawayThreshold || current.maxY > runawayThreshold;
   return {
-    bounds: { ...current, minY: stableMinY, maxY: stableMaxY },
+    bounds: preferCurrent && !runaway ? current : { ...current, minY: stableMinY, maxY: stableMaxY },
     runaway,
     referenceHeight
   };
@@ -1445,6 +1486,82 @@ function selectNoteFlowAnchorPlacement(candidates, {
   }
   const last = ordered[ordered.length - 1];
   return { candidate: last, side: "after", line: last.end };
+}
+function selectNoteFlowPositionAnchor(candidates, {
+  strokeTop,
+  tolerance = 4,
+  maxOrderExclusive = Number.POSITIVE_INFINITY
+} = {}) {
+  const top = finite6(strokeTop, Number.NaN);
+  if (!Number.isFinite(top)) {
+    return null;
+  }
+  const orderLimit = Number.isFinite(Number(maxOrderExclusive)) ? Number(maxOrderExclusive) : Number.POSITIVE_INFINITY;
+  const above = (Array.isArray(candidates) ? candidates : []).filter((candidate) => {
+    return candidate && Number.isFinite(Number(candidate.bottom)) && Number.isFinite(Number(candidate.end));
+  }).map((candidate, index) => ({
+    ...candidate,
+    bottom: finite6(candidate.bottom),
+    end: finite6(candidate.end),
+    order: Number.isFinite(Number(candidate.order)) ? Number(candidate.order) : index
+  })).filter((candidate) => {
+    return candidate.bottom <= top + finite6(tolerance, 4) && candidate.order < orderLimit;
+  }).sort((a, b) => b.bottom - a.bottom || b.end - a.end || b.order - a.order);
+  if (!above.length) {
+    return null;
+  }
+  return { candidate: above[0], line: above[0].end };
+}
+function pointBounds(points, canvasWidth, canvasHeight) {
+  const width = Math.max(1, finite6(canvasWidth, 1));
+  const height = Math.max(1, finite6(canvasHeight, 1));
+  const coordinates = (Array.isArray(points) ? points : []).map((point) => ({
+    x: finite6(point?.x, Number.NaN) * width,
+    y: finite6(point?.y, Number.NaN) * height
+  })).filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
+  if (!coordinates.length) {
+    return null;
+  }
+  return {
+    minX: Math.min(...coordinates.map((point) => point.x)),
+    minY: Math.min(...coordinates.map((point) => point.y))
+  };
+}
+function stabilizeNoteFlowPointProjection(previousPoints, projectedPoints, {
+  canvasWidth,
+  canvasHeight,
+  threshold = 0.65
+} = {}) {
+  const width = Math.max(1, finite6(canvasWidth, 1));
+  const height = Math.max(1, finite6(canvasHeight, 1));
+  const previous = pointBounds(previousPoints, width, height);
+  const projected = pointBounds(projectedPoints, width, height);
+  if (!previous || !projected) {
+    return Array.isArray(projectedPoints) ? projectedPoints.map((point) => ({ ...point })) : [];
+  }
+  const limit = Math.max(0, finite6(threshold, 0.65));
+  const deltaX = Math.abs(projected.minX - previous.minX) < limit ? previous.minX - projected.minX : 0;
+  const deltaY = Math.abs(projected.minY - previous.minY) < limit ? previous.minY - projected.minY : 0;
+  if (!deltaX && !deltaY) {
+    return projectedPoints;
+  }
+  return projectedPoints.map((point) => ({
+    ...point,
+    x: clamp6(finite6(point?.x, 0) + deltaX / width, 0, 1),
+    y: clamp6(finite6(point?.y, 0) + deltaY / height, 0, 1)
+  }));
+}
+function projectNoteFlowDocumentPoint(sourcePoint, projectedPoint, {
+  canvasHeight
+} = {}) {
+  const absoluteY = Number(sourcePoint?.anchor?.offsetY);
+  if (!Number.isFinite(absoluteY)) {
+    return projectedPoint;
+  }
+  return {
+    ...projectedPoint,
+    y: clamp6(absoluteY / Math.max(1, finite6(canvasHeight, 1)), 0, 1)
+  };
 }
 function noteFlowRequiredOffset({
   side,
@@ -3784,7 +3901,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.3.9",
+      version: "3.3.10",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -7249,14 +7366,13 @@ var PreviewDrawingController = class {
   }
   captureNoteFlowResponsiveAnchors(stroke, context = this.getResponsiveLayoutContext()) {
     const noteFlow = normalizeNoteFlow(stroke?.noteFlow);
-    if (!noteFlow || !Number.isFinite(noteFlow.line) || !stroke?.points?.length) {
+    if (!noteFlow || !stroke?.points?.length) {
       return false;
     }
-    const linePosition = noteFlow.line + 0.999999;
-    const anchorY = this.projectLineLocation(noteFlow.path, linePosition, context);
-    if (!Number.isFinite(anchorY)) {
-      return false;
-    }
+    const linePosition = noteFlow.positionBasis === "above" && Number.isFinite(noteFlow.positionLine) ? noteFlow.positionLine + 0.999999 : null;
+    const anchorY = linePosition === null ? NaN : this.projectLineLocation(noteFlow.positionPath, linePosition, context);
+    const useLineAnchor = linePosition !== null && Number.isFinite(anchorY);
+    const useDocumentAnchor = noteFlow.positionBasis === "document" && noteFlow.positionVersion >= 1;
     stroke.points = stroke.points.map((point) => {
       const canvasX = clamp9(Number(point?.x || 0), 0, 1) * this.canvasWidth();
       const canvasY = clamp9(Number(point?.y || 0), 0, 1) * this.canvasHeight();
@@ -7268,10 +7384,10 @@ var PreviewDrawingController = class {
           canvasWidth: this.canvasWidth(),
           canvasHeight: this.canvasHeight(),
           frame: context.frame,
-          sourcePath: noteFlow.path,
-          linePosition,
-          lineConfidence: 1,
-          lineOffsetY: canvasY - anchorY,
+          sourcePath: useLineAnchor ? noteFlow.positionPath : this.file?.path || "",
+          linePosition: useLineAnchor ? linePosition : null,
+          lineConfidence: useLineAnchor ? 1 : null,
+          lineOffsetY: useLineAnchor ? canvasY - anchorY : useDocumentAnchor ? canvasY : 0,
           time: point?.t
         })
       };
@@ -7320,7 +7436,7 @@ var PreviewDrawingController = class {
     const items = [];
     const layoutsById = /* @__PURE__ */ new Map();
     for (const stroke of this.drawingData?.strokes || []) {
-      if (isConnectorStroke(stroke)) {
+      if (isConnectorStroke(stroke) || normalizeNoteFlow(stroke?.noteFlow)) {
         continue;
       }
       const layout = normalizeElementLayout(stroke.layout);
@@ -7349,7 +7465,7 @@ var PreviewDrawingController = class {
       }
       const layout = normalizeElementLayout(stroke.layout);
       if (layout?.id) {
-        layout.relations = relations.get(layout.id) || [];
+        layout.relations = normalizeNoteFlow(stroke?.noteFlow) ? [] : relations.get(layout.id) || [];
         stroke.layout = layout;
       }
     }
@@ -7392,6 +7508,14 @@ var PreviewDrawingController = class {
       if (isConnectorStroke(stroke)) {
         continue;
       }
+      const noteFlow = normalizeNoteFlow(stroke?.noteFlow);
+      if (noteFlow && (!noteFlow.positionBasis || noteFlow.positionVersion < 1)) {
+        const recaptured = this.captureNoteFlowAnchor(stroke, { preservePlacement: true });
+        stroke.noteFlow = recaptured;
+        if (recaptured?.positionBasis) {
+          this.captureNoteFlowResponsiveAnchors(stroke, context);
+        }
+      }
       const existingLayout = normalizeElementLayout(stroke.layout);
       const needsLayoutRepair = Boolean(existingLayout) && (elementLayoutNeedsRepair(existingLayout) || elementLayoutExceedsTarget(existingLayout, this.canvasHeight()));
       const hasUniqueElementLayout = Boolean(existingLayout?.id) && !elementIds.has(existingLayout.id) && !needsLayoutRepair;
@@ -7413,18 +7537,26 @@ var PreviewDrawingController = class {
         elementIds.add(elementId);
       }
     }
-    let migratedDrawingData = null;
     if (migrated) {
       this.rebuildElementRelations();
-      migratedDrawingData = normalizeDrawingDataForStorage(this.drawingData, this.file);
     }
     const projected = [];
     const layoutsById = /* @__PURE__ */ new Map();
+    const currentBoundsById = /* @__PURE__ */ new Map();
     for (const stroke of this.drawingData?.strokes || []) {
       if (isConnectorStroke(stroke)) {
         continue;
       }
       const layout = normalizeElementLayout(stroke.layout);
+      if (layout?.id) {
+        const currentBounds = getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight());
+        if (currentBounds) {
+          currentBoundsById.set(layout.id, currentBounds);
+        }
+      }
+      if (normalizeNoteFlow(stroke?.noteFlow)) {
+        continue;
+      }
       const box = projectElementLayout(layout, {
         canvasWidth: this.canvasWidth(),
         canvasHeight: this.canvasHeight(),
@@ -7438,13 +7570,34 @@ var PreviewDrawingController = class {
         layoutsById.set(layout.id, layout);
       }
     }
-    const projectedById = new Map(stabilizeElementRelations(projected, layoutsById).map((box) => [box.id, {
-      ...box,
-      x: clamp9(box.x, 0, Math.max(0, this.canvasWidth() - box.width)),
-      y: clamp9(box.y, 0, Math.max(0, this.canvasHeight() - box.height))
-    }]));
+    const projectedById = new Map(stabilizeElementRelations(projected, layoutsById).map((box) => {
+      const stabilized = stabilizeProjectedElementBox(box, currentBoundsById.get(box.id));
+      return [box.id, {
+        ...stabilized,
+        x: clamp9(stabilized.x, 0, Math.max(0, this.canvasWidth() - stabilized.width)),
+        y: clamp9(stabilized.y, 0, Math.max(0, this.canvasHeight() - stabilized.height))
+      }];
+    }));
     for (const stroke of this.drawingData?.strokes || []) {
       if (isConnectorStroke(stroke)) {
+        continue;
+      }
+      if (normalizeNoteFlow(stroke?.noteFlow)) {
+        const noteFlow = normalizeNoteFlow(stroke.noteFlow);
+        const previousPoints = stroke.points;
+        const projectedPoints = stroke.points.map((point) => {
+          const projectedPoint = projectResponsivePoint(point, {
+            canvasWidth: this.canvasWidth(),
+            canvasHeight: this.canvasHeight(),
+            frame: context.frame,
+            lineToCanvasY
+          });
+          return noteFlow.positionBasis === "document" && noteFlow.positionVersion >= 1 ? projectNoteFlowDocumentPoint(point, projectedPoint, { canvasHeight: this.canvasHeight() }) : projectedPoint;
+        });
+        stroke.points = stabilizeNoteFlowPointProjection(previousPoints, projectedPoints, {
+          canvasWidth: this.canvasWidth(),
+          canvasHeight: this.canvasHeight()
+        });
         continue;
       }
       const layout = normalizeElementLayout(stroke.layout);
@@ -7488,10 +7641,6 @@ var PreviewDrawingController = class {
     }
     this.responsivePointsInitialized = true;
     this.responsiveLayoutSignature = signature;
-    if (migrated) {
-      migratedDrawingData.version = Math.max(3, Number(migratedDrawingData.version) || 1);
-      this.plugin.scheduleDrawingSave(this.file, migratedDrawingData, { excludeData: this.drawingData });
-    }
   }
   resizeCanvas(options = {}) {
     this.refreshScrollContainer();
@@ -7817,6 +7966,9 @@ var PreviewDrawingController = class {
         path: this.file?.path || "",
         line: null,
         side: null,
+        positionBasis: null,
+        positionPath: this.file?.path || "",
+        positionLine: null,
         gap: 12
       } : null,
       points: [this.pointerStartPoint]
@@ -10309,7 +10461,7 @@ var PreviewDrawingController = class {
     if (!bounds) {
       return;
     }
-    const padding = Math.max(this.selectionHitPaddingPx(), this.getSelectedStrokeMaxWidth() + 4);
+    const padding = this.selectionFramePaddingPx();
     const x = bounds.minX - padding;
     const y = bounds.minY - padding;
     const width = bounds.maxX - bounds.minX + padding * 2;
@@ -10565,21 +10717,53 @@ var PreviewDrawingController = class {
       event.stopPropagation();
     }
   }
-  captureNoteFlowAnchor(stroke) {
+  noteFlowCanvasRect() {
+    const rects = [this.canvas, this.staticCanvas].map((canvas) => canvas?.getBoundingClientRect?.()).filter(Boolean);
+    return rects.find((rect) => rect.width > 1 && rect.height > 1) || rects[0] || null;
+  }
+  captureNoteFlowAnchor(stroke, options = {}) {
+    const previous = normalizeNoteFlow(stroke?.noteFlow);
     const bounds = getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight());
-    const canvasRect = this.canvas?.getBoundingClientRect?.();
-    if (!bounds || !canvasRect) {
-      return { enabled: true, path: this.file?.path || "", line: null, side: null, gap: 12 };
+    const canvasRect = this.noteFlowCanvasRect();
+    if (!bounds || !canvasRect || canvasRect.width <= 1 || canvasRect.height <= 1) {
+      return previous || {
+        enabled: true,
+        path: this.file?.path || "",
+        line: null,
+        side: null,
+        positionBasis: null,
+        positionPath: this.file?.path || "",
+        positionLine: null,
+        positionVersion: 0,
+        gap: 12
+      };
     }
     const scaleY = canvasRect.height > 0 ? canvasRect.height / Math.max(1, this.canvasRenderHeight) : 1;
     const strokeTop = canvasRect.top + (bounds.minY - this.canvasWindowTop) * scaleY;
-    const placement = selectNoteFlowAnchorPlacement(this.noteFlowCandidates(), { strokeTop });
-    const anchor = placement?.candidate;
+    const candidates = this.noteFlowCandidates();
+    const placement = selectNoteFlowAnchorPlacement(candidates, { strokeTop });
+    const previousAnchor = options.preservePlacement === true && Number.isFinite(previous?.line) && ["before", "after"].includes(previous?.side) ? candidates.filter((candidate) => {
+      return candidate.path === previous.path && previous.line >= candidate.start && previous.line <= candidate.end;
+    }).sort((a, b) => a.bottom - a.top - (b.bottom - b.top) || a.order - b.order)[0] || null : null;
+    const preservePlacement = Boolean(previousAnchor);
+    const anchor = preservePlacement ? previousAnchor : placement?.candidate;
+    const side = preservePlacement ? previous.side : placement?.side || previous?.side || null;
+    const line = preservePlacement ? previous.line : Number.isFinite(placement?.line) ? placement.line : previous?.line ?? null;
+    const position = selectNoteFlowPositionAnchor(candidates, {
+      strokeTop,
+      maxOrderExclusive: side === "before" && anchor ? anchor.order : Number.POSITIVE_INFINITY
+    });
+    const positionAnchor = position?.candidate;
+    const candidatesReady = candidates.length > 0;
     return {
       enabled: true,
-      path: anchor?.path || this.file?.path || "",
-      line: Number.isFinite(placement?.line) ? placement.line : null,
-      side: placement?.side || null,
+      path: anchor?.path || previous?.path || this.file?.path || "",
+      line,
+      side,
+      positionBasis: positionAnchor ? "above" : candidatesReady ? "document" : previous?.positionBasis || null,
+      positionPath: positionAnchor?.path || previous?.positionPath || this.file?.path || "",
+      positionLine: positionAnchor && Number.isFinite(position?.line) ? position.line : candidatesReady ? null : previous?.positionLine ?? null,
+      positionVersion: 1,
       gap: clamp9(Number(stroke?.noteFlow?.gap) || 12, 4, 64)
     };
   }
@@ -10731,7 +10915,8 @@ var PreviewDrawingController = class {
         bounds,
         layout: normalizeElementLayout(stroke.layout),
         contentWidth: contentFrame.width,
-        viewportHeight
+        viewportHeight,
+        preferCurrent: Boolean(normalizeNoteFlow(stroke.noteFlow)?.positionBasis)
       });
       return { stroke, ...stabilized };
     }).filter(Boolean).sort((a, b) => a.bounds.minY - b.bounds.minY);
@@ -10745,21 +10930,35 @@ var PreviewDrawingController = class {
     if (runawayReferenceHeight > 0) {
       this.repairRunawayNoteFlowSurface(runawayReferenceHeight);
     }
-    const canvasRect = this.canvas.getBoundingClientRect();
+    const canvasRect = this.noteFlowCanvasRect();
+    if (!canvasRect || canvasRect.width <= 1 || canvasRect.height <= 1) {
+      return false;
+    }
     const scaleY = canvasRect.height > 0 ? canvasRect.height / Math.max(1, this.canvasRenderHeight) : 1;
     const offsets = /* @__PURE__ */ new Map();
     let migratedAnchor = false;
     for (const item of flows) {
-      if (!Number.isFinite(item.stroke.noteFlow?.line) || !["before", "after"].includes(item.stroke.noteFlow?.side)) {
-        item.stroke.noteFlow = this.captureNoteFlowAnchor(item.stroke);
-        migratedAnchor = true;
+      let currentNoteFlow = normalizeNoteFlow(item.stroke.noteFlow);
+      if (!Number.isFinite(currentNoteFlow?.line) || !["before", "after"].includes(currentNoteFlow?.side) || !currentNoteFlow?.positionBasis || currentNoteFlow.positionVersion < 1) {
+        const recaptured = this.captureNoteFlowAnchor(item.stroke, { preservePlacement: true });
+        const resolved = Number.isFinite(recaptured?.line) && ["before", "after"].includes(recaptured?.side) && Boolean(recaptured?.positionBasis);
+        if (resolved) {
+          item.stroke.noteFlow = recaptured;
+          currentNoteFlow = recaptured;
+          this.captureNoteFlowResponsiveAnchors(item.stroke, this.getResponsiveLayoutContext(true));
+          migratedAnchor = true;
+        } else {
+          item.stroke.noteFlow = currentNoteFlow;
+        }
       }
-      let anchor = this.noteFlowAnchorElement(item.stroke.noteFlow);
+      let anchor = this.noteFlowAnchorElement(currentNoteFlow);
       if (!anchor) {
         const recaptured = this.captureNoteFlowAnchor(item.stroke);
         anchor = this.noteFlowAnchorElement(recaptured);
-        if (anchor) {
+        if (anchor && recaptured?.positionBasis) {
           item.stroke.noteFlow = recaptured;
+          currentNoteFlow = recaptured;
+          this.captureNoteFlowResponsiveAnchors(item.stroke, this.getResponsiveLayoutContext(true));
           migratedAnchor = true;
         }
       }
@@ -10767,7 +10966,7 @@ var PreviewDrawingController = class {
       if (!element) {
         continue;
       }
-      const side = item.stroke.noteFlow.side;
+      const side = currentNoteFlow.side;
       const property = side === "after" ? "margin-bottom" : "margin-top";
       let states = this.noteFlowStyledElements.get(element);
       if (!states) {
@@ -10787,7 +10986,7 @@ var PreviewDrawingController = class {
       }
       const state = states.get(property);
       const rect = element.getBoundingClientRect();
-      const desiredBottom = canvasRect.top + (item.bounds.maxY - this.canvasWindowTop) * scaleY + Number(item.stroke.noteFlow.gap || 12) * scaleY;
+      const desiredBottom = canvasRect.top + (item.bounds.maxY - this.canvasWindowTop) * scaleY + Number(currentNoteFlow.gap || 12) * scaleY;
       const required = noteFlowRequiredOffset({
         side,
         anchorTop: rect.top,
@@ -10827,11 +11026,12 @@ var PreviewDrawingController = class {
       const states = this.noteFlowStyledElements.get(element);
       for (const [property, offset] of elementOffsets) {
         const state = states.get(property);
-        const nextValue = `${Math.ceil(state.base + offset)}px`;
+        const appliedValue = Math.ceil(state.base + offset);
+        const nextValue = `${appliedValue}px`;
         if (element.style.getPropertyValue(property) !== nextValue || element.style.getPropertyPriority(property) !== "important") {
           element.style.setProperty(property, nextValue, "important");
         }
-        state.applied = offset;
+        state.applied = Math.max(0, appliedValue - state.base);
       }
       element.classList.add("notedraw-note-flow-anchor");
     }
@@ -11016,6 +11216,9 @@ var PreviewDrawingController = class {
   getSelectedStrokeMaxWidth() {
     return this.getSelectedStrokeIndexes().map((index) => this.drawingData.strokes[index]?.width || this.penWidth).reduce((max, width) => Math.max(max, width), this.penWidth);
   }
+  selectionFramePaddingPx() {
+    return Math.max(3, this.getSelectedStrokeMaxWidth() / 2 + 2);
+  }
   getSelectedFrameCanvasRect() {
     if (!this.getSelectedStrokeIndexes().length) {
       return null;
@@ -11024,7 +11227,7 @@ var PreviewDrawingController = class {
     if (!bounds) {
       return null;
     }
-    const padding = Math.max(this.selectionHitPaddingPx(), this.getSelectedStrokeMaxWidth() + 4);
+    const padding = this.selectionFramePaddingPx();
     return {
       x: bounds.minX - padding,
       y: bounds.minY - padding,
@@ -11054,7 +11257,8 @@ var PreviewDrawingController = class {
       return false;
     }
     const hitPoint = this.pointToCanvas(point);
-    return hitPoint.x >= rect.x && hitPoint.x <= rect.x + rect.width && hitPoint.y >= rect.y && hitPoint.y <= rect.y + rect.height;
+    const hitPadding = this.selectionHitPaddingPx();
+    return hitPoint.x >= rect.x - hitPadding && hitPoint.x <= rect.x + rect.width + hitPadding && hitPoint.y >= rect.y - hitPadding && hitPoint.y <= rect.y + rect.height + hitPadding;
   }
   startTextEdit(element, clientPoint = null) {
     if (this.currentEditor === element) {
@@ -13119,11 +13323,17 @@ function normalizeNoteFlow(value) {
     return null;
   }
   const line = value.line === null || value.line === void 0 || value.line === "" ? NaN : Number(value.line);
+  const positionLine = value.positionLine === null || value.positionLine === void 0 || value.positionLine === "" ? NaN : Number(value.positionLine);
+  const positionBasis = value.positionBasis === "document" ? "document" : value.positionBasis === "above" && Number.isFinite(positionLine) && positionLine >= 0 ? "above" : null;
   return {
     enabled: true,
     path: normalizeVaultPath(value.path || ""),
     line: Number.isFinite(line) && line >= 0 ? line : null,
     side: ["before", "after"].includes(value.side) ? value.side : null,
+    positionBasis,
+    positionPath: normalizeVaultPath(value.positionPath || value.path || ""),
+    positionLine: positionBasis === "above" ? positionLine : null,
+    positionVersion: Number(value.positionVersion) >= 1 ? 1 : 0,
     gap: clamp9(Number(value.gap) || 12, 4, 64)
   };
 }

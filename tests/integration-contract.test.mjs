@@ -34,23 +34,23 @@ test("the stable v1 API exposes Cancip-friendly capabilities and events", async 
   assert.match(source, /setZoom: v1\.setZoom/);
 });
 
-test("3.3.9 preserves bottom coordinates and cross-view frames without eager hidden-view refresh", async () => {
+test("3.3.10 preserves bottom coordinates and cross-view frames without eager hidden-view refresh", async () => {
   const [source, manifestText] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(manifestUrl, "utf8")
   ]);
   const manifest = JSON.parse(manifestText);
 
-  assert.equal(manifest.version, "3.3.9");
-  assert.match(source, /version: "3\.3\.9"/);
+  assert.equal(manifest.version, "3.3.10");
+  assert.match(source, /version: "3\.3\.10"/);
   assert.match(source, /if \(!this\.responsivePointsInitialized \|\| signature !== this\.responsiveLayoutSignature\)/);
-  assert.match(source, /migratedDrawingData\.version = Math\.max\(3/);
   assert.match(source, /captureElementLayoutForStroke/);
   assert.match(source, /projectElementPoints\(stroke\.points, layout, box/);
   assert.match(source, /stabilizeElementRelations\(projected, layoutsById\)/);
   assert.match(source, /elementLayoutNeedsRepair\(existingLayout\)/);
-  assert.match(source, /normalizeDrawingDataForStorage\(this\.drawingData, this\.file\)/);
-  assert.match(source, /scheduleDrawingSave\(this\.file, migratedDrawingData, \{ excludeData: this\.drawingData \}\)/);
+  assert.match(source, /function normalizeDrawingDataForStorage\(data, file\)/);
+  const responsiveMigration = source.slice(source.indexOf("  initializeAndProjectResponsivePoints("), source.indexOf("  resizeCanvas(options = {})"));
+  assert.doesNotMatch(responsiveMigration, /scheduleDrawingSave|writeDrawings/);
   assert.match(source, /for \(const controller of this\.liveControllers\) \{[\s\S]*controller\.syncFloatingControlClasses\(\);\s*if \(controller\.active \|\| controller\.drawingsLoaded \|\| isElementVisibleEnough\(controller\.previewEl\)\) \{\s*controller\.scheduleLayoutRefresh\(\{ settle: false \}\)/);
   assert.match(source, /const eager = !enabled \|\| candidate === controller \|\| isElementVisibleEnough\(candidate\.previewEl\);\s*candidate\.applyActiveState\(enabled, \{ eager \}\)/);
   assert.match(source, /scheduleLayoutRefresh\(options = \{\}\)/);

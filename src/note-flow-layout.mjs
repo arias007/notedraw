@@ -17,7 +17,8 @@ export function stabilizeNoteFlowBounds({
   bounds,
   layout,
   contentWidth,
-  viewportHeight
+  viewportHeight,
+  preferCurrent = false
 } = {}) {
   const current = normalizeBounds(bounds);
   const box = layout?.box;
@@ -46,7 +47,9 @@ export function stabilizeNoteFlowBounds({
   const runaway = current.minY > runawayThreshold || current.maxY > runawayThreshold;
 
   return {
-    bounds: { ...current, minY: stableMinY, maxY: stableMaxY },
+    bounds: preferCurrent && !runaway
+      ? current
+      : { ...current, minY: stableMinY, maxY: stableMaxY },
     runaway,
     referenceHeight
   };
@@ -92,6 +95,88 @@ export function selectNoteFlowAnchorPlacement(candidates, {
 
   const last = ordered[ordered.length - 1];
   return { candidate: last, side: "after", line: last.end };
+}
+
+export function selectNoteFlowPositionAnchor(candidates, {
+  strokeTop,
+  tolerance = 4,
+  maxOrderExclusive = Number.POSITIVE_INFINITY
+} = {}) {
+  const top = finite(strokeTop, Number.NaN);
+  if (!Number.isFinite(top)) {
+    return null;
+  }
+  const orderLimit = Number.isFinite(Number(maxOrderExclusive))
+    ? Number(maxOrderExclusive)
+    : Number.POSITIVE_INFINITY;
+  const above = (Array.isArray(candidates) ? candidates : []).filter((candidate) => {
+    return candidate && Number.isFinite(Number(candidate.bottom)) && Number.isFinite(Number(candidate.end));
+  }).map((candidate, index) => ({
+    ...candidate,
+    bottom: finite(candidate.bottom),
+    end: finite(candidate.end),
+    order: Number.isFinite(Number(candidate.order)) ? Number(candidate.order) : index
+  })).filter((candidate) => {
+    return candidate.bottom <= top + finite(tolerance, 4) && candidate.order < orderLimit;
+  }).sort((a, b) => b.bottom - a.bottom || b.end - a.end || b.order - a.order);
+  if (!above.length) {
+    return null;
+  }
+  return { candidate: above[0], line: above[0].end };
+}
+
+function pointBounds(points, canvasWidth, canvasHeight) {
+  const width = Math.max(1, finite(canvasWidth, 1));
+  const height = Math.max(1, finite(canvasHeight, 1));
+  const coordinates = (Array.isArray(points) ? points : []).map((point) => ({
+    x: finite(point?.x, Number.NaN) * width,
+    y: finite(point?.y, Number.NaN) * height
+  })).filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
+  if (!coordinates.length) {
+    return null;
+  }
+  return {
+    minX: Math.min(...coordinates.map((point) => point.x)),
+    minY: Math.min(...coordinates.map((point) => point.y))
+  };
+}
+
+export function stabilizeNoteFlowPointProjection(previousPoints, projectedPoints, {
+  canvasWidth,
+  canvasHeight,
+  threshold = 0.65
+} = {}) {
+  const width = Math.max(1, finite(canvasWidth, 1));
+  const height = Math.max(1, finite(canvasHeight, 1));
+  const previous = pointBounds(previousPoints, width, height);
+  const projected = pointBounds(projectedPoints, width, height);
+  if (!previous || !projected) {
+    return Array.isArray(projectedPoints) ? projectedPoints.map((point) => ({ ...point })) : [];
+  }
+  const limit = Math.max(0, finite(threshold, 0.65));
+  const deltaX = Math.abs(projected.minX - previous.minX) < limit ? previous.minX - projected.minX : 0;
+  const deltaY = Math.abs(projected.minY - previous.minY) < limit ? previous.minY - projected.minY : 0;
+  if (!deltaX && !deltaY) {
+    return projectedPoints;
+  }
+  return projectedPoints.map((point) => ({
+    ...point,
+    x: clamp(finite(point?.x, 0) + deltaX / width, 0, 1),
+    y: clamp(finite(point?.y, 0) + deltaY / height, 0, 1)
+  }));
+}
+
+export function projectNoteFlowDocumentPoint(sourcePoint, projectedPoint, {
+  canvasHeight
+} = {}) {
+  const absoluteY = Number(sourcePoint?.anchor?.offsetY);
+  if (!Number.isFinite(absoluteY)) {
+    return projectedPoint;
+  }
+  return {
+    ...projectedPoint,
+    y: clamp(absoluteY / Math.max(1, finite(canvasHeight, 1)), 0, 1)
+  };
 }
 
 export function noteFlowRequiredOffset({

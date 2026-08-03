@@ -518,6 +518,51 @@ export function projectElementLayout(layoutInput, {
   };
 }
 
+export function stabilizeProjectedElementBox(projectedInput, previousInput, {
+  positionThreshold = 0.65,
+  sizeThreshold = 0.65
+} = {}) {
+  if (!projectedInput || !previousInput) {
+    return projectedInput;
+  }
+  const previous = {
+    x: finite(previousInput.x, previousInput.minX),
+    y: finite(previousInput.y, previousInput.minY),
+    width: Math.max(0.01, finite(previousInput.width, finite(previousInput.maxX) - finite(previousInput.minX))),
+    height: Math.max(0.01, finite(previousInput.height, finite(previousInput.maxY) - finite(previousInput.minY)))
+  };
+  const projected = {
+    x: finite(projectedInput.x),
+    y: finite(projectedInput.y),
+    width: Math.max(0.01, finite(projectedInput.width, 0.01)),
+    height: Math.max(0.01, finite(projectedInput.height, 0.01))
+  };
+  const positionLimit = Math.max(0, finite(positionThreshold, 0.65));
+  const sizeLimit = Math.max(0, finite(sizeThreshold, 0.65));
+  const x = Math.abs(projected.x - previous.x) < positionLimit ? previous.x : projected.x;
+  const y = Math.abs(projected.y - previous.y) < positionLimit ? previous.y : projected.y;
+  const width = Math.abs(projected.width - previous.width) < sizeLimit ? previous.width : projected.width;
+  const height = Math.abs(projected.height - previous.height) < sizeLimit ? previous.height : projected.height;
+  const widthRatio = width / projected.width;
+  const heightRatio = height / projected.height;
+  return {
+    ...projectedInput,
+    x,
+    y,
+    width,
+    height,
+    xScale: finite(projectedInput.xScale, projectedInput.scale) * widthRatio,
+    yScale: finite(projectedInput.yScale, projectedInput.scale) * heightRatio,
+    scale: finite(projectedInput.scale, 1) * Math.sqrt(widthRatio * heightRatio),
+    anchorX: Number.isFinite(Number(projectedInput.anchorX))
+      ? Number(projectedInput.anchorX) + x - projected.x
+      : projectedInput.anchorX,
+    anchorY: Number.isFinite(Number(projectedInput.anchorY))
+      ? Number(projectedInput.anchorY) + y - projected.y
+      : projectedInput.anchorY
+  };
+}
+
 function rectGap(a, b) {
   const dx = Math.max(0, a.x - (b.x + b.width), b.x - (a.x + a.width));
   const dy = Math.max(0, a.y - (b.y + b.height), b.y - (a.y + a.height));
