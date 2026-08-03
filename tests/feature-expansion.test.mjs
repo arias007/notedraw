@@ -161,6 +161,23 @@ test("reading-only note pen and selected elements can reserve Markdown flow spac
   assert.match(styles, /\.notedraw-note-flow-anchor/);
 });
 
+test("moving inserted note elements refreshes Markdown avoidance once per animation frame", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const dragSource = source.slice(source.indexOf("  startSelectedStrokeDrag("), source.indexOf("  startSelectedStrokeResize("));
+  const refreshSource = source.slice(source.indexOf("  queueDraggedNoteFlowRefresh("), source.indexOf("  cancelNoteFlowLayout()"));
+  const moveSource = dragSource.slice(dragSource.indexOf("  moveSelectedStroke("), dragSource.indexOf("  finishSelectedStrokeDrag("));
+
+  assert.match(dragSource, /this\.dragStrokeOriginalNoteFlows = new Map/);
+  assert.match(moveSource, /this\.queueDraggedNoteFlowRefresh\(this\.dragStrokeOriginalPoints\.keys\(\)\)/);
+  assert.doesNotMatch(moveSource, /captureNoteFlowAnchor|scheduleDrawingSave/);
+  assert.match(refreshSource, /this\.pendingDraggedNoteFlowIndexes\.add\(index\)/);
+  assert.match(refreshSource, /refreshDraggedNoteFlowAnchors\(\)/);
+  assert.match(refreshSource, /this\.clearNoteFlowLayout\(\)/);
+  assert.match(refreshSource, /path: captured\.path,[\s\S]*line: captured\.line,[\s\S]*side: captured\.side/);
+  assert.match(refreshSource, /window\.requestAnimationFrame\(\(\) => \{[\s\S]*this\.refreshDraggedNoteFlowAnchors\(\)[\s\S]*this\.applyNoteFlowLayout\(\)/);
+  assert.match(dragSource, /stroke\.noteFlow = originalNoteFlow \? \{ \.\.\.originalNoteFlow \} : null/);
+});
+
 test("mind map import creates editable NoteDraw nodes and magnetically bound connectors", async () => {
   const source = await readFile(sourceUrl, "utf8");
 

@@ -3988,7 +3988,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.3.11",
+      version: "3.3.12",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -5373,6 +5373,8 @@ var PreviewDrawingController = class {
     this.draggingStroke = false;
     this.dragStrokeStartPoint = null;
     this.dragStrokeOriginalPoints = null;
+    this.dragStrokeOriginalNoteFlows = null;
+    this.pendingDraggedNoteFlowIndexes = /* @__PURE__ */ new Set();
     this.dragStrokeOriginalBounds = null;
     this.dragStrokeOriginalBounds = null;
     this.dragStrokeMoved = false;
@@ -5813,6 +5815,8 @@ var PreviewDrawingController = class {
     this.draggingStroke = false;
     this.dragStrokeStartPoint = null;
     this.dragStrokeOriginalPoints = null;
+    this.dragStrokeOriginalNoteFlows = null;
+    this.pendingDraggedNoteFlowIndexes.clear();
     this.dragStrokeMoved = false;
     this.dragStrokeHitIndex = -1;
     this.resizingSelection = false;
@@ -9526,6 +9530,11 @@ var PreviewDrawingController = class {
       index,
       this.drawingData.strokes[index].points.map((strokePoint) => ({ ...strokePoint }))
     ]));
+    this.dragStrokeOriginalNoteFlows = new Map(movableIndexes.map((index) => {
+      const noteFlow = normalizeNoteFlow(this.drawingData.strokes[index]?.noteFlow);
+      return [index, noteFlow ? { ...noteFlow } : null];
+    }));
+    this.pendingDraggedNoteFlowIndexes.clear();
     this.dragDrawingHistoryBefore = this.captureDrawingHistorySnapshot();
     this.dragStrokeOriginalBounds = this.getStrokeIndexesNormalizedBounds(movableIndexes);
     this.dragStrokeMoved = false;
@@ -9612,7 +9621,7 @@ var PreviewDrawingController = class {
     if (this.syncBoundConnectors({ elementIds: movedElementIds })) {
       this.invalidateStaticCache();
     }
-    this.scheduleNoteFlowLayout();
+    this.queueDraggedNoteFlowRefresh(this.dragStrokeOriginalPoints.keys());
     this.requestRender(this.selectionHasDomStrokes());
     event.preventDefault();
     event.stopPropagation();
@@ -9649,10 +9658,13 @@ var PreviewDrawingController = class {
   cancelSelectedStrokeDrag(restoreOriginal = false) {
     this.clearSelectionLongPress();
     if (restoreOriginal && this.dragStrokeOriginalPoints?.size) {
+      this.clearNoteFlowLayout();
       for (const [index, points] of this.dragStrokeOriginalPoints.entries()) {
         const stroke = this.drawingData.strokes[index];
         if (stroke) {
           stroke.points = points.map((strokePoint) => ({ ...strokePoint }));
+          const originalNoteFlow = this.dragStrokeOriginalNoteFlows?.get(index);
+          stroke.noteFlow = originalNoteFlow ? { ...originalNoteFlow } : null;
         }
       }
     }
@@ -9660,12 +9672,17 @@ var PreviewDrawingController = class {
       this.releasePointerCapture(this.activePointerId);
     }
     this.clearSelectedStrokeDragState();
+    if (restoreOriginal) {
+      this.scheduleNoteFlowLayout();
+    }
     this.render();
   }
   clearSelectedStrokeDragState() {
     this.draggingStroke = false;
     this.dragStrokeStartPoint = null;
     this.dragStrokeOriginalPoints = null;
+    this.dragStrokeOriginalNoteFlows = null;
+    this.pendingDraggedNoteFlowIndexes.clear();
     this.dragStrokeOriginalBounds = null;
     this.dragStrokeMoved = false;
     this.dragStrokeHitIndex = -1;
@@ -11195,13 +11212,51 @@ var PreviewDrawingController = class {
     this.noteFlowLayoutSignature = signature;
     return changed;
   }
+  queueDraggedNoteFlowRefresh(indexes) {
+    for (const index of indexes || []) {
+      const stroke = this.drawingData?.strokes?.[index];
+      if (stroke?.noteFlow?.enabled && !isConnectorStroke(stroke)) {
+        this.pendingDraggedNoteFlowIndexes.add(index);
+      }
+    }
+    this.scheduleNoteFlowLayout();
+  }
+  refreshDraggedNoteFlowAnchors() {
+    if (!this.draggingStroke || !this.pendingDraggedNoteFlowIndexes.size) {
+      this.pendingDraggedNoteFlowIndexes.clear();
+      return false;
+    }
+    const indexes = Array.from(this.pendingDraggedNoteFlowIndexes);
+    this.pendingDraggedNoteFlowIndexes.clear();
+    this.clearNoteFlowLayout();
+    let refreshed = false;
+    for (const index of indexes) {
+      const stroke = this.drawingData?.strokes?.[index];
+      const current = normalizeNoteFlow(stroke?.noteFlow);
+      if (!stroke || !current || isConnectorStroke(stroke)) {
+        continue;
+      }
+      const captured = this.captureNoteFlowAnchor(stroke);
+      stroke.noteFlow = {
+        ...current,
+        enabled: true,
+        path: captured.path,
+        line: captured.line,
+        side: captured.side,
+        gap: captured.gap
+      };
+      refreshed = true;
+    }
+    return refreshed;
+  }
   scheduleNoteFlowLayout() {
     if (this.noteFlowFrameId !== null) {
       return;
     }
     this.noteFlowFrameId = window.requestAnimationFrame(() => {
       this.noteFlowFrameId = null;
-      if (this.applyNoteFlowLayout()) {
+      const refreshedDraggedFlow = this.refreshDraggedNoteFlowAnchors();
+      if (this.applyNoteFlowLayout() || refreshedDraggedFlow) {
         this.scheduleResize({ layout: true });
       }
     });
