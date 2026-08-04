@@ -4445,7 +4445,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.3.22",
+      version: "3.3.23",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -5320,14 +5320,24 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     }
   }
   syncWebviewControllers() {
+    for (const leaf of collectWorkspaceLeaves(this.app)) {
+      const view = leaf?.view;
+      if (isNativeGraphWorkspaceType(workspaceViewType(view))) {
+        this.cleanupNativeGraphWorkspaceView(view, view?.contentEl || findWorkspaceDrawingSurface(view));
+      }
+    }
     const surfaces = findWebviewSurfaces(activeDocument);
     const activeSurfaces = /* @__PURE__ */ new Set();
     for (const surface of surfaces) {
       if (!surface?.isConnected) {
         continue;
       }
-      activeSurfaces.add(surface);
       const view = findOwningWorkspaceView(this.app, surface);
+      if (isNativeGraphWorkspaceType(workspaceViewType(view))) {
+        this.cleanupNativeGraphWorkspaceView(view, surface);
+        continue;
+      }
+      activeSurfaces.add(surface);
       const file = createWebviewDrawingFile(surface, view);
       const existing = this.webviewControllers.get(surface);
       if (existing?.previewEl === surface) {
@@ -5372,7 +5382,11 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     const activeViews = /* @__PURE__ */ new Set();
     for (const leaf of collectWorkspaceLeaves(this.app)) {
       const view = leaf?.view;
-      const viewType = String(view?.getViewType?.() || view?.containerEl?.querySelector?.(".workspace-leaf-content")?.dataset?.type || "").toLowerCase();
+      const viewType = workspaceViewType(view);
+      if (isNativeGraphWorkspaceType(viewType)) {
+        this.cleanupNativeGraphWorkspaceView(view, view?.contentEl || findWorkspaceDrawingSurface(view));
+        continue;
+      }
       if (!view?.containerEl || !isMainWorkspaceView(view) || view instanceof import_obsidian.MarkdownView || viewType === "markdown" || viewType === "empty" || isWebviewWorkspaceType(viewType)) {
         continue;
       }
@@ -5415,6 +5429,32 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       if (!activeViews.has(view) || !controller.previewEl?.isConnected) {
         controller.destroy();
         this.workspaceControllers.delete(view);
+      }
+    }
+  }
+  cleanupNativeGraphWorkspaceView(view, surface = view?.contentEl || findWorkspaceDrawingSurface(view)) {
+    if (!surface) {
+      return;
+    }
+    const candidates = new Set([
+      this.workspaceControllers.get(view),
+      this.webviewControllers.get(surface),
+      this.controllers.get(surface),
+      surface._noteDrawController
+    ].filter(Boolean));
+    const registeredController = Array.from(candidates).find((controller) => controller?.plugin === this && controller.registeredSurface);
+    for (const controller of candidates) {
+      if (controller?.plugin === this && controller !== registeredController) {
+        controller.destroy?.();
+      }
+    }
+    if (registeredController) {
+      return;
+    }
+    cleanupDrawingUi(surface);
+    for (const button of view?.containerEl?.querySelectorAll?.(".notedraw-header-button, .notedraw-webview-button") || []) {
+      if (!button._noteDrawController?.registeredSurface) {
+        button.remove();
       }
     }
   }
@@ -14937,6 +14977,12 @@ function isMainWorkspaceView(view) {
   }
   return Boolean(container.closest?.(".workspace-split.mod-root"));
 }
+function workspaceViewType(view) {
+  return String(view?.getViewType?.() || view?.containerEl?.querySelector?.(".workspace-leaf-content")?.dataset?.type || view?.containerEl?.dataset?.type || "").toLowerCase();
+}
+function isNativeGraphWorkspaceType(viewType) {
+  return viewType === "graph" || viewType === "localgraph";
+}
 function isWebviewWorkspaceType(viewType) {
   return /(webview|web-view|browser|iframe)/i.test(String(viewType || ""));
 }
@@ -15233,7 +15279,10 @@ function findWebviewSurfaces(root) {
   ];
   const candidates = selectors.flatMap((selector) => Array.from(root.querySelectorAll(selector)));
   const iframeHosts = Array.from(root.querySelectorAll("webview, iframe")).map((element) => element.closest(".mwv-embed[data-url], .view-content, .workspace-leaf-content") || element);
-  return uniqueConnectedElements([...candidates, ...iframeHosts]).filter((element) => !element.closest(".notedraw-toolbar, .notedraw-palette-panel, .notedraw-brush-panel, .notedraw-text-panel"));
+  return uniqueConnectedElements([...candidates, ...iframeHosts]).filter((element) => {
+    const viewType = String(element.closest?.(".workspace-leaf-content")?.dataset?.type || "").toLowerCase();
+    return !isNativeGraphWorkspaceType(viewType) && !element.closest(".notedraw-toolbar, .notedraw-palette-panel, .notedraw-brush-panel, .notedraw-text-panel");
+  });
 }
 function findWebviewButtonHost(previewEl, view) {
   const candidates = [
@@ -15612,6 +15661,22 @@ function cleanupDrawingUi(preview) {
   cleanupOrphanedNoteFlowLayout(preview);
   preview.querySelectorAll(".notedraw-button, .notedraw-fallback-button, .notedraw-webview-button, .notedraw-toolbar, .notedraw-palette-panel, .notedraw-brush-panel, .notedraw-text-panel, .notedraw-selection-menu, .notedraw-format-toolbar, .notedraw-reading-zoom-extent, .notedraw-reading-bottom-spacer, .notedraw-embed-layer, .notedraw-note-flow-line-spacer, .notedraw-file-input, .notedraw-underlay-canvas, .notedraw-static-canvas, .notedraw-canvas").forEach((element) => element.remove());
   preview.classList.remove("notedraw-shell", "is-drawing-active", "is-drawing-hidden", "is-select-mode", "is-palette-open", "is-brush-panel-open", "is-text-panel-open", "is-selection-menu-open", "is-watercolor-mode", "is-edit-md-mode", "is-selecting-strokes", "is-resizing-selection", "is-native-text-editing", "is-reading-zoomed", "is-editing-layout-zoomed", "is-notedraw-webview-shell", "is-notedraw-workspace-shell", "is-notedraw-embedded-shell", "is-notedraw-registered-shell", "is-notedraw-responsive-layout", "is-notedraw-controls-visible", "has-notedraw-body-controls", "has-notedraw-canvas");
+  for (const property of [
+    "--notedraw-toolbar-right",
+    "--notedraw-toolbar-left",
+    "--notedraw-toolbar-top",
+    "--notedraw-palette-top",
+    "--notedraw-palette-left",
+    "--notedraw-palette-right",
+    "--notedraw-brush-panel-top",
+    "--notedraw-brush-panel-left",
+    "--notedraw-brush-panel-right",
+    "--notedraw-text-panel-top",
+    "--notedraw-text-panel-left",
+    "--notedraw-text-panel-right"
+  ]) {
+    preview.style?.removeProperty(property);
+  }
 }
 function isNoteDrawOwnedMutation(mutation) {
   if (!mutation) {
@@ -15682,7 +15747,7 @@ function isWorkspaceSurfaceMutation(mutation) {
   }
   const leafContent = mutation.target?.closest?.(".workspace-leaf-content");
   const viewType = leafContent?.dataset?.type || "";
-  return Boolean(leafContent) && viewType !== "markdown" && !isWebviewWorkspaceType(viewType);
+  return Boolean(leafContent) && viewType !== "markdown" && !isWebviewWorkspaceType(viewType) && !isNativeGraphWorkspaceType(viewType);
 }
 function isFloatingControlsVisibilityMutation(mutation) {
   if (!mutation || isNoteDrawOwnedMutation(mutation)) {

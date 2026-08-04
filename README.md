@@ -214,6 +214,8 @@ The structured methods cover surface state, visibility, tools, brush settings, t
 
 Magic-wand actions are maintained on Markdown, Canvas, PDF, image, Base/database, HTML/webview, and other supported main-workspace pages. State-backed plugin pages use a stable NoteDraw storage identity even when they do not expose a Vault file.
 
+Obsidian's built-in global and local graph views remain native interactive surfaces: NoteDraw does not automatically wrap their canvases or input handlers. Plugins can still opt a custom region into NoteDraw explicitly through `api.v1.registerSurface()`.
+
 The original top-level methods remain available for compatibility.
 
 Example: read current note drawings.
@@ -276,4 +278,4 @@ The current package focuses on the local Obsidian plugin runtime. The API and DO
 
 ## Version
 
-Current version: `3.3.22`.
+Current version: `3.3.23`.

@@ -359,6 +359,21 @@ test("main workspace views remount drawings and header controls after internal r
   assert.match(styles, /\.notedraw-shell\.is-notedraw-workspace-shell \.notedraw-static-canvas/);
 });
 
+test("Obsidian graph views keep their native canvases and interactions", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const webviewSync = source.slice(source.indexOf("  syncWebviewControllers() {"), source.indexOf("  syncWorkspaceControllers() {"));
+  const workspaceSync = source.slice(source.indexOf("  syncWorkspaceControllers() {"), source.indexOf("  installHeaderButton(controller) {"));
+
+  assert.match(source, /function isNativeGraphWorkspaceType\(viewType\) \{\s*return viewType === "graph" \|\| viewType === "localgraph";/);
+  assert.match(webviewSync, /for \(const leaf of collectWorkspaceLeaves\(this\.app\)\)[\s\S]*this\.cleanupNativeGraphWorkspaceView\(view, view\?\.contentEl \|\| findWorkspaceDrawingSurface\(view\)\);/);
+  assert.match(webviewSync, /isNativeGraphWorkspaceType\(workspaceViewType\(view\)\)[\s\S]*this\.cleanupNativeGraphWorkspaceView\(view, surface\);\s*continue;/);
+  assert.match(workspaceSync, /if \(isNativeGraphWorkspaceType\(viewType\)\) \{\s*this\.cleanupNativeGraphWorkspaceView\(view, view\?\.contentEl \|\| findWorkspaceDrawingSurface\(view\)\);\s*continue;/);
+  assert.match(workspaceSync, /controller\?\.plugin === this && controller !== registeredController[\s\S]*controller\.destroy\?\.\(\)/);
+  assert.match(source, /return !isNativeGraphWorkspaceType\(viewType\) && !element\.closest/);
+  assert.match(source, /!isWebviewWorkspaceType\(viewType\) && !isNativeGraphWorkspaceType\(viewType\)/);
+  assert.match(source, /preview\.style\?\.removeProperty\(property\)/);
+});
+
 test("hidden and offscreen embeds avoid redundant controllers and scroll work", async () => {
   const source = await readFile(sourceUrl, "utf8");
   const observerSource = source.slice(source.indexOf("  installWebviewObserver()"), source.indexOf("  scheduleFloatingControlsSync()"));
