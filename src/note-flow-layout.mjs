@@ -125,6 +125,76 @@ export function selectNoteFlowPositionAnchor(candidates, {
   return { candidate: above[0], line: above[0].end };
 }
 
+export function selectStoredNoteFlowAnchorCandidate(candidates, {
+  side,
+  strokeTop,
+  tolerance = 4
+} = {}) {
+  const ordered = (Array.isArray(candidates) ? candidates : []).filter((candidate) => {
+    return candidate && Number.isFinite(Number(candidate.top)) && Number.isFinite(Number(candidate.bottom));
+  }).map((candidate, order) => ({
+    ...candidate,
+    top: finite(candidate.top),
+    bottom: Math.max(finite(candidate.top), finite(candidate.bottom)),
+    order: Number.isFinite(Number(candidate.order)) ? Number(candidate.order) : order
+  }));
+  if (ordered.length <= 1 || !Number.isFinite(Number(strokeTop))) {
+    return ordered.sort((a, b) => (a.bottom - a.top) - (b.bottom - b.top) || a.order - b.order)[0] || null;
+  }
+  const top = finite(strokeTop);
+  const threshold = Math.max(0, finite(tolerance, 4));
+  if (side === "after") {
+    const above = ordered.filter((candidate) => candidate.bottom <= top + threshold)
+      .sort((a, b) => b.bottom - a.bottom || a.order - b.order);
+    if (above.length) {
+      return above[0];
+    }
+  } else {
+    const below = ordered.filter((candidate) => candidate.top >= top - threshold)
+      .sort((a, b) => a.top - b.top || (a.bottom - a.top) - (b.bottom - b.top) || a.order - b.order);
+    if (below.length) {
+      return below[0];
+    }
+  }
+  return ordered.sort((a, b) => {
+    const aDistance = Math.min(Math.abs(a.top - top), Math.abs(a.bottom - top));
+    const bDistance = Math.min(Math.abs(b.top - top), Math.abs(b.bottom - top));
+    return aDistance - bDistance || a.order - b.order;
+  })[0] || null;
+}
+
+export function selectNoteFlowAvoidanceCandidate(candidates, {
+  strokeTop,
+  strokeBottom,
+  tolerance = 4
+} = {}) {
+  const top = finite(strokeTop, Number.NaN);
+  const bottom = finite(strokeBottom, Number.NaN);
+  if (!Number.isFinite(top) || !Number.isFinite(bottom)) {
+    return null;
+  }
+  const threshold = Math.max(0, finite(tolerance, 4));
+  return (Array.isArray(candidates) ? candidates : []).filter((candidate) => {
+    return candidate
+      && Number.isFinite(Number(candidate.top))
+      && Number.isFinite(Number(candidate.bottom))
+      && Number(candidate.bottom) >= top + threshold
+      && Number(candidate.top) <= bottom - threshold;
+  }).map((candidate, order) => ({
+    ...candidate,
+    top: finite(candidate.top),
+    bottom: Math.max(finite(candidate.top), finite(candidate.bottom)),
+    order: Number.isFinite(Number(candidate.order)) ? Number(candidate.order) : order
+  })).sort((a, b) => {
+    const aLine = a.lineSpacer || Number(a.start) === Number(a.end) ? 0 : 1;
+    const bLine = b.lineSpacer || Number(b.start) === Number(b.end) ? 0 : 1;
+    return aLine - bLine
+      || a.top - b.top
+      || (a.bottom - a.top) - (b.bottom - b.top)
+      || a.order - b.order;
+  })[0] || null;
+}
+
 function pointBounds(points, canvasWidth, canvasHeight) {
   const width = Math.max(1, finite(canvasWidth, 1));
   const height = Math.max(1, finite(canvasHeight, 1));

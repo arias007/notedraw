@@ -53,6 +53,17 @@
   display: block;
 }
 
+.notedraw-reading-bottom-spacer {
+  display: block;
+  width: 1px;
+  min-height: 0;
+  height: 0;
+  margin: 0;
+  padding: 0;
+  pointer-events: none;
+  contain: layout size;
+}
+
 .notedraw-shell.is-notedraw-embedded-shell .notedraw-static-canvas {
   z-index: 64;
 }
@@ -99,6 +110,7 @@
   height: 18px;
 }
 
+.notedraw-underlay-canvas,
 .notedraw-static-canvas,
 .notedraw-canvas {
   display: none;
@@ -114,6 +126,10 @@
   user-select: none;
 }
 
+.notedraw-underlay-canvas {
+  z-index: 0;
+}
+
 .notedraw-static-canvas {
   z-index: 59;
 }
@@ -122,9 +138,15 @@
   z-index: 60;
 }
 
+.notedraw-shell.has-notedraw-canvas .notedraw-underlay-canvas,
 .notedraw-shell.has-notedraw-canvas .notedraw-static-canvas,
 .notedraw-shell.has-notedraw-canvas.is-drawing-active .notedraw-canvas {
   display: block;
+}
+
+.notedraw-shell.has-notedraw-canvas > :not(.notedraw-underlay-canvas):not(.notedraw-static-canvas):not(.notedraw-canvas):not(.notedraw-embed-layer):not(.notedraw-reading-zoom-extent):not(.notedraw-toolbar):not(.notedraw-palette-panel):not(.notedraw-brush-panel):not(.notedraw-text-panel):not(.notedraw-selection-menu):not(.notedraw-format-toolbar):not(.notedraw-file-input) {
+  position: relative;
+  z-index: 1;
 }
 
 .notedraw-embed-layer {
@@ -267,6 +289,13 @@
 .notedraw-shell.is-drawing-active .notedraw-canvas {
   pointer-events: auto;
   cursor: crosshair;
+}
+
+.notedraw-shell.is-drawing-active .notedraw-embed input.task-list-item-checkbox,
+.notedraw-shell.is-drawing-active .notedraw-embed input[type="checkbox"] {
+  pointer-events: auto;
+  position: relative;
+  z-index: 2;
 }
 
 .notedraw-shell.is-notedraw-source-shell .notedraw-canvas {
@@ -770,6 +799,12 @@
   touch-action: manipulation;
 }
 
+.notedraw-text-panel button,
+.notedraw-palette-panel button,
+.notedraw-brush-panel button {
+  touch-action: manipulation;
+}
+
 .notedraw-text-option svg,
 .notedraw-text-option .svg-icon {
   width: 14px;
@@ -831,6 +866,7 @@
   color: var(--text-muted);
   background: transparent;
   cursor: pointer;
+  touch-action: manipulation;
 }
 
 .notedraw-selection-menu-button:hover {
@@ -849,6 +885,12 @@
 
 .notedraw-note-flow-anchor {
   overflow-anchor: none;
+}
+
+.notedraw-note-flow-line-spacer {
+  display: block;
+  height: 0;
+  pointer-events: none;
 }
 
 .notedraw-selection-menu-button svg,

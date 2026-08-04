@@ -28,6 +28,7 @@ Opening paragraph.
   assert.equal(byText.get("Opening paragraph.").parentId, byText.get("Project").id);
   assert.equal(byText.get("Nested").parentId, byText.get("First").id);
   assert.equal(byText.get("[x] Complete").type, "task");
+  assert.equal(byText.get("[x] Complete").markdown, "- [x] Complete");
   assert.equal(byText.get("Important").type, "quote");
   assert.equal(byText.get("A | 1").type, "table");
   assert.equal(byText.get("Project").sourceText, "# Project");

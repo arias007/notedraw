@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { shouldMountRootPreview, shouldResetDormantRootPreview } from "../src/preview-lifecycle.mjs";
+import { pickRootPreview, shouldMountRootPreview, shouldResetDormantRootPreview } from "../src/preview-lifecycle.mjs";
 
 const renderedPreview = {
   sourceMode: false,
@@ -46,4 +46,28 @@ test("only hidden source-mode previews are eligible for dormant geometry reset",
     sourceHasContent: false,
     renderedContent: false
   }), false);
+});
+
+test("a visible duplicate preview wins over a hidden renderer preview", () => {
+  const hiddenRenderer = { id: "renderer" };
+  const visiblePreview = { id: "visible" };
+
+  assert.equal(pickRootPreview(
+    [hiddenRenderer, visiblePreview],
+    hiddenRenderer,
+    (preview) => preview === visiblePreview,
+    () => false
+  ), visiblePreview);
+});
+
+test("the renderer preview remains the fallback while every preview is hidden", () => {
+  const hiddenRenderer = { id: "renderer" };
+  const hiddenAlternate = { id: "alternate" };
+
+  assert.equal(pickRootPreview(
+    [hiddenAlternate, hiddenRenderer],
+    hiddenRenderer,
+    () => false,
+    () => false
+  ), hiddenRenderer);
 });

@@ -29,6 +29,16 @@ test("rendered headings and list items map to their Markdown source lines", () =
   });
 });
 
+test("task decorations may add harmless whitespace around an emoji", () => {
+  const source = "- [ ] **医务科工作**: 远程，转诊📅 2026-08-03";
+
+  assert.deepEqual(matchRenderedTextToMarkdown(source, "医务科工作: 远程，转诊 📅 2026-08-03"), {
+    lineStart: 0,
+    lineEnd: 0,
+    confidence: 0.98
+  });
+});
+
 test("a rendered multi-line block keeps the full source line range", () => {
   const source = "第一行\n第二行\n第三行";
   const match = matchRenderedTextToMarkdown(source, "第一行\n第二行\n第三行");

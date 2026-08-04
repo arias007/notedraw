@@ -60,12 +60,14 @@ import {
   projectNoteFlowDocumentPoint,
   reflowNoteFlowIntervals,
   selectNoteFlowAnchorPlacement,
+  selectNoteFlowAvoidanceCandidate,
   selectNoteFlowPositionAnchor,
+  selectStoredNoteFlowAnchorCandidate,
   shouldRenderStrokeOnSurface,
   stabilizeNoteFlowPointProjection,
   stabilizeNoteFlowBounds
 } from "./note-flow-layout.mjs";
-import { shouldMountRootPreview, shouldResetDormantRootPreview } from "./preview-lifecycle.mjs";
+import { pickRootPreview, shouldMountRootPreview, shouldResetDormantRootPreview } from "./preview-lifecycle.mjs";
 import { buildSnappedConnectorPoints, connectorSnapThreshold } from "./connector-binding.mjs";
 import {
   buildFountainPenSegments,
@@ -295,6 +297,7 @@ var I18N = {
     supportCodeBinance: "Binance",
     bringToFront: "Bring to front",
     sendToBack: "Send to back",
+    selectRelatedElements: "Select related",
     moveForward: "Move up",
     moveBackward: "Move down",
     lockElement: "Lock",
@@ -436,6 +439,7 @@ var I18N = {
     supportCodeBinance: "币安",
     bringToFront: "置顶",
     sendToBack: "置底",
+    selectRelatedElements: "选择关联元素",
     moveForward: "上移一层",
     moveBackward: "下移一层",
     lockElement: "锁定",
@@ -1111,6 +1115,7 @@ var WEBVIEW_BLOCKED_EDIT_SELECTOR = [
   ".notedraw-text-panel",
   ".notedraw-selection-menu",
   ".notedraw-embed-layer",
+  ".notedraw-underlay-canvas",
   ".notedraw-static-canvas",
   ".notedraw-canvas",
   "button",
@@ -1138,9 +1143,12 @@ var NOTEDRAW_OWNED_MUTATION_SELECTOR = [
   ".notedraw-selection-menu",
   ".notedraw-format-toolbar",
   ".notedraw-reading-zoom-extent",
+  ".notedraw-reading-bottom-spacer",
   ".notedraw-embed-layer",
+  ".notedraw-underlay-canvas",
   ".notedraw-static-canvas",
   ".notedraw-canvas",
+  ".notedraw-note-flow-line-spacer",
   ".notedraw-body-control",
   ".notedraw-file-input"
 ].join(",");
@@ -1269,8 +1277,11 @@ var NoteDrawPlugin = class extends Plugin {
           controller.button = this.installHeaderButton(controller);
         }
         controller.syncFloatingControlClasses();
-        if (controller.active || controller.drawingsLoaded || isElementVisibleEnough(controller.previewEl)) {
+        if (isElementVisibleEnough(controller.previewEl)) {
           controller.scheduleLayoutRefresh({ settle: false });
+        } else if (controller.noteFlowStyledElements?.size) {
+          controller.clearNoteFlowLayout();
+          controller.noteFlowLayoutSignature = "";
         }
       }
     };
@@ -1997,7 +2008,7 @@ var NoteDrawPlugin = class extends Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.3.18",
+      version: "3.3.20",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -2451,6 +2462,7 @@ var NoteDrawPlugin = class extends Plugin {
     const enabled = options.enabled !== false;
     controller.resetNoteFlowSettle();
     controller.clearNoteFlowLayout();
+    controller.noteFlowAvoidanceAnchors.clear();
     for (const index of indexes) {
       const stroke = controller.drawingData.strokes[index];
       stroke.noteFlow = enabled ? controller.captureNoteFlowAnchor(stroke) : null;
@@ -2731,7 +2743,7 @@ var NoteDrawPlugin = class extends Plugin {
         continue;
       }
       const sourceEl = findSourceSurfaceForView(view);
-      const previewVisible = isElementVisibleEnough(findRootPreviewForView(view));
+      const previewVisible = isMarkdownPreviewVisible(view, findRootPreviewForView(view));
       const sourceVisible = isElementVisibleEnough(sourceEl);
       const shouldMount = Boolean(sourceEl) && isSourceMode(view) && sourceVisible && !previewVisible;
       const existing = this.sourceControllers.get(view);
@@ -2785,7 +2797,7 @@ var NoteDrawPlugin = class extends Plugin {
       const source = findSourceSurfaceForView(view);
       let previewController = preview ? this.controllers.get(preview) || preview._noteDrawController : null;
       const sourceController = source ? this.controllers.get(source) || source._noteDrawController : null;
-      const previewVisible = isElementVisibleEnough(preview);
+      const previewVisible = isMarkdownPreviewVisible(view, preview);
       const sourceVisible = isElementVisibleEnough(source);
       if (isSourceMode(view) && sourceVisible && !previewVisible) {
         for (const rootPreview of findRootPreviewsForView(view)) {
@@ -2798,6 +2810,15 @@ var NoteDrawPlugin = class extends Plugin {
       sourceController?.syncFloatingControlClasses();
       if (!previewVisible) {
         continue;
+      }
+      for (const alternatePreview of findRootPreviewsForView(view)) {
+        if (alternatePreview === preview) {
+          continue;
+        }
+        const alternateController = this.controllers.get(alternatePreview) || alternatePreview._noteDrawController;
+        if (alternateController?.plugin === this && alternateController.surfaceType === "preview") {
+          alternateController.destroy();
+        }
       }
       if (previewController?.plugin === this && !previewController.destroyed && previewController.file?.path === view.file?.path) {
         previewController.syncFloatingControlClasses();
@@ -3904,8 +3925,16 @@ var PreviewDrawingController = class {
     this.noteFlowSuppressResizeUntil = 0;
     this.noteFlowSettleEpoch = "";
     this.noteFlowSettlePasses = 0;
+    this.noteFlowAnchorRepairReady = false;
+    this.noteFlowAnchorRepairComplete = false;
+    this.noteFlowAnchorRepairTimer = null;
     this.noteFlowStyledElements = /* @__PURE__ */ new Map();
+    this.noteFlowLineSpacers = /* @__PURE__ */ new Map();
+    this.noteFlowAvoidanceAnchors = /* @__PURE__ */ new Map();
     this.noteFlowLayoutSignature = "";
+    this.readingBottomSpacer = null;
+    this.readingBottomSpacerHeight = 0;
+    this.readingBottomExtentResizeAt = 0;
     const sharedToolbarState = this.plugin.controllerToolbarState(this);
     if (sharedToolbarState) {
       this.brushMode = [BRUSH_PEN, BRUSH_WATERCOLOR].includes(sharedToolbarState.brushMode) ? sharedToolbarState.brushMode : this.brushMode;
@@ -3927,6 +3956,11 @@ var PreviewDrawingController = class {
       this.syncCurrentBrushFields();
     }
     this.lastTextTap = null;
+    this.underlayCanvas = activeDocument.createElement("canvas");
+    this.underlayCanvas.width = 1;
+    this.underlayCanvas.height = 1;
+    this.underlayCtx = null;
+    this.underlayCacheDirty = true;
     this.embedLayer = null;
     this.embedNodes = /* @__PURE__ */ new Map();
     this.embedRenderTokens = /* @__PURE__ */ new Map();
@@ -3966,6 +4000,8 @@ var PreviewDrawingController = class {
     this.onPointerDown = this.onPointerDown.bind(this);
     this.onPointerMove = this.onPointerMove.bind(this);
     this.onPointerUp = this.onPointerUp.bind(this);
+    this.onCanvasContextMenu = this.onCanvasContextMenu.bind(this);
+    this.onPreviewContextMenu = this.onPreviewContextMenu.bind(this);
     this.onCanvasDoubleClick = this.onCanvasDoubleClick.bind(this);
     this.onWheel = this.onWheel.bind(this);
     this.onResize = this.onResize.bind(this);
@@ -4107,7 +4143,9 @@ var PreviewDrawingController = class {
       title: this.plugin.t("penWidth")
     });
     this.widthInput.addEventListener("input", () => {
-      this.currentBrushSettings().width = paletteSliderToBrushWidth(this.widthInput.value);
+      const width = paletteSliderToBrushWidth(this.widthInput.value);
+      this.currentBrushSettings().width = width;
+      this.applySizeToSelectedStrokes(width);
       this.syncCurrentBrushFields();
       this.updateToolButtons();
       this.persistCurrentBrushSettings();
@@ -4122,7 +4160,9 @@ var PreviewDrawingController = class {
       title: this.plugin.t("penOpacity")
     });
     this.opacityInput.addEventListener("input", () => {
-      this.currentBrushSettings().opacity = paletteSliderToOpacity(this.opacityInput.value);
+      const opacity = paletteSliderToOpacity(this.opacityInput.value);
+      this.currentBrushSettings().opacity = opacity;
+      this.applyOpacityToSelectedStrokes(opacity);
       this.syncCurrentBrushFields();
       this.updateToolButtons();
       this.persistCurrentBrushSettings();
@@ -4130,6 +4170,8 @@ var PreviewDrawingController = class {
     });
     this.readingZoomExtent = this.previewEl.createDiv({ cls: "notedraw-reading-zoom-extent" });
     this.embedLayer = this.previewEl.createDiv({ cls: "notedraw-embed-layer" });
+    this.underlayCanvas.classList.add("notedraw-underlay-canvas");
+    this.previewEl.appendChild(this.underlayCanvas);
     this.staticCanvas.classList.add("notedraw-static-canvas");
     this.previewEl.appendChild(this.staticCanvas);
     this.canvas = this.previewEl.createEl("canvas", { cls: "notedraw-canvas" });
@@ -4141,7 +4183,9 @@ var PreviewDrawingController = class {
     this.canvas.addEventListener("pointercancel", this.onPointerUp);
     this.canvas.addEventListener("lostpointercapture", this.onPointerUp);
     this.canvas.addEventListener("dblclick", this.onCanvasDoubleClick);
+    this.canvas.addEventListener("contextmenu", this.onCanvasContextMenu);
     this.canvas.addEventListener("wheel", this.onWheel, { passive: false });
+    this.previewEl.addEventListener("contextmenu", this.onPreviewContextMenu, true);
     window.addEventListener("resize", this.onResize);
     window.visualViewport?.addEventListener("resize", this.onResize);
     window.visualViewport?.addEventListener("scroll", this.onResize);
@@ -4301,6 +4345,9 @@ var PreviewDrawingController = class {
     this.clearNoteFlowLayout();
     this.noteFlowLayoutSignature = "";
     this.resetNoteFlowSettle();
+    this.noteFlowAnchorRepairReady = false;
+    this.noteFlowAnchorRepairComplete = false;
+    this.noteFlowAvoidanceAnchors.clear();
     this.cancelRenderFrame();
     this.cancelResizeFrame();
     this.resetCanvasSurface();
@@ -4359,7 +4406,7 @@ var PreviewDrawingController = class {
     this.responsiveLayoutSignature = "";
     this.responsivePointsInitialized = false;
     this.responsiveLayoutContext = null;
-    for (const canvas of [this.staticCanvas, this.canvas]) {
+    for (const canvas of [this.underlayCanvas, this.staticCanvas, this.canvas]) {
       if (!canvas) {
         continue;
       }
@@ -4418,7 +4465,9 @@ var PreviewDrawingController = class {
     this.canvas?.removeEventListener("pointercancel", this.onPointerUp);
     this.canvas?.removeEventListener("lostpointercapture", this.onPointerUp);
     this.canvas?.removeEventListener("dblclick", this.onCanvasDoubleClick);
+    this.canvas?.removeEventListener("contextmenu", this.onCanvasContextMenu);
     this.canvas?.removeEventListener("wheel", this.onWheel);
+    this.previewEl?.removeEventListener("contextmenu", this.onPreviewContextMenu, true);
     this.plugin.releaseHeaderButton(this);
     this.toolbar?.remove();
     this.palettePanel?.remove();
@@ -4437,6 +4486,10 @@ var PreviewDrawingController = class {
     this.disposeRegisteredSurfaceViewport = null;
     this.readingZoomExtent?.remove();
     this.readingZoomExtent = null;
+    this.readingBottomSpacer?.remove();
+    this.readingBottomSpacer = null;
+    this.readingBottomSpacerHeight = 0;
+    this.underlayCanvas?.remove();
     this.staticCanvas?.remove();
     this.canvas?.remove();
     this.previewEl.removeClass("notedraw-shell");
@@ -4534,7 +4587,9 @@ var PreviewDrawingController = class {
       this.ensureDrawingsLoaded().catch((error) => {
         console.error(`[${PLUGIN_ID}] Failed to load drawings`, error);
       });
-      this.scheduleLayoutRefresh();
+      if (isElementVisibleEnough(this.previewEl)) {
+        this.scheduleLayoutRefresh();
+      }
     } else if (this.active && !eager) {
       this.layoutRefreshGeneration += 1;
     }
@@ -4745,6 +4800,7 @@ var PreviewDrawingController = class {
           return;
         }
         this.responsiveLayoutContext = null;
+        this.scheduleNoteFlowAnchorRepair();
         if (this.drawingsLoaded) {
           if (layout) {
             this.responsiveLayoutSignature = "";
@@ -5037,10 +5093,10 @@ var PreviewDrawingController = class {
     }
     this.syncColorSwatches();
     if (this.widthInput) {
-      this.widthInput.value = String(brushWidthToPaletteSlider(settings.width));
+      this.widthInput.value = String(brushWidthToPaletteSlider(this.currentPaletteWidth()));
     }
     if (this.opacityInput) {
-      this.opacityInput.value = String(opacityToPaletteSlider(settings.opacity));
+      this.opacityInput.value = String(opacityToPaletteSlider(this.currentPaletteOpacity()));
     }
   }
   persistCurrentBrushSettings() {
@@ -5164,6 +5220,7 @@ var PreviewDrawingController = class {
       { icon: "move-up", key: "moveForward", action: () => this.reorderSelectedStrokes("forward") },
       { icon: "move-down", key: "moveBackward", action: () => this.reorderSelectedStrokes("backward") },
       { icon: "send-to-back", key: "sendToBack", action: () => this.reorderSelectedStrokes("back") },
+      { icon: "group", key: "selectRelatedElements", action: () => this.selectRelatedElements() },
       { icon: "lock", key: "lockElement", action: () => this.toggleSelectedStrokeLock() }
     ];
     for (const item of actions) {
@@ -5295,6 +5352,75 @@ var PreviewDrawingController = class {
       this.selectionLongPressTimer = null;
     }
     this.selectionLongPressState = null;
+  }
+  onCanvasContextMenu(event) {
+    if (!this.active) {
+      return;
+    }
+    if (this.shouldPassThroughHeaderPoint(event)) {
+      return;
+    }
+    const point = this.eventToPoint(event);
+    const hitStrokeIndex = this.findStrokeAt(point);
+    if (hitStrokeIndex >= 0) {
+      if (!this.isStrokeSelected(hitStrokeIndex)) {
+        this.setSelectedStrokes(hitStrokeIndex);
+      }
+      this.clearSelectionLongPress();
+      this.showSelectionMenu({ x: event.clientX, y: event.clientY });
+      this.render();
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    if (this.getSelectedStrokeIndexes().length && this.selectedStrokeFrameContains(point)) {
+      this.clearSelectionLongPress();
+      this.showSelectionMenu({ x: event.clientX, y: event.clientY });
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  }
+  onPreviewContextMenu(event) {
+    if (!this.active || this.shouldPassThroughHeaderPoint(event)) {
+      return;
+    }
+    const target = event.target;
+    const targetShell = target?.closest?.(".notedraw-shell");
+    if (targetShell && targetShell !== this.previewEl) {
+      return;
+    }
+    if (target?.closest?.(NOTEDRAW_OWNED_MUTATION_SELECTOR)) {
+      const embed = target.closest(".notedraw-embed");
+      const index = Number(embed?.dataset?.noteDrawStrokeIndex);
+      if (!Number.isInteger(index) || index < 0 || !this.drawingData?.strokes?.[index]) {
+        return;
+      }
+      if (!this.isStrokeSelected(index)) {
+        this.setSelectedStrokes(index);
+      }
+      this.clearSelectionLongPress();
+      this.showSelectionMenu({ x: event.clientX, y: event.clientY });
+      this.render();
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    if (target?.closest?.(".notedraw-toolbar, .notedraw-palette-panel, .notedraw-brush-panel, .notedraw-text-panel, .notedraw-selection-menu, .notedraw-format-toolbar")) {
+      return;
+    }
+    const point = this.eventToPoint(event);
+    const hitStrokeIndex = this.findStrokeAt(point);
+    if (hitStrokeIndex < 0 && !(this.getSelectedStrokeIndexes().length && this.selectedStrokeFrameContains(point))) {
+      return;
+    }
+    if (hitStrokeIndex >= 0 && !this.isStrokeSelected(hitStrokeIndex)) {
+      this.setSelectedStrokes(hitStrokeIndex);
+    }
+    this.clearSelectionLongPress();
+    this.showSelectionMenu({ x: event.clientX, y: event.clientY });
+    this.render();
+    event.preventDefault();
+    event.stopPropagation();
   }
   createFormatToolbar() {
     this.formatToolbar = createNoteDrawControlElement(this.floatingControlsHost || this.previewEl, "notedraw-format-toolbar");
@@ -5701,6 +5827,24 @@ var PreviewDrawingController = class {
     }
     return this.currentBrushSettings().color;
   }
+  currentPaletteWidth() {
+    if (this.toolMode === TOOL_SELECT) {
+      const selectedWidth = this.getSelectedStrokeIndexes().map((index) => this.drawingData.strokes[index]?.width).find((width) => Number.isFinite(Number(width)));
+      if (Number.isFinite(Number(selectedWidth))) {
+        return clamp(Number(selectedWidth), MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH);
+      }
+    }
+    return this.currentBrushSettings().width;
+  }
+  currentPaletteOpacity() {
+    if (this.toolMode === TOOL_SELECT) {
+      const selectedOpacity = this.getSelectedStrokeIndexes().map((index) => this.drawingData.strokes[index]?.opacity).find((opacity) => Number.isFinite(Number(opacity)));
+      if (Number.isFinite(Number(selectedOpacity))) {
+        return clamp(Number(selectedOpacity), 0, 1);
+      }
+    }
+    return this.currentBrushSettings().opacity;
+  }
   applyColorToSelectedStrokes(color) {
     const indexes = this.getSelectedStrokeIndexes();
     const changed = indexes.filter((index) => {
@@ -5713,6 +5857,64 @@ var PreviewDrawingController = class {
     const historyBefore = this.captureDrawingHistorySnapshot();
     for (const index of changed) {
       this.drawingData.strokes[index].color = color;
+    }
+    this.redoStack = [];
+    this.invalidateStaticCache();
+    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.recordDrawingHistory(historyBefore);
+    this.render();
+    return true;
+  }
+  applyOpacityToSelectedStrokes(opacity) {
+    const nextOpacity = clamp(Number(opacity), 0, 1);
+    const indexes = this.getSelectedStrokeIndexes();
+    const changed = indexes.filter((index) => {
+      const stroke = this.drawingData.strokes[index];
+      return stroke && Math.abs(clamp(Number(stroke.opacity ?? 1), 0, 1) - nextOpacity) >= 0.001;
+    });
+    if (!changed.length) {
+      return false;
+    }
+    const historyBefore = this.captureDrawingHistorySnapshot();
+    for (const index of changed) {
+      this.drawingData.strokes[index].opacity = nextOpacity;
+    }
+    this.redoStack = [];
+    this.invalidateStaticCache();
+    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.recordDrawingHistory(historyBefore);
+    this.render();
+    return true;
+  }
+  applySizeToSelectedStrokes(width) {
+    const nextWidth = clamp(Number(width), MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH);
+    const indexes = this.getSelectedStrokeIndexes();
+    const changed = indexes.filter((index) => {
+      const stroke = this.drawingData.strokes[index];
+      return stroke && Math.abs(clamp(Number(stroke.width || this.penWidth), MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH) - nextWidth) >= 0.01;
+    });
+    if (!changed.length) {
+      return false;
+    }
+    const historyBefore = this.captureDrawingHistorySnapshot();
+    for (const index of changed) {
+      const stroke = this.drawingData.strokes[index];
+      const previousWidth = clamp(Number(stroke.width || this.penWidth), MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH);
+      const scale = clamp(nextWidth / Math.max(MIN_BRUSH_WIDTH, previousWidth), 0.15, 8);
+      stroke.width = nextWidth;
+      if (isTextStroke(stroke)) {
+        stroke.fontSize = clamp(Number(stroke.fontSize || 18) * scale, 10, 72);
+        if (Number(stroke.textWidth) > 0) {
+          stroke.textWidth = clamp(Number(stroke.textWidth) * scale, 24, 900);
+        }
+      }
+      if (isTextLikeStroke(stroke) || isEmbedStroke(stroke)) {
+        stroke.previewWidth = clamp(Number(stroke.previewWidth || 260) * scale, 80, 900);
+        stroke.previewHeight = clamp(Number(stroke.previewHeight || 160) * scale, 40, 700);
+      }
+      if (isConnectorStroke(stroke)) {
+        stroke.width = nextWidth;
+      }
     }
     this.redoStack = [];
     this.invalidateStaticCache();
@@ -6362,7 +6564,7 @@ var PreviewDrawingController = class {
       });
     }
     if (canvasWindow.changed && visualScale !== 1 && this.usesVisualReadingZoom()) {
-      for (const canvas of [this.staticCanvas, this.canvas]) {
+      for (const canvas of [this.underlayCanvas, this.staticCanvas, this.canvas]) {
         this.applyVisualReadingZoomElement(canvas, visualScale);
       }
     }
@@ -6375,6 +6577,18 @@ var PreviewDrawingController = class {
       return false;
     }
     this.ctx.setTransform(backingStore.scale, 0, 0, backingStore.scale, 0, -canvasWindow.top * backingStore.scale);
+    if (this.underlayCanvas.width !== backingStore.width || this.underlayCanvas.height !== backingStore.height) {
+      this.underlayCanvas.width = backingStore.width;
+      this.underlayCanvas.height = backingStore.height;
+      this.underlayCtx = this.underlayCanvas.getContext("2d");
+    }
+    if (!this.underlayCtx) {
+      this.underlayCtx = this.underlayCanvas.getContext("2d");
+    }
+    if (!this.underlayCtx) {
+      return false;
+    }
+    this.underlayCtx.setTransform(backingStore.scale, 0, 0, backingStore.scale, 0, -canvasWindow.top * backingStore.scale);
     if (this.staticCanvas.width !== backingStore.width || this.staticCanvas.height !== backingStore.height) {
       this.staticCanvas.width = backingStore.width;
       this.staticCanvas.height = backingStore.height;
@@ -6405,7 +6619,7 @@ var PreviewDrawingController = class {
       this.invalidateStaticCache();
     }
     if (measured.visibleWidth > 0) {
-      for (const canvas of [this.staticCanvas, this.canvas]) {
+      for (const canvas of [this.underlayCanvas, this.staticCanvas, this.canvas]) {
         applyElementStyles(canvas, { minWidth: `${Math.round(measured.visibleWidth)}px` });
       }
     }
@@ -8100,6 +8314,7 @@ var PreviewDrawingController = class {
     this.dragStrokeMoved = false;
     this.dragStrokeHitIndex = hitIndex;
     this.dragStrokePreserveSelection = Boolean(options.preserveSelection);
+    this.prepareReadingBottomExtentForDrag();
     this.pointerStartClient = { x: event.clientX, y: event.clientY };
     this.activePointerId = event.pointerId;
     this.previewEl.addClass("is-moving-selection");
@@ -8130,10 +8345,54 @@ var PreviewDrawingController = class {
     }
     return ids;
   }
+  selectRelatedElements() {
+    const selectedIndexes = this.getSelectedStrokeIndexes();
+    if (!selectedIndexes.length) {
+      return false;
+    }
+    const strokes = this.drawingData?.strokes || [];
+    const relatedIndexes = new Set(selectedIndexes);
+    const relatedIds = this.connectorTargetIdsForStrokeIndexes(selectedIndexes);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (let index = 0; index < strokes.length; index += 1) {
+        const stroke = strokes[index];
+        const elementId = strokeElementId(stroke);
+        const connector = normalizeConnector(stroke?.connector);
+        const connectorMatches = connector && (relatedIds.has(connector.fromId) || relatedIds.has(connector.toId));
+        const elementMatches = elementId && relatedIds.has(elementId);
+        if (!connectorMatches && !elementMatches) {
+          continue;
+        }
+        if (!relatedIndexes.has(index)) {
+          relatedIndexes.add(index);
+          changed = true;
+        }
+        if (elementId && !relatedIds.has(elementId)) {
+          relatedIds.add(elementId);
+          changed = true;
+        }
+        if (connector?.fromId && !relatedIds.has(connector.fromId)) {
+          relatedIds.add(connector.fromId);
+          changed = true;
+        }
+        if (connector?.toId && !relatedIds.has(connector.toId)) {
+          relatedIds.add(connector.toId);
+          changed = true;
+        }
+      }
+    }
+    this.setSelectedStrokes(Array.from(relatedIndexes).sort((a, b) => a - b));
+    this.showSelectionMenu();
+    this.render();
+    return true;
+  }
   moveSelectedStroke(event) {
     if (!this.dragStrokeStartPoint || !this.dragStrokeOriginalPoints?.size) {
       return;
     }
+    this.extendReadingBottomExtentDuringDrag(event);
     const point = this.eventToPoint(event);
     let minX = 1;
     let maxX = 0;
@@ -8192,6 +8451,7 @@ var PreviewDrawingController = class {
       const movedIndexes = Array.from(this.dragStrokeOriginalPoints?.keys() || []);
       this.resetNoteFlowSettle();
       this.clearNoteFlowLayout();
+      this.noteFlowAvoidanceAnchors.clear();
       const flowedIndexes = this.reflowNoteFlowElementsAfterDrag(movedIndexes);
       const affectedIndexes = Array.from(new Set([...movedIndexes, ...flowedIndexes]));
       for (const index of affectedIndexes) {
@@ -8212,6 +8472,7 @@ var PreviewDrawingController = class {
     } else {
       this.cancelSelectedStrokeDrag(true);
     }
+    this.settleReadingBottomExtent();
     this.releasePointerCapture(event.pointerId);
     this.clearSelectedStrokeDragState();
     this.render();
@@ -8255,6 +8516,126 @@ var PreviewDrawingController = class {
     this.pointerStartClient = null;
     this.activePointerId = null;
     this.previewEl.removeClass("is-moving-selection");
+  }
+  isReadingBottomExtentSurface() {
+    return this.surfaceType === "preview" && !this.embeddedSurface && !this.workspaceSurface;
+  }
+  ensureReadingBottomSpacer() {
+    if (!this.isReadingBottomExtentSurface()) {
+      return null;
+    }
+    if (this.readingBottomSpacer?.isConnected) {
+      return this.readingBottomSpacer;
+    }
+    const host = rootPreviewSizer(this.previewEl) || this.layoutMeasureEl || this.previewEl;
+    if (!host?.appendChild) {
+      return null;
+    }
+    const spacer = activeDocument.createElement("div");
+    spacer.className = "notedraw-reading-bottom-spacer";
+    spacer.setAttribute("aria-hidden", "true");
+    host.appendChild(spacer);
+    this.readingBottomSpacer = spacer;
+    this.readingBottomSpacerHeight = 0;
+    return spacer;
+  }
+  readingBottomBaseDocumentHeight() {
+    const spacer = this.readingBottomSpacer;
+    const host = spacer?.parentElement || rootPreviewSizer(this.previewEl) || this.layoutMeasureEl || this.previewEl;
+    const total = Number(host?.scrollHeight || host?.offsetHeight || 0);
+    return Math.max(Number(this.previewEl?.clientHeight || 0), total - Number(this.readingBottomSpacerHeight || 0));
+  }
+  setReadingBottomSpacerHeight(height, { resize = false } = {}) {
+    const spacer = this.ensureReadingBottomSpacer();
+    if (!spacer) {
+      return false;
+    }
+    const next = clamp(Math.round(Number(height) || 0), 0, 2400);
+    if (next === this.readingBottomSpacerHeight) {
+      return false;
+    }
+    this.readingBottomSpacerHeight = next;
+    spacer.style.height = `${next}px`;
+    spacer.style.minHeight = `${next}px`;
+    this.markNoteFlowLayoutMutation();
+    if (resize) {
+      this.resizeCanvas({ layout: true, preserveNoteFlowAbsolute: true });
+      this.render();
+    } else {
+      this.scheduleResize({ layout: false });
+    }
+    return true;
+  }
+  selectedReadingBottomDocumentY() {
+    const indexes = this.getSelectedStrokeIndexes();
+    if (!indexes.length) {
+      return 0;
+    }
+    const height = this.canvasHeight();
+    return Math.max(0, ...indexes.map((index) => {
+      const bounds = getStrokeBounds(this.drawingData?.strokes?.[index], this.canvasWidth(), height);
+      return bounds?.maxY || 0;
+    }));
+  }
+  prepareReadingBottomExtentForDrag() {
+    if (!this.isReadingBottomExtentSurface()) {
+      return;
+    }
+    this.ensureReadingBottomSpacer();
+    const baseHeight = this.readingBottomBaseDocumentHeight();
+    const selectedBottom = this.selectedReadingBottomDocumentY();
+    const needed = Math.max(0, selectedBottom - baseHeight + 48);
+    if (needed > this.readingBottomSpacerHeight) {
+      this.setReadingBottomSpacerHeight(Math.min(480, needed), { resize: true });
+      this.readingBottomExtentResizeAt = Date.now();
+    }
+  }
+  scrollReadingViewportBy(delta) {
+    const amount = Number(delta) || 0;
+    if (!amount || !this.scrollContainer) {
+      return;
+    }
+    const root = activeDocument.scrollingElement || activeDocument.documentElement;
+    if (this.scrollContainer === root || this.scrollContainer === activeDocument.body || this.scrollContainer === activeDocument.documentElement) {
+      window.scrollBy?.(0, amount);
+      return;
+    }
+    this.scrollContainer.scrollTop += amount;
+  }
+  extendReadingBottomExtentDuringDrag(event) {
+    if (!this.isReadingBottomExtentSurface() || !event) {
+      return;
+    }
+    const rect = this.scrollContainer?.getBoundingClientRect?.() || {
+      top: 0,
+      bottom: window.innerHeight || 0,
+      height: window.innerHeight || 0
+    };
+    const edge = clamp(rect.height * 0.16, 56, 112);
+    if (event.clientY < rect.bottom - edge) {
+      return;
+    }
+    const now = Date.now();
+    if (now - this.readingBottomExtentResizeAt > 90) {
+      this.ensureReadingBottomSpacer();
+      this.setReadingBottomSpacerHeight(this.readingBottomSpacerHeight + 220, { resize: true });
+      this.readingBottomExtentResizeAt = now;
+    }
+    const intensity = clamp((event.clientY - (rect.bottom - edge)) / edge, 0, 1);
+    this.scrollReadingViewportBy(4 + intensity * 14);
+  }
+  settleReadingBottomExtent() {
+    if (!this.isReadingBottomExtentSurface() || !this.readingBottomSpacer) {
+      return;
+    }
+    const baseHeight = this.readingBottomBaseDocumentHeight();
+    const allBottom = Math.max(0, ...(this.drawingData?.strokes || []).filter((stroke) => this.isStrokeVisibleOnSurface(stroke)).map((stroke) => {
+      const bounds = getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight());
+      return bounds?.maxY || 0;
+    }));
+    const needed = Math.max(0, allBottom - baseHeight + 32);
+    this.setReadingBottomSpacerHeight(needed, { resize: true });
+    this.readingBottomExtentResizeAt = Date.now();
   }
   startSelectedStrokeResize(event, point, handle) {
     const indexes = this.getSelectedStrokeIndexes();
@@ -8658,19 +9039,27 @@ var PreviewDrawingController = class {
     }
   }
   ensureStaticCache() {
-    if (!this.staticCtx || !this.staticCacheDirty) {
+    if (!this.staticCtx || !this.underlayCtx || !this.staticCacheDirty) {
       return;
     }
+    clearCanvasContext(this.underlayCtx, this.underlayCanvas);
     clearCanvasContext(this.staticCtx, this.staticCanvas);
     for (const [index, stroke] of this.drawingData.strokes.entries()) {
-      if (this.isStrokeVisibleOnSurface(stroke) && !this.isStrokeSelected(index) && this.isStrokeInCanvasWindow(stroke)) {
+      if (!this.isStrokeVisibleOnSurface(stroke) || this.isStrokeSelected(index) || !this.isStrokeInCanvasWindow(stroke)) {
+        continue;
+      }
+      if (stroke.belowMarkdown) {
+        this.drawStrokeOn(this.underlayCtx, stroke);
+      } else {
         this.drawStrokeOn(this.staticCtx, stroke);
       }
     }
     this.staticCacheDirty = false;
+    this.underlayCacheDirty = false;
   }
   invalidateStaticCache() {
     this.staticCacheDirty = true;
+    this.underlayCacheDirty = true;
   }
   isStrokeInCanvasWindow(stroke) {
     const bounds = getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight());
@@ -8705,6 +9094,9 @@ var PreviewDrawingController = class {
       if (!isEmbedStroke(stroke) && !isRichTextStroke(stroke)) {
         continue;
       }
+      if (stroke.belowMarkdown && isImageEmbedStroke(stroke)) {
+        continue;
+      }
       if (!stroke.points.length || this.floatingTextInput?.index === index) {
         continue;
       }
@@ -8724,6 +9116,8 @@ var PreviewDrawingController = class {
       node.toggleClass("is-asset", isEmbedStroke(stroke));
       node.toggleClass("is-locked", Boolean(stroke.locked));
       node.toggleClass("is-mind-map-node", Boolean(normalizeMindMapNode(stroke.mindMapNode)));
+      node.toggleClass("is-below-markdown", Boolean(stroke.belowMarkdown));
+      node.dataset.noteDrawStrokeIndex = key;
       const geometry = {
         left: `${Math.round(bounds.minX)}px`,
         top: `${Math.round(bounds.minY)}px`,
@@ -8803,6 +9197,32 @@ var PreviewDrawingController = class {
     }
     const sourcePath = normalizeMindMapNode(stroke.mindMapNode)?.sourcePath || this.file.path;
     await MarkdownRenderer.render(this.plugin.app, content, node, sourcePath, this.plugin);
+    this.bindMindMapTaskInteractions(node, stroke);
+  }
+  bindMindMapTaskInteractions(node, stroke) {
+    if (!normalizeMindMapNode(stroke.mindMapNode) || normalizeMindMapNode(stroke.mindMapNode)?.type !== "task") {
+      return;
+    }
+    node.querySelectorAll?.("input.task-list-item-checkbox, input[type='checkbox']").forEach((checkbox) => {
+      checkbox.addEventListener("change", () => {
+        const nextChecked = Boolean(checkbox.checked);
+        const currentText = String(stroke.text || "");
+        const nextText = currentText.replace(/(\[[ xX]\])/, nextChecked ? "[x]" : "[ ]");
+        if (nextText === currentText) {
+          return;
+        }
+        const historyBefore = this.captureDrawingHistorySnapshot();
+        stroke.text = nextText;
+        this.redoStack = [];
+        this.invalidateStaticCache();
+        this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+        this.recordDrawingHistory(historyBefore);
+        this.render();
+        if (normalizeMindMapNode(stroke.mindMapNode)?.affectsSource) {
+          void this.syncMindMapNodeToSource(stroke, nextText.replace(/^\s*(?:[-+*]|\d+[.)])\s+/, ""));
+        }
+      });
+    });
   }
   async resolveNotePreviewContent(text) {
     const link = String(text || "").trim();
@@ -9531,6 +9951,7 @@ var PreviewDrawingController = class {
     const disable = indexes.every((index) => this.drawingData.strokes[index]?.noteFlow?.enabled);
     this.resetNoteFlowSettle();
     this.clearNoteFlowLayout();
+    this.noteFlowAvoidanceAnchors.clear();
     for (const index of indexes) {
       const stroke = this.drawingData.strokes[index];
       stroke.noteFlow = disable ? null : this.captureNoteFlowAnchor(stroke);
@@ -9551,8 +9972,69 @@ var PreviewDrawingController = class {
     const promoted = element.closest?.(".internal-embed, .markdown-embed, .callout, table, li, blockquote");
     return promoted && this.previewEl.contains(promoted) ? promoted : element;
   }
+  noteFlowInlineLineCandidates(sourceElement, path, start, end) {
+    if (sourceElement?.tagName !== "P" || !Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+      return [];
+    }
+    const childNodes = Array.from(sourceElement.childNodes || []);
+    if (childNodes.filter((node) => node.nodeName === "BR").length < end - start) {
+      return [];
+    }
+    const candidates = [];
+    let segmentStart = 0;
+    let line = start;
+    const appendSegment = (segmentEnd) => {
+      const nodes = childNodes.slice(segmentStart, segmentEnd).filter((node) => {
+        if (node.nodeType === Node.TEXT_NODE) {
+          return Boolean(node.nodeValue?.trim());
+        }
+        return node.nodeType === Node.ELEMENT_NODE && !node.classList?.contains("notedraw-note-flow-line-spacer");
+      });
+      const firstNode = nodes[0];
+      const lastNode = nodes[nodes.length - 1];
+      if (!firstNode || !lastNode) {
+        return;
+      }
+      try {
+        const range = sourceElement.ownerDocument.createRange();
+        range.setStartBefore(firstNode);
+        range.setEndAfter(lastNode);
+        const rects = Array.from(range.getClientRects?.() || []).filter((rect) => rect.width > 1 && rect.height > 1);
+        if (!rects.length) {
+          return;
+        }
+        candidates.push({
+          element: sourceElement,
+          sourceElement,
+          path,
+          start: line,
+          end: line,
+          top: Math.min(...rects.map((rect) => rect.top)),
+          bottom: Math.max(...rects.map((rect) => rect.bottom)),
+          lineSpacer: {
+            key: `${path}\0${line}`,
+            parent: sourceElement,
+            before: firstNode
+          }
+        });
+      } catch (error) {
+        void error;
+      }
+    };
+    for (let index = 0; index < childNodes.length; index += 1) {
+      if (childNodes[index].nodeName !== "BR") {
+        continue;
+      }
+      appendSegment(index);
+      segmentStart = index + 1;
+      line += 1;
+    }
+    appendSegment(childNodes.length);
+    return candidates.length === end - start + 1 ? candidates : [];
+  }
   noteFlowCandidates() {
     const grouped = /* @__PURE__ */ new Map();
+    const inlineLines = [];
     let order = 0;
     for (const sourceElement of this.previewEl.querySelectorAll?.("[data-note-draw-line-start]") || []) {
       if (sourceElement.closest?.(".notedraw-body-control, .notedraw-embed-layer")) {
@@ -9566,6 +10048,13 @@ var PreviewDrawingController = class {
         continue;
       }
       const path = normalizeVaultPath(sourceElement.dataset.noteDrawSourcePath || this.file?.path || "");
+      const lineCandidates = this.noteFlowInlineLineCandidates(sourceElement, path, start, end);
+      if (lineCandidates.length) {
+        for (const candidate of lineCandidates) {
+          inlineLines.push({ ...candidate, order: order++ });
+        }
+        continue;
+      }
       let byPath = grouped.get(element);
       if (!byPath) {
         byPath = /* @__PURE__ */ new Map();
@@ -9588,9 +10077,29 @@ var PreviewDrawingController = class {
         order: order++
       });
     }
-    return Array.from(grouped.values()).flatMap((byPath) => Array.from(byPath.values()));
+    return [...Array.from(grouped.values()).flatMap((byPath) => Array.from(byPath.values())), ...inlineLines]
+      .sort((a, b) => a.top - b.top || a.bottom - b.bottom || a.order - b.order);
   }
-  noteFlowAnchorElement(noteFlow, allCandidates = null) {
+  noteFlowTargetElement(anchor) {
+    const descriptor = anchor?.lineSpacer;
+    if (!descriptor?.parent?.isConnected || !descriptor.before?.isConnected) {
+      return anchor?.element || null;
+    }
+    const existing = this.noteFlowLineSpacers.get(descriptor.key);
+    if (existing?.isConnected && existing.parentElement === descriptor.parent) {
+      return existing;
+    }
+    existing?.remove?.();
+    this.markNoteFlowLayoutMutation();
+    const spacer = descriptor.parent.createSpan({
+      cls: "notedraw-note-flow-line-spacer",
+      attr: { "aria-hidden": "true" }
+    });
+    descriptor.parent.insertBefore(spacer, descriptor.before);
+    this.noteFlowLineSpacers.set(descriptor.key, spacer);
+    return spacer;
+  }
+  noteFlowAnchorElement(noteFlow, allCandidates = null, strokeTop = Number.NaN) {
     const path = normalizeVaultPath(noteFlow?.path || this.file?.path || "");
     const line = Number(noteFlow?.line);
     if (!Number.isFinite(line)) {
@@ -9599,8 +10108,10 @@ var PreviewDrawingController = class {
     const candidates = (allCandidates || this.noteFlowCandidates()).filter((candidate) => {
       return candidate.path === path && line >= candidate.start && line <= candidate.end;
     });
-    candidates.sort((a, b) => (a.bottom - a.top) - (b.bottom - b.top) || a.order - b.order);
-    return candidates[0] || null;
+    return selectStoredNoteFlowAnchorCandidate(candidates, {
+      side: noteFlow?.side,
+      strokeTop
+    });
   }
   clearNoteFlowLayout() {
     if (this.noteFlowStyledElements?.size) {
@@ -9622,6 +10133,10 @@ var PreviewDrawingController = class {
       element.classList.remove("notedraw-note-flow-anchor");
     }
     this.noteFlowStyledElements?.clear();
+    for (const spacer of this.noteFlowLineSpacers?.values?.() || []) {
+      spacer?.remove?.();
+    }
+    this.noteFlowLineSpacers?.clear();
   }
   repairRunawayNoteFlowSurface(referenceHeight) {
     const viewportHeight = Math.max(1, this.previewEl?.clientHeight || this.canvasRenderHeight || 1);
@@ -9661,13 +10176,14 @@ var PreviewDrawingController = class {
     return repaired;
   }
   applyNoteFlowLayout() {
-    if (!this.supportsNoteFlow() || !this.drawingsVisible || !this.canvas?.isConnected) {
+    if (!this.supportsNoteFlow() || !this.drawingsVisible || !this.canvas?.isConnected || !isElementVisibleEnough(this.previewEl)) {
       this.clearNoteFlowLayout();
+      this.noteFlowLayoutSignature = "";
       return false;
     }
     const contentFrame = this.getResponsiveContentFrame();
     const viewportHeight = Math.max(1, this.previewEl?.clientHeight || this.canvasRenderHeight || 1);
-    const flows = (this.drawingData?.strokes || []).filter((stroke) => stroke?.noteFlow?.enabled && !isConnectorStroke(stroke)).map((stroke) => {
+    const flows = (this.drawingData?.strokes || []).map((stroke, index) => ({ stroke, index })).filter(({ stroke }) => stroke?.noteFlow?.enabled && !isConnectorStroke(stroke)).map(({ stroke, index }) => {
       const bounds = getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight());
       if (!bounds) {
         return null;
@@ -9679,7 +10195,7 @@ var PreviewDrawingController = class {
         viewportHeight,
         preferCurrent: Boolean(normalizeNoteFlow(stroke.noteFlow)?.positionBasis)
       });
-      return { stroke, ...stabilized };
+      return { stroke, index, ...stabilized };
     }).filter(Boolean).sort((a, b) => a.bounds.minY - b.bounds.minY);
     if (!flows.length) {
       const changed = Boolean(this.noteFlowLayoutSignature);
@@ -9697,9 +10213,13 @@ var PreviewDrawingController = class {
     }
     const scaleY = canvasRect.height > 0 ? canvasRect.height / Math.max(1, this.canvasRenderHeight) : 1;
     const candidates = this.noteFlowCandidates();
+    const canRepairStoredAnchors = this.noteFlowAnchorRepairReady
+      && !this.noteFlowAnchorRepairComplete
+      && Date.now() - this.lastScrollAt > 480;
     const offsets = /* @__PURE__ */ new Map();
     let migratedAnchor = false;
     let missingStableAnchor = false;
+    let updatedNoteFlowMetadata = false;
     for (const item of flows) {
       let currentNoteFlow = normalizeNoteFlow(item.stroke.noteFlow);
       const hasStoredAnchor = hasStableNoteFlowAnchor(currentNoteFlow);
@@ -9715,11 +10235,14 @@ var PreviewDrawingController = class {
           item.stroke.noteFlow = currentNoteFlow;
         }
       }
-      let anchor = this.noteFlowAnchorElement(currentNoteFlow, candidates);
       const strokeTop = canvasRect.top + (item.bounds.minY - this.canvasWindowTop) * scaleY;
+      const strokeBottom = canvasRect.top + (item.bounds.maxY - this.canvasWindowTop) * scaleY;
+      let anchor = this.noteFlowAnchorElement(currentNoteFlow, candidates, strokeTop);
+      const previewRect = this.previewEl.getBoundingClientRect();
+      const strokeNearViewport = strokeTop >= previewRect.top - 64 && strokeTop <= previewRect.bottom + 64;
       if (!hasStoredAnchor && anchor && currentNoteFlow?.side === "before" && anchor.top < strokeTop - 4) {
         const recaptured = this.captureNoteFlowAnchor(item.stroke);
-        const correctedAnchor = this.noteFlowAnchorElement(recaptured, candidates);
+        const correctedAnchor = this.noteFlowAnchorElement(recaptured, candidates, strokeTop);
         if (correctedAnchor) {
           item.stroke.noteFlow = recaptured;
           currentNoteFlow = recaptured;
@@ -9728,9 +10251,19 @@ var PreviewDrawingController = class {
           migratedAnchor = true;
         }
       }
-      if (!anchor && !hasStoredAnchor) {
+      const samePathCandidates = candidates.filter((candidate) => candidate.path === normalizeVaultPath(currentNoteFlow?.path || this.file?.path || ""));
+      const storedLine = Number(currentNoteFlow?.line);
+      const renderedStart = Math.min(...samePathCandidates.map((candidate) => candidate.start));
+      const renderedEnd = Math.max(...samePathCandidates.map((candidate) => candidate.end));
+      const staleStoredAnchor = canRepairStoredAnchors
+        && hasStoredAnchor
+        && samePathCandidates.length > 1
+        && Number.isFinite(storedLine)
+        && (storedLine < renderedStart || storedLine > renderedEnd)
+        && strokeNearViewport;
+      if (!anchor && (!hasStoredAnchor || staleStoredAnchor)) {
         const recaptured = this.captureNoteFlowAnchor(item.stroke);
-        anchor = this.noteFlowAnchorElement(recaptured, candidates);
+        anchor = this.noteFlowAnchorElement(recaptured, candidates, strokeTop);
         if (anchor && recaptured?.positionBasis) {
           item.stroke.noteFlow = recaptured;
           currentNoteFlow = recaptured;
@@ -9738,12 +10271,40 @@ var PreviewDrawingController = class {
           migratedAnchor = true;
         }
       }
-      const element = anchor?.element || null;
-      if (!element) {
-        missingStableAnchor = missingStableAnchor || hasStoredAnchor;
+      const avoidanceKey = strokeElementId(item.stroke) || String(item.index);
+      let avoidanceReference = Number.isFinite(Number(currentNoteFlow?.avoidanceLine)) ? {
+        path: normalizeVaultPath(currentNoteFlow.avoidancePath || currentNoteFlow.path || this.file?.path || ""),
+        line: Number(currentNoteFlow.avoidanceLine)
+      } : this.noteFlowAvoidanceAnchors.get(avoidanceKey) || null;
+      let avoidanceAnchor = avoidanceReference ? this.noteFlowAnchorElement({
+        path: avoidanceReference.path,
+        line: avoidanceReference.line,
+        side: "before"
+      }, candidates, strokeTop) : null;
+      if (!avoidanceReference) {
+        avoidanceAnchor = selectNoteFlowAvoidanceCandidate(candidates, { strokeTop, strokeBottom });
+        if (avoidanceAnchor) {
+          avoidanceReference = { path: avoidanceAnchor.path, line: avoidanceAnchor.start };
+          this.noteFlowAvoidanceAnchors.set(avoidanceKey, avoidanceReference);
+          item.stroke.noteFlow = {
+            ...currentNoteFlow,
+            avoidancePath: avoidanceReference.path,
+            avoidanceLine: avoidanceReference.line
+          };
+          currentNoteFlow = item.stroke.noteFlow;
+          updatedNoteFlowMetadata = true;
+        }
+      }
+      if (avoidanceReference && !avoidanceAnchor) {
+        missingStableAnchor = true;
         continue;
       }
-      const side = currentNoteFlow.side;
+      const element = this.noteFlowTargetElement(avoidanceAnchor || anchor);
+      if (!element) {
+        missingStableAnchor = missingStableAnchor || hasStoredAnchor || Boolean(avoidanceReference);
+        continue;
+      }
+      const side = avoidanceAnchor ? "before" : currentNoteFlow.side;
       const property = side === "after" ? "padding-bottom" : "padding-top";
       let states = this.noteFlowStyledElements.get(element);
       if (!states) {
@@ -9819,7 +10380,13 @@ var PreviewDrawingController = class {
     const signature = Array.from(offsets, ([element, elementOffsets]) => {
       return Array.from(elementOffsets, ([property, offset]) => `${property}:${Math.round(offset)}`).join(",");
     }).join("|");
-    const changed = migratedAnchor || restoredStaleAnchor || signature !== this.noteFlowLayoutSignature;
+    if (canRepairStoredAnchors) {
+      this.noteFlowAnchorRepairComplete = true;
+    }
+    if ((migratedAnchor || updatedNoteFlowMetadata) && this.file && this.drawingData) {
+      this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    }
+    const changed = migratedAnchor || updatedNoteFlowMetadata || restoredStaleAnchor || signature !== this.noteFlowLayoutSignature;
     this.noteFlowLayoutSignature = signature;
     return changed;
   }
@@ -9845,6 +10412,24 @@ var PreviewDrawingController = class {
   resetNoteFlowSettle() {
     this.noteFlowSettleEpoch = "";
     this.noteFlowSettlePasses = 0;
+  }
+  scheduleNoteFlowAnchorRepair() {
+    if (this.destroyed || this.noteFlowAnchorRepairComplete || this.noteFlowAnchorRepairTimer !== null) {
+      return;
+    }
+    this.noteFlowAnchorRepairTimer = window.setTimeout(() => {
+      this.noteFlowAnchorRepairTimer = null;
+      if (this.destroyed || this.noteFlowAnchorRepairComplete || !this.previewEl?.isConnected) {
+        return;
+      }
+      const layoutBusy = this.markdownAnnotationTimer !== null || Date.now() < this.noteFlowSuppressResizeUntil;
+      if (layoutBusy || Date.now() - this.lastScrollAt <= 700) {
+        this.scheduleNoteFlowAnchorRepair();
+        return;
+      }
+      this.noteFlowAnchorRepairReady = true;
+      this.scheduleNoteFlowLayout();
+    }, 700);
   }
   scheduleNoteFlowSettleResize() {
     if (this.destroyed || this.noteFlowResizeTimer !== null) {
@@ -10001,6 +10586,10 @@ var PreviewDrawingController = class {
       window.clearTimeout(this.noteFlowResizeTimer);
       this.noteFlowResizeTimer = null;
     }
+    if (this.noteFlowAnchorRepairTimer !== null) {
+      window.clearTimeout(this.noteFlowAnchorRepairTimer);
+      this.noteFlowAnchorRepairTimer = null;
+    }
   }
   getSelectedStrokeIndexes() {
     if (this.selectedStrokeIndexes?.size) {
@@ -10111,6 +10700,15 @@ var PreviewDrawingController = class {
     const strokes = this.drawingData.strokes;
     const selectedStrokes = selectedIndexes.map((index) => strokes[index]).filter(Boolean);
     const selectedSet = new Set(selectedStrokes);
+    if (direction === "front" || direction === "forward") {
+      selectedStrokes.forEach((stroke) => {
+        stroke.belowMarkdown = false;
+      });
+    } else if (direction === "back") {
+      selectedStrokes.forEach((stroke) => {
+        stroke.belowMarkdown = true;
+      });
+    }
     if (direction === "front" || direction === "back") {
       const rest = strokes.filter((stroke) => !selectedSet.has(stroke));
       this.drawingData.strokes = direction === "front" ? [...rest, ...selectedStrokes] : [...selectedStrokes, ...rest];
@@ -11030,6 +11628,11 @@ function bindNoteDrawControlTap(element, action) {
         x: event.clientX,
         y: event.clientY
       };
+      try {
+        element.setPointerCapture?.(event.pointerId);
+      } catch (error) {
+        void error;
+      }
     }
   });
   element.addEventListener("pointerup", (event) => {
@@ -11042,12 +11645,22 @@ function bindNoteDrawControlTap(element, action) {
       return;
     }
     suppressClickUntil = Date.now() + 700;
+    try {
+      element.releasePointerCapture?.(event.pointerId);
+    } catch (error) {
+      void error;
+    }
     event.preventDefault();
     event.stopPropagation();
     action(event);
   });
-  element.addEventListener("pointercancel", () => {
+  element.addEventListener("pointercancel", (event) => {
     touchPointer = null;
+    try {
+      element.releasePointerCapture?.(event.pointerId);
+    } catch (error) {
+      void error;
+    }
   });
   element.addEventListener("click", (event) => {
     event.preventDefault();
@@ -11491,8 +12104,13 @@ function annotateVisibleMarkdownElements(app, root, fallbackPath) {
 }
 async function annotateRenderedMarkdownLines(app, root, fallbackPath) {
   annotateVisibleMarkdownElements(app, root, fallbackPath);
-  const elements = Array.from(root?.querySelectorAll?.(EDITABLE_SELECTOR) || []).filter((element) => {
-    return !element.dataset.noteDrawLineStart && element.dataset.noteDrawSourcePath;
+  const annotated = Array.from(root?.querySelectorAll?.(EDITABLE_SELECTOR) || []).filter((element) => element.dataset.noteDrawSourcePath);
+  const elements = annotated.filter((element) => {
+    const line = parseInteger(element.dataset.noteDrawLineStart);
+    if (!Number.isFinite(line)) {
+      return true;
+    }
+    return line === 0;
   });
   const sources = /* @__PURE__ */ new Map();
   for (const path of new Set(elements.map((element) => normalizeVaultPath(element.dataset.noteDrawSourcePath || fallbackPath)))) {
@@ -11773,7 +12391,7 @@ function findRootPreviewsForView(view) {
 function findRootPreviewForView(view) {
   const previews = findRootPreviewsForView(view);
   const rendererPreview = view?.previewMode?.renderer?.previewEl;
-  return previews.find((preview) => preview === rendererPreview) || previews.find((preview) => isElementVisibleEnough(preview)) || previews[0] || null;
+  return pickRootPreview(previews, rendererPreview, isElementVisibleEnough, isElementLaidOut);
 }
 function rootPreviewSizer(preview) {
   return preview?.querySelector?.(":scope > .markdown-preview-sizer") || preview?.querySelector?.(".markdown-preview-sizer") || null;
@@ -11783,7 +12401,7 @@ function rootPreviewHasRenderedContent(preview) {
   if (!sizer) {
     return false;
   }
-  const ignored = ".mod-ui, .mod-header, .mod-footer, .markdown-preview-pusher, .notedraw-reading-zoom-extent, .notedraw-embed-layer, .notedraw-static-canvas, .notedraw-canvas";
+  const ignored = ".mod-ui, .mod-header, .mod-footer, .markdown-preview-pusher, .notedraw-reading-zoom-extent, .notedraw-reading-bottom-spacer, .notedraw-embed-layer, .notedraw-underlay-canvas, .notedraw-static-canvas, .notedraw-canvas";
   for (const section of sizer.querySelectorAll?.(".markdown-preview-section") || []) {
     if (Array.from(section.children || []).some((element) => !element.matches?.(ignored))) {
       return true;
@@ -11808,7 +12426,7 @@ function markdownViewHasSourceContent(view) {
 function rootPreviewLifecycleState(view, preview) {
   return {
     sourceMode: isSourceMode(view) && !isElementVisibleEnough(preview),
-    visible: isElementVisibleEnough(preview),
+    visible: isMarkdownPreviewVisible(view, preview),
     hasSurface: Boolean(preview && rootPreviewSizer(preview)),
     sourceHasContent: markdownViewHasSourceContent(view),
     renderedContent: rootPreviewHasRenderedContent(preview)
@@ -11842,7 +12460,7 @@ function currentMarkdownSurfaceType(view) {
 }
 function isReadingSurfaceVisible(view) {
   const preview = findRootPreviewForView(view);
-  return !isSourceMode(view) && isElementVisibleEnough(preview);
+  return isMarkdownPreviewVisible(view, preview);
 }
 function isElementVisibleEnough(element) {
   if (!isElementLaidOut(element)) {
@@ -11850,6 +12468,18 @@ function isElementVisibleEnough(element) {
   }
   const rect = element.getBoundingClientRect();
   return Boolean(rect.bottom > 0 && rect.right > 0 && rect.top < window.innerHeight && rect.left < window.innerWidth);
+}
+function isMarkdownPreviewVisible(view, preview) {
+  if (!view || !preview?.isConnected || isSourceMode(view)) {
+    return false;
+  }
+  const viewContent = view.containerEl?.querySelector?.(":scope > .view-content")
+    || view.containerEl?.querySelector?.(".view-content")
+    || view.containerEl;
+  if (!isElementVisibleEnough(viewContent)) {
+    return false;
+  }
+  return Boolean(rootPreviewSizer(preview) || isElementLaidOut(preview));
 }
 function isElementLaidOut(element) {
   if (!element?.isConnected) {
@@ -12173,6 +12803,28 @@ function collectTextLineRectsBelowCanvas(canvas, root) {
       break;
     }
   }
+  for (const textElement of root.querySelectorAll?.(".cm-line") || []) {
+    if (rects.length >= 1200 || textElement.closest?.(WEBVIEW_BLOCKED_EDIT_SELECTOR) || textElement.closest?.(NOTEDRAW_OWNED_MUTATION_SELECTOR)) {
+      continue;
+    }
+    const beforeCount = rects.length;
+    const walker = document.createTreeWalker(textElement, nodeFilter.SHOW_TEXT);
+    let node = walker.nextNode();
+    while (node && rects.length < 1200) {
+      if (!seenNodes.has(node) && String(node.nodeValue || "").trim()) {
+        seenNodes.add(node);
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        for (const rect of Array.from(range.getClientRects())) {
+          addRect(rect, textElement);
+        }
+      }
+      node = walker.nextNode();
+    }
+    if (beforeCount === rects.length) {
+      addRect(textElement.getBoundingClientRect?.(), textElement);
+    }
+  }
   return rects;
 }
 function domPathForElement(element, root) {
@@ -12236,6 +12888,7 @@ function cleanupAllDrawingHeaderButtons() {
   activeDocument.body?.querySelectorAll?.(".notedraw-body-control, .notedraw-file-input").forEach((element) => element.remove());
 }
 function cleanupOrphanedNoteFlowLayout(preview) {
+  preview?.querySelectorAll?.(".notedraw-note-flow-line-spacer").forEach((spacer) => spacer.remove());
   for (const anchor of preview?.querySelectorAll?.(".notedraw-note-flow-anchor") || []) {
     for (const property of ["padding-top", "padding-bottom", "margin-top", "margin-bottom"]) {
       if (anchor.style?.getPropertyPriority(property) === "important") {
@@ -12247,7 +12900,7 @@ function cleanupOrphanedNoteFlowLayout(preview) {
 }
 function cleanupDrawingUi(preview) {
   cleanupOrphanedNoteFlowLayout(preview);
-  preview.querySelectorAll(".notedraw-button, .notedraw-fallback-button, .notedraw-webview-button, .notedraw-toolbar, .notedraw-palette-panel, .notedraw-brush-panel, .notedraw-text-panel, .notedraw-selection-menu, .notedraw-format-toolbar, .notedraw-reading-zoom-extent, .notedraw-embed-layer, .notedraw-file-input, .notedraw-static-canvas, .notedraw-canvas").forEach((element) => element.remove());
+  preview.querySelectorAll(".notedraw-button, .notedraw-fallback-button, .notedraw-webview-button, .notedraw-toolbar, .notedraw-palette-panel, .notedraw-brush-panel, .notedraw-text-panel, .notedraw-selection-menu, .notedraw-format-toolbar, .notedraw-reading-zoom-extent, .notedraw-reading-bottom-spacer, .notedraw-embed-layer, .notedraw-note-flow-line-spacer, .notedraw-file-input, .notedraw-underlay-canvas, .notedraw-static-canvas, .notedraw-canvas").forEach((element) => element.remove());
   preview.classList.remove("notedraw-shell", "is-drawing-active", "is-drawing-hidden", "is-select-mode", "is-palette-open", "is-brush-panel-open", "is-text-panel-open", "is-selection-menu-open", "is-watercolor-mode", "is-edit-md-mode", "is-selecting-strokes", "is-resizing-selection", "is-native-text-editing", "is-reading-zoomed", "is-editing-layout-zoomed", "is-notedraw-webview-shell", "is-notedraw-workspace-shell", "is-notedraw-embedded-shell", "is-notedraw-registered-shell", "is-notedraw-responsive-layout", "is-notedraw-controls-visible", "has-notedraw-body-controls", "has-notedraw-canvas");
 }
 function isNoteDrawOwnedMutation(mutation) {
@@ -12320,7 +12973,7 @@ function isWorkspaceSurfaceMutation(mutation) {
     return false;
   }
   const nodes = [...Array.from(mutation.addedNodes || []), ...Array.from(mutation.removedNodes || [])].filter((node) => {
-    return node?.nodeType === Node.ELEMENT_NODE && !node.matches?.(".notedraw-static-canvas, .notedraw-canvas, .notedraw-embed-layer, .notedraw-body-control");
+    return node?.nodeType === Node.ELEMENT_NODE && !node.matches?.(".notedraw-reading-bottom-spacer, .notedraw-underlay-canvas, .notedraw-static-canvas, .notedraw-canvas, .notedraw-embed-layer, .notedraw-body-control");
   });
   if (!nodes.length) {
     return false;
@@ -12431,6 +13084,7 @@ function normalizeNoteFlow(value) {
   }
   const line = value.line === null || value.line === void 0 || value.line === "" ? NaN : Number(value.line);
   const positionLine = value.positionLine === null || value.positionLine === void 0 || value.positionLine === "" ? NaN : Number(value.positionLine);
+  const avoidanceLine = value.avoidanceLine === null || value.avoidanceLine === void 0 || value.avoidanceLine === "" ? NaN : Number(value.avoidanceLine);
   const positionBasis = value.positionBasis === "document"
     ? "document"
     : value.positionBasis === "above" && Number.isFinite(positionLine) && positionLine >= 0 ? "above" : null;
@@ -12443,6 +13097,8 @@ function normalizeNoteFlow(value) {
     positionPath: normalizeVaultPath(value.positionPath || value.path || ""),
     positionLine: positionBasis === "above" ? positionLine : null,
     positionVersion: Number(value.positionVersion) >= 1 ? 1 : 0,
+    avoidancePath: Number.isFinite(avoidanceLine) && avoidanceLine >= 0 ? normalizeVaultPath(value.avoidancePath || value.path || "") : "",
+    avoidanceLine: Number.isFinite(avoidanceLine) && avoidanceLine >= 0 ? avoidanceLine : null,
     gap: clamp(Number(value.gap) || 12, 4, 64)
   };
 }
@@ -12691,6 +13347,7 @@ function normalizeStroke(stroke) {
     buttonStyle: normalizeButtonStyle(stroke?.buttonStyle),
     snap: Boolean(stroke?.snap),
     locked: Boolean(stroke?.locked),
+    belowMarkdown: Boolean(stroke?.belowMarkdown),
     connector: normalizeConnector(stroke?.connector),
     noteFlow: normalizeNoteFlow(stroke?.noteFlow),
     mindMapNode: normalizeMindMapNode(stroke?.mindMapNode),

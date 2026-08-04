@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const sourceUrl = new URL("../src/notedraw-plugin.js", import.meta.url);
+const previewLifecycleUrl = new URL("../src/preview-lifecycle.mjs", import.meta.url);
 const stylesUrl = new URL("../styles.css", import.meta.url);
 
 test("canvas layers stay hidden until their backing stores are initialized", async () => {
@@ -40,9 +41,13 @@ test("root reading controllers wait for Markdown and clear only dormant preview 
 });
 
 test("virtual Markdown recycling cannot discard a live reading controller", async () => {
-  const source = await readFile(sourceUrl, "utf8");
+  const [source, previewLifecycle] = await Promise.all([
+    readFile(sourceUrl, "utf8"),
+    readFile(previewLifecycleUrl, "utf8")
+  ]);
 
   assert.match(source, /if \(previewController\?\.plugin === this && !previewController\.destroyed && previewController\.file\?\.path === view\.file\?\.path\) \{\s*previewController\.syncFloatingControlClasses\(\);\s*continue;/s);
   assert.match(source, /const rendererPreview = view\?\.previewMode\?\.renderer\?\.previewEl;/);
-  assert.match(source, /return previews\.find\(\(preview\) => preview === rendererPreview\)/);
+  assert.match(source, /return pickRootPreview\(previews, rendererPreview, isElementVisibleEnough, isElementLaidOut\)/);
+  assert.match(previewLifecycle, /candidates\.find\(\(preview\) => isVisible\(preview\)\)[\s\S]*candidates\.find\(\(preview\) => preview === rendererPreview\)/);
 });

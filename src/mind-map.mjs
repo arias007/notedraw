@@ -183,7 +183,10 @@ export function parseMarkdownMindMap(source, {
       const parentId = listStack[listStack.length - 1]?.id || currentSectionId;
       const task = list[2].match(/^\[([ xX])\]\s*(.*)$/);
       const text = task ? `[${task[1].toLowerCase() === "x" ? "x" : " "}] ${task[2]}` : list[2];
-      const node = addNode(text, parentId, task ? "task" : "list", index, index, line, text);
+      const markdownText = task
+        ? `- [${task[1].toLowerCase() === "x" ? "x" : " "}] ${task[2]}`
+        : list[2];
+      const node = addNode(text, parentId, task ? "task" : "list", index, index, line, markdownText);
       if (node) {
         listStack.push({ indent, id: node.id });
       }

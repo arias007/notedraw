@@ -72,15 +72,15 @@ test("registered surfaces expose stable handles and structured actions without c
   assert.match(source, /registeredSurfaceSource/);
 });
 
-test("3.3.18 preserves bottom coordinates and cross-view frames without eager hidden-view refresh", async () => {
+test("3.3.20 preserves bottom coordinates and cross-view frames without hidden-surface layout writes", async () => {
   const [source, manifestText] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(manifestUrl, "utf8")
   ]);
   const manifest = JSON.parse(manifestText);
 
-  assert.equal(manifest.version, "3.3.18");
-  assert.match(source, /version: "3\.3\.18"/);
+  assert.equal(manifest.version, "3.3.20");
+  assert.match(source, /version: "3\.3\.20"/);
   assert.match(source, /if \(!this\.responsivePointsInitialized \|\| signature !== this\.responsiveLayoutSignature\)/);
   assert.match(source, /captureElementLayoutForStroke/);
   assert.match(source, /projectElementPoints\(stroke\.points, layout, box/);
@@ -89,7 +89,10 @@ test("3.3.18 preserves bottom coordinates and cross-view frames without eager hi
   assert.match(source, /function normalizeDrawingDataForStorage\(data, file\)/);
   const responsiveMigration = source.slice(source.indexOf("  initializeAndProjectResponsivePoints("), source.indexOf("  resizeCanvas(options = {})"));
   assert.doesNotMatch(responsiveMigration, /scheduleDrawingSave|writeDrawings/);
-  assert.match(source, /for \(const controller of this\.liveControllers\) \{[\s\S]*controller\.syncFloatingControlClasses\(\);\s*if \(controller\.active \|\| controller\.drawingsLoaded \|\| isElementVisibleEnough\(controller\.previewEl\)\) \{\s*controller\.scheduleLayoutRefresh\(\{ settle: false \}\)/);
+  assert.match(source, /for \(const controller of this\.liveControllers\) \{[\s\S]*controller\.syncFloatingControlClasses\(\);\s*if \(isElementVisibleEnough\(controller\.previewEl\)\) \{\s*controller\.scheduleLayoutRefresh\(\{ settle: false \}\);\s*\} else if \(controller\.noteFlowStyledElements\?\.size\) \{\s*controller\.clearNoteFlowLayout\(\)/);
+  assert.match(source, /pickRootPreview\(previews, rendererPreview, isElementVisibleEnough, isElementLaidOut\)/);
+  assert.match(source, /for \(const alternatePreview of findRootPreviewsForView\(view\)\)/);
+  assert.match(source, /!this\.canvas\?\.isConnected \|\| !isElementVisibleEnough\(this\.previewEl\)/);
   assert.match(source, /const eager = !enabled \|\| candidate === controller \|\| isElementVisibleEnough\(candidate\.previewEl\);\s*candidate\.applyActiveState\(enabled, \{ eager \}\)/);
   assert.match(source, /scheduleLayoutRefresh\(options = \{\}\)/);
   assert.match(source, /generation === this\.layoutRefreshGeneration/);

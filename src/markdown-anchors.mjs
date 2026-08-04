@@ -82,6 +82,13 @@ export function matchRenderedTextToMarkdown(source, renderedText) {
   if (exact) {
     return { lineStart: exact.lineStart, lineEnd: exact.lineEnd, confidence: 1 };
   }
+  const compactRendered = rendered.replace(/\s+/g, "");
+  const whitespaceEquivalent = candidates
+    .filter((candidate) => candidate.text.replace(/\s+/g, "") === compactRendered)
+    .sort((a, b) => (a.lineEnd - a.lineStart) - (b.lineEnd - b.lineStart) || (a.kind === "line" ? -1 : 1))[0];
+  if (whitespaceEquivalent) {
+    return { lineStart: whitespaceEquivalent.lineStart, lineEnd: whitespaceEquivalent.lineEnd, confidence: 0.98 };
+  }
   const partial = candidates.map((candidate) => {
     const contains = candidate.text.includes(rendered) || rendered.includes(candidate.text);
     const overlap = contains ? Math.min(candidate.text.length, rendered.length) / Math.max(candidate.text.length, rendered.length) : 0;

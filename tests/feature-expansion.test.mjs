@@ -155,14 +155,34 @@ test("reading-only note pen and selected elements can reserve Markdown flow spac
   assert.match(flowLayout, /preferCurrent: Boolean\(normalizeNoteFlow\(stroke\.noteFlow\)\?\.positionBasis\)/);
   assert.match(flowLayout, /this\.repairRunawayNoteFlowSurface\(runawayReferenceHeight\)/);
   assert.match(flowLayout, /const hasStoredAnchor = hasStableNoteFlowAnchor\(currentNoteFlow\)/);
-  assert.match(flowLayout, /if \(!anchor && !hasStoredAnchor\)/);
+  assert.match(flowLayout, /const strokeNearViewport = strokeTop >= previewRect\.top - 64 && strokeTop <= previewRect\.bottom \+ 64/);
+  assert.match(flowLayout, /const staleStoredAnchor = canRepairStoredAnchors[\s\S]*&& strokeNearViewport;[\s\S]*if \(!anchor && \(!hasStoredAnchor \|\| staleStoredAnchor\)\)/);
+  assert.match(flowLayout, /const canRepairStoredAnchors = this\.noteFlowAnchorRepairReady[\s\S]*Date\.now\(\) - this\.lastScrollAt > 480/);
+  assert.match(flowLayout, /this\.noteFlowAvoidanceAnchors\.get\(avoidanceKey\)/);
+  assert.match(flowLayout, /currentNoteFlow\?\.avoidanceLine/);
+  assert.match(flowLayout, /selectNoteFlowAvoidanceCandidate\(candidates, \{ strokeTop, strokeBottom \}\)/);
+  assert.match(flowLayout, /avoidancePath: avoidanceReference\.path,[\s\S]*avoidanceLine: avoidanceReference\.line/);
+  assert.match(flowLayout, /if \(avoidanceReference && !avoidanceAnchor\) \{[\s\S]*missingStableAnchor = true;[\s\S]*continue;/);
+  assert.match(flowLayout, /this\.plugin\.scheduleDrawingSave\(this\.file, this\.drawingData\)/);
+  assert.match(flowLayout, /if \(canRepairStoredAnchors\) \{\s*this\.noteFlowAnchorRepairComplete = true/);
+  assert.match(source, /noteFlowInlineLineCandidates\(sourceElement, path, start, end\)/);
+  assert.match(source, /cls: "notedraw-note-flow-line-spacer"/);
+  assert.match(source, /NOTEDRAW_OWNED_MUTATION_SELECTOR = \[[\s\S]*"\.notedraw-note-flow-line-spacer"/);
+  assert.match(flowLayout, /const element = this\.noteFlowTargetElement\(avoidanceAnchor \|\| anchor\)/);
+  assert.match(source, /for \(const spacer of this\.noteFlowLineSpacers\?\.values\?\.\(\) \|\| \[\]\)/);
+  assert.match(source, /scheduleNoteFlowAnchorRepair\(\)[\s\S]*this\.noteFlowAnchorRepairReady = true[\s\S]*this\.scheduleNoteFlowLayout\(\)[\s\S]*}, 700\)/);
+  assert.match(source, /window\.clearTimeout\(this\.noteFlowAnchorRepairTimer\)/);
+  assert.match(source, /selectStoredNoteFlowAnchorCandidate\(candidates, \{[\s\S]*strokeTop/);
+  assert.match(source, /return line === 0/);
+  assert.match(source, /avoidancePath: Number\.isFinite\(avoidanceLine\)/);
+  assert.match(source, /avoidanceLine: Number\.isFinite\(avoidanceLine\)/);
   assert.match(source, /\["padding-top", "padding-bottom", "margin-top", "margin-bottom"\]/);
   assert.doesNotMatch(flowLayout, /this\.clearNoteFlowLayout\(\);\s*const flows/);
   assert.doesNotMatch(flowLayout, /querySelectorAll\?\.\("\[data-note-draw-line-start\]"\)[\s\S]*\[0\]/);
   assert.doesNotMatch(flowLayout, /item\.stroke\.noteFlow = this\.captureNoteFlowAnchor\(item\.stroke\);\s*const anchor/);
   assert.doesNotMatch(flowLayout, /vault\.modify|app\.vault\.process/);
-  assert.doesNotMatch(flowLayout, /scheduleDrawingSave/);
   assert.match(styles, /\.notedraw-note-flow-anchor/);
+  assert.match(styles, /\.notedraw-note-flow-line-spacer \{[\s\S]*display: block;[\s\S]*height: 0;/);
 });
 
 test("moving inserted note elements refreshes Markdown avoidance once per animation frame", async () => {

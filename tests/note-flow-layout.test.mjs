@@ -9,7 +9,9 @@ import {
   projectNoteFlowDocumentPoint,
   reflowNoteFlowIntervals,
   selectNoteFlowAnchorPlacement,
+  selectNoteFlowAvoidanceCandidate,
   selectNoteFlowPositionAnchor,
+  selectStoredNoteFlowAnchorCandidate,
   shouldRenderStrokeOnSurface,
   stabilizeNoteFlowPointProjection,
   stabilizeNoteFlowBounds
@@ -200,6 +202,66 @@ test("note-flow position stays before the Markdown block being pushed", () => {
 
   assert.equal(position?.candidate.id, "stable-above");
   assert.equal(position?.line, 4);
+});
+
+test("duplicate stored line anchors resolve to the block beside the ink", () => {
+  const firstTask = { id: "first", top: 992, bottom: 1045, order: 3 };
+  const laterTask = { id: "later", top: 1248, bottom: 1278, order: 7 };
+
+  assert.equal(selectStoredNoteFlowAnchorCandidate(
+    [laterTask, firstTask],
+    { side: "before", strokeTop: 993 }
+  )?.id, "first");
+});
+
+test("stored after anchors prefer the closest block above the ink", () => {
+  const earlier = { id: "earlier", top: 80, bottom: 112, order: 0 };
+  const closest = { id: "closest", top: 140, bottom: 176, order: 1 };
+
+  assert.equal(selectStoredNoteFlowAnchorCandidate(
+    [earlier, closest],
+    { side: "after", strokeTop: 190 }
+  )?.id, "closest");
+});
+
+test("note-flow avoidance targets the intersecting rendered line", () => {
+  const target = selectNoteFlowAvoidanceCandidate([
+    { id: "line-1", top: 120, bottom: 150, start: 1, end: 1, order: 0 },
+    { id: "line-2", top: 162, bottom: 192, start: 2, end: 2, order: 1 },
+    { id: "line-3", top: 204, bottom: 234, start: 3, end: 3, order: 2 }
+  ], { strokeTop: 158, strokeBottom: 198 });
+
+  assert.equal(target?.id, "line-2");
+  assert.equal(target?.start, 2);
+});
+
+test("note-flow avoidance starts at the first concrete line crossed by a tall stroke", () => {
+  const target = selectNoteFlowAvoidanceCandidate([
+    { id: "line-3", top: 150, bottom: 180, start: 3, end: 3, order: 0 },
+    { id: "line-4", top: 190, bottom: 220, start: 4, end: 4, order: 1 },
+    { id: "line-5", top: 230, bottom: 260, start: 5, end: 5, order: 2 }
+  ], { strokeTop: 176, strokeBottom: 244 });
+
+  assert.equal(target?.id, "line-3");
+  assert.equal(target?.start, 3);
+});
+
+test("note-flow avoidance prefers a concrete line over a larger embed wrapper", () => {
+  const target = selectNoteFlowAvoidanceCandidate([
+    { id: "embed", top: 100, bottom: 260, start: 0, end: 4, order: 0 },
+    { id: "line-2", top: 162, bottom: 192, start: 2, end: 2, order: 1 }
+  ], { strokeTop: 158, strokeBottom: 198 });
+
+  assert.equal(target?.id, "line-2");
+});
+
+test("note-flow avoidance ignores non-overlapping Markdown lines", () => {
+  const target = selectNoteFlowAvoidanceCandidate([
+    { id: "above", top: 80, bottom: 112, start: 0, end: 0 },
+    { id: "below", top: 220, bottom: 252, start: 4, end: 4 }
+  ], { strokeTop: 150, strokeBottom: 190 });
+
+  assert.equal(target, null);
 });
 
 test("subpixel note-flow projection jitter is suppressed but real movement remains", () => {
