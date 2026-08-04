@@ -354,6 +354,25 @@ test("note-flow padding keeps its required offset stable without moving upper co
   }), 134);
 });
 
+test("note-flow padding preserves Markdown clearance at visual reading zoom", () => {
+  assert.equal(noteFlowRequiredOffset({
+    side: "before",
+    anchorTop: 480,
+    anchorBottom: 544,
+    desiredBottom: 520,
+    applied: 40,
+    scale: 2
+  }), 20);
+  assert.equal(noteFlowRequiredOffset({
+    side: "after",
+    anchorTop: 240,
+    anchorBottom: 312,
+    desiredBottom: 420,
+    applied: 80,
+    scale: 2
+  }), 134);
+});
+
 test("inserted note elements are excluded only from the source editing surface", () => {
   const inserted = { noteFlow: { enabled: true } };
   assert.equal(shouldRenderStrokeOnSurface(inserted, "preview"), true);

@@ -78,6 +78,9 @@ test("reading zoom preserves wrapping while edit zoom can reflow", async () => {
   assert.match(source, /syncReadingVirtualSections\(\)/);
   assert.match(source, /captureReadingZoomBaseOrigin\(target\)[\s\S]*this\.readingZoomBaseOrigin = this\.measureReadingZoomOrigin\(target\)/);
   assert.match(source, /scheduleReadingVirtualSectionSync\(\)[\s\S]*if \(this\.isReadingZoomInteractionActive\(\)\) \{\s*return;/);
+  assert.match(source, /scheduleReadingZoomSettle\(delay = 180\)[\s\S]*this\.hasNoteFlowElements\(\)[\s\S]*this\.scheduleMarkdownAnnotationRefresh\(\{ layout: false \}\)[\s\S]*this\.scheduleNoteFlowLayout\(\)/);
+  assert.match(source, /const hasRenderedAnchors = sectionElements\.some[\s\S]*this\.hasNoteFlowElements\(\) && !hasRenderedAnchors[\s\S]*this\.scheduleMarkdownAnnotationRefresh\(\{ layout: false \}\)/);
+  assert.match(source, /scheduleMarkdownAnnotationRefresh\(options = \{\}\)[\s\S]*\.finally\(\(\) => \{[\s\S]*this\.hasNoteFlowElements\(\)[\s\S]*this\.scheduleNoteFlowLayout\(\)/);
   assert.match(source, /renderer\.measureSection\?\.\(sections\[index\]\)/);
   assert.match(source, /if \(canvasWindow\.changed && visualScale !== 1 && this\.usesVisualReadingZoom\(\)\) \{[\s\S]*this\.applyVisualReadingZoomElement\(canvas, visualScale\)/);
   assert.match(source, /this\.scheduleResize\(\{ layout: !this\.usesVisualReadingZoom\(\) \}\)/);

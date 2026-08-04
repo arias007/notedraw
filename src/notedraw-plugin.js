@@ -2035,7 +2035,7 @@ var NoteDrawPlugin = class extends Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.3.26",
+      version: "3.3.27",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -4973,6 +4973,9 @@ var PreviewDrawingController = class {
         }
         this.responsiveLayoutContext = null;
         this.scheduleNoteFlowAnchorRepair();
+        if (this.hasNoteFlowElements()) {
+          this.scheduleNoteFlowLayout();
+        }
         if (this.drawingsLoaded) {
           if (layout) {
             this.responsiveLayoutSignature = "";
@@ -5250,6 +5253,9 @@ var PreviewDrawingController = class {
   }
   supportsNoteFlow() {
     return this.surfaceType === "preview" && !this.embeddedSurface;
+  }
+  hasNoteFlowElements() {
+    return (this.drawingData?.strokes || []).some((stroke) => stroke?.noteFlow?.enabled && !isConnectorStroke(stroke));
   }
   syncCurrentBrushFields() {
     const settings = this.currentBrushSettings();
@@ -8183,6 +8189,10 @@ var PreviewDrawingController = class {
       } else {
         this.scheduleReadingVirtualSectionSync();
       }
+      if (this.hasNoteFlowElements()) {
+        this.resetNoteFlowSettle();
+        this.scheduleMarkdownAnnotationRefresh({ layout: false });
+      }
       this.scheduleNoteFlowLayout();
       this.scheduleResize({ layout: false });
       this.requestRender(true);
@@ -8364,11 +8374,10 @@ var PreviewDrawingController = class {
     const signature = visibleIndexes.join(",");
     if (signature !== this.readingVirtualSectionSignature) {
       this.readingVirtualSectionSignature = signature;
-      const hasNoteFlow = (this.drawingData?.strokes || []).some((stroke) => stroke?.noteFlow?.enabled);
-      const hasRenderedAnchors = sectionElements.some((element) => element.querySelector?.("[data-note-draw-line-start]"));
-      if (hasNoteFlow && !hasRenderedAnchors) {
-        this.scheduleMarkdownAnnotationRefresh({ layout: false });
-      }
+    }
+    const hasRenderedAnchors = sectionElements.some((element) => element.querySelector?.("[data-note-draw-line-start]"));
+    if (this.hasNoteFlowElements() && !hasRenderedAnchors) {
+      this.scheduleMarkdownAnnotationRefresh({ layout: false });
     }
     return true;
   }
