@@ -71,6 +71,10 @@ test("reading zoom preserves wrapping while edit zoom can reflow", async () => {
   assert.match(source, /element\.style\.setProperty\("transform-origin", `\$\{-origin\.x\}px \$\{-origin\.y\}px`\)/);
   assert.match(source, /element\.style\.setProperty\("zoom", String\(zoom\)\)/);
   assert.match(source, /updateReadingZoomExtent\(zoom, target\)/);
+  assert.match(source, /calculateVisualZoomLogicalWindow\(\{/);
+  assert.match(source, /scheduleReadingVirtualSectionSync\(\)/);
+  assert.match(source, /syncReadingVirtualSections\(\)/);
+  assert.match(source, /renderer\.measureSection\?\.\(sections\[index\]\)/);
   assert.match(source, /if \(canvasWindow\.changed && visualScale !== 1 && this\.usesVisualReadingZoom\(\)\) \{[\s\S]*this\.applyVisualReadingZoomElement\(canvas, visualScale\)/);
   assert.match(source, /this\.scheduleResize\(\{ layout: !this\.usesVisualReadingZoom\(\) \}\)/);
   assert.match(source, /measureCanvasExtent\(this\.previewEl, this\.layoutMeasureEl, visualScale\)/);
@@ -148,7 +152,7 @@ test("reading-only note pen and selected elements can reserve Markdown flow spac
   assert.match(source, /positionVersion: 1/);
   assert.match(source, /stabilizeNoteFlowPointProjection\(previousPoints, projectedPoints/);
   assert.match(source, /applyNoteFlowLayout\(\)/);
-  assert.match(source, /selectNoteFlowAnchorPlacement\(candidates, \{ strokeTop \}\)/);
+  assert.match(source, /selectNoteFlowInsertionPlacement\(candidates, \{ strokeTop, strokeBottom \}\)/);
   const flowLayout = source.slice(source.indexOf("  applyNoteFlowLayout()"), source.indexOf("  scheduleNoteFlowLayout()"));
   assert.match(flowLayout, /const appliedValue = Math\.ceil\(state\.base \+ offset\)/);
   assert.match(flowLayout, /const nextValue = `\$\{appliedValue\}px`/);
@@ -166,6 +170,7 @@ test("reading-only note pen and selected elements can reserve Markdown flow spac
   assert.match(flowLayout, /this\.noteFlowAvoidanceAnchors\.get\(avoidanceKey\)/);
   assert.match(flowLayout, /currentNoteFlow\?\.avoidanceLine/);
   assert.match(flowLayout, /selectNoteFlowAvoidanceCandidate\(candidates, \{ strokeTop, strokeBottom \}\)/);
+  assert.match(flowLayout, /selectNoteFlowAvoidanceCandidate\(\[avoidanceAnchor\], \{ strokeTop, strokeBottom \}\)/);
   assert.match(flowLayout, /avoidancePath: avoidanceReference\.path,[\s\S]*avoidanceLine: avoidanceReference\.line/);
   assert.match(flowLayout, /if \(avoidanceReference && !avoidanceAnchor\) \{[\s\S]*missingStableAnchor = true;[\s\S]*continue;/);
   assert.match(flowLayout, /this\.plugin\.scheduleDrawingSave\(this\.file, this\.drawingData\)/);

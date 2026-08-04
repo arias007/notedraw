@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { calculatePinchPanScroll, calculateReadingZoomMargin } from "../src/viewport-gesture.mjs";
+import {
+  calculatePinchPanScroll,
+  calculateReadingZoomMargin,
+  calculateVisualZoomLogicalWindow
+} from "../src/viewport-gesture.mjs";
 
 test("two-finger translation pans without changing zoom", () => {
   const scroll = calculatePinchPanScroll({
@@ -66,4 +70,30 @@ test("reading zoom margin is derived from its stable baseline without cumulative
   assert.equal(first, -468);
   assert.equal(repeated, first);
   assert.equal(calculateReadingZoomMargin(12, 1200, 1.2), 12);
+});
+
+test("visual reading zoom maps the physical bottom viewport back to logical document coordinates", () => {
+  const window = calculateVisualZoomLogicalWindow({
+    scrollTop: 6766,
+    viewportHeight: 611,
+    zoom: 1.20062,
+    origin: 39.7075
+  });
+
+  assert.ok(window.top > 5625 && window.top < 5635);
+  assert.ok(window.height > 508 && window.height < 510);
+  assert.equal(window.bottom, window.top + window.height);
+});
+
+test("unscaled reading surfaces preserve ordinary scroll coordinates", () => {
+  assert.deepEqual(calculateVisualZoomLogicalWindow({
+    scrollTop: 640,
+    viewportHeight: 720,
+    zoom: 1,
+    origin: 48
+  }), {
+    top: 640,
+    bottom: 1360,
+    height: 720
+  });
 });

@@ -39,3 +39,20 @@ export function calculateReadingZoomMargin(baseMargin, targetHeight, zoom) {
   const scale = Math.max(0.01, Number.isFinite(Number(zoom)) ? Number(zoom) : 1);
   return scale < 1 ? base - height * (1 - scale) : base;
 }
+
+export function calculateVisualZoomLogicalWindow({
+  scrollTop = 0,
+  viewportHeight = 0,
+  zoom = 1,
+  origin = 0
+} = {}) {
+  const scale = Math.max(0.01, finite(zoom, 1));
+  const visualTop = Math.max(0, finite(scrollTop));
+  const logicalTop = Math.max(0, (visualTop - finite(origin) * (scale - 1)) / scale);
+  const logicalHeight = Math.max(0, finite(viewportHeight)) / scale;
+  return {
+    top: logicalTop,
+    bottom: logicalTop + logicalHeight,
+    height: logicalHeight
+  };
+}

@@ -64,12 +64,14 @@ export function noteFlowSurfaceRepairLimits(referenceHeight, viewportHeight) {
   };
 }
 
-export function selectNoteFlowAnchorPlacement(candidates, {
+export function selectNoteFlowInsertionPlacement(candidates, {
   strokeTop,
+  strokeBottom = strokeTop,
   tolerance = 4
 } = {}) {
   const top = finite(strokeTop, Number.NaN);
-  if (!Number.isFinite(top)) {
+  const bottom = Math.max(top, finite(strokeBottom, top));
+  if (!Number.isFinite(top) || !Number.isFinite(bottom)) {
     return null;
   }
   const ordered = (Array.isArray(candidates) ? candidates : []).filter((candidate) => {
@@ -86,15 +88,34 @@ export function selectNoteFlowAnchorPlacement(candidates, {
     return null;
   }
 
-  // Only move blocks that begin below the ink. Moving an intersecting block
-  // can pull text from above the stroke down with the reserved space.
-  const below = ordered.find((candidate) => candidate.top >= top - finite(tolerance, 4));
+  const threshold = Math.max(0, finite(tolerance, 4));
+  const preciseOverlap = ordered.filter((candidate) => {
+    const precise = Boolean(candidate.lineSpacer)
+      || candidate.start === candidate.end
+      || Math.abs(candidate.top - top) <= threshold;
+    return precise && candidate.bottom >= top - threshold && candidate.top <= bottom + threshold;
+  }).sort((a, b) => {
+    const aLine = a.lineSpacer || a.start === a.end ? 0 : 1;
+    const bLine = b.lineSpacer || b.start === b.end ? 0 : 1;
+    return aLine - bLine || a.top - b.top || (a.bottom - a.top) - (b.bottom - b.top) || a.order - b.order;
+  })[0];
+  if (preciseOverlap) {
+    return { candidate: preciseOverlap, side: "before", line: preciseOverlap.start };
+  }
+
+  // Padding a broad paragraph would move text from its first line instead of
+  // reserving space where the ink was placed.
+  const below = ordered.find((candidate) => candidate.top >= bottom - threshold);
   if (below) {
     return { candidate: below, side: "before", line: below.start };
   }
 
   const last = ordered[ordered.length - 1];
   return { candidate: last, side: "after", line: last.end };
+}
+
+export function selectNoteFlowAnchorPlacement(candidates, options = {}) {
+  return selectNoteFlowInsertionPlacement(candidates, options);
 }
 
 export function selectNoteFlowPositionAnchor(candidates, {
@@ -175,7 +196,13 @@ export function selectNoteFlowAvoidanceCandidate(candidates, {
   }
   const threshold = Math.max(0, finite(tolerance, 4));
   return (Array.isArray(candidates) ? candidates : []).filter((candidate) => {
+    const start = Number(candidate?.start);
+    const end = Number(candidate?.end);
+    const precise = Boolean(candidate?.lineSpacer)
+      || Number.isFinite(start) && Number.isFinite(end) && start === end
+      || Math.abs(Number(candidate?.top) - top) <= threshold;
     return candidate
+      && precise
       && Number.isFinite(Number(candidate.top))
       && Number.isFinite(Number(candidate.bottom))
       && Number(candidate.bottom) >= top + threshold

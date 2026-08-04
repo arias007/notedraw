@@ -1488,6 +1488,22 @@ function calculateReadingZoomMargin(baseMargin, targetHeight, zoom) {
   const scale = Math.max(0.01, Number.isFinite(Number(zoom)) ? Number(zoom) : 1);
   return scale < 1 ? base - height * (1 - scale) : base;
 }
+function calculateVisualZoomLogicalWindow({
+  scrollTop = 0,
+  viewportHeight = 0,
+  zoom = 1,
+  origin = 0
+} = {}) {
+  const scale = Math.max(0.01, finite5(zoom, 1));
+  const visualTop = Math.max(0, finite5(scrollTop));
+  const logicalTop = Math.max(0, (visualTop - finite5(origin) * (scale - 1)) / scale);
+  const logicalHeight = Math.max(0, finite5(viewportHeight)) / scale;
+  return {
+    top: logicalTop,
+    bottom: logicalTop + logicalHeight,
+    height: logicalHeight
+  };
+}
 
 // src/note-flow-layout.mjs
 function finite6(value, fallback = 0) {
@@ -1547,12 +1563,14 @@ function noteFlowSurfaceRepairLimits(referenceHeight, viewportHeight) {
     runawayThreshold: Math.max(8e3, stableHeight * 4)
   };
 }
-function selectNoteFlowAnchorPlacement(candidates, {
+function selectNoteFlowInsertionPlacement(candidates, {
   strokeTop,
+  strokeBottom = strokeTop,
   tolerance = 4
 } = {}) {
   const top = finite6(strokeTop, Number.NaN);
-  if (!Number.isFinite(top)) {
+  const bottom = Math.max(top, finite6(strokeBottom, top));
+  if (!Number.isFinite(top) || !Number.isFinite(bottom)) {
     return null;
   }
   const ordered = (Array.isArray(candidates) ? candidates : []).filter((candidate) => {
@@ -1568,7 +1586,19 @@ function selectNoteFlowAnchorPlacement(candidates, {
   if (!ordered.length) {
     return null;
   }
-  const below = ordered.find((candidate) => candidate.top >= top - finite6(tolerance, 4));
+  const threshold = Math.max(0, finite6(tolerance, 4));
+  const preciseOverlap = ordered.filter((candidate) => {
+    const precise = Boolean(candidate.lineSpacer) || candidate.start === candidate.end || Math.abs(candidate.top - top) <= threshold;
+    return precise && candidate.bottom >= top - threshold && candidate.top <= bottom + threshold;
+  }).sort((a, b) => {
+    const aLine = a.lineSpacer || a.start === a.end ? 0 : 1;
+    const bLine = b.lineSpacer || b.start === b.end ? 0 : 1;
+    return aLine - bLine || a.top - b.top || a.bottom - a.top - (b.bottom - b.top) || a.order - b.order;
+  })[0];
+  if (preciseOverlap) {
+    return { candidate: preciseOverlap, side: "before", line: preciseOverlap.start };
+  }
+  const below = ordered.find((candidate) => candidate.top >= bottom - threshold);
   if (below) {
     return { candidate: below, side: "before", line: below.start };
   }
@@ -1647,7 +1677,10 @@ function selectNoteFlowAvoidanceCandidate(candidates, {
   }
   const threshold = Math.max(0, finite6(tolerance, 4));
   return (Array.isArray(candidates) ? candidates : []).filter((candidate) => {
-    return candidate && Number.isFinite(Number(candidate.top)) && Number.isFinite(Number(candidate.bottom)) && Number(candidate.bottom) >= top + threshold && Number(candidate.top) <= bottom - threshold;
+    const start = Number(candidate?.start);
+    const end = Number(candidate?.end);
+    const precise = Boolean(candidate?.lineSpacer) || Number.isFinite(start) && Number.isFinite(end) && start === end || Math.abs(Number(candidate?.top) - top) <= threshold;
+    return candidate && precise && Number.isFinite(Number(candidate.top)) && Number.isFinite(Number(candidate.bottom)) && Number(candidate.bottom) >= top + threshold && Number(candidate.top) <= bottom - threshold;
   }).map((candidate, order) => ({
     ...candidate,
     top: finite6(candidate.top),
@@ -4412,7 +4445,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.3.21",
+      version: "3.3.22",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -5142,7 +5175,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       }
       const sourceEl = findSourceSurfaceForView(view);
       const previewVisible = isMarkdownPreviewVisible(view, findRootPreviewForView(view));
-      const sourceVisible = isElementVisibleEnough(sourceEl);
+      const sourceVisible = isMarkdownSourceVisible(view, sourceEl);
       const shouldMount = Boolean(sourceEl) && isSourceMode(view) && sourceVisible && !previewVisible;
       const existing = this.sourceControllers.get(view);
       if (!shouldMount) {
@@ -5196,7 +5229,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       let previewController = preview ? this.controllers.get(preview) || preview._noteDrawController : null;
       const sourceController = source ? this.controllers.get(source) || source._noteDrawController : null;
       const previewVisible = isMarkdownPreviewVisible(view, preview);
-      const sourceVisible = isElementVisibleEnough(source);
+      const sourceVisible = isMarkdownSourceVisible(view, source);
       if (isSourceMode(view) && sourceVisible && !previewVisible) {
         for (const rootPreview of findRootPreviewsForView(view)) {
           const controller = this.controllers.get(rootPreview) || rootPreview._noteDrawController;
@@ -6315,6 +6348,9 @@ var PreviewDrawingController = class {
     this.readingZoomTarget = null;
     this.readingZoomExtent = null;
     this.readingZoomStyleState = /* @__PURE__ */ new Map();
+    this.readingVirtualSectionFrameId = null;
+    this.readingVirtualSectionsManaged = false;
+    this.readingVirtualSectionSignature = "";
     this.pendingEmbedTool = null;
     this.pendingMindMapFile = null;
     this.pendingMindMapOptions = null;
@@ -6835,6 +6871,7 @@ var PreviewDrawingController = class {
     this.cancelResizeFrame();
     this.cancelResponsiveProjectionSettle();
     this.cancelPositionFrame();
+    this.cancelReadingVirtualSectionSync();
     if (this.scrollSettleTimer !== null) {
       window.clearTimeout(this.scrollSettleTimer);
       this.scrollSettleTimer = null;
@@ -7064,6 +7101,7 @@ var PreviewDrawingController = class {
   }
   onScroll() {
     this.lastScrollAt = Date.now();
+    this.scheduleReadingVirtualSectionSync();
     if (this.embeddedSurface && !isElementNearViewport(this.previewEl)) {
       if (this.scrollSettleTimer !== null) {
         window.clearTimeout(this.scrollSettleTimer);
@@ -10402,6 +10440,152 @@ var PreviewDrawingController = class {
     element.style.setProperty("transform", `scale(${zoom})${originalTransform && originalTransform !== "none" ? ` ${originalTransform}` : ""}`);
     element.style.setProperty("transform-origin", `${-origin.x}px ${-origin.y}px`);
   }
+  readingPreviewRenderer() {
+    const renderer = this.view?.previewMode?.renderer;
+    return renderer?.previewEl === this.previewEl && Array.isArray(renderer?.sections) ? renderer : null;
+  }
+  readingVirtualZoomOrigin(target) {
+    const origin = String(target?.style?.getPropertyValue?.("transform-origin") || "").trim().split(/\s+/);
+    const y = Number.parseFloat(origin[1] || origin[0]);
+    return Number.isFinite(y) ? -y : 0;
+  }
+  scheduleReadingVirtualSectionSync() {
+    if (this.destroyed || !this.usesVisualReadingZoom() || Math.abs(this.readingZoomScale() - 1) < 1e-3 || !this.readingPreviewRenderer()) {
+      return;
+    }
+    if (this.readingVirtualSectionFrameId !== null) {
+      return;
+    }
+    this.readingVirtualSectionFrameId = window.requestAnimationFrame(() => {
+      this.readingVirtualSectionFrameId = null;
+      this.syncReadingVirtualSections();
+    });
+  }
+  cancelReadingVirtualSectionSync() {
+    if (this.readingVirtualSectionFrameId !== null) {
+      window.cancelAnimationFrame(this.readingVirtualSectionFrameId);
+      this.readingVirtualSectionFrameId = null;
+    }
+  }
+  restoreReadingVirtualSections() {
+    this.cancelReadingVirtualSectionSync();
+    if (!this.readingVirtualSectionsManaged) {
+      return;
+    }
+    this.readingVirtualSectionsManaged = false;
+    this.readingVirtualSectionSignature = "";
+    const renderer = this.readingPreviewRenderer();
+    if (!renderer || !this.previewEl?.isConnected) {
+      return;
+    }
+    try {
+      renderer.updateVirtualDisplay?.();
+    } catch (error) {
+      void error;
+    }
+    if (this.readingBottomSpacerHeight > 0) {
+      this.ensureReadingBottomSpacer();
+    }
+  }
+  syncReadingVirtualSections() {
+    const renderer = this.readingPreviewRenderer();
+    const target = this.readingZoomTarget;
+    const zoom = this.readingZoomScale();
+    const sizer = renderer?.sizerEl || rootPreviewSizer(this.previewEl);
+    const pusher = renderer?.pusherEl;
+    const sections = renderer?.sections || [];
+    if (!renderer || !target?.isConnected || !sizer?.isConnected || !pusher || !sections.length || Math.abs(zoom - 1) < 1e-3) {
+      return false;
+    }
+    const shown = sections.filter((section) => section?.shown !== false && section?.el);
+    const knownHeights = shown.map((section) => Number(section.height) || 0).filter((height) => height > 0);
+    const averageHeight = knownHeights.length ? knownHeights.reduce((sum, height) => sum + height, 0) / knownHeights.length : 48;
+    const topSpace = Math.max(0, Number(renderer.topSpace) || 0);
+    let cursor = topSpace;
+    const records = [];
+    for (const section of shown) {
+      const height = Math.max(1, Number(section.height) || averageHeight);
+      records.push({ section, start: cursor, end: cursor + height, height });
+      cursor += height;
+    }
+    const documentHeight = Math.max(1, cursor - topSpace);
+    const viewport = calculateVisualZoomLogicalWindow({
+      scrollTop: this.previewEl.scrollTop,
+      viewportHeight: this.previewEl.clientHeight,
+      zoom,
+      origin: this.readingVirtualZoomOrigin(target)
+    });
+    const logicalTop = clamp9(viewport.top, 0, Math.max(0, documentHeight - viewport.height));
+    const logicalBottom = logicalTop + viewport.height;
+    const buffer = Math.max(
+      240,
+      viewport.height * Math.max(0.5, Number(renderer.renderExtra) || 1),
+      (Number(renderer.renderExtraMinPx) || 0) / zoom
+    );
+    let visible = records.filter((record) => record.end >= logicalTop - buffer && record.start <= logicalBottom + buffer);
+    if (!visible.length && records.length) {
+      visible = [records.reduce((nearest, record) => {
+        const distance = Math.min(Math.abs(record.start - logicalTop), Math.abs(record.end - logicalTop));
+        return !nearest || distance < nearest.distance ? { record, distance } : nearest;
+      }, null).record];
+    }
+    const selection = this.previewEl.ownerDocument?.defaultView?.getSelection?.();
+    if (selection?.rangeCount) {
+      const range = selection.getRangeAt(0);
+      if (!range.collapsed && this.previewEl.contains(range.commonAncestorContainer)) {
+        visible = records.filter((record) => {
+          return visible.includes(record) || record.section.el === range.startContainer || record.section.el === range.endContainer || record.section.el.contains?.(range.startContainer) || record.section.el.contains?.(range.endContainer);
+        });
+      }
+    }
+    visible.sort((a, b) => sections.indexOf(a.section) - sections.indexOf(b.section));
+    for (const record of visible) {
+      record.section.render?.();
+    }
+    const first = visible[0] || records[0];
+    const sectionElements = visible.map((record) => record.section.el);
+    const bottomSpacer = this.readingBottomSpacerHeight > 0 ? this.readingBottomSpacer : null;
+    const desiredChildren = [pusher, ...sectionElements, ...bottomSpacer ? [bottomSpacer] : []];
+    const currentChildren = Array.from(sizer.children || []);
+    const childrenChanged = currentChildren.length !== desiredChildren.length || currentChildren.some((child, index) => child !== desiredChildren[index]);
+    if (childrenChanged) {
+      if (typeof sizer.setChildrenInPlace === "function") {
+        sizer.setChildrenInPlace(desiredChildren);
+      } else {
+        sizer.replaceChildren(...desiredChildren);
+      }
+    }
+    const pusherOffset = Math.max(0, (first?.start || topSpace) - topSpace);
+    const pusherMargin = `${pusherOffset}px`;
+    if (pusher.style.marginBottom !== pusherMargin) {
+      pusher.style.marginBottom = pusherMargin;
+    }
+    const minimumHeight = `${Math.max(0, documentHeight + Number(this.readingBottomSpacerHeight || 0) - 1)}px`;
+    if (sizer.style.minHeight !== minimumHeight) {
+      sizer.style.minHeight = minimumHeight;
+    }
+    const visibleIndexes = visible.map((record) => sections.indexOf(record.section)).filter((index) => index >= 0);
+    const firstIndex = visibleIndexes[0] ?? 0;
+    const lastIndex = visibleIndexes[visibleIndexes.length - 1] ?? firstIndex;
+    const measureThrough = lastIndex === sections.length - 1 ? lastIndex : lastIndex - 1;
+    for (let index = firstIndex; index <= measureThrough; index += 1) {
+      if (sections[index]?.shown !== false && sections[index]?.el?.isConnected) {
+        renderer.measureSection?.(sections[index]);
+      }
+    }
+    renderer.renderHighlights?.(firstIndex, lastIndex);
+    this.readingVirtualSectionsManaged = true;
+    const signature = visibleIndexes.join(",");
+    if (signature !== this.readingVirtualSectionSignature) {
+      this.readingVirtualSectionSignature = signature;
+      const hasNoteFlow = (this.drawingData?.strokes || []).some((stroke) => stroke?.noteFlow?.enabled);
+      const hasRenderedAnchors = sectionElements.some((element) => element.querySelector?.("[data-note-draw-line-start]"));
+      if (hasNoteFlow && !hasRenderedAnchors) {
+        this.scheduleMarkdownAnnotationRefresh({ layout: false });
+      }
+    }
+    return true;
+  }
   rememberReadingZoomStyles(element) {
     if (!element || this.readingZoomStyleState.has(element)) {
       return;
@@ -10485,6 +10669,7 @@ var PreviewDrawingController = class {
     const elements = this.readingZoomElements(target);
     if (Math.abs(zoom - 1) < 1e-3) {
       this.restoreReadingZoomStyles();
+      this.restoreReadingVirtualSections();
       this.previewEl.removeClass("is-reading-zoomed");
       this.previewEl.removeClass("is-editing-layout-zoomed");
     } else {
@@ -10516,10 +10701,12 @@ var PreviewDrawingController = class {
       this.previewEl.toggleClass("is-editing-layout-zoomed", !this.usesVisualReadingZoom());
     }
     this.updateReadingZoomExtent(zoom, target);
+    this.scheduleReadingVirtualSectionSync();
     return true;
   }
   clearReadingZoomStyles() {
     this.restoreReadingZoomStyles();
+    this.restoreReadingVirtualSections();
     this.updateReadingZoomExtent(1, this.readingZoomTarget);
     this.previewEl?.removeClass("is-reading-zoomed");
     this.previewEl?.removeClass("is-editing-layout-zoomed");
@@ -12413,8 +12600,9 @@ var PreviewDrawingController = class {
     }
     const scaleY = canvasRect.height > 0 ? canvasRect.height / Math.max(1, this.canvasRenderHeight) : 1;
     const strokeTop = canvasRect.top + (bounds.minY - this.canvasWindowTop) * scaleY;
+    const strokeBottom = canvasRect.top + (bounds.maxY - this.canvasWindowTop) * scaleY;
     const candidates = this.noteFlowCandidates();
-    const placement = selectNoteFlowAnchorPlacement(candidates, { strokeTop });
+    const placement = selectNoteFlowInsertionPlacement(candidates, { strokeTop, strokeBottom });
     const previousAnchor = options.preservePlacement === true && Number.isFinite(previous?.line) && ["before", "after"].includes(previous?.side) ? candidates.filter((candidate) => {
       return candidate.path === previous.path && previous.line >= candidate.start && previous.line <= candidate.end;
     }).sort((a, b) => a.bottom - a.top - (b.bottom - b.top) || a.order - b.order)[0] || null : null;
@@ -12475,13 +12663,14 @@ var PreviewDrawingController = class {
       return [];
     }
     const childNodes = Array.from(sourceElement.childNodes || []);
-    if (childNodes.filter((node) => node.nodeName === "BR").length < end - start) {
+    const breakIndexes = childNodes.map((node, index) => node.nodeName === "BR" ? index : -1).filter((index) => index >= 0);
+    if (!breakIndexes.length) {
       return [];
     }
     const candidates = [];
     let segmentStart = 0;
-    let line = start;
-    const appendSegment = (segmentEnd) => {
+    const segmentCount = breakIndexes.length + 1;
+    const appendSegment = (segmentEnd, segmentIndex) => {
       const nodes = childNodes.slice(segmentStart, segmentEnd).filter((node) => {
         if (node.nodeType === Node.TEXT_NODE) {
           return Boolean(node.nodeValue?.trim());
@@ -12493,6 +12682,7 @@ var PreviewDrawingController = class {
       if (!firstNode || !lastNode) {
         return;
       }
+      const line = clamp9(Math.round(start + segmentIndex * (end - start) / Math.max(1, segmentCount - 1)), start, end);
       try {
         const range = sourceElement.ownerDocument.createRange();
         range.setStartBefore(firstNode);
@@ -12510,7 +12700,7 @@ var PreviewDrawingController = class {
           top: Math.min(...rects.map((rect) => rect.top)),
           bottom: Math.max(...rects.map((rect) => rect.bottom)),
           lineSpacer: {
-            key: `${path}\0${line}`,
+            key: `${path}\0${line}\0${segmentIndex}`,
             parent: sourceElement,
             before: firstNode
           }
@@ -12519,16 +12709,13 @@ var PreviewDrawingController = class {
         void error;
       }
     };
-    for (let index = 0; index < childNodes.length; index += 1) {
-      if (childNodes[index].nodeName !== "BR") {
-        continue;
-      }
-      appendSegment(index);
+    for (let segmentIndex = 0; segmentIndex < breakIndexes.length; segmentIndex += 1) {
+      const index = breakIndexes[segmentIndex];
+      appendSegment(index, segmentIndex);
       segmentStart = index + 1;
-      line += 1;
     }
-    appendSegment(childNodes.length);
-    return candidates.length === end - start + 1 ? candidates : [];
+    appendSegment(childNodes.length, segmentCount - 1);
+    return candidates;
   }
   noteFlowCandidates() {
     const grouped = /* @__PURE__ */ new Map();
@@ -12771,6 +12958,18 @@ var PreviewDrawingController = class {
         line: avoidanceReference.line,
         side: "before"
       }, candidates, strokeTop) : null;
+      if (avoidanceAnchor && !selectNoteFlowAvoidanceCandidate([avoidanceAnchor], { strokeTop, strokeBottom })) {
+        avoidanceReference = null;
+        avoidanceAnchor = null;
+        this.noteFlowAvoidanceAnchors.delete(avoidanceKey);
+        item.stroke.noteFlow = {
+          ...currentNoteFlow,
+          avoidancePath: "",
+          avoidanceLine: null
+        };
+        currentNoteFlow = item.stroke.noteFlow;
+        updatedNoteFlowMetadata = true;
+      }
       if (!avoidanceReference) {
         avoidanceAnchor = selectNoteFlowAvoidanceCandidate(candidates, { strokeTop, strokeBottom });
         if (avoidanceAnchor) {
@@ -14941,12 +15140,23 @@ function resetDormantRootPreview(view, preview) {
 function findPrimaryMarkdownSurface(view) {
   const source = findSourceSurfaceForView(view);
   const preview = findRootPreviewForView(view);
-  if (isSourceMode(view)) {
-    return source || preview;
+  if (isMarkdownPreviewVisible(view, preview)) {
+    return preview;
   }
-  return preview || source;
+  if (isMarkdownSourceVisible(view, source)) {
+    return source;
+  }
+  return isSourceMode(view) ? source || preview : preview || source;
 }
 function currentMarkdownSurfaceType(view) {
+  const preview = findRootPreviewForView(view);
+  if (isMarkdownPreviewVisible(view, preview)) {
+    return "preview";
+  }
+  const source = findSourceSurfaceForView(view);
+  if (isMarkdownSourceVisible(view, source)) {
+    return "source";
+  }
   return isSourceMode(view) ? "source" : "preview";
 }
 function isReadingSurfaceVisible(view) {
@@ -14961,14 +15171,28 @@ function isElementVisibleEnough(element) {
   return Boolean(rect.bottom > 0 && rect.right > 0 && rect.top < window.innerHeight && rect.left < window.innerWidth);
 }
 function isMarkdownPreviewVisible(view, preview) {
-  if (!view || !preview?.isConnected || isSourceMode(view)) {
+  if (!view || !preview?.isConnected || !isElementDisplayVisible(preview)) {
     return false;
   }
   const viewContent = view.containerEl?.querySelector?.(":scope > .view-content") || view.containerEl?.querySelector?.(".view-content") || view.containerEl;
   if (!isElementVisibleEnough(viewContent)) {
     return false;
   }
-  return Boolean(rootPreviewSizer(preview) || isElementLaidOut(preview));
+  return Boolean(rootPreviewSizer(preview) && isElementLaidOut(preview));
+}
+function isElementDisplayVisible(element) {
+  if (!element?.isConnected) {
+    return false;
+  }
+  const style = element.ownerDocument?.defaultView?.getComputedStyle?.(element);
+  return style?.display !== "none" && style?.visibility !== "hidden" && Number(style?.opacity ?? 1) !== 0;
+}
+function isMarkdownSourceVisible(view, source = findSourceSurfaceForView(view)) {
+  if (!view || !source?.isConnected || !isElementDisplayVisible(source) || !isElementLaidOut(source)) {
+    return false;
+  }
+  const sourceRoot = source.closest?.(".markdown-source-view") || source;
+  return isElementDisplayVisible(sourceRoot) && isElementLaidOut(sourceRoot);
 }
 function isElementLaidOut(element) {
   if (!element?.isConnected) {
@@ -15187,7 +15411,12 @@ function findSourceSurfaceForView(view) {
   if (!container) {
     return null;
   }
-  return container.querySelector(".markdown-source-view .cm-scroller") || container.querySelector(".markdown-source-view .cm-editor") || container.querySelector(".markdown-source-view") || null;
+  const candidates = [
+    container.querySelector(".markdown-source-view .cm-scroller"),
+    container.querySelector(".markdown-source-view .cm-editor"),
+    container.querySelector(".markdown-source-view")
+  ].filter(Boolean);
+  return candidates.find((element) => isElementDisplayVisible(element) && isElementLaidOut(element)) || candidates.find((element) => isElementLaidOut(element)) || candidates[0] || null;
 }
 function getCodeMirrorView(markdownView, sourceEl) {
   const candidates = [

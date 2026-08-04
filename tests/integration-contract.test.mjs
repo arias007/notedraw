@@ -72,15 +72,15 @@ test("registered surfaces expose stable handles and structured actions without c
   assert.match(source, /registeredSurfaceSource/);
 });
 
-test("3.3.21 preserves bottom coordinates and cross-view frames without hidden-surface layout writes", async () => {
+test("3.3.22 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
   const [source, manifestText] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(manifestUrl, "utf8")
   ]);
   const manifest = JSON.parse(manifestText);
 
-  assert.equal(manifest.version, "3.3.21");
-  assert.match(source, /version: "3\.3\.21"/);
+  assert.equal(manifest.version, "3.3.22");
+  assert.match(source, /version: "3\.3\.22"/);
   assert.match(source, /if \(!this\.responsivePointsInitialized \|\| signature !== this\.responsiveLayoutSignature\)/);
   assert.match(source, /captureElementLayoutForStroke/);
   assert.match(source, /projectElementPoints\(stroke\.points, layout, box/);
@@ -204,7 +204,7 @@ test("reading controllers survive zero-sized view transitions until the source s
   const syncStart = source.indexOf("  syncMarkdownControllerModes() {");
   const syncSource = source.slice(syncStart, source.indexOf("  syncEmbeddedMarkdownControllers()", syncStart));
 
-  assert.match(syncSource, /const sourceVisible = isElementVisibleEnough\(source\)/);
+  assert.match(syncSource, /const sourceVisible = isMarkdownSourceVisible\(view, source\)/);
   assert.match(syncSource, /if \(isSourceMode\(view\) && sourceVisible && !previewVisible\) \{\s*for \(const rootPreview of findRootPreviewsForView\(view\)\)/);
   assert.match(syncSource, /sourceController\?\.syncFloatingControlClasses\(\);\s*if \(!previewVisible\) \{\s*continue;/);
   assert.match(syncSource, /if \(previewController\?\.plugin === this && !previewController\.destroyed[\s\S]*continue;\s*}\s*if \(!isRootPreviewReady/);

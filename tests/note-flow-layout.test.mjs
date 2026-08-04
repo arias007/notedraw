@@ -10,6 +10,7 @@ import {
   reflowNoteFlowIntervals,
   selectNoteFlowAnchorPlacement,
   selectNoteFlowAvoidanceCandidate,
+  selectNoteFlowInsertionPlacement,
   selectNoteFlowPositionAnchor,
   selectStoredNoteFlowAnchorCandidate,
   shouldRenderStrokeOnSurface,
@@ -152,6 +153,28 @@ test("note-flow leaves an intersecting upper block in place", () => {
   assert.equal(placement?.line, 4);
 });
 
+test("note-flow starts at a precise rendered line crossed by the stroke", () => {
+  const placement = selectNoteFlowInsertionPlacement([
+    { id: "paragraph", top: 80, bottom: 260, start: 0, end: 7, order: 0 },
+    { id: "line-5", top: 168, bottom: 194, start: 5, end: 5, order: 1, lineSpacer: {} },
+    { id: "next", top: 280, bottom: 312, start: 8, end: 8, order: 2 }
+  ], { strokeTop: 166, strokeBottom: 202 });
+
+  assert.equal(placement?.candidate.id, "line-5");
+  assert.equal(placement?.side, "before");
+  assert.equal(placement?.line, 5);
+});
+
+test("note-flow skips a broad paragraph above the stroke and starts at the next block", () => {
+  const placement = selectNoteFlowInsertionPlacement([
+    { id: "broad", top: 60, bottom: 240, start: 0, end: 7, order: 0 },
+    { id: "next", top: 252, bottom: 286, start: 8, end: 8, order: 1 }
+  ], { strokeTop: 180, strokeBottom: 214 });
+
+  assert.equal(placement?.candidate.id, "next");
+  assert.equal(placement?.line, 8);
+});
+
 test("note-flow does not fall back to the first line for a middle stroke", () => {
   const placement = selectNoteFlowAnchorPlacement([
     { id: "first", top: 20, bottom: 52, start: 0, end: 0 },
@@ -260,6 +283,14 @@ test("note-flow avoidance ignores non-overlapping Markdown lines", () => {
     { id: "above", top: 80, bottom: 112, start: 0, end: 0 },
     { id: "below", top: 220, bottom: 252, start: 4, end: 4 }
   ], { strokeTop: 150, strokeBottom: 190 });
+
+  assert.equal(target, null);
+});
+
+test("note-flow avoidance never pads a broad multi-line container from its top", () => {
+  const target = selectNoteFlowAvoidanceCandidate([
+    { id: "broad", top: 60, bottom: 260, start: 0, end: 8 }
+  ], { strokeTop: 170, strokeBottom: 205 });
 
   assert.equal(target, null);
 });
