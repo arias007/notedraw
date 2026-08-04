@@ -323,6 +323,10 @@ export function shouldRenderStrokeOnSurface(stroke, surfaceType) {
   return !(surfaceType === "source" && stroke?.noteFlow?.enabled);
 }
 
+export function shouldPlaceStrokeBelowMarkdown(stroke) {
+  return Boolean(stroke?.belowMarkdown || stroke?.noteFlow?.enabled);
+}
+
 export function reflowNoteFlowIntervals(items, { gap = 12 } = {}) {
   const defaultGap = Math.max(0, finite(gap, 12));
   const normalized = (Array.isArray(items) ? items : []).map((item, order) => {

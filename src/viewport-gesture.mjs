@@ -13,6 +13,8 @@ export function calculatePinchPanScroll({
   previousCenter = null,
   nextCenter = null,
   zoomRatio = 1,
+  originX = 0,
+  originY = 0,
   movementEpsilon = 0.35,
   maxScrollLeft = Number.POSITIVE_INFINITY,
   maxScrollTop = Number.POSITIVE_INFINITY
@@ -25,11 +27,13 @@ export function calculatePinchPanScroll({
   const previousY = finite(previous.y);
   const nextX = Math.abs(finite(next.x) - previousX) < epsilon ? previousX : finite(next.x);
   const nextY = Math.abs(finite(next.y) - previousY) < epsilon ? previousY : finite(next.y);
+  const stableOriginX = finite(originX);
+  const stableOriginY = finite(originY);
   const maxLeft = Math.max(0, finite(maxScrollLeft, Number.MAX_SAFE_INTEGER));
   const maxTop = Math.max(0, finite(maxScrollTop, Number.MAX_SAFE_INTEGER));
   return {
-    left: clamp((finite(scrollLeft) + previousX) * ratio - nextX, 0, maxLeft),
-    top: clamp((finite(scrollTop) + previousY) * ratio - nextY, 0, maxTop)
+    left: clamp((finite(scrollLeft) + previousX) * ratio + (1 - ratio) * stableOriginX - nextX, 0, maxLeft),
+    top: clamp((finite(scrollTop) + previousY) * ratio + (1 - ratio) * stableOriginY - nextY, 0, maxTop)
   };
 }
 

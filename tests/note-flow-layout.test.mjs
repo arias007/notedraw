@@ -13,6 +13,7 @@ import {
   selectNoteFlowInsertionPlacement,
   selectNoteFlowPositionAnchor,
   selectStoredNoteFlowAnchorCandidate,
+  shouldPlaceStrokeBelowMarkdown,
   shouldRenderStrokeOnSurface,
   stabilizeNoteFlowPointProjection,
   stabilizeNoteFlowBounds
@@ -358,6 +359,12 @@ test("inserted note elements are excluded only from the source editing surface",
   assert.equal(shouldRenderStrokeOnSurface(inserted, "preview"), true);
   assert.equal(shouldRenderStrokeOnSurface(inserted, "source"), false);
   assert.equal(shouldRenderStrokeOnSurface({}, "source"), true);
+});
+
+test("inserted note elements always remain below Markdown content", () => {
+  assert.equal(shouldPlaceStrokeBelowMarkdown({ noteFlow: { enabled: true }, belowMarkdown: false }), true);
+  assert.equal(shouldPlaceStrokeBelowMarkdown({ belowMarkdown: true }), true);
+  assert.equal(shouldPlaceStrokeBelowMarkdown({}), false);
 });
 
 test("moving an inserted element pushes later elements and fills a usable upper vacancy", () => {

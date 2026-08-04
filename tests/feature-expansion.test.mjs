@@ -43,7 +43,7 @@ test("scrolling refreshes only the canvas window while real layout changes can r
   assert.match(source, /if \(layout\) \{\s*this\.render\(\);\s*\} else \{\s*this\.renderCanvas\(\);/);
   assert.match(source, /const atScrollEnd = scrollHeight > clientHeight && scrollTop \+ clientHeight >= scrollHeight - 3/);
   assert.match(source, /scheduleMarkdownAnnotationRefresh\(\{ layout: Date\.now\(\) - this\.lastScrollAt > 220 \}\)/);
-  assert.match(source, /resizeCanvas\(options = \{\}\)[\s\S]*const refreshLayout = options\.layout !== false/);
+  assert.match(source, /resizeCanvas\(options = \{\}\)[\s\S]*const refreshLayout = \(options\.layout !== false && !this\.isReadingZoomInteractionActive\(\)\)/);
   assert.match(source, /if \(this\.drawingsLoaded && refreshLayout\) \{\s*const frame = this\.getResponsiveContentFrame\(\)/);
   assert.match(source, /const readingScrollActive = this\.isReadingProjectionSettleSurface\(\)[\s\S]*sinceScroll < 260/);
   assert.match(source, /if \(readingScrollActive && this\.resizeNeedsLayout\) \{\s*this\.resizeNeedsLayout = false/);
@@ -64,6 +64,7 @@ test("reading zoom preserves wrapping while edit zoom can reflow", async () => {
   assert.match(source, /if \(\(event\.ctrlKey \|\| event\.metaKey\) && this\.canZoomReadingSurface\(\)\)/);
   assert.match(source, /nextZoom = this\.readingZoom \* distance \/ previousDistance/);
   assert.match(source, /calculatePinchPanScroll\(\{[\s\S]*previousCenter,[\s\S]*nextCenter,[\s\S]*zoomRatio: ratio/);
+  assert.match(source, /originX: origin\.x,[\s\S]*originY: origin\.y/);
   assert.match(source, /handleMultiTouchScroll\(event\)[\s\S]*window\.requestAnimationFrame/);
   assert.match(source, /return \["preview", "source"\]\.includes\(this\.surfaceType\) && !this\.embeddedSurface/);
   assert.match(source, /usesVisualReadingZoom\(\)/);
@@ -75,6 +76,8 @@ test("reading zoom preserves wrapping while edit zoom can reflow", async () => {
   assert.match(source, /calculateVisualZoomLogicalWindow\(\{/);
   assert.match(source, /scheduleReadingVirtualSectionSync\(\)/);
   assert.match(source, /syncReadingVirtualSections\(\)/);
+  assert.match(source, /captureReadingZoomBaseOrigin\(target\)[\s\S]*this\.readingZoomBaseOrigin = this\.measureReadingZoomOrigin\(target\)/);
+  assert.match(source, /scheduleReadingVirtualSectionSync\(\)[\s\S]*if \(this\.isReadingZoomInteractionActive\(\)\) \{\s*return;/);
   assert.match(source, /renderer\.measureSection\?\.\(sections\[index\]\)/);
   assert.match(source, /if \(canvasWindow\.changed && visualScale !== 1 && this\.usesVisualReadingZoom\(\)\) \{[\s\S]*this\.applyVisualReadingZoomElement\(canvas, visualScale\)/);
   assert.match(source, /this\.scheduleResize\(\{ layout: !this\.usesVisualReadingZoom\(\) \}\)/);
@@ -164,6 +167,7 @@ test("reading-only note pen and selected elements can reserve Markdown flow spac
   assert.match(flowLayout, /stabilizeNoteFlowBounds\(\{/);
   assert.match(flowLayout, /preferCurrent: Boolean\(normalizeNoteFlow\(stroke\.noteFlow\)\?\.positionBasis\)/);
   assert.match(flowLayout, /this\.repairRunawayNoteFlowSurface\(runawayReferenceHeight\)/);
+  assert.match(flowLayout, /if \(this\.isReadingZoomInteractionActive\(\)\) \{\s*return false;/);
   assert.match(flowLayout, /const hasStoredAnchor = hasStableNoteFlowAnchor\(currentNoteFlow\)/);
   assert.match(flowLayout, /const strokeNearViewport = strokeTop >= previewRect\.top - 64 && strokeTop <= previewRect\.bottom \+ 64/);
   assert.match(flowLayout, /const staleStoredAnchor = canRepairStoredAnchors[\s\S]*&& strokeNearViewport;[\s\S]*if \(!anchor && \(!hasStoredAnchor \|\| staleStoredAnchor\)\)/);
@@ -194,6 +198,11 @@ test("reading-only note pen and selected elements can reserve Markdown flow spac
   assert.doesNotMatch(flowLayout, /vault\.modify|app\.vault\.process/);
   assert.match(styles, /\.notedraw-note-flow-anchor/);
   assert.match(styles, /\.notedraw-note-flow-line-spacer \{[\s\S]*display: block;[\s\S]*height: 0;/);
+  assert.match(source, /shouldPlaceStrokeBelowMarkdown\(stroke\)/);
+  assert.match(source, /for \(const canvas of \[this\.underlayCanvas, this\.staticCanvas, this\.canvas\]\) \{\s*applyElementStyles\(canvas/);
+  assert.match(source, /const layer = belowMarkdown \? this\.underlayEmbedLayer : this\.embedLayer/);
+  assert.match(source, /belowMarkdown: Boolean\(stroke\?\.belowMarkdown \|\| noteFlow\?\.enabled\)/);
+  assert.match(styles, /\.notedraw-underlay-embed-layer \{\s*z-index: 0;/);
 });
 
 test("moving inserted note elements refreshes Markdown avoidance once per animation frame", async () => {

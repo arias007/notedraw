@@ -35,6 +35,22 @@ test("pinch and translation preserve the content point between both fingers", ()
   assert.deepEqual(scroll, { left: 145, top: 417.5 });
 });
 
+test("pinch zoom preserves its anchor around a non-zero visual transform origin", () => {
+  const scroll = calculatePinchPanScroll({
+    scrollLeft: 100,
+    scrollTop: 300,
+    previousCenter: { x: 200, y: 250 },
+    nextCenter: { x: 230, y: 270 },
+    zoomRatio: 1.25,
+    originX: 40,
+    originY: 80,
+    maxScrollLeft: 1200,
+    maxScrollTop: 2400
+  });
+
+  assert.deepEqual(scroll, { left: 135, top: 397.5 });
+});
+
 test("pinch-pan coordinates cannot move into a blank area outside the scroll extent", () => {
   const scroll = calculatePinchPanScroll({
     scrollLeft: 900,

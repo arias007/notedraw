@@ -144,14 +144,14 @@
   display: block;
 }
 
-.notedraw-shell.has-notedraw-canvas > :not(.notedraw-underlay-canvas):not(.notedraw-static-canvas):not(.notedraw-canvas):not(.notedraw-embed-layer):not(.notedraw-reading-zoom-extent):not(.notedraw-toolbar):not(.notedraw-palette-panel):not(.notedraw-brush-panel):not(.notedraw-text-panel):not(.notedraw-selection-menu):not(.notedraw-format-toolbar):not(.notedraw-file-input) {
+.notedraw-shell.has-notedraw-canvas > :not(.notedraw-underlay-canvas):not(.notedraw-static-canvas):not(.notedraw-canvas):not(.notedraw-underlay-embed-layer):not(.notedraw-embed-layer):not(.notedraw-reading-zoom-extent):not(.notedraw-toolbar):not(.notedraw-palette-panel):not(.notedraw-brush-panel):not(.notedraw-text-panel):not(.notedraw-selection-menu):not(.notedraw-format-toolbar):not(.notedraw-file-input) {
   position: relative;
   z-index: 1;
 }
 
+.notedraw-underlay-embed-layer,
 .notedraw-embed-layer {
   position: absolute;
-  z-index: 55;
   top: 0;
   left: 0;
   right: auto;
@@ -162,6 +162,15 @@
   user-select: none;
 }
 
+.notedraw-underlay-embed-layer {
+  z-index: 0;
+}
+
+.notedraw-embed-layer {
+  z-index: 55;
+}
+
+.notedraw-shell.is-drawing-hidden .notedraw-underlay-embed-layer,
 .notedraw-shell.is-drawing-hidden .notedraw-embed-layer {
   opacity: 0;
 }
@@ -326,6 +335,7 @@
   cursor: nwse-resize;
 }
 
+.notedraw-shell.is-drawing-hidden .notedraw-underlay-canvas,
 .notedraw-shell.is-drawing-hidden .notedraw-static-canvas,
 .notedraw-shell.is-drawing-hidden .notedraw-canvas {
   opacity: 0;
