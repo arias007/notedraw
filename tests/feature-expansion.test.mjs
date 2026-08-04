@@ -44,6 +44,11 @@ test("scrolling refreshes only the canvas window while real layout changes can r
   assert.match(source, /scheduleMarkdownAnnotationRefresh\(\{ layout: Date\.now\(\) - this\.lastScrollAt > 220 \}\)/);
   assert.match(source, /resizeCanvas\(options = \{\}\)[\s\S]*const refreshLayout = options\.layout !== false/);
   assert.match(source, /if \(this\.drawingsLoaded && refreshLayout\) \{\s*const frame = this\.getResponsiveContentFrame\(\)/);
+  assert.match(source, /const readingScrollActive = this\.isReadingProjectionSettleSurface\(\)[\s\S]*sinceScroll < 260/);
+  assert.match(source, /if \(readingScrollActive && this\.resizeNeedsLayout\) \{\s*this\.resizeNeedsLayout = false/);
+  assert.match(source, /scheduleResponsiveProjectionSettle\(delay = 180[\s\S]*this\.scheduleResize\(\{ layout: true, preserveNoteFlowAbsolute \}\)/);
+  assert.match(source, /settleProjectedElementTransition\([\s\S]*this\.responsiveProjectionPending[\s\S]*this\.preserveAbsoluteStrokePlacement\(previousCanvasWidth, previousCanvasHeight\)/);
+  assert.match(source, /else if \(this\.responsiveProjectionPending\) \{\s*this\.preserveAbsoluteStrokePlacement\(previousCanvasWidth, previousCanvasHeight\);\s*this\.responsiveProjectionPending = null/);
 });
 
 test("reading zoom preserves wrapping while edit zoom can reflow", async () => {
@@ -204,7 +209,7 @@ test("moving inserted note elements refreshes Markdown avoidance once per animat
   assert.match(dragSource, /stroke\.noteFlow = originalNoteFlow \? \{ \.\.\.originalNoteFlow \} : null/);
   assert.match(source, /onResize\(\)[\s\S]*this\.scheduleResize\(\{ layout: !this\.draggingStroke \}\)/);
   assert.match(source, /const noteFlowResizeSuppressed = Date\.now\(\) < this\.noteFlowSuppressResizeUntil/);
-  assert.match(source, /options\.layout !== false && !this\.draggingStroke && !noteFlowResizeSuppressed/);
+  assert.match(source, /const wantsLayout = options\.layout !== false[\s\S]*&& !this\.draggingStroke[\s\S]*&& !noteFlowResizeSuppressed[\s\S]*&& !readingScrollActive/);
   assert.match(dragSource, /this\.cancelResizeFrame\(\);\s*this\.draggingStroke = true/);
   assert.match(settleSource, /markNoteFlowLayoutMutation\(\)[\s\S]*Date\.now\(\) \+ 180/);
   assert.match(settleSource, /this\.resizeFrameId !== null && this\.resizeNeedsLayout[\s\S]*this\.cancelResizeFrame\(\)[\s\S]*this\.scheduleResize\(\{ layout: false \}\)/);

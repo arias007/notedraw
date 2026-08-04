@@ -37,6 +37,7 @@ import {
   projectElementLayout,
   projectElementPoints,
   scaleElementMetrics,
+  settleProjectedElementTransition,
   stabilizeElementRelations,
   stabilizeProjectedElementBox
 } from "./element-layout.mjs";
@@ -2008,7 +2009,7 @@ var NoteDrawPlugin = class extends Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.3.20",
+      version: "3.3.21",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -3980,6 +3981,9 @@ var PreviewDrawingController = class {
     this.resizeFrameId = null;
     this.resizeNeedsLayout = false;
     this.resizePreserveNoteFlowAbsolute = false;
+    this.responsiveProjectionPending = null;
+    this.responsiveProjectionSettleTimer = null;
+    this.responsiveProjectionPreserveNoteFlowAbsolute = false;
     this.scrollSettleTimer = null;
     this.positionFrameId = null;
     this.layoutRefreshGeneration = 0;
@@ -4350,6 +4354,7 @@ var PreviewDrawingController = class {
     this.noteFlowAvoidanceAnchors.clear();
     this.cancelRenderFrame();
     this.cancelResizeFrame();
+    this.cancelResponsiveProjectionSettle();
     this.resetCanvasSurface();
     this.file = file;
     this.currentStroke = null;
@@ -4386,6 +4391,7 @@ var PreviewDrawingController = class {
     this.responsiveLayoutSignature = "";
     this.responsivePointsInitialized = false;
     this.responsiveLayoutContext = null;
+    this.responsiveProjectionPending = null;
     this.invalidateStaticCache();
     this.drawingsLoaded = false;
     this.loadingDrawings = null;
@@ -4430,6 +4436,7 @@ var PreviewDrawingController = class {
     this.clearButtonLongPress();
     this.cancelRenderFrame();
     this.cancelResizeFrame();
+    this.cancelResponsiveProjectionSettle();
     this.cancelPositionFrame();
     if (this.scrollSettleTimer !== null) {
       window.clearTimeout(this.scrollSettleTimer);
@@ -4688,9 +4695,60 @@ var PreviewDrawingController = class {
       }, 90);
     }
   }
+  isReadingProjectionSettleSurface() {
+    return this.surfaceType === "preview" && this.responsivePointsInitialized;
+  }
+  scheduleResponsiveProjectionSettle(delay = 180, options = {}) {
+    if (this.destroyed || !this.isReadingProjectionSettleSurface()) {
+      return;
+    }
+    this.responsiveProjectionPreserveNoteFlowAbsolute = this.responsiveProjectionPreserveNoteFlowAbsolute
+      || options.preserveNoteFlowAbsolute === true;
+    if (this.responsiveProjectionSettleTimer !== null) {
+      window.clearTimeout(this.responsiveProjectionSettleTimer);
+    }
+    const wait = Math.max(40, Number(delay) || 180);
+    this.responsiveProjectionSettleTimer = window.setTimeout(() => {
+      this.responsiveProjectionSettleTimer = null;
+      if (this.destroyed || !this.previewEl?.isConnected) {
+        return;
+      }
+      const sinceScroll = Date.now() - this.lastScrollAt;
+      if (this.lastScrollAt > 0 && sinceScroll < 260) {
+        this.scheduleResponsiveProjectionSettle(260 - sinceScroll + 40, {
+          preserveNoteFlowAbsolute: this.responsiveProjectionPreserveNoteFlowAbsolute
+        });
+        return;
+      }
+      const preserveNoteFlowAbsolute = this.responsiveProjectionPreserveNoteFlowAbsolute;
+      this.responsiveProjectionPreserveNoteFlowAbsolute = false;
+      this.scheduleResize({ layout: true, preserveNoteFlowAbsolute });
+    }, wait);
+  }
+  cancelResponsiveProjectionSettle() {
+    if (this.responsiveProjectionSettleTimer !== null) {
+      window.clearTimeout(this.responsiveProjectionSettleTimer);
+      this.responsiveProjectionSettleTimer = null;
+    }
+    this.responsiveProjectionPreserveNoteFlowAbsolute = false;
+  }
   scheduleResize(options = {}) {
     const noteFlowResizeSuppressed = Date.now() < this.noteFlowSuppressResizeUntil;
-    const wantsLayout = options.layout !== false && !this.draggingStroke && !noteFlowResizeSuppressed;
+    const sinceScroll = Date.now() - this.lastScrollAt;
+    const readingScrollActive = this.isReadingProjectionSettleSurface()
+      && this.lastScrollAt > 0
+      && sinceScroll < 260;
+    if (readingScrollActive && this.resizeNeedsLayout) {
+      this.resizeNeedsLayout = false;
+      this.resizePreserveNoteFlowAbsolute = false;
+    }
+    if (options.layout !== false && readingScrollActive) {
+      this.scheduleResponsiveProjectionSettle(260 - sinceScroll + 40, options);
+    }
+    const wantsLayout = options.layout !== false
+      && !this.draggingStroke
+      && !noteFlowResizeSuppressed
+      && !readingScrollActive;
     if (wantsLayout) {
       if (!this.resizeNeedsLayout) {
         this.resizePreserveNoteFlowAbsolute = options.preserveNoteFlowAbsolute === true;
@@ -6329,7 +6387,30 @@ var PreviewDrawingController = class {
       };
     });
   }
+  preserveAbsoluteStrokePlacement(previousWidth, previousHeight) {
+    const nextWidth = this.canvasWidth();
+    const nextHeight = this.canvasHeight();
+    const sourceWidth = Math.max(1, Number(previousWidth) || nextWidth);
+    const sourceHeight = Math.max(1, Number(previousHeight) || nextHeight);
+    if (Math.abs(sourceWidth - nextWidth) < 0.01 && Math.abs(sourceHeight - nextHeight) < 0.01) {
+      return;
+    }
+    const preserve = (points) => (Array.isArray(points) ? points : []).map((point) => ({
+      ...point,
+      x: clamp(Number(point?.x || 0) * sourceWidth / Math.max(1, nextWidth), 0, 1),
+      y: clamp(Number(point?.y || 0) * sourceHeight / Math.max(1, nextHeight), 0, 1)
+    }));
+    for (const stroke of this.drawingData?.strokes || []) {
+      stroke.points = preserve(stroke.points);
+    }
+    if (this.currentStroke?.points?.length) {
+      this.currentStroke.points = preserve(this.currentStroke.points);
+    }
+  }
   initializeAndProjectResponsivePoints(context, signature, options = {}) {
+    const hadResponsivePoints = this.responsivePointsInitialized;
+    const previousCanvasWidth = Number(options.previousCanvasWidth) > 1 ? Number(options.previousCanvasWidth) : this.canvasWidth();
+    const previousCanvasHeight = Number(options.previousCanvasHeight) > 1 ? Number(options.previousCanvasHeight) : this.canvasHeight();
     let migrated = false;
     const elementIds = new Set();
     if (needsElementLayoutMigration(this.drawingData?.strokes) && !isStableResponsiveCaptureFrame(this.canvasWidth(), context.frame)) {
@@ -6385,7 +6466,7 @@ var PreviewDrawingController = class {
       }
       const layout = normalizeElementLayout(stroke.layout);
       if (layout?.id) {
-        const currentBounds = getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight());
+        const currentBounds = getStrokeBounds(stroke, previousCanvasWidth, previousCanvasHeight);
         if (currentBounds) {
           currentBoundsById.set(layout.id, currentBounds);
         }
@@ -6406,7 +6487,58 @@ var PreviewDrawingController = class {
         layoutsById.set(layout.id, layout);
       }
     }
-    const projectedById = new Map(stabilizeElementRelations(projected, layoutsById).map((box) => {
+    const relationProjected = stabilizeElementRelations(projected, layoutsById);
+    const transitionProjected = [...relationProjected];
+    for (const [index, stroke] of (this.drawingData?.strokes || []).entries()) {
+      const noteFlow = normalizeNoteFlow(stroke?.noteFlow);
+      if (!noteFlow || isConnectorStroke(stroke)) {
+        continue;
+      }
+      const transitionId = `note-flow:${strokeElementId(stroke) || index}`;
+      const previousBounds = getStrokeBounds(stroke, previousCanvasWidth, previousCanvasHeight);
+      const projectedPoints = (stroke.points || []).map((point) => {
+        const projectedPoint = projectResponsivePoint(point, {
+          canvasWidth: this.canvasWidth(),
+          canvasHeight: this.canvasHeight(),
+          frame: context.frame,
+          lineToCanvasY
+        });
+        return noteFlow.positionBasis === "document" && noteFlow.positionVersion >= 1
+          ? projectNoteFlowDocumentPoint(point, projectedPoint, { canvasHeight: this.canvasHeight() })
+          : projectedPoint;
+      });
+      const projectedBounds = getStrokeBounds({ ...stroke, points: projectedPoints }, this.canvasWidth(), this.canvasHeight());
+      if (previousBounds && projectedBounds) {
+        currentBoundsById.set(transitionId, previousBounds);
+        transitionProjected.push({
+          id: transitionId,
+          x: projectedBounds.minX,
+          y: projectedBounds.minY,
+          width: projectedBounds.maxX - projectedBounds.minX,
+          height: projectedBounds.maxY - projectedBounds.minY
+        });
+      }
+    }
+    if (this.surfaceType === "preview" && hadResponsivePoints && !migrated) {
+      const transition = settleProjectedElementTransition(
+        transitionProjected,
+        currentBoundsById,
+        this.responsiveProjectionPending,
+        { now: Date.now() }
+      );
+      this.responsiveProjectionPending = transition.pending;
+      if (!transition.commit) {
+        this.preserveAbsoluteStrokePlacement(previousCanvasWidth, previousCanvasHeight);
+        this.scheduleResponsiveProjectionSettle(200, {
+          preserveNoteFlowAbsolute: options.preserveNoteFlowAbsolute === true
+        });
+        return false;
+      }
+      this.cancelResponsiveProjectionSettle();
+    } else {
+      this.responsiveProjectionPending = null;
+    }
+    const projectedById = new Map(relationProjected.map((box) => {
       const stabilized = stabilizeProjectedElementBox(box, currentBoundsById.get(box.id));
       return [box.id, {
         ...stabilized,
@@ -6488,6 +6620,8 @@ var PreviewDrawingController = class {
     }
     this.responsivePointsInitialized = true;
     this.responsiveLayoutSignature = signature;
+    this.responsiveProjectionPending = null;
+    return true;
   }
   resizeCanvas(options = {}) {
     this.refreshScrollContainer();
@@ -6613,6 +6747,10 @@ var PreviewDrawingController = class {
           previousCanvasWidth,
           previousCanvasHeight
         });
+      } else if (this.responsiveProjectionPending) {
+        this.preserveAbsoluteStrokePlacement(previousCanvasWidth, previousCanvasHeight);
+        this.responsiveProjectionPending = null;
+        this.cancelResponsiveProjectionSettle();
       }
     }
     if (geometryChanged || backingStoreChanged) {

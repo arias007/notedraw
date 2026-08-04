@@ -12,6 +12,7 @@ import {
   projectElementLayout,
   projectElementPoints,
   scaleElementMetrics,
+  settleProjectedElementTransition,
   stabilizeElementRelations,
   stabilizeProjectedElementBox
 } from "../src/element-layout.mjs";
@@ -398,6 +399,51 @@ test("subpixel element box jitter is suppressed without blocking real layout mov
   assert.deepEqual({ x: moved.x, y: moved.y, width: moved.width, height: moved.height }, {
     x: 104, y: 206, width: 126, height: 88
   });
+});
+
+test("large projected jumps wait for a repeated stable reading layout", () => {
+  const previous = new Map([["element", { minX: 100, minY: 240, maxX: 220, maxY: 320 }]]);
+  const target = [{ id: "element", x: 100, y: 390, width: 120, height: 80 }];
+
+  const first = settleProjectedElementTransition(target, previous, null, { now: 1_000, settleMs: 180 });
+  assert.equal(first.commit, false);
+  assert.equal(first.abrupt, true);
+  assert.equal(first.pending.observations, 1);
+
+  const early = settleProjectedElementTransition(target, previous, first.pending, { now: 1_120, settleMs: 180 });
+  assert.equal(early.commit, false);
+  assert.equal(early.pending.observations, 2);
+
+  const settled = settleProjectedElementTransition(target, previous, early.pending, { now: 1_210, settleMs: 180 });
+  assert.equal(settled.commit, true);
+  assert.equal(settled.pending, null);
+});
+
+test("small reflow remains responsive and a changed jump restarts settling", () => {
+  const previous = new Map([["element", { x: 100, y: 240, width: 120, height: 80 }]]);
+  const small = settleProjectedElementTransition(
+    [{ id: "element", x: 108, y: 248, width: 120, height: 80 }],
+    previous,
+    null,
+    { now: 2_000 }
+  );
+  assert.equal(small.commit, true);
+
+  const first = settleProjectedElementTransition(
+    [{ id: "element", x: 100, y: 390, width: 120, height: 80 }],
+    previous,
+    null,
+    { now: 2_100 }
+  );
+  const changed = settleProjectedElementTransition(
+    [{ id: "element", x: 100, y: 470, width: 120, height: 80 }],
+    previous,
+    first.pending,
+    { now: 2_400 }
+  );
+  assert.equal(changed.commit, false);
+  assert.equal(changed.pending.observations, 1);
+  assert.equal(changed.pending.firstSeen, 2_400);
 });
 
 test("reciprocal relation cycles reduce drift without diverging", () => {

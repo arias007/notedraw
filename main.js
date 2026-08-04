@@ -796,6 +796,83 @@ function stabilizeProjectedElementBox(projectedInput, previousInput, {
     anchorY: Number.isFinite(Number(projectedInput.anchorY)) ? Number(projectedInput.anchorY) + y - projected.y : projectedInput.anchorY
   };
 }
+function transitionBox(input) {
+  if (!input) {
+    return null;
+  }
+  const x = finite2(input.x, input.minX);
+  const y = finite2(input.y, input.minY);
+  const width = Math.max(0.01, finite2(input.width, finite2(input.maxX) - finite2(input.minX)));
+  const height = Math.max(0.01, finite2(input.height, finite2(input.maxY) - finite2(input.minY)));
+  return { x, y, width, height };
+}
+function projectedTransitionSignature(projectedItems, quantum) {
+  const step = Math.max(0.5, finite2(quantum, 3));
+  return projectedItems.filter((item) => item?.id).map((item) => {
+    const box = transitionBox(item);
+    return box ? [
+      String(item.id),
+      Math.round(box.x / step),
+      Math.round(box.y / step),
+      Math.round(box.width / step),
+      Math.round(box.height / step)
+    ].join(":") : "";
+  }).filter(Boolean).sort().join("|");
+}
+function settleProjectedElementTransition(projectedItems, previousById, pendingInput = null, {
+  now = Date.now(),
+  settleMs = 180,
+  positionThreshold = 24,
+  sizeRatioThreshold = 0.14,
+  signatureQuantum = 3
+} = {}) {
+  const projected = Array.isArray(projectedItems) ? projectedItems.filter((item) => item?.id) : [];
+  if (!projected.length) {
+    return { commit: true, pending: null, abrupt: false };
+  }
+  const previous = previousById instanceof Map ? previousById : /* @__PURE__ */ new Map();
+  let abrupt = false;
+  for (const item of projected) {
+    const before = transitionBox(previous.get(item.id));
+    const after = transitionBox(item);
+    if (!before || !after) {
+      continue;
+    }
+    const positionLimit = Math.max(
+      Math.max(0, finite2(positionThreshold, 24)),
+      Math.min(56, Math.max(before.width, before.height) * 0.18)
+    );
+    const positionShift = Math.hypot(after.x - before.x, after.y - before.y);
+    const sizeRatio = Math.max(
+      Math.abs(after.width - before.width) / Math.max(1, before.width),
+      Math.abs(after.height - before.height) / Math.max(1, before.height)
+    );
+    if (positionShift > positionLimit || sizeRatio > Math.max(0, finite2(sizeRatioThreshold, 0.14))) {
+      abrupt = true;
+      break;
+    }
+  }
+  if (!abrupt) {
+    return { commit: true, pending: null, abrupt: false };
+  }
+  const signature = projectedTransitionSignature(projected, signatureQuantum);
+  const timestamp = finite2(now, Date.now());
+  const pending = pendingInput?.signature === signature ? {
+    signature,
+    firstSeen: finite2(pendingInput.firstSeen, timestamp),
+    observations: Math.max(1, Math.floor(finite2(pendingInput.observations, 1))) + 1
+  } : {
+    signature,
+    firstSeen: timestamp,
+    observations: 1
+  };
+  const commit = pending.observations >= 2 && timestamp - pending.firstSeen >= Math.max(0, finite2(settleMs, 180));
+  return {
+    commit,
+    pending: commit ? null : pending,
+    abrupt: true
+  };
+}
 function rectGap(a, b) {
   const dx = Math.max(0, a.x - (b.x + b.width), b.x - (a.x + a.width));
   const dy = Math.max(0, a.y - (b.y + b.height), b.y - (a.y + a.height));
@@ -4335,7 +4412,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.3.20",
+      version: "3.3.21",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -6301,6 +6378,9 @@ var PreviewDrawingController = class {
     this.resizeFrameId = null;
     this.resizeNeedsLayout = false;
     this.resizePreserveNoteFlowAbsolute = false;
+    this.responsiveProjectionPending = null;
+    this.responsiveProjectionSettleTimer = null;
+    this.responsiveProjectionPreserveNoteFlowAbsolute = false;
     this.scrollSettleTimer = null;
     this.positionFrameId = null;
     this.layoutRefreshGeneration = 0;
@@ -6671,6 +6751,7 @@ var PreviewDrawingController = class {
     this.noteFlowAvoidanceAnchors.clear();
     this.cancelRenderFrame();
     this.cancelResizeFrame();
+    this.cancelResponsiveProjectionSettle();
     this.resetCanvasSurface();
     this.file = file;
     this.currentStroke = null;
@@ -6707,6 +6788,7 @@ var PreviewDrawingController = class {
     this.responsiveLayoutSignature = "";
     this.responsivePointsInitialized = false;
     this.responsiveLayoutContext = null;
+    this.responsiveProjectionPending = null;
     this.invalidateStaticCache();
     this.drawingsLoaded = false;
     this.loadingDrawings = null;
@@ -6751,6 +6833,7 @@ var PreviewDrawingController = class {
     this.clearButtonLongPress();
     this.cancelRenderFrame();
     this.cancelResizeFrame();
+    this.cancelResponsiveProjectionSettle();
     this.cancelPositionFrame();
     if (this.scrollSettleTimer !== null) {
       window.clearTimeout(this.scrollSettleTimer);
@@ -7009,9 +7092,54 @@ var PreviewDrawingController = class {
       }, 90);
     }
   }
+  isReadingProjectionSettleSurface() {
+    return this.surfaceType === "preview" && this.responsivePointsInitialized;
+  }
+  scheduleResponsiveProjectionSettle(delay = 180, options = {}) {
+    if (this.destroyed || !this.isReadingProjectionSettleSurface()) {
+      return;
+    }
+    this.responsiveProjectionPreserveNoteFlowAbsolute = this.responsiveProjectionPreserveNoteFlowAbsolute || options.preserveNoteFlowAbsolute === true;
+    if (this.responsiveProjectionSettleTimer !== null) {
+      window.clearTimeout(this.responsiveProjectionSettleTimer);
+    }
+    const wait = Math.max(40, Number(delay) || 180);
+    this.responsiveProjectionSettleTimer = window.setTimeout(() => {
+      this.responsiveProjectionSettleTimer = null;
+      if (this.destroyed || !this.previewEl?.isConnected) {
+        return;
+      }
+      const sinceScroll = Date.now() - this.lastScrollAt;
+      if (this.lastScrollAt > 0 && sinceScroll < 260) {
+        this.scheduleResponsiveProjectionSettle(260 - sinceScroll + 40, {
+          preserveNoteFlowAbsolute: this.responsiveProjectionPreserveNoteFlowAbsolute
+        });
+        return;
+      }
+      const preserveNoteFlowAbsolute = this.responsiveProjectionPreserveNoteFlowAbsolute;
+      this.responsiveProjectionPreserveNoteFlowAbsolute = false;
+      this.scheduleResize({ layout: true, preserveNoteFlowAbsolute });
+    }, wait);
+  }
+  cancelResponsiveProjectionSettle() {
+    if (this.responsiveProjectionSettleTimer !== null) {
+      window.clearTimeout(this.responsiveProjectionSettleTimer);
+      this.responsiveProjectionSettleTimer = null;
+    }
+    this.responsiveProjectionPreserveNoteFlowAbsolute = false;
+  }
   scheduleResize(options = {}) {
     const noteFlowResizeSuppressed = Date.now() < this.noteFlowSuppressResizeUntil;
-    const wantsLayout = options.layout !== false && !this.draggingStroke && !noteFlowResizeSuppressed;
+    const sinceScroll = Date.now() - this.lastScrollAt;
+    const readingScrollActive = this.isReadingProjectionSettleSurface() && this.lastScrollAt > 0 && sinceScroll < 260;
+    if (readingScrollActive && this.resizeNeedsLayout) {
+      this.resizeNeedsLayout = false;
+      this.resizePreserveNoteFlowAbsolute = false;
+    }
+    if (options.layout !== false && readingScrollActive) {
+      this.scheduleResponsiveProjectionSettle(260 - sinceScroll + 40, options);
+    }
+    const wantsLayout = options.layout !== false && !this.draggingStroke && !noteFlowResizeSuppressed && !readingScrollActive;
     if (wantsLayout) {
       if (!this.resizeNeedsLayout) {
         this.resizePreserveNoteFlowAbsolute = options.preserveNoteFlowAbsolute === true;
@@ -8646,7 +8774,30 @@ var PreviewDrawingController = class {
       };
     });
   }
+  preserveAbsoluteStrokePlacement(previousWidth, previousHeight) {
+    const nextWidth = this.canvasWidth();
+    const nextHeight = this.canvasHeight();
+    const sourceWidth = Math.max(1, Number(previousWidth) || nextWidth);
+    const sourceHeight = Math.max(1, Number(previousHeight) || nextHeight);
+    if (Math.abs(sourceWidth - nextWidth) < 0.01 && Math.abs(sourceHeight - nextHeight) < 0.01) {
+      return;
+    }
+    const preserve = (points) => (Array.isArray(points) ? points : []).map((point) => ({
+      ...point,
+      x: clamp9(Number(point?.x || 0) * sourceWidth / Math.max(1, nextWidth), 0, 1),
+      y: clamp9(Number(point?.y || 0) * sourceHeight / Math.max(1, nextHeight), 0, 1)
+    }));
+    for (const stroke of this.drawingData?.strokes || []) {
+      stroke.points = preserve(stroke.points);
+    }
+    if (this.currentStroke?.points?.length) {
+      this.currentStroke.points = preserve(this.currentStroke.points);
+    }
+  }
   initializeAndProjectResponsivePoints(context, signature, options = {}) {
+    const hadResponsivePoints = this.responsivePointsInitialized;
+    const previousCanvasWidth = Number(options.previousCanvasWidth) > 1 ? Number(options.previousCanvasWidth) : this.canvasWidth();
+    const previousCanvasHeight = Number(options.previousCanvasHeight) > 1 ? Number(options.previousCanvasHeight) : this.canvasHeight();
     let migrated = false;
     const elementIds = /* @__PURE__ */ new Set();
     if (needsElementLayoutMigration(this.drawingData?.strokes) && !isStableResponsiveCaptureFrame(this.canvasWidth(), context.frame)) {
@@ -8700,7 +8851,7 @@ var PreviewDrawingController = class {
       }
       const layout = normalizeElementLayout(stroke.layout);
       if (layout?.id) {
-        const currentBounds = getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight());
+        const currentBounds = getStrokeBounds(stroke, previousCanvasWidth, previousCanvasHeight);
         if (currentBounds) {
           currentBoundsById.set(layout.id, currentBounds);
         }
@@ -8721,7 +8872,56 @@ var PreviewDrawingController = class {
         layoutsById.set(layout.id, layout);
       }
     }
-    const projectedById = new Map(stabilizeElementRelations(projected, layoutsById).map((box) => {
+    const relationProjected = stabilizeElementRelations(projected, layoutsById);
+    const transitionProjected = [...relationProjected];
+    for (const [index, stroke] of (this.drawingData?.strokes || []).entries()) {
+      const noteFlow = normalizeNoteFlow(stroke?.noteFlow);
+      if (!noteFlow || isConnectorStroke(stroke)) {
+        continue;
+      }
+      const transitionId = `note-flow:${strokeElementId(stroke) || index}`;
+      const previousBounds = getStrokeBounds(stroke, previousCanvasWidth, previousCanvasHeight);
+      const projectedPoints = (stroke.points || []).map((point) => {
+        const projectedPoint = projectResponsivePoint(point, {
+          canvasWidth: this.canvasWidth(),
+          canvasHeight: this.canvasHeight(),
+          frame: context.frame,
+          lineToCanvasY
+        });
+        return noteFlow.positionBasis === "document" && noteFlow.positionVersion >= 1 ? projectNoteFlowDocumentPoint(point, projectedPoint, { canvasHeight: this.canvasHeight() }) : projectedPoint;
+      });
+      const projectedBounds = getStrokeBounds({ ...stroke, points: projectedPoints }, this.canvasWidth(), this.canvasHeight());
+      if (previousBounds && projectedBounds) {
+        currentBoundsById.set(transitionId, previousBounds);
+        transitionProjected.push({
+          id: transitionId,
+          x: projectedBounds.minX,
+          y: projectedBounds.minY,
+          width: projectedBounds.maxX - projectedBounds.minX,
+          height: projectedBounds.maxY - projectedBounds.minY
+        });
+      }
+    }
+    if (this.surfaceType === "preview" && hadResponsivePoints && !migrated) {
+      const transition = settleProjectedElementTransition(
+        transitionProjected,
+        currentBoundsById,
+        this.responsiveProjectionPending,
+        { now: Date.now() }
+      );
+      this.responsiveProjectionPending = transition.pending;
+      if (!transition.commit) {
+        this.preserveAbsoluteStrokePlacement(previousCanvasWidth, previousCanvasHeight);
+        this.scheduleResponsiveProjectionSettle(200, {
+          preserveNoteFlowAbsolute: options.preserveNoteFlowAbsolute === true
+        });
+        return false;
+      }
+      this.cancelResponsiveProjectionSettle();
+    } else {
+      this.responsiveProjectionPending = null;
+    }
+    const projectedById = new Map(relationProjected.map((box) => {
       const stabilized = stabilizeProjectedElementBox(box, currentBoundsById.get(box.id));
       return [box.id, {
         ...stabilized,
@@ -8801,6 +9001,8 @@ var PreviewDrawingController = class {
     }
     this.responsivePointsInitialized = true;
     this.responsiveLayoutSignature = signature;
+    this.responsiveProjectionPending = null;
+    return true;
   }
   resizeCanvas(options = {}) {
     this.refreshScrollContainer();
@@ -8923,6 +9125,10 @@ var PreviewDrawingController = class {
           previousCanvasWidth,
           previousCanvasHeight
         });
+      } else if (this.responsiveProjectionPending) {
+        this.preserveAbsoluteStrokePlacement(previousCanvasWidth, previousCanvasHeight);
+        this.responsiveProjectionPending = null;
+        this.cancelResponsiveProjectionSettle();
       }
     }
     if (geometryChanged || backingStoreChanged) {

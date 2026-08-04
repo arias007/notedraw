@@ -563,6 +563,91 @@ export function stabilizeProjectedElementBox(projectedInput, previousInput, {
   };
 }
 
+function transitionBox(input) {
+  if (!input) {
+    return null;
+  }
+  const x = finite(input.x, input.minX);
+  const y = finite(input.y, input.minY);
+  const width = Math.max(0.01, finite(input.width, finite(input.maxX) - finite(input.minX)));
+  const height = Math.max(0.01, finite(input.height, finite(input.maxY) - finite(input.minY)));
+  return { x, y, width, height };
+}
+
+function projectedTransitionSignature(projectedItems, quantum) {
+  const step = Math.max(0.5, finite(quantum, 3));
+  return projectedItems
+    .filter((item) => item?.id)
+    .map((item) => {
+      const box = transitionBox(item);
+      return box ? [
+        String(item.id),
+        Math.round(box.x / step),
+        Math.round(box.y / step),
+        Math.round(box.width / step),
+        Math.round(box.height / step)
+      ].join(":") : "";
+    })
+    .filter(Boolean)
+    .sort()
+    .join("|");
+}
+
+export function settleProjectedElementTransition(projectedItems, previousById, pendingInput = null, {
+  now = Date.now(),
+  settleMs = 180,
+  positionThreshold = 24,
+  sizeRatioThreshold = 0.14,
+  signatureQuantum = 3
+} = {}) {
+  const projected = Array.isArray(projectedItems) ? projectedItems.filter((item) => item?.id) : [];
+  if (!projected.length) {
+    return { commit: true, pending: null, abrupt: false };
+  }
+  const previous = previousById instanceof Map ? previousById : new Map();
+  let abrupt = false;
+  for (const item of projected) {
+    const before = transitionBox(previous.get(item.id));
+    const after = transitionBox(item);
+    if (!before || !after) {
+      continue;
+    }
+    const positionLimit = Math.max(
+      Math.max(0, finite(positionThreshold, 24)),
+      Math.min(56, Math.max(before.width, before.height) * 0.18)
+    );
+    const positionShift = Math.hypot(after.x - before.x, after.y - before.y);
+    const sizeRatio = Math.max(
+      Math.abs(after.width - before.width) / Math.max(1, before.width),
+      Math.abs(after.height - before.height) / Math.max(1, before.height)
+    );
+    if (positionShift > positionLimit || sizeRatio > Math.max(0, finite(sizeRatioThreshold, 0.14))) {
+      abrupt = true;
+      break;
+    }
+  }
+  if (!abrupt) {
+    return { commit: true, pending: null, abrupt: false };
+  }
+  const signature = projectedTransitionSignature(projected, signatureQuantum);
+  const timestamp = finite(now, Date.now());
+  const pending = pendingInput?.signature === signature ? {
+    signature,
+    firstSeen: finite(pendingInput.firstSeen, timestamp),
+    observations: Math.max(1, Math.floor(finite(pendingInput.observations, 1))) + 1
+  } : {
+    signature,
+    firstSeen: timestamp,
+    observations: 1
+  };
+  const commit = pending.observations >= 2 && timestamp - pending.firstSeen >= Math.max(0, finite(settleMs, 180));
+  return {
+    commit,
+    pending: commit ? null : pending,
+    abrupt: true
+  };
+}
+
 function rectGap(a, b) {
   const dx = Math.max(0, a.x - (b.x + b.width), b.x - (a.x + a.width));
   const dy = Math.max(0, a.y - (b.y + b.height), b.y - (a.y + a.height));
