@@ -360,6 +360,20 @@ test("main workspace views remount drawings and header controls after internal r
   assert.match(styles, /\.notedraw-shell\.is-notedraw-workspace-shell \.notedraw-static-canvas/);
 });
 
+test("image files always receive a workspace controller and magic-wand entry", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const workspaceSync = source.slice(source.indexOf("  syncWorkspaceControllers() {"), source.indexOf("  cleanupNativeGraphWorkspaceView", source.indexOf("  syncWorkspaceControllers() {")));
+
+  assert.match(source, /imageWorkspaceSurfaces: true/);
+  assert.match(source, /function isImageWorkspaceView\(view, viewType = workspaceViewType\(view\)\)/);
+  assert.match(source, /function collectImageWorkspaceLeaves\(app\) \{[\s\S]*getLeavesOfType\?\.\("image"\)/);
+  assert.match(source, /"png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "avif"/);
+  assert.match(workspaceSync, /for \(const leaf of collectImageWorkspaceLeaves\(this\.app\)\)/);
+  assert.match(workspaceSync, /const file = view\?\.file && typeof view\.file\.path === "string" \? view\.file : null/);
+  assert.match(workspaceSync, /this\.mountWorkspaceController\(view, viewType, file, surface\)/);
+  assert.match(source, /mountWorkspaceController\(view, viewType, file, surface\) \{[\s\S]*existing\.button = this\.installHeaderButton\(existing\)/);
+});
+
 test("Obsidian graph views keep their native canvases and interactions", async () => {
   const source = await readFile(sourceUrl, "utf8");
   const webviewSync = source.slice(source.indexOf("  syncWebviewControllers() {"), source.indexOf("  syncWorkspaceControllers() {"));

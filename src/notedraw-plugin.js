@@ -1937,6 +1937,7 @@ var NoteDrawPlugin = class extends Plugin {
       readingViewZoom: true,
       sourceViewLayoutZoom: true,
       workspaceSurfaces: true,
+      imageWorkspaceSurfaces: true,
       registeredSurfaces: true,
       surfaceHandles: true,
       elementClipboard: true,
@@ -2031,7 +2032,7 @@ var NoteDrawPlugin = class extends Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.3.24",
+      version: "3.3.25",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -2977,11 +2978,26 @@ var NoteDrawPlugin = class extends Plugin {
   }
   syncWorkspaceControllers() {
     const activeViews = /* @__PURE__ */ new Set();
+    for (const leaf of collectImageWorkspaceLeaves(this.app)) {
+      const view = leaf?.view;
+      const viewType = workspaceViewType(view) || "image";
+      const file = view?.file && typeof view.file.path === "string" ? view.file : null;
+      const surface = findWorkspaceDrawingSurface(view);
+      if (!view?.containerEl || !file || !surface?.isConnected) {
+        continue;
+      }
+      activeViews.add(view);
+      this.mountWorkspaceController(view, viewType, file, surface);
+    }
     for (const leaf of collectWorkspaceLeaves(this.app)) {
       const view = leaf?.view;
       const viewType = workspaceViewType(view);
+      const imageWorkspace = isImageWorkspaceView(view, viewType);
       if (isNativeGraphWorkspaceType(viewType)) {
         this.cleanupNativeGraphWorkspaceView(view, view?.contentEl || findWorkspaceDrawingSurface(view));
+        continue;
+      }
+      if (imageWorkspace) {
         continue;
       }
       if (!view?.containerEl || !isMainWorkspaceView(view) || view instanceof MarkdownView || viewType === "markdown" || viewType === "empty" || isWebviewWorkspaceType(viewType)) {
@@ -2993,34 +3009,7 @@ var NoteDrawPlugin = class extends Plugin {
         continue;
       }
       activeViews.add(view);
-      const existing = this.workspaceControllers.get(view);
-      if (existing?.previewEl === surface && !existing.destroyed) {
-        existing.workspaceViewType = viewType;
-        existing.setFile(file).catch((error) => {
-          console.error(`[${PLUGIN_ID}] Failed to switch workspace drawing file`, error);
-        });
-        if (!existing.button?.isConnected) {
-          existing.button = this.installHeaderButton(existing);
-        }
-        continue;
-      }
-      existing?.destroy();
-      const mountedOnElement = this.controllers.get(surface) || surface._noteDrawController;
-      if (mountedOnElement?.destroy) {
-        mountedOnElement.destroy();
-      }
-      cleanupDrawingUi(surface);
-      const controller = new PreviewDrawingController(this, surface, view, file, {
-        allowTextEdit: false,
-        surfaceType: "workspace",
-        workspaceSurface: true,
-        workspaceViewType: viewType
-      });
-      this.controllers.set(surface, controller);
-      this.workspaceControllers.set(view, controller);
-      controller.mount().catch((error) => {
-        console.error(`[${PLUGIN_ID}] Failed to mount workspace drawing controller`, error);
-      });
+      this.mountWorkspaceController(view, viewType, file, surface);
     }
     for (const [view, controller] of Array.from(this.workspaceControllers.entries())) {
       if (!activeViews.has(view) || !controller.previewEl?.isConnected) {
@@ -3028,6 +3017,37 @@ var NoteDrawPlugin = class extends Plugin {
         this.workspaceControllers.delete(view);
       }
     }
+  }
+  mountWorkspaceController(view, viewType, file, surface) {
+    const existing = this.workspaceControllers.get(view);
+    if (existing?.previewEl === surface && !existing.destroyed) {
+      existing.workspaceViewType = viewType;
+      existing.setFile(file).catch((error) => {
+        console.error(`[${PLUGIN_ID}] Failed to switch workspace drawing file`, error);
+      });
+      if (!existing.button?.isConnected) {
+        existing.button = this.installHeaderButton(existing);
+      }
+      return existing;
+    }
+    existing?.destroy();
+    const mountedOnElement = this.controllers.get(surface) || surface._noteDrawController;
+    if (mountedOnElement?.destroy) {
+      mountedOnElement.destroy();
+    }
+    cleanupDrawingUi(surface);
+    const controller = new PreviewDrawingController(this, surface, view, file, {
+      allowTextEdit: false,
+      surfaceType: "workspace",
+      workspaceSurface: true,
+      workspaceViewType: viewType
+    });
+    this.controllers.set(surface, controller);
+    this.workspaceControllers.set(view, controller);
+    controller.mount().catch((error) => {
+      console.error(`[${PLUGIN_ID}] Failed to mount workspace drawing controller`, error);
+    });
+    return controller;
   }
   cleanupNativeGraphWorkspaceView(view, surface = view?.contentEl || findWorkspaceDrawingSurface(view)) {
     if (!surface) {
@@ -12664,6 +12684,15 @@ function collectWorkspaceLeaves(app) {
   }
   return leaves;
 }
+function collectImageWorkspaceLeaves(app) {
+  const leaves = /* @__PURE__ */ new Set(app.workspace.getLeavesOfType?.("image") || []);
+  for (const leaf of collectWorkspaceLeaves(app)) {
+    if (isImageWorkspaceView(leaf?.view, workspaceViewType(leaf?.view))) {
+      leaves.add(leaf);
+    }
+  }
+  return Array.from(leaves);
+}
 function isMainWorkspaceView(view) {
   const container = view?.containerEl;
   if (!container?.isConnected || container.closest?.(".workspace-drawer, .mod-sidedock")) {
@@ -12679,6 +12708,17 @@ function isNativeGraphWorkspaceType(viewType) {
 }
 function isWebviewWorkspaceType(viewType) {
   return /(webview|web-view|browser|iframe)/i.test(String(viewType || ""));
+}
+var IMAGE_WORKSPACE_EXTENSIONS = /* @__PURE__ */ new Set([
+  "png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "avif", "apng", "ico", "tif", "tiff", "heic", "heif", "jxl"
+]);
+function isImageWorkspaceView(view, viewType = workspaceViewType(view)) {
+  const normalizedType = String(viewType || "").trim().toLowerCase();
+  if (normalizedType === "image" || normalizedType === "image-view" || normalizedType === "imageview") {
+    return true;
+  }
+  const extension = String(view?.file?.extension || view?.file?.path?.split(".").pop() || "").trim().toLowerCase();
+  return IMAGE_WORKSPACE_EXTENSIONS.has(extension);
 }
 function createWorkspaceDrawingFile(view, viewType) {
   const sourcePath = workspaceSurfaceStoragePath(view, viewType);
