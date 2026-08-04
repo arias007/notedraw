@@ -10,7 +10,8 @@ test("embedded Markdown edits stage changes until editing ends", async () => {
 
   assert.match(source, /stageTextSave\(file, originalText, editedText, element, controller = null\)/);
   assert.match(source, /if \(this\.currentEditorEmbedded\) \{\s*this\.plugin\.stageTextSave\(this\.currentEditorFile, original, edited, element, this\)/);
-  assert.match(source, /endTextEdit\(options = \{\}\)[\s\S]*scheduleTextSaveNow\(this\.currentEditorFile \|\| this\.file, original, edited, element, this\)/);
+  assert.match(source, /endTextEdit\(options = \{\}\)[\s\S]*queueTextSaveAndWait\(this\.currentEditorFile \|\| this\.file, original, edited, element\)/);
+  assert.match(source, /this\.textCommitBarrier\.wait\(\)/);
 });
 
 test("default brushes remain separate from opt-in fountain and watercolor variants", async () => {

@@ -80,6 +80,7 @@ import {
 } from "./stroke-dynamics.mjs";
 import { pickTextHighlightLine } from "./text-highlight.mjs";
 import { layoutMindMap, parseMarkdownMindMap, replaceMarkdownMindMapNodeText } from "./mind-map.mjs";
+import { createAsyncCommitBarrier, hoistPlainTextMarker } from "./text-edit-utils.mjs";
 const activeDocument = window.activeWindow?.document || window.document;
 var PLUGIN_ID = "notedraw";
 var DRAWING_DIR = `${PLUGIN_ID}/drawings`;
@@ -1806,6 +1807,23 @@ var NoteDrawPlugin = class extends Plugin {
     return true;
   }
   async applyControllerHistoryEntry(entry, direction) {
+    if (entry.kind === "compound") {
+      const markdownFile = getVaultFileByPath(this.app.vault, entry.markdownFile?.path);
+      const drawingFile = getVaultFileByPath(this.app.vault, entry.drawingFile?.path) || entry.drawingFile;
+      if (!markdownFile || !drawingFile) {
+        return false;
+      }
+      const current = await this.app.vault.read(markdownFile);
+      const expected = direction === "before" ? entry.markdownAfter : entry.markdownBefore;
+      if (current !== String(expected || "")) {
+        return false;
+      }
+      await this.app.vault.modify(markdownFile, String(direction === "before" ? entry.markdownBefore : entry.markdownAfter || ""));
+      const data = cloneDrawingData(direction === "before" ? entry.drawingBefore : entry.drawingAfter, drawingFile);
+      this.scheduleDrawingSave(drawingFile, data);
+      this.emitApiEvent("markdown-changed", { file: markdownFile.path, history: direction });
+      return true;
+    }
     if (entry.kind === "drawing") {
       const data = cloneDrawingData(entry[direction], entry.file);
       this.scheduleDrawingSave(entry.file, data);
@@ -2013,7 +2031,7 @@ var NoteDrawPlugin = class extends Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.3.23",
+      version: "3.3.24",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -2570,7 +2588,12 @@ var NoteDrawPlugin = class extends Plugin {
     if (!target) {
       return { changed: false, reason: "target-not-found" };
     }
-    return this.saveTextBlock(file, originalText, editedText, sourceInfo, target);
+    const result = await this.saveTextBlock(file, originalText, editedText, sourceInfo, target);
+    if (result.history) {
+      const controller = this.findApiController({ file });
+      controller?.recordMarkdownHistory(file, result.history.before, result.history.after);
+    }
+    return result;
   }
   async insertStrokeApi(fileOrPath, stroke) {
     const file = this.resolveApiFile(fileOrPath);
@@ -3865,6 +3888,9 @@ var PreviewDrawingController = class {
     this.currentEditor = null;
     this.currentEditorFile = null;
     this.currentEditorEmbedded = false;
+    this.textCommitBarrier = createAsyncCommitBarrier((error) => {
+      console.error(`[${PLUGIN_ID}] Failed to settle an edit before history navigation`, error);
+    });
     this.routedPointerController = null;
     this.routedPointerHost = null;
     this.currentTextRange = null;
@@ -5836,8 +5862,13 @@ var PreviewDrawingController = class {
     if (clearWholeEditor) {
       this.currentEditor.replaceChildren(textNode);
     } else {
+      const marker = activeDocument.createElement("span");
+      marker.dataset.noteDrawClearFormat = "true";
+      marker.textContent = plainText;
       range.deleteContents();
-      range.insertNode(textNode);
+      range.insertNode(marker);
+      hoistPlainTextMarker(marker, this.currentEditor, isClearableInlineFormattingElement);
+      marker.replaceWith(textNode);
     }
     const nextRange = activeDocument.createRange();
     nextRange.setStart(textNode, 0);
@@ -5847,6 +5878,10 @@ var PreviewDrawingController = class {
     this.currentTextRange = nextRange.cloneRange();
     this.queueCurrentTextSave(true);
     this.positionFormatToolbar();
+  }
+  queueTextSaveAndWait(file, original, editedSource, element) {
+    const scheduled = this.plugin.scheduleTextSaveNow(file, original, editedSource, element, this);
+    return this.textCommitBarrier.track(Promise.resolve(scheduled).then(() => this.plugin.flushTextSaveAndWait(element)));
   }
   queueCurrentTextSave(immediate = true) {
     const element = this.currentEditor;
@@ -5859,7 +5894,7 @@ var PreviewDrawingController = class {
     if (this.currentEditorEmbedded) {
       this.plugin.stageTextSave(file, original, editedSource, element, this);
     } else if (immediate) {
-      this.plugin.scheduleTextSaveNow(file, original, editedSource, element, this);
+      this.queueTextSaveAndWait(file, original, editedSource, element);
     } else {
       this.plugin.scheduleTextSave(file, original, editedSource, element, this);
     }
@@ -7700,9 +7735,10 @@ var PreviewDrawingController = class {
     this.redoStack = [];
     this.invalidateStaticCache();
     this.plugin.scheduleDrawingSave(this.file, this.drawingData);
-    this.recordDrawingHistory(historyBefore);
     if (mindMapStrokeToSync) {
-      void this.syncMindMapNodeToSource(mindMapStrokeToSync, text);
+      this.textCommitBarrier.track(this.syncMindMapNodeToSource(mindMapStrokeToSync, text, { drawingBefore: historyBefore }));
+    } else {
+      this.recordDrawingHistory(historyBefore);
     }
     this.scheduleLayoutRefresh({ settle: false });
     this.endFloatingTextInput(false, state);
@@ -7887,14 +7923,20 @@ var PreviewDrawingController = class {
     }
     return { ok: true, nodes: nodeStrokes.length, connectors: connectorStrokes.length, truncated: model.truncated, affectsSource };
   }
-  async syncMindMapNodeToSource(stroke, text) {
+  async syncMindMapNodeToSource(stroke, text, options = {}) {
+    const fallbackToDrawingHistory = () => {
+      if (options.drawingBefore) {
+        this.recordDrawingHistory(options.drawingBefore);
+      }
+      return false;
+    };
     const node = normalizeMindMapNode(stroke?.mindMapNode);
     if (!node?.affectsSource || node.role === "root" || !node.sourcePath) {
-      return false;
+      return fallbackToDrawingHistory();
     }
     const file = this.plugin.resolveApiFile(node.sourcePath, this.file?.path || "");
     if (!file) {
-      return false;
+      return fallbackToDrawingHistory();
     }
     try {
       const source = await this.plugin.app.vault.cachedRead(file);
@@ -7905,16 +7947,19 @@ var PreviewDrawingController = class {
         if (result.reason === "source-range-not-found") {
           new Notice(this.plugin.t("sourceNoteUpdateFailed"));
         }
-        return false;
+        return fallbackToDrawingHistory();
       }
       await this.plugin.app.vault.modify(file, result.source);
       this.refreshMindMapSourceMetadata(node.mapId, node.sourcePath, result.source);
       this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+      if (options.drawingBefore) {
+        this.recordCompoundHistory(file, source, result.source, options.drawingBefore);
+      }
       return true;
     } catch (error) {
       console.error(`[${PLUGIN_ID}] Failed to update mind map source note`, error);
       new Notice(this.plugin.t("sourceNoteUpdateFailed"));
-      return false;
+      return fallbackToDrawingHistory();
     }
   }
   refreshMindMapSourceMetadata(mapId, sourcePath, source) {
@@ -9562,10 +9607,11 @@ var PreviewDrawingController = class {
         this.redoStack = [];
         this.invalidateStaticCache();
         this.plugin.scheduleDrawingSave(this.file, this.drawingData);
-        this.recordDrawingHistory(historyBefore);
         this.render();
         if (normalizeMindMapNode(stroke.mindMapNode)?.affectsSource) {
-          void this.syncMindMapNodeToSource(stroke, nextText.replace(/^\s*(?:[-+*]|\d+[.)])\s+/, ""));
+          this.textCommitBarrier.track(this.syncMindMapNodeToSource(stroke, nextText.replace(/^\s*(?:[-+*]|\d+[.)])\s+/, ""), { drawingBefore: historyBefore }));
+        } else {
+          this.recordDrawingHistory(historyBefore);
         }
       });
     });
@@ -11266,16 +11312,17 @@ var PreviewDrawingController = class {
   endTextEdit(options = {}) {
     const element = this.currentEditor;
     if (!element) {
-      return;
+      return Promise.resolve(true);
     }
     const original = element.dataset.noteDrawOriginal || "";
     const edited = this.surfaceType === "webview" ? element.innerText : serializeControllerEditableSource(element, this.currentEditorEmbedded, true);
+    let commit = Promise.resolve(true);
     if (options.save === false) {
       // The caller already flushed the final value before a structural edit.
     } else if (this.surfaceType === "webview") {
-      this.commitWebviewTextEdit(element, original, edited);
+      commit = Promise.resolve(this.commitWebviewTextEdit(element, original, edited));
     } else if (normalizeEditableSourceText(original) !== normalizeEditableSourceText(edited)) {
-      this.plugin.scheduleTextSaveNow(this.currentEditorFile || this.file, original, edited, element, this);
+      commit = this.queueTextSaveAndWait(this.currentEditorFile || this.file, original, edited, element);
     }
     element._noteDrawCleanup?.();
     delete element._noteDrawCleanup;
@@ -11291,6 +11338,7 @@ var PreviewDrawingController = class {
     this.currentEditor = null;
     this.currentEditorFile = null;
     this.currentEditorEmbedded = false;
+    return commit;
   }
   installTextSortHandle(element) {
     if (this.surfaceType !== "preview" || !element || element.querySelector(":scope > .notedraw-text-sort-handle")) {
@@ -11390,6 +11438,7 @@ var PreviewDrawingController = class {
     if (!edit.path) {
       return;
     }
+    const historyBefore = this.captureDrawingHistorySnapshot();
     const edits = Array.isArray(this.drawingData.webEdits) ? this.drawingData.webEdits : [];
     const existingIndex = edits.findIndex((item) => item?.kind === "text" && item.path === edit.path && normalizeRenderedText(item.originalText) === normalizedOriginal);
     if (existingIndex >= 0) {
@@ -11398,7 +11447,11 @@ var PreviewDrawingController = class {
       edits.push(edit);
     }
     this.drawingData.webEdits = edits;
+    this.redoStack = [];
+    this.recordDrawingHistory(historyBefore);
     this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.render();
+    return true;
   }
   applyWebEdits() {
     if (this.surfaceType !== "webview" || this.currentEditor || !Array.isArray(this.drawingData?.webEdits)) {
@@ -11434,6 +11487,21 @@ var PreviewDrawingController = class {
     }
     this.plugin.recordControllerHistory(this, { kind: "markdown", file, before, after }, { coalesceKey });
   }
+  recordCompoundHistory(markdownFile, markdownBefore, markdownAfter, drawingBefore) {
+    const drawingAfter = this.captureDrawingHistorySnapshot();
+    if (String(markdownBefore ?? "") === String(markdownAfter ?? "") && JSON.stringify(drawingBefore) === JSON.stringify(drawingAfter)) {
+      return;
+    }
+    this.plugin.recordControllerHistory(this, {
+      kind: "compound",
+      drawingFile: this.file,
+      drawingBefore,
+      drawingAfter,
+      markdownFile,
+      markdownBefore,
+      markdownAfter
+    });
+  }
   captureDrawingHistorySnapshot() {
     return cloneDrawingData(this.drawingData, this.file);
   }
@@ -11445,16 +11513,10 @@ var PreviewDrawingController = class {
     this.plugin.recordControllerHistory(this, { kind: "drawing", file: this.file, before, after });
   }
   async commitActiveTextEditForHistory() {
-    const element = this.currentEditor;
-    if (!element) {
-      return;
+    if (this.currentEditor) {
+      await this.endTextEdit();
     }
-    const original = element.dataset.noteDrawOriginal || "";
-    const edited = this.surfaceType === "webview" ? element.innerText : serializeControllerEditableSource(element, this.currentEditorEmbedded, true);
-    if (this.surfaceType !== "webview" && normalizeEditableSourceText(original) !== normalizeEditableSourceText(edited)) {
-      await this.plugin.scheduleTextSaveNow(this.currentEditorFile || this.file, original, edited, element, this);
-    }
-    this.endTextEdit();
+    await this.textCommitBarrier.wait();
   }
   async undoLastStroke() {
     await this.commitActiveTextEditForHistory();
@@ -12245,6 +12307,10 @@ function selectNodeContents(node) {
 }
 function serializeEditableSource(element) {
   return stripGeneratedTerminalBreaks(serializeEditableChildren(element)).replace(/\u00a0/g, " ").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+function isClearableInlineFormattingElement(element) {
+  const tag = String(element?.tagName || "").toUpperCase();
+  return ["A", "B", "CODE", "DEL", "EM", "I", "KBD", "MARK", "S", "SMALL", "SPAN", "STRONG", "SUB", "SUP", "U"].includes(tag);
 }
 function serializeControllerEditableSource(element, embeddedSurface = false, cleanupTerminalBreak = false) {
   const source = serializeEditableSource(element);

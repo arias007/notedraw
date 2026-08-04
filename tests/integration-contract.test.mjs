@@ -13,7 +13,7 @@ test("embedded Markdown edits resolve and save against the referenced file", asy
   assert.match(source, /element\.dataset\.noteDrawSourcePath = normalizeVaultPath\(sourcePath\)/);
   assert.match(source, /const editsEmbeddedFile = Boolean\(editableFile\?\.path && editableFile\.path !== this\.file\?\.path\)/);
   assert.match(source, /prepareTextEditState\(this\.currentEditorFile, element\.innerText, element, this\)/);
-  assert.match(source, /scheduleTextSaveNow\(this\.currentEditorFile \|\| this\.file, original, edited, element, this\)/);
+  assert.match(source, /queueTextSaveAndWait\(this\.currentEditorFile \|\| this\.file, original, edited, element\)/);
   assert.match(source, /this\.currentEditorEmbedded = this\.embeddedSurface \|\| isEmbeddedEditableElement\(element\) \|\| normalizeVaultPath\(this\.currentEditorFile\?\.path\) !== normalizeVaultPath\(this\.file\?\.path\)/);
   assert.match(source, /serializeControllerEditableSource\(element, this\.currentEditorEmbedded\)/);
   assert.match(source, /function stripOneTerminalBreakPerLine\(value\)[\s\S]*replace\(\/<br\\s\*\\\/\?>\[ \\t\]\*\(\?=\\n\|\$\)\/gim, ""\)/);
@@ -72,15 +72,15 @@ test("registered surfaces expose stable handles and structured actions without c
   assert.match(source, /registeredSurfaceSource/);
 });
 
-test("3.3.23 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
+test("3.3.24 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
   const [source, manifestText] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(manifestUrl, "utf8")
   ]);
   const manifest = JSON.parse(manifestText);
 
-  assert.equal(manifest.version, "3.3.23");
-  assert.match(source, /version: "3\.3\.23"/);
+  assert.equal(manifest.version, "3.3.24");
+  assert.match(source, /version: "3\.3\.24"/);
   assert.match(source, /if \(!this\.responsivePointsInitialized \|\| signature !== this\.responsiveLayoutSignature\)/);
   assert.match(source, /captureElementLayoutForStroke/);
   assert.match(source, /projectElementPoints\(stroke\.points, layout, box/);
@@ -110,7 +110,11 @@ test("reading text edits avoid placeholder breaks and support undo, redo, and bl
   assert.match(source, /await this\.plugin\.undoControllerHistory\(this\)/);
   assert.match(source, /await this\.plugin\.redoControllerHistory\(this\)/);
   assert.match(source, /recordMarkdownHistory\(file, before, after/);
+  assert.match(source, /const result = await this\.saveTextBlock\(file, originalText, editedText, sourceInfo, target\)/);
+  assert.match(source, /controller\?\.recordMarkdownHistory\(file, result\.history\.before, result\.history\.after\)/);
   assert.match(source, /recordDrawingHistory\(before\)/);
+  assert.match(source, /kind: "compound"/);
+  assert.match(source, /recordCompoundHistory\(file, source, result\.source, options\.drawingBefore\)/);
   assert.match(source, /installTextSortHandle\(element\)/);
   assert.match(source, /async reorderTextBlock\(file, movingElement, targetElement, placeAfter = false, sourceState = \{\}\)/);
   assert.match(source, /element\.dataset\.noteDrawSortDragging === "true"/);
@@ -119,6 +123,9 @@ test("reading text edits avoid placeholder breaks and support undo, redo, and bl
   assert.match(source, /this\.endTextEdit\(\{ save: false \}\);\s*this\.plugin\.discardTextSaveState\(element\)/);
   assert.match(source, /normalizeEditableSourceText\(state\.baselineText\) === normalizeEditableSourceText\(state\.latestText\)/);
   assert.match(source, /this\.currentEditor\.replaceChildren\(textNode\)/);
+  assert.match(source, /hoistPlainTextMarker\(marker, this\.currentEditor, isClearableInlineFormattingElement\)/);
+  assert.match(source, /createAsyncCommitBarrier/);
+  assert.match(source, /commitWebviewTextEdit\(element, original, edited\)[\s\S]*recordDrawingHistory\(historyBefore\)/);
   assert.match(source, /button\.addEventListener\("contextmenu", state\.contextMenuHandler\)/);
   assert.match(source, /onButtonContextMenu\(event\)[\s\S]*this\.toggleDrawingsVisible\(\)/);
   assert.match(source, /if \(!this\.drawingsVisible\) \{\s*this\.setDrawingsVisible\(true\)/);
