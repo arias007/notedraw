@@ -355,7 +355,7 @@ test("note-flow padding keeps its required offset stable without moving upper co
 });
 
 test("note-flow padding preserves Markdown clearance at visual reading zoom", () => {
-  for (const scale of [2, 5, 8]) {
+  for (const scale of [2, 8, 64, 1024]) {
     assert.equal(noteFlowRequiredOffset({
       side: "before",
       anchorTop: 240 * scale,

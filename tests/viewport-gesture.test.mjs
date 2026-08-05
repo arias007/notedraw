@@ -3,8 +3,10 @@ import test from "node:test";
 
 import {
   calculatePinchPanScroll,
+  calculateReadingZoomExtent,
   calculateReadingZoomMargin,
-  calculateVisualZoomLogicalWindow
+  calculateVisualZoomLogicalWindow,
+  normalizeReadingZoom
 } from "../src/viewport-gesture.mjs";
 
 test("two-finger translation pans without changing zoom", () => {
@@ -88,6 +90,19 @@ test("reading zoom margin is derived from its stable baseline without cumulative
   assert.equal(calculateReadingZoomMargin(12, 1200, 1.2), 12);
 });
 
+test("reading zoom has no fixed plugin multiplier ceiling", () => {
+  assert.equal(normalizeReadingZoom(64), 64);
+  assert.equal(normalizeReadingZoom(1_000_000), 1_000_000);
+  assert.equal(normalizeReadingZoom(0.1), 0.6);
+  assert.equal(normalizeReadingZoom(Number.POSITIVE_INFINITY, { fallback: 512 }), 512);
+});
+
+test("unbounded visual zoom keeps its CSS scroll extent finite", () => {
+  assert.equal(calculateReadingZoomExtent(1200, 64), 76_800);
+  assert.equal(calculateReadingZoomExtent(1200, 1_000_000), 16_777_216);
+  assert.equal(calculateReadingZoomExtent(1200, Number.POSITIVE_INFINITY), 1200);
+});
+
 test("visual reading zoom maps the physical bottom viewport back to logical document coordinates", () => {
   const window = calculateVisualZoomLogicalWindow({
     scrollTop: 6766,
@@ -101,11 +116,11 @@ test("visual reading zoom maps the physical bottom viewport back to logical docu
   assert.equal(window.bottom, window.top + window.height);
 });
 
-test("eight-times reading zoom keeps the same logical document coordinates", () => {
+test("large reading zoom keeps the same logical document coordinates", () => {
   assert.deepEqual(calculateVisualZoomLogicalWindow({
-    scrollTop: 8040,
-    viewportHeight: 800,
-    zoom: 8,
+    scrollTop: 1_034_200,
+    viewportHeight: 102_400,
+    zoom: 1024,
     origin: 40
   }), {
     top: 970,

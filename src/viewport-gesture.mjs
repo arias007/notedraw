@@ -7,6 +7,23 @@ function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
 
+export function normalizeReadingZoom(value, {
+  minimum = 0.6,
+  fallback = 1
+} = {}) {
+  const min = Math.max(0.01, finite(minimum, 0.6));
+  const fallbackZoom = Math.max(min, finite(fallback, 1));
+  const zoom = Number(value);
+  return Number.isFinite(zoom) && zoom > 0 ? Math.max(min, zoom) : fallbackZoom;
+}
+
+export function calculateReadingZoomExtent(logicalSize, zoom, maximumPixels = 16_777_216) {
+  const size = Math.max(1, finite(logicalSize, 1));
+  const scale = normalizeReadingZoom(zoom, { minimum: 0.01, fallback: 1 });
+  const maximum = Math.max(1, finite(maximumPixels, 16_777_216));
+  return Math.max(1, Math.min(maximum, Math.ceil(size * scale)));
+}
+
 export function calculatePinchPanScroll({
   scrollLeft = 0,
   scrollTop = 0,

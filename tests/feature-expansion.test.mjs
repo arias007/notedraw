@@ -60,7 +60,8 @@ test("reading zoom preserves wrapping while edit zoom can reflow", async () => {
 
   assert.match(source, /readingViewZoom: true/);
   assert.match(source, /sourceViewLayoutZoom: true/);
-  assert.match(source, /var MAX_READING_ZOOM = 8;/);
+  assert.doesNotMatch(source, /MAX_READING_ZOOM/);
+  assert.match(source, /normalizeReadingZoom\(value,[\s\S]*fallback: previous/);
   assert.match(source, /setZoom: \(zoom, options = \{\}\) => this\.setApiZoom\(zoom, options\)/);
   assert.match(source, /if \(\(event\.ctrlKey \|\| event\.metaKey\) && this\.canZoomReadingSurface\(\)\)/);
   assert.match(source, /nextZoom = this\.readingZoom \* distance \/ previousDistance/);
@@ -74,6 +75,7 @@ test("reading zoom preserves wrapping while edit zoom can reflow", async () => {
   assert.match(source, /element\.style\.setProperty\("transform-origin", `\$\{-origin\.x\}px \$\{-origin\.y\}px`\)/);
   assert.match(source, /element\.style\.setProperty\("zoom", String\(zoom\)\)/);
   assert.match(source, /updateReadingZoomExtent\(zoom, target\)/);
+  assert.match(source, /calculateReadingZoomExtent\(logicalWidth, zoom\)/);
   assert.match(source, /calculateVisualZoomLogicalWindow\(\{/);
   assert.match(source, /scheduleReadingVirtualSectionSync\(\)/);
   assert.match(source, /syncReadingVirtualSections\(\)/);

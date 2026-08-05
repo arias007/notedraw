@@ -1457,6 +1457,21 @@ function finite5(value, fallback = 0) {
 function clamp5(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
+function normalizeReadingZoom(value, {
+  minimum = 0.6,
+  fallback = 1
+} = {}) {
+  const min = Math.max(0.01, finite5(minimum, 0.6));
+  const fallbackZoom = Math.max(min, finite5(fallback, 1));
+  const zoom = Number(value);
+  return Number.isFinite(zoom) && zoom > 0 ? Math.max(min, zoom) : fallbackZoom;
+}
+function calculateReadingZoomExtent(logicalSize, zoom, maximumPixels = 16777216) {
+  const size = Math.max(1, finite5(logicalSize, 1));
+  const scale = normalizeReadingZoom(zoom, { minimum: 0.01, fallback: 1 });
+  const maximum = Math.max(1, finite5(maximumPixels, 16777216));
+  return Math.max(1, Math.min(maximum, Math.ceil(size * scale)));
+}
 function calculatePinchPanScroll({
   scrollLeft = 0,
   scrollTop = 0,
@@ -2782,7 +2797,6 @@ var PEN_VARIANT_NOTE = "note-flow";
 var WATERCOLOR_VARIANT_TEXT = "text-highlight";
 var WATERCOLOR_VARIANT_STRAIGHT = "straight";
 var MIN_READING_ZOOM = 0.6;
-var MAX_READING_ZOOM = 8;
 var TEXT_RENDER_PLAIN = "plain";
 var TEXT_RENDER_MARKDOWN = "markdown";
 var TEXT_RENDER_HTML = "html";
@@ -4669,7 +4683,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.4.0",
+      version: "3.4.1",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -6679,7 +6693,7 @@ var PreviewDrawingController = class {
       this.brushPanelMode = [BRUSH_PEN, BRUSH_WATERCOLOR].includes(sharedToolbarState.brushPanelMode) ? sharedToolbarState.brushPanelMode : this.brushPanelMode;
       this.textPanelOpen = Boolean(sharedToolbarState.textPanelOpen);
       this.textPreset = sharedToolbarState.textPreset || this.textPreset;
-      this.readingZoom = clamp9(Number(sharedToolbarState.readingZoom) || 1, MIN_READING_ZOOM, MAX_READING_ZOOM);
+      this.readingZoom = normalizeReadingZoom(sharedToolbarState.readingZoom, { minimum: MIN_READING_ZOOM });
       for (const mode of [BRUSH_PEN, BRUSH_WATERCOLOR]) {
         if (sharedToolbarState.brushSettings?.[mode]) {
           this.brushSettings[mode] = { ...this.brushSettings[mode], ...sharedToolbarState.brushSettings[mode] };
@@ -7874,7 +7888,10 @@ var PreviewDrawingController = class {
     this.brushPanelMode = [BRUSH_PEN, BRUSH_WATERCOLOR].includes(state.brushPanelMode) ? state.brushPanelMode : this.brushPanelMode;
     this.textPanelOpen = Boolean(state.textPanelOpen);
     this.textPreset = state.textPreset || this.textPreset;
-    this.readingZoom = clamp9(Number(state.readingZoom) || this.readingZoom || 1, MIN_READING_ZOOM, MAX_READING_ZOOM);
+    this.readingZoom = normalizeReadingZoom(state.readingZoom, {
+      minimum: MIN_READING_ZOOM,
+      fallback: this.readingZoom
+    });
     this.syncCurrentBrushFields();
     this.previewEl.toggleClass("is-select-mode", this.toolMode === TOOL_SELECT);
     this.previewEl.toggleClass("is-palette-open", this.paletteOpen);
@@ -7886,7 +7903,9 @@ var PreviewDrawingController = class {
     const zoomChanged = Math.abs(this.readingZoom - previousReadingZoom) >= 1e-3;
     if (zoomChanged) {
       this.applyReadingZoom();
-      this.responsiveLayoutContext = null;
+      if (!this.usesVisualReadingZoom()) {
+        this.responsiveLayoutContext = null;
+      }
       this.scheduleResize({ layout: !this.usesVisualReadingZoom() });
     }
     this.updateToolButtons();
@@ -7981,7 +8000,7 @@ var PreviewDrawingController = class {
     noteDrawSettings.lastPenVariant = normalizeBrushVariant(BRUSH_PEN, this.brushVariants[BRUSH_PEN]);
     noteDrawSettings.lastWatercolorVariant = normalizeBrushVariant(BRUSH_WATERCOLOR, this.brushVariants[BRUSH_WATERCOLOR]);
     noteDrawSettings.lastTextPreset = normalizeTextPreset(this.textPreset);
-    noteDrawSettings.lastReadingZoom = clamp9(Number(this.readingZoom) || 1, MIN_READING_ZOOM, MAX_READING_ZOOM);
+    noteDrawSettings.lastReadingZoom = normalizeReadingZoom(this.readingZoom, { minimum: MIN_READING_ZOOM });
     this.plugin.noteDrawSettings = noteDrawSettings;
     this.plugin.scheduleSettingsSave?.();
   }
@@ -10867,7 +10886,7 @@ var PreviewDrawingController = class {
     return this.surfaceType === "preview" && !this.embeddedSurface;
   }
   readingZoomScale() {
-    return this.canZoomReadingSurface() ? clamp9(Number(this.readingZoom) || 1, MIN_READING_ZOOM, MAX_READING_ZOOM) : 1;
+    return this.canZoomReadingSurface() ? normalizeReadingZoom(this.readingZoom, { minimum: MIN_READING_ZOOM }) : 1;
   }
   isReadingZoomInteractionActive() {
     return Boolean(this.multiTouchScrolling) || Date.now() < this.readingZoomInteractionUntil;
@@ -11163,8 +11182,8 @@ var PreviewDrawingController = class {
     const targetOrigin = this.readingZoomOrigin(target);
     const logicalWidth = Math.max(this.canvasCssWidth || 0, targetOrigin.x + (target?.scrollWidth || target?.offsetWidth || 0), this.previewEl.clientWidth || 0);
     const logicalHeight = Math.max(this.canvasCssHeight || 0, targetOrigin.y + (target?.scrollHeight || target?.offsetHeight || 0), this.previewEl.clientHeight || 0);
-    const width = `${Math.max(1, Math.ceil(logicalWidth * zoom))}px`;
-    const height = `${Math.max(1, Math.ceil(logicalHeight * zoom))}px`;
+    const width = `${calculateReadingZoomExtent(logicalWidth, zoom)}px`;
+    const height = `${calculateReadingZoomExtent(logicalHeight, zoom)}px`;
     if (this.readingZoomExtent.style.width !== width) {
       this.readingZoomExtent.style.setProperty("width", width);
     }
@@ -11247,8 +11266,11 @@ var PreviewDrawingController = class {
     if (!this.canZoomReadingSurface()) {
       return false;
     }
-    const next = clamp9(Number(value) || 1, MIN_READING_ZOOM, MAX_READING_ZOOM);
-    const previous = this.readingZoom || 1;
+    const previous = normalizeReadingZoom(this.readingZoom, { minimum: MIN_READING_ZOOM });
+    const next = normalizeReadingZoom(value, {
+      minimum: MIN_READING_ZOOM,
+      fallback: previous
+    });
     const zoomChanged = Math.abs(next - previous) >= 1e-3;
     const previousClientPoint = options.previousClientPoint || clientPoint;
     if (!zoomChanged && !previousClientPoint) {
@@ -13406,7 +13428,8 @@ var PreviewDrawingController = class {
     }
     for (const element of [this.underlayEmbedLayer, this.embedLayer, this.readingZoomExtent]) {
       if ((Number.parseFloat(element?.style?.height) || 0) > runawayThreshold) {
-        element.style.setProperty("height", `${Math.ceil(stableHeight * (element === this.readingZoomExtent ? this.readingZoomScale() : 1))}px`);
+        const repairedHeight = element === this.readingZoomExtent ? calculateReadingZoomExtent(stableHeight, this.readingZoomScale()) : Math.ceil(stableHeight);
+        element.style.setProperty("height", `${repairedHeight}px`);
         repaired = true;
       }
     }
@@ -14792,7 +14815,10 @@ function sanitizeSettings(settings) {
     lastPenVariant: normalizeBrushVariant(BRUSH_PEN, input.lastPenVariant),
     lastWatercolorVariant: normalizeBrushVariant(BRUSH_WATERCOLOR, input.lastWatercolorVariant),
     lastTextPreset: normalizeTextPreset(input.lastTextPreset),
-    lastReadingZoom: clamp9(Number(input.lastReadingZoom ?? DEFAULT_SETTINGS.lastReadingZoom), MIN_READING_ZOOM, MAX_READING_ZOOM),
+    lastReadingZoom: normalizeReadingZoom(input.lastReadingZoom, {
+      minimum: MIN_READING_ZOOM,
+      fallback: DEFAULT_SETTINGS.lastReadingZoom
+    }),
     mindMapAffectsSource: input.mindMapAffectsSource !== false,
     toolbarTopOffset: clamp9(Number(input.toolbarTopOffset ?? DEFAULT_SETTINGS.toolbarTopOffset), 0, 48),
     longPressMs: clamp9(Number(input.longPressMs ?? DEFAULT_SETTINGS.longPressMs), MIN_LONG_PRESS_MS, MAX_LONG_PRESS_MS),
