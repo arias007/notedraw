@@ -101,6 +101,19 @@ test("visual reading zoom maps the physical bottom viewport back to logical docu
   assert.equal(window.bottom, window.top + window.height);
 });
 
+test("eight-times reading zoom keeps the same logical document coordinates", () => {
+  assert.deepEqual(calculateVisualZoomLogicalWindow({
+    scrollTop: 8040,
+    viewportHeight: 800,
+    zoom: 8,
+    origin: 40
+  }), {
+    top: 970,
+    bottom: 1070,
+    height: 100
+  });
+});
+
 test("unscaled reading surfaces preserve ordinary scroll coordinates", () => {
   assert.deepEqual(calculateVisualZoomLogicalWindow({
     scrollTop: 640,

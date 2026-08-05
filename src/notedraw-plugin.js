@@ -58,6 +58,18 @@ import {
   calculateVisualZoomLogicalWindow
 } from "./viewport-gesture.mjs";
 import {
+  captureInitialReadingLayout,
+  waitForStableReadingLayout
+} from "./reading-layout.mjs";
+import {
+  beginReadingTouch,
+  createReadingTouchGuardState,
+  finishReadingTouch,
+  moveReadingTouch,
+  recordReadingTouchScroll,
+  shouldSuppressReadingClick
+} from "./reading-touch-guard.mjs";
+import {
   hasStableNoteFlowAnchor,
   noteFlowRequiredOffset,
   noteFlowSurfaceRepairLimits,
@@ -139,7 +151,7 @@ var PEN_VARIANT_NOTE = "note-flow";
 var WATERCOLOR_VARIANT_TEXT = "text-highlight";
 var WATERCOLOR_VARIANT_STRAIGHT = "straight";
 var MIN_READING_ZOOM = 0.6;
-var MAX_READING_ZOOM = 2.5;
+var MAX_READING_ZOOM = 8;
 var TEXT_RENDER_PLAIN = "plain";
 var TEXT_RENDER_MARKDOWN = "markdown";
 var TEXT_RENDER_HTML = "html";
@@ -2035,7 +2047,7 @@ var NoteDrawPlugin = class extends Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.3.27",
+      version: "3.4.0",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -4019,6 +4031,8 @@ var PreviewDrawingController = class {
     this.readingVirtualSectionSignature = "";
     this.readingZoomInteractionUntil = 0;
     this.readingZoomSettleTimer = null;
+    this.initialReadingLayoutPrepared = false;
+    this.readingTouchGuard = createReadingTouchGuardState();
     this.pendingEmbedTool = null;
     this.pendingMindMapFile = null;
     this.pendingMindMapOptions = null;
@@ -4112,6 +4126,10 @@ var PreviewDrawingController = class {
     this.onWheel = this.onWheel.bind(this);
     this.onResize = this.onResize.bind(this);
     this.onScroll = this.onScroll.bind(this);
+    this.onReadingTouchPointerDown = this.onReadingTouchPointerDown.bind(this);
+    this.onReadingTouchPointerMove = this.onReadingTouchPointerMove.bind(this);
+    this.onReadingTouchPointerFinish = this.onReadingTouchPointerFinish.bind(this);
+    this.onReadingClick = this.onReadingClick.bind(this);
     this.onButtonClick = this.onButtonClick.bind(this);
     this.onButtonPointerDown = this.onButtonPointerDown.bind(this);
     this.onButtonPointerUp = this.onButtonPointerUp.bind(this);
@@ -4293,6 +4311,13 @@ var PreviewDrawingController = class {
     this.canvas.addEventListener("contextmenu", this.onCanvasContextMenu);
     this.canvas.addEventListener("wheel", this.onWheel, { passive: false });
     this.previewEl.addEventListener("contextmenu", this.onPreviewContextMenu, true);
+    if (this.usesVisualReadingZoom()) {
+      this.previewEl.addEventListener("pointerdown", this.onReadingTouchPointerDown, true);
+      this.previewEl.addEventListener("pointermove", this.onReadingTouchPointerMove, true);
+      this.previewEl.addEventListener("pointerup", this.onReadingTouchPointerFinish, true);
+      this.previewEl.addEventListener("pointercancel", this.onReadingTouchPointerFinish, true);
+      this.previewEl.addEventListener("click", this.onReadingClick, true);
+    }
     window.addEventListener("resize", this.onResize);
     window.visualViewport?.addEventListener("resize", this.onResize);
     window.visualViewport?.addEventListener("scroll", this.onResize);
@@ -4311,6 +4336,10 @@ var PreviewDrawingController = class {
     }
     this.refreshScrollContainer();
     annotateVisibleMarkdownElements(this.plugin.app, this.previewEl, this.file.path);
+    await this.prepareInitialReadingLayout();
+    if (this.destroyed || !this.previewEl?.isConnected) {
+      return;
+    }
     this.scheduleMarkdownAnnotationRefresh();
     if (typeof MutationObserver !== "undefined") {
       this.markdownRenderObserver = new MutationObserver((mutations) => {
@@ -4333,6 +4362,38 @@ var PreviewDrawingController = class {
     this.resizeCanvas();
     this.render();
     this.plugin.emitApiEvent("surface-changed", { ...this.plugin.describeController(this), phase: "mounted" });
+  }
+  async prepareInitialReadingLayout() {
+    if (this.initialReadingLayoutPrepared || !this.usesVisualReadingZoom()) {
+      this.initialReadingLayoutPrepared = true;
+      return;
+    }
+    const requestFrame = () => new Promise((resolve) => {
+      if (typeof window.requestAnimationFrame === "function") {
+        window.requestAnimationFrame(resolve);
+      } else {
+        window.setTimeout(resolve, 16);
+      }
+    });
+    await waitForStableReadingLayout(() => {
+      const sizer = rootPreviewSizer(this.previewEl);
+      return captureInitialReadingLayout(this.previewEl, sizer, this.readingPreviewRenderer());
+    }, {
+      requestFrame,
+      shouldAbort: () => this.destroyed || !this.previewEl?.isConnected
+    });
+    if (this.destroyed || !this.previewEl?.isConnected) {
+      return;
+    }
+    annotateVisibleMarkdownElements(this.plugin.app, this.previewEl, this.file.path);
+    try {
+      await annotateRenderedMarkdownLines(this.plugin.app, this.previewEl, this.file.path);
+    } catch (error) {
+      void error;
+    }
+    this.responsiveLayoutContext = null;
+    this.responsiveLayoutSignature = "";
+    this.initialReadingLayoutPrepared = true;
   }
   applySettings() {
     const settings = sanitizeSettings(this.plugin?.noteDrawSettings || {});
@@ -4497,11 +4558,17 @@ var PreviewDrawingController = class {
     this.responsiveLayoutSignature = "";
     this.responsivePointsInitialized = false;
     this.responsiveLayoutContext = null;
+    this.initialReadingLayoutPrepared = false;
+    this.readingTouchGuard = createReadingTouchGuardState();
     this.responsiveProjectionPending = null;
     this.invalidateStaticCache();
     this.drawingsLoaded = false;
     this.loadingDrawings = null;
     this.drawingData = createEmptyDrawingData(file);
+    await this.prepareInitialReadingLayout();
+    if (this.destroyed || !this.previewEl?.isConnected) {
+      return;
+    }
     await this.ensureDrawingsLoaded();
     this.resizeCanvas();
     this.render();
@@ -4583,6 +4650,11 @@ var PreviewDrawingController = class {
     this.canvas?.removeEventListener("contextmenu", this.onCanvasContextMenu);
     this.canvas?.removeEventListener("wheel", this.onWheel);
     this.previewEl?.removeEventListener("contextmenu", this.onPreviewContextMenu, true);
+    this.previewEl?.removeEventListener("pointerdown", this.onReadingTouchPointerDown, true);
+    this.previewEl?.removeEventListener("pointermove", this.onReadingTouchPointerMove, true);
+    this.previewEl?.removeEventListener("pointerup", this.onReadingTouchPointerFinish, true);
+    this.previewEl?.removeEventListener("pointercancel", this.onReadingTouchPointerFinish, true);
+    this.previewEl?.removeEventListener("click", this.onReadingClick, true);
     this.plugin.releaseHeaderButton(this);
     this.toolbar?.remove();
     this.palettePanel?.remove();
@@ -4776,6 +4848,7 @@ var PreviewDrawingController = class {
   }
   onScroll() {
     this.lastScrollAt = Date.now();
+    recordReadingTouchScroll(this.readingTouchGuard, { now: this.lastScrollAt });
     if (!this.isReadingZoomInteractionActive()) {
       this.scheduleReadingVirtualSectionSync();
     }
@@ -6301,13 +6374,16 @@ var PreviewDrawingController = class {
   getResponsiveContentFrame() {
     return measureResponsiveContentFrame(this.previewEl, this.surfaceType, this.canvasWidth(), this.canvas, this.readingZoomScale());
   }
+  responsiveViewportScale() {
+    return this.usesVisualReadingZoom() ? 1 : this.readingZoomScale();
+  }
   getResponsiveLayoutContext(refresh = false) {
     if (this.responsiveLayoutContext && !refresh) {
       return this.responsiveLayoutContext;
     }
     this.responsiveLayoutContext = {
       frame: this.getResponsiveContentFrame(),
-      viewportHeight: measureResponsiveViewportHeight(this.previewEl, this.scrollContainer, this.readingZoomScale()),
+      viewportHeight: measureResponsiveViewportHeight(this.previewEl, this.scrollContainer, this.responsiveViewportScale()),
       lineAnchors: [
         ...collectRenderedLineAnchors(this.previewEl, this.canvas, this.canvasWindowTop, this.readingZoomScale()),
         ...collectVirtualMarkdownLineAnchors(this.view, this.previewEl, this.canvas, this.canvasWindowTop, this.file?.path || "", this.readingZoomScale())
@@ -6870,7 +6946,7 @@ var PreviewDrawingController = class {
     this.staticCtx.setTransform(backingStore.scale, 0, 0, backingStore.scale, 0, -canvasWindow.top * backingStore.scale);
     if (this.drawingsLoaded && refreshLayout) {
       const frame = this.getResponsiveContentFrame();
-      const viewportHeight = measureResponsiveViewportHeight(this.previewEl, this.scrollContainer, visualScale);
+      const viewportHeight = measureResponsiveViewportHeight(this.previewEl, this.scrollContainer, this.responsiveViewportScale());
       const signature = responsiveLayoutSignature(width, height, frame, this.surfaceType, viewportHeight);
       if (!this.responsivePointsInitialized || signature !== this.responsiveLayoutSignature) {
         this.responsiveLayoutContext = null;
@@ -8153,6 +8229,50 @@ var PreviewDrawingController = class {
     }
     this.scheduleFloatingControlsPosition();
   }
+  onReadingTouchPointerDown(event) {
+    if (this.active || event.pointerType !== "touch" || event.isPrimary === false) {
+      return;
+    }
+    beginReadingTouch(this.readingTouchGuard, {
+      id: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      now: Date.now()
+    });
+  }
+  onReadingTouchPointerMove(event) {
+    if (this.active || event.pointerType !== "touch") {
+      return;
+    }
+    moveReadingTouch(this.readingTouchGuard, {
+      id: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      now: Date.now()
+    });
+  }
+  onReadingTouchPointerFinish(event) {
+    if (this.active || event.pointerType !== "touch") {
+      return;
+    }
+    const moved = finishReadingTouch(this.readingTouchGuard, {
+      id: event.pointerId,
+      now: Date.now()
+    });
+    if (moved && event.type !== "pointercancel") {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation?.();
+    }
+  }
+  onReadingClick(event) {
+    if (this.active || !shouldSuppressReadingClick(this.readingTouchGuard, Date.now())) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation?.();
+  }
   canZoomReadingSurface() {
     return ["preview", "source"].includes(this.surfaceType) && !this.embeddedSurface;
   }
@@ -8596,7 +8716,9 @@ var PreviewDrawingController = class {
       }
     }
     if (zoomChanged) {
-      this.responsiveLayoutContext = null;
+      if (!this.usesVisualReadingZoom()) {
+        this.responsiveLayoutContext = null;
+      }
       if (options.resize !== false) {
         this.scheduleResize({ layout: !this.usesVisualReadingZoom() });
       }

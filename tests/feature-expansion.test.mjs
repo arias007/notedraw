@@ -60,6 +60,7 @@ test("reading zoom preserves wrapping while edit zoom can reflow", async () => {
 
   assert.match(source, /readingViewZoom: true/);
   assert.match(source, /sourceViewLayoutZoom: true/);
+  assert.match(source, /var MAX_READING_ZOOM = 8;/);
   assert.match(source, /setZoom: \(zoom, options = \{\}\) => this\.setApiZoom\(zoom, options\)/);
   assert.match(source, /if \(\(event\.ctrlKey \|\| event\.metaKey\) && this\.canZoomReadingSurface\(\)\)/);
   assert.match(source, /nextZoom = this\.readingZoom \* distance \/ previousDistance/);
@@ -84,6 +85,8 @@ test("reading zoom preserves wrapping while edit zoom can reflow", async () => {
   assert.match(source, /renderer\.measureSection\?\.\(sections\[index\]\)/);
   assert.match(source, /if \(canvasWindow\.changed && visualScale !== 1 && this\.usesVisualReadingZoom\(\)\) \{[\s\S]*this\.applyVisualReadingZoomElement\(canvas, visualScale\)/);
   assert.match(source, /this\.scheduleResize\(\{ layout: !this\.usesVisualReadingZoom\(\) \}\)/);
+  assert.match(source, /responsiveViewportScale\(\) \{\s*return this\.usesVisualReadingZoom\(\) \? 1 : this\.readingZoomScale\(\);/);
+  assert.match(source, /if \(!this\.usesVisualReadingZoom\(\)\) \{\s*this\.responsiveLayoutContext = null;/);
   assert.match(source, /measureCanvasExtent\(this\.previewEl, this\.layoutMeasureEl, visualScale\)/);
   assert.match(source, /measureVisibleSurfaceWindow\(this\.previewEl, this\.scrollContainer, height, visualScale\)/);
   assert.match(source, /const xScale = rect\.width > 0 \? width \/ rect\.width : 1/);

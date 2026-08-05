@@ -38,6 +38,8 @@ test("root reading controllers wait for Markdown and clear only dormant preview 
   assert.match(source, /for \(const property of \["min-height", "padding-bottom"\]\)/);
   assert.match(source, /shouldResetDormantRootPreview\(rootPreviewLifecycleState\(view, preview\)\)/);
   assert.doesNotMatch(source, /resetDormantRootPreview[\s\S]{0,900}preview\.scrollTop = 0/);
+  assert.match(source, /await this\.prepareInitialReadingLayout\(\);\s*if \(this\.destroyed \|\| !this\.previewEl\?\.isConnected\) \{\s*return;/);
+  assert.match(source, /waitForStableReadingLayout[\s\S]*await annotateRenderedMarkdownLines[\s\S]*this\.responsiveLayoutSignature = "";/);
 });
 
 test("virtual Markdown recycling cannot discard a live reading controller", async () => {

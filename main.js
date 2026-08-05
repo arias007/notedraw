@@ -1509,8 +1509,146 @@ function calculateVisualZoomLogicalWindow({
   };
 }
 
-// src/note-flow-layout.mjs
+// src/reading-layout.mjs
 function finite6(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+function captureInitialReadingLayout(previewEl, sizer, renderer = null) {
+  const previewRect = previewEl?.getBoundingClientRect?.();
+  const sizerRect = sizer?.getBoundingClientRect?.();
+  const sections = Array.isArray(renderer?.sections) ? renderer.sections : [];
+  return {
+    previewWidth: Math.max(0, finite6(previewEl?.clientWidth, previewRect?.width)),
+    sizerHeight: Math.max(
+      0,
+      finite6(sizer?.scrollHeight),
+      finite6(sizer?.offsetHeight),
+      finite6(sizerRect?.height)
+    ),
+    sectionCount: sections.length,
+    renderedSectionCount: sections.filter((section) => section?.shown !== false && section?.el?.isConnected).length,
+    measuredSectionCount: sections.filter((section) => finite6(section?.height) > 0).length
+  };
+}
+function initialReadingLayoutSignature(metrics = {}) {
+  return [
+    Math.round(finite6(metrics.previewWidth)),
+    Math.round(finite6(metrics.sizerHeight)),
+    Math.max(0, Math.round(finite6(metrics.sectionCount))),
+    Math.max(0, Math.round(finite6(metrics.renderedSectionCount))),
+    Math.max(0, Math.round(finite6(metrics.measuredSectionCount)))
+  ].join(":");
+}
+function isInitialReadingLayoutUsable(metrics = {}) {
+  const sectionCount = Math.max(0, Math.round(finite6(metrics.sectionCount)));
+  return finite6(metrics.previewWidth) > 8 && finite6(metrics.sizerHeight) > 0 && (sectionCount === 0 || finite6(metrics.renderedSectionCount) > 0);
+}
+async function waitForStableReadingLayout(readMetrics, {
+  requestFrame,
+  shouldAbort = () => false,
+  stableFrames = 3,
+  maxFrames = 24
+} = {}) {
+  if (typeof readMetrics !== "function" || typeof requestFrame !== "function") {
+    return false;
+  }
+  const requiredStableFrames = Math.max(1, Math.round(finite6(stableFrames, 3)));
+  const frameLimit = Math.max(requiredStableFrames, Math.round(finite6(maxFrames, 24)));
+  let previousSignature = "";
+  let stableCount = 0;
+  let lastUsable = false;
+  for (let frame = 0; frame < frameLimit; frame += 1) {
+    await requestFrame();
+    if (shouldAbort()) {
+      return false;
+    }
+    const metrics = readMetrics();
+    lastUsable = isInitialReadingLayoutUsable(metrics);
+    if (!lastUsable) {
+      previousSignature = "";
+      stableCount = 0;
+      continue;
+    }
+    const signature = initialReadingLayoutSignature(metrics);
+    stableCount = signature === previousSignature ? stableCount + 1 : 1;
+    previousSignature = signature;
+    if (stableCount >= requiredStableFrames) {
+      return true;
+    }
+  }
+  return lastUsable;
+}
+
+// src/reading-touch-guard.mjs
+function finite7(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+function createReadingTouchGuardState() {
+  return {
+    active: null,
+    lastTouchAt: 0,
+    suppressUntil: 0
+  };
+}
+function beginReadingTouch(state, { id, x, y, now } = {}) {
+  state.active = {
+    id,
+    x: finite7(x),
+    y: finite7(y),
+    moved: false
+  };
+  state.lastTouchAt = finite7(now);
+}
+function moveReadingTouch(state, { id, x, y, now } = {}, threshold = 10) {
+  const active = state?.active;
+  if (!active || active.id !== id) {
+    return false;
+  }
+  const distance = Math.hypot(finite7(x) - active.x, finite7(y) - active.y);
+  if (distance >= Math.max(1, finite7(threshold, 10))) {
+    active.moved = true;
+  }
+  state.lastTouchAt = finite7(now);
+  return active.moved;
+}
+function finishReadingTouch(state, { id, now } = {}, suppressMs = 380) {
+  const active = state?.active;
+  if (!active || active.id !== id) {
+    return false;
+  }
+  const moved = Boolean(active.moved);
+  const timestamp = finite7(now);
+  state.active = null;
+  state.lastTouchAt = timestamp;
+  if (moved) {
+    state.suppressUntil = Math.max(state.suppressUntil, timestamp + Math.max(0, finite7(suppressMs, 380)));
+  }
+  return moved;
+}
+function recordReadingTouchScroll(state, { now } = {}, {
+  recentTouchMs = 900,
+  suppressMs = 380
+} = {}) {
+  const timestamp = finite7(now);
+  const touchIsRecent = Boolean(state?.active) || state?.lastTouchAt > 0 && timestamp - state.lastTouchAt <= Math.max(0, finite7(recentTouchMs, 900));
+  if (!touchIsRecent) {
+    return false;
+  }
+  if (state.active) {
+    state.active.moved = true;
+  }
+  state.lastTouchAt = timestamp;
+  state.suppressUntil = Math.max(state.suppressUntil, timestamp + Math.max(0, finite7(suppressMs, 380)));
+  return true;
+}
+function shouldSuppressReadingClick(state, now) {
+  return finite7(now) < finite7(state?.suppressUntil);
+}
+
+// src/note-flow-layout.mjs
+function finite8(value, fallback = 0) {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
 }
@@ -1518,8 +1656,8 @@ function clamp6(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
 function normalizeBounds(bounds) {
-  const minY = finite6(bounds?.minY, 0);
-  const maxY = Math.max(minY, finite6(bounds?.maxY, minY));
+  const minY = finite8(bounds?.minY, 0);
+  const maxY = Math.max(minY, finite8(bounds?.maxY, minY));
   return { ...bounds, minY, maxY };
 }
 function stabilizeNoteFlowBounds({
@@ -1532,25 +1670,25 @@ function stabilizeNoteFlowBounds({
   const current = normalizeBounds(bounds);
   const box = layout?.box;
   const sourceFrame = layout?.sourceFrame;
-  const sourceContentWidth = finite6(sourceFrame?.contentWidth, 0);
-  const boxY = finite6(box?.y, Number.NaN);
-  const boxHeight = finite6(box?.height, Number.NaN);
+  const sourceContentWidth = finite8(sourceFrame?.contentWidth, 0);
+  const boxY = finite8(box?.y, Number.NaN);
+  const boxHeight = finite8(box?.height, Number.NaN);
   if (!(sourceContentWidth > 0) || !Number.isFinite(boxY) || !(boxHeight >= 0)) {
     return {
       bounds: current,
       runaway: false,
-      referenceHeight: Math.max(1, finite6(viewportHeight, 1))
+      referenceHeight: Math.max(1, finite8(viewportHeight, 1))
     };
   }
-  const widthScale = clamp6(finite6(contentWidth, sourceContentWidth) / sourceContentWidth, 0.2, 5);
+  const widthScale = clamp6(finite8(contentWidth, sourceContentWidth) / sourceContentWidth, 0.2, 5);
   const sameContentLane = widthScale >= 0.82 && widthScale <= 1.2;
   const positionScale = sameContentLane ? 1 : clamp6(1 / widthScale, 0.48, 2.2);
   const heightScale = sameContentLane ? widthScale : clamp6(Math.max(positionScale, widthScale), 0.42, 2.8);
   const stableMinY = Math.max(0, boxY * positionScale);
   const stableMaxY = Math.max(stableMinY, stableMinY + boxHeight * heightScale);
-  const sourceDocumentHeight = Math.max(1, finite6(sourceFrame?.documentHeight, 1) * positionScale);
-  const referenceHeight = Math.max(1, finite6(viewportHeight, 1), sourceDocumentHeight, stableMaxY);
-  const viewport = Math.max(1, finite6(viewportHeight, 1));
+  const sourceDocumentHeight = Math.max(1, finite8(sourceFrame?.documentHeight, 1) * positionScale);
+  const referenceHeight = Math.max(1, finite8(viewportHeight, 1), sourceDocumentHeight, stableMaxY);
+  const viewport = Math.max(1, finite8(viewportHeight, 1));
   const runawayThreshold = Math.max(viewport * 4, stableMaxY * 4, stableMaxY + viewport * 2);
   const runaway = current.minY > runawayThreshold || current.maxY > runawayThreshold;
   return {
@@ -1560,8 +1698,8 @@ function stabilizeNoteFlowBounds({
   };
 }
 function noteFlowSurfaceRepairLimits(referenceHeight, viewportHeight) {
-  const viewport = Math.max(1, finite6(viewportHeight, 1));
-  const stableHeight = Math.ceil(clamp6(Math.max(viewport, finite6(referenceHeight, viewport) * 1.5), viewport, 2e5));
+  const viewport = Math.max(1, finite8(viewportHeight, 1));
+  const stableHeight = Math.ceil(clamp6(Math.max(viewport, finite8(referenceHeight, viewport) * 1.5), viewport, 2e5));
   return {
     stableHeight,
     runawayThreshold: Math.max(8e3, stableHeight * 4)
@@ -1572,8 +1710,8 @@ function selectNoteFlowInsertionPlacement(candidates, {
   strokeBottom = strokeTop,
   tolerance = 4
 } = {}) {
-  const top = finite6(strokeTop, Number.NaN);
-  const bottom = Math.max(top, finite6(strokeBottom, top));
+  const top = finite8(strokeTop, Number.NaN);
+  const bottom = Math.max(top, finite8(strokeBottom, top));
   if (!Number.isFinite(top) || !Number.isFinite(bottom)) {
     return null;
   }
@@ -1581,16 +1719,16 @@ function selectNoteFlowInsertionPlacement(candidates, {
     return candidate && Number.isFinite(Number(candidate.top)) && Number.isFinite(Number(candidate.bottom)) && Number.isFinite(Number(candidate.start));
   }).map((candidate, index) => ({
     ...candidate,
-    top: finite6(candidate.top),
-    bottom: Math.max(finite6(candidate.top), finite6(candidate.bottom)),
-    start: finite6(candidate.start),
-    end: Math.max(finite6(candidate.start), finite6(candidate.end, candidate.start)),
+    top: finite8(candidate.top),
+    bottom: Math.max(finite8(candidate.top), finite8(candidate.bottom)),
+    start: finite8(candidate.start),
+    end: Math.max(finite8(candidate.start), finite8(candidate.end, candidate.start)),
     order: Number.isFinite(Number(candidate.order)) ? Number(candidate.order) : index
   })).sort((a, b) => a.top - b.top || a.bottom - b.bottom || a.order - b.order);
   if (!ordered.length) {
     return null;
   }
-  const threshold = Math.max(0, finite6(tolerance, 4));
+  const threshold = Math.max(0, finite8(tolerance, 4));
   const preciseOverlap = ordered.filter((candidate) => {
     const precise = Boolean(candidate.lineSpacer) || candidate.start === candidate.end || Math.abs(candidate.top - top) <= threshold;
     return precise && candidate.bottom >= top - threshold && candidate.top <= bottom + threshold;
@@ -1614,7 +1752,7 @@ function selectNoteFlowPositionAnchor(candidates, {
   tolerance = 4,
   maxOrderExclusive = Number.POSITIVE_INFINITY
 } = {}) {
-  const top = finite6(strokeTop, Number.NaN);
+  const top = finite8(strokeTop, Number.NaN);
   if (!Number.isFinite(top)) {
     return null;
   }
@@ -1623,11 +1761,11 @@ function selectNoteFlowPositionAnchor(candidates, {
     return candidate && Number.isFinite(Number(candidate.bottom)) && Number.isFinite(Number(candidate.end));
   }).map((candidate, index) => ({
     ...candidate,
-    bottom: finite6(candidate.bottom),
-    end: finite6(candidate.end),
+    bottom: finite8(candidate.bottom),
+    end: finite8(candidate.end),
     order: Number.isFinite(Number(candidate.order)) ? Number(candidate.order) : index
   })).filter((candidate) => {
-    return candidate.bottom <= top + finite6(tolerance, 4) && candidate.order < orderLimit;
+    return candidate.bottom <= top + finite8(tolerance, 4) && candidate.order < orderLimit;
   }).sort((a, b) => b.bottom - a.bottom || b.end - a.end || b.order - a.order);
   if (!above.length) {
     return null;
@@ -1643,15 +1781,15 @@ function selectStoredNoteFlowAnchorCandidate(candidates, {
     return candidate && Number.isFinite(Number(candidate.top)) && Number.isFinite(Number(candidate.bottom));
   }).map((candidate, order) => ({
     ...candidate,
-    top: finite6(candidate.top),
-    bottom: Math.max(finite6(candidate.top), finite6(candidate.bottom)),
+    top: finite8(candidate.top),
+    bottom: Math.max(finite8(candidate.top), finite8(candidate.bottom)),
     order: Number.isFinite(Number(candidate.order)) ? Number(candidate.order) : order
   }));
   if (ordered.length <= 1 || !Number.isFinite(Number(strokeTop))) {
     return ordered.sort((a, b) => a.bottom - a.top - (b.bottom - b.top) || a.order - b.order)[0] || null;
   }
-  const top = finite6(strokeTop);
-  const threshold = Math.max(0, finite6(tolerance, 4));
+  const top = finite8(strokeTop);
+  const threshold = Math.max(0, finite8(tolerance, 4));
   if (side === "after") {
     const above = ordered.filter((candidate) => candidate.bottom <= top + threshold).sort((a, b) => b.bottom - a.bottom || a.order - b.order);
     if (above.length) {
@@ -1674,12 +1812,12 @@ function selectNoteFlowAvoidanceCandidate(candidates, {
   strokeBottom,
   tolerance = 4
 } = {}) {
-  const top = finite6(strokeTop, Number.NaN);
-  const bottom = finite6(strokeBottom, Number.NaN);
+  const top = finite8(strokeTop, Number.NaN);
+  const bottom = finite8(strokeBottom, Number.NaN);
   if (!Number.isFinite(top) || !Number.isFinite(bottom)) {
     return null;
   }
-  const threshold = Math.max(0, finite6(tolerance, 4));
+  const threshold = Math.max(0, finite8(tolerance, 4));
   return (Array.isArray(candidates) ? candidates : []).filter((candidate) => {
     const start = Number(candidate?.start);
     const end = Number(candidate?.end);
@@ -1687,8 +1825,8 @@ function selectNoteFlowAvoidanceCandidate(candidates, {
     return candidate && precise && Number.isFinite(Number(candidate.top)) && Number.isFinite(Number(candidate.bottom)) && Number(candidate.bottom) >= top + threshold && Number(candidate.top) <= bottom - threshold;
   }).map((candidate, order) => ({
     ...candidate,
-    top: finite6(candidate.top),
-    bottom: Math.max(finite6(candidate.top), finite6(candidate.bottom)),
+    top: finite8(candidate.top),
+    bottom: Math.max(finite8(candidate.top), finite8(candidate.bottom)),
     order: Number.isFinite(Number(candidate.order)) ? Number(candidate.order) : order
   })).sort((a, b) => {
     const aLine = a.lineSpacer || Number(a.start) === Number(a.end) ? 0 : 1;
@@ -1697,11 +1835,11 @@ function selectNoteFlowAvoidanceCandidate(candidates, {
   })[0] || null;
 }
 function pointBounds(points, canvasWidth, canvasHeight) {
-  const width = Math.max(1, finite6(canvasWidth, 1));
-  const height = Math.max(1, finite6(canvasHeight, 1));
+  const width = Math.max(1, finite8(canvasWidth, 1));
+  const height = Math.max(1, finite8(canvasHeight, 1));
   const coordinates = (Array.isArray(points) ? points : []).map((point) => ({
-    x: finite6(point?.x, Number.NaN) * width,
-    y: finite6(point?.y, Number.NaN) * height
+    x: finite8(point?.x, Number.NaN) * width,
+    y: finite8(point?.y, Number.NaN) * height
   })).filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
   if (!coordinates.length) {
     return null;
@@ -1716,14 +1854,14 @@ function stabilizeNoteFlowPointProjection(previousPoints, projectedPoints, {
   canvasHeight,
   threshold = 0.65
 } = {}) {
-  const width = Math.max(1, finite6(canvasWidth, 1));
-  const height = Math.max(1, finite6(canvasHeight, 1));
+  const width = Math.max(1, finite8(canvasWidth, 1));
+  const height = Math.max(1, finite8(canvasHeight, 1));
   const previous = pointBounds(previousPoints, width, height);
   const projected = pointBounds(projectedPoints, width, height);
   if (!previous || !projected) {
     return Array.isArray(projectedPoints) ? projectedPoints.map((point) => ({ ...point })) : [];
   }
-  const limit = Math.max(0, finite6(threshold, 0.65));
+  const limit = Math.max(0, finite8(threshold, 0.65));
   const deltaX = Math.abs(projected.minX - previous.minX) < limit ? previous.minX - projected.minX : 0;
   const deltaY = Math.abs(projected.minY - previous.minY) < limit ? previous.minY - projected.minY : 0;
   if (!deltaX && !deltaY) {
@@ -1731,8 +1869,8 @@ function stabilizeNoteFlowPointProjection(previousPoints, projectedPoints, {
   }
   return projectedPoints.map((point) => ({
     ...point,
-    x: clamp6(finite6(point?.x, 0) + deltaX / width, 0, 1),
-    y: clamp6(finite6(point?.y, 0) + deltaY / height, 0, 1)
+    x: clamp6(finite8(point?.x, 0) + deltaX / width, 0, 1),
+    y: clamp6(finite8(point?.y, 0) + deltaY / height, 0, 1)
   }));
 }
 function projectNoteFlowDocumentPoint(sourcePoint, projectedPoint, {
@@ -1744,7 +1882,7 @@ function projectNoteFlowDocumentPoint(sourcePoint, projectedPoint, {
   }
   return {
     ...projectedPoint,
-    y: clamp6(absoluteY / Math.max(1, finite6(canvasHeight, 1)), 0, 1)
+    y: clamp6(absoluteY / Math.max(1, finite8(canvasHeight, 1)), 0, 1)
   };
 }
 function preserveAbsoluteNoteFlowPoints(points, {
@@ -1753,14 +1891,14 @@ function preserveAbsoluteNoteFlowPoints(points, {
   nextWidth,
   nextHeight
 } = {}) {
-  const oldWidth = Math.max(1, finite6(previousWidth, 1));
-  const oldHeight = Math.max(1, finite6(previousHeight, 1));
-  const width = Math.max(1, finite6(nextWidth, oldWidth));
-  const height = Math.max(1, finite6(nextHeight, oldHeight));
+  const oldWidth = Math.max(1, finite8(previousWidth, 1));
+  const oldHeight = Math.max(1, finite8(previousHeight, 1));
+  const width = Math.max(1, finite8(nextWidth, oldWidth));
+  const height = Math.max(1, finite8(nextHeight, oldHeight));
   return (Array.isArray(points) ? points : []).map((point) => ({
     ...point,
-    x: clamp6(finite6(point?.x, 0) * oldWidth / width, 0, 1),
-    y: clamp6(finite6(point?.y, 0) * oldHeight / height, 0, 1)
+    x: clamp6(finite8(point?.x, 0) * oldWidth / width, 0, 1),
+    y: clamp6(finite8(point?.y, 0) * oldHeight / height, 0, 1)
   }));
 }
 function hasStableNoteFlowAnchor(noteFlow) {
@@ -1775,9 +1913,9 @@ function noteFlowRequiredOffset({
   applied = 0,
   scale = 1
 } = {}) {
-  const safeScale = Math.max(0.01, finite6(scale, 1));
-  const edge = side === "after" ? finite6(anchorBottom) - Math.max(0, finite6(applied)) * safeScale : finite6(anchorTop);
-  return Math.max(0, (finite6(desiredBottom) - edge) / safeScale);
+  const safeScale = Math.max(0.01, finite8(scale, 1));
+  const edge = side === "after" ? finite8(anchorBottom) - Math.max(0, finite8(applied)) * safeScale : finite8(anchorTop);
+  return Math.max(0, (finite8(desiredBottom) - edge) / safeScale);
 }
 function shouldRenderStrokeOnSurface(stroke, surfaceType) {
   return !(surfaceType === "source" && stroke?.noteFlow?.enabled);
@@ -1786,22 +1924,22 @@ function shouldPlaceStrokeBelowMarkdown(stroke) {
   return Boolean(stroke?.belowMarkdown || stroke?.noteFlow?.enabled);
 }
 function reflowNoteFlowIntervals(items, { gap = 12 } = {}) {
-  const defaultGap = Math.max(0, finite6(gap, 12));
+  const defaultGap = Math.max(0, finite8(gap, 12));
   const normalized = (Array.isArray(items) ? items : []).map((item, order) => {
-    const minY = finite6(item?.minY, Number.NaN);
-    const maxY = finite6(item?.maxY, Number.NaN);
+    const minY = finite8(item?.minY, Number.NaN);
+    const maxY = finite8(item?.maxY, Number.NaN);
     if (!Number.isFinite(minY) || !Number.isFinite(maxY) || maxY < minY) {
       return null;
     }
-    const previousMinY = finite6(item?.previousMinY, Number.NaN);
-    const previousMaxY = finite6(item?.previousMaxY, Number.NaN);
+    const previousMinY = finite8(item?.previousMinY, Number.NaN);
+    const previousMaxY = finite8(item?.previousMaxY, Number.NaN);
     return {
       ...item,
       order: Number.isFinite(Number(item?.order)) ? Number(item.order) : order,
       minY,
       maxY,
       height: Math.max(0, maxY - minY),
-      gap: Math.max(0, finite6(item?.gap, defaultGap)),
+      gap: Math.max(0, finite8(item?.gap, defaultGap)),
       previousMinY,
       previousMaxY,
       movedDown: Boolean(item?.moved) && Number.isFinite(previousMinY) && Number.isFinite(previousMaxY) && minY > previousMinY
@@ -1837,7 +1975,7 @@ function reflowNoteFlowIntervals(items, { gap = 12 } = {}) {
       index: item.index,
       minY,
       maxY,
-      deltaY: minY - finite6(item?.originalMinY, item.minY)
+      deltaY: minY - finite8(item?.originalMinY, item.minY)
     };
   });
 }
@@ -1868,17 +2006,17 @@ function pickRootPreview(previews = [], rendererPreview = null, isVisible = () =
 }
 
 // src/connector-binding.mjs
-function finite7(value, fallback = 0) {
+function finite9(value, fallback = 0) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 function clamp01(value) {
-  return Math.min(1, Math.max(0, finite7(value)));
+  return Math.min(1, Math.max(0, finite9(value)));
 }
 function boundsCenter(bounds) {
   return {
-    x: (finite7(bounds?.minX) + finite7(bounds?.maxX)) / 2,
-    y: (finite7(bounds?.minY) + finite7(bounds?.maxY)) / 2
+    x: (finite9(bounds?.minX) + finite9(bounds?.maxX)) / 2,
+    y: (finite9(bounds?.minY) + finite9(bounds?.maxY)) / 2
   };
 }
 function canvasPoint(point, width, height) {
@@ -1889,27 +2027,27 @@ function canvasPoint(point, width, height) {
 }
 function attachmentPoint(bounds, toward) {
   const center = boundsCenter(bounds);
-  const dx = finite7(toward?.x, center.x) - center.x;
-  const dy = finite7(toward?.y, center.y) - center.y;
+  const dx = finite9(toward?.x, center.x) - center.x;
+  const dy = finite9(toward?.y, center.y) - center.y;
   const horizontal = Math.abs(dx) >= Math.abs(dy) * 0.62;
   return horizontal ? {
-    x: dx >= 0 ? finite7(bounds?.maxX, center.x) : finite7(bounds?.minX, center.x),
+    x: dx >= 0 ? finite9(bounds?.maxX, center.x) : finite9(bounds?.minX, center.x),
     y: center.y
   } : {
     x: center.x,
-    y: dy >= 0 ? finite7(bounds?.maxY, center.y) : finite7(bounds?.minY, center.y)
+    y: dy >= 0 ? finite9(bounds?.maxY, center.y) : finite9(bounds?.minY, center.y)
   };
 }
 function normalizePoint(point, width, height, timestamp) {
   return {
-    x: clamp01(finite7(point?.x) / width),
-    y: clamp01(finite7(point?.y) / height),
+    x: clamp01(finite9(point?.x) / width),
+    y: clamp01(finite9(point?.y) / height),
     t: timestamp,
     anchor: null
   };
 }
 function connectorSnapThreshold(hitPaddingPx = 0) {
-  return Math.max(28, Math.max(0, finite7(hitPaddingPx)) * 1.75);
+  return Math.max(28, Math.max(0, finite9(hitPaddingPx)) * 1.75);
 }
 function buildSnappedConnectorPoints({
   fromBounds = null,
@@ -1920,8 +2058,8 @@ function buildSnappedConnectorPoints({
   canvasHeight = 1,
   timestamp = Date.now()
 } = {}) {
-  const width = Math.max(1, finite7(canvasWidth, 1));
-  const height = Math.max(1, finite7(canvasHeight, 1));
+  const width = Math.max(1, finite9(canvasWidth, 1));
+  const height = Math.max(1, finite9(canvasHeight, 1));
   const freeFrom = canvasPoint(fromPoint, width, height);
   const freeTo = canvasPoint(toPoint, width, height);
   const fromTarget = toBounds ? boundsCenter(toBounds) : freeTo;
@@ -1934,7 +2072,7 @@ function buildSnappedConnectorPoints({
 }
 
 // src/stroke-dynamics.mjs
-function finite8(value, fallback = 0) {
+function finite10(value, fallback = 0) {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
 }
@@ -1953,33 +2091,33 @@ function buildFountainPenSegments(points, {
   if (!Array.isArray(points) || points.length < 2) {
     return [];
   }
-  const width = Math.max(1, finite8(canvasWidth, 1));
-  const height = Math.max(1, finite8(canvasHeight, 1));
-  const strokeWidth = Math.max(0.25, finite8(baseWidth, 3));
-  const strokeOpacity = clamp7(finite8(baseOpacity, 1), 0, 1);
+  const width = Math.max(1, finite10(canvasWidth, 1));
+  const height = Math.max(1, finite10(canvasHeight, 1));
+  const strokeWidth = Math.max(0.25, finite10(baseWidth, 3));
+  const strokeOpacity = clamp7(finite10(baseOpacity, 1), 0, 1);
   const minimumVisibleWidth = Math.min(strokeWidth, Math.max(0.8, strokeWidth * 0.7));
   const samples = [];
   for (let index = 1; index < points.length; index += 1) {
     const from = points[index - 1];
     const to = points[index];
-    const dx = (finite8(to?.x) - finite8(from?.x)) * width;
-    const dy = (finite8(to?.y) - finite8(from?.y)) * height;
+    const dx = (finite10(to?.x) - finite10(from?.x)) * width;
+    const dy = (finite10(to?.y) - finite10(from?.y)) * height;
     const distance = Math.hypot(dx, dy);
     if (distance <= 0.01) {
       continue;
     }
     let sampleStart = index - 1;
     let sampleDistance = distance;
-    let sampleElapsed = finite8(to?.t, index * 16) - finite8(from?.t, (index - 1) * 16);
+    let sampleElapsed = finite10(to?.t, index * 16) - finite10(from?.t, (index - 1) * 16);
     while (sampleStart > 0 && sampleElapsed < 22) {
       const previous = points[sampleStart - 1];
       const current = points[sampleStart];
       sampleDistance += Math.hypot(
-        (finite8(current?.x) - finite8(previous?.x)) * width,
-        (finite8(current?.y) - finite8(previous?.y)) * height
+        (finite10(current?.x) - finite10(previous?.x)) * width,
+        (finite10(current?.y) - finite10(previous?.y)) * height
       );
       sampleStart -= 1;
-      sampleElapsed = finite8(to?.t, index * 16) - finite8(previous?.t, sampleStart * 16);
+      sampleElapsed = finite10(to?.t, index * 16) - finite10(previous?.t, sampleStart * 16);
     }
     const elapsed = clamp7(sampleElapsed > 0 ? sampleElapsed : 4, 1, 250);
     samples.push({
@@ -2054,45 +2192,45 @@ function straightenWatercolorPoints(points, {
   if (!Array.isArray(points) || points.length < 2) {
     return { axis: null, points: Array.isArray(points) ? points.slice() : [] };
   }
-  const width = Math.max(1, finite8(canvasWidth, 1));
-  const height = Math.max(1, finite8(canvasHeight, 1));
+  const width = Math.max(1, finite10(canvasWidth, 1));
+  const height = Math.max(1, finite10(canvasHeight, 1));
   const start = points[0];
   const end = points[points.length - 1];
-  const dx = (finite8(end?.x) - finite8(start?.x)) * width;
-  const dy = (finite8(end?.y) - finite8(start?.y)) * height;
+  const dx = (finite10(end?.x) - finite10(start?.x)) * width;
+  const dy = (finite10(end?.y) - finite10(start?.y)) * height;
   const distance = Math.hypot(dx, dy);
-  if (distance < Math.max(0, finite8(minDistance, 18))) {
+  if (distance < Math.max(0, finite10(minDistance, 18))) {
     return { axis: null, points: points.slice() };
   }
-  const tolerance = Math.sin(clamp7(finite8(angleTolerance, 12), 1, 45) * Math.PI / 180);
+  const tolerance = Math.sin(clamp7(finite10(angleTolerance, 12), 1, 45) * Math.PI / 180);
   const horizontal = Math.abs(dy) / distance <= tolerance;
   const vertical = Math.abs(dx) / distance <= tolerance;
   if (!horizontal && !vertical) {
     return { axis: null, points: points.slice() };
   }
   const axis = horizontal ? "horizontal" : "vertical";
-  const centerX = (finite8(start?.x) + finite8(end?.x)) / 2;
-  const centerY = (finite8(start?.y) + finite8(end?.y)) / 2;
+  const centerX = (finite10(start?.x) + finite10(end?.x)) / 2;
+  const centerY = (finite10(start?.y) + finite10(end?.y)) / 2;
   return {
     axis,
     points: points.map((point) => ({
       ...point,
-      x: axis === "vertical" ? centerX : finite8(point?.x),
-      y: axis === "horizontal" ? centerY : finite8(point?.y)
+      x: axis === "vertical" ? centerX : finite10(point?.x),
+      y: axis === "horizontal" ? centerY : finite10(point?.y)
     }))
   };
 }
 
 // src/text-highlight.mjs
-function finite9(value, fallback = 0) {
+function finite11(value, fallback = 0) {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
 }
 function normalizeRect(rect) {
-  const left = finite9(rect?.left);
-  const top = finite9(rect?.top);
-  const right = finite9(rect?.right, left + finite9(rect?.width));
-  const bottom = finite9(rect?.bottom, top + finite9(rect?.height));
+  const left = finite11(rect?.left);
+  const top = finite11(rect?.top);
+  const right = finite11(rect?.right, left + finite11(rect?.width));
+  const bottom = finite11(rect?.bottom, top + finite11(rect?.height));
   if (right <= left || bottom <= top) {
     return null;
   }
@@ -2120,8 +2258,8 @@ function pickTextHighlightLine(rectInputs, pointInputs, {
 } = {}) {
   const rects = (Array.isArray(rectInputs) ? rectInputs : []).map(normalizeRect).filter(Boolean);
   const points = (Array.isArray(pointInputs) ? pointInputs : []).map((point) => ({
-    x: finite9(point?.x, NaN),
-    y: finite9(point?.y, NaN)
+    x: finite11(point?.x, NaN),
+    y: finite11(point?.y, NaN)
   })).filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
   if (!rects.length || !points.length) {
     return null;
@@ -2135,8 +2273,8 @@ function pickTextHighlightLine(rectInputs, pointInputs, {
     const horizontalGap = intervalGap(pointLeft, pointRight, rect.left, rect.right);
     const nearestVertical = Math.min(...verticalDistances);
     const medianVertical = median2(verticalDistances);
-    const verticalLimit = Math.max(finite9(maxVerticalDistance, 36), rect.height * 1.25);
-    if (nearestVertical > verticalLimit || horizontalGap > Math.max(0, finite9(maxHorizontalDistance, 140))) {
+    const verticalLimit = Math.max(finite11(maxVerticalDistance, 36), rect.height * 1.25);
+    if (nearestVertical > verticalLimit || horizontalGap > Math.max(0, finite11(maxHorizontalDistance, 140))) {
       continue;
     }
     const supportedPoints = points.filter((point) => point.y >= rect.top - rect.height * 0.72 && point.y <= rect.bottom + rect.height * 0.72 && point.x >= rect.left - maxHorizontalDistance && point.x <= rect.right + maxHorizontalDistance).length;
@@ -2644,7 +2782,7 @@ var PEN_VARIANT_NOTE = "note-flow";
 var WATERCOLOR_VARIANT_TEXT = "text-highlight";
 var WATERCOLOR_VARIANT_STRAIGHT = "straight";
 var MIN_READING_ZOOM = 0.6;
-var MAX_READING_ZOOM = 2.5;
+var MAX_READING_ZOOM = 8;
 var TEXT_RENDER_PLAIN = "plain";
 var TEXT_RENDER_MARKDOWN = "markdown";
 var TEXT_RENDER_HTML = "html";
@@ -4531,7 +4669,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.3.27",
+      version: "3.4.0",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -6509,6 +6647,8 @@ var PreviewDrawingController = class {
     this.readingVirtualSectionSignature = "";
     this.readingZoomInteractionUntil = 0;
     this.readingZoomSettleTimer = null;
+    this.initialReadingLayoutPrepared = false;
+    this.readingTouchGuard = createReadingTouchGuardState();
     this.pendingEmbedTool = null;
     this.pendingMindMapFile = null;
     this.pendingMindMapOptions = null;
@@ -6602,6 +6742,10 @@ var PreviewDrawingController = class {
     this.onWheel = this.onWheel.bind(this);
     this.onResize = this.onResize.bind(this);
     this.onScroll = this.onScroll.bind(this);
+    this.onReadingTouchPointerDown = this.onReadingTouchPointerDown.bind(this);
+    this.onReadingTouchPointerMove = this.onReadingTouchPointerMove.bind(this);
+    this.onReadingTouchPointerFinish = this.onReadingTouchPointerFinish.bind(this);
+    this.onReadingClick = this.onReadingClick.bind(this);
     this.onButtonClick = this.onButtonClick.bind(this);
     this.onButtonPointerDown = this.onButtonPointerDown.bind(this);
     this.onButtonPointerUp = this.onButtonPointerUp.bind(this);
@@ -6783,6 +6927,13 @@ var PreviewDrawingController = class {
     this.canvas.addEventListener("contextmenu", this.onCanvasContextMenu);
     this.canvas.addEventListener("wheel", this.onWheel, { passive: false });
     this.previewEl.addEventListener("contextmenu", this.onPreviewContextMenu, true);
+    if (this.usesVisualReadingZoom()) {
+      this.previewEl.addEventListener("pointerdown", this.onReadingTouchPointerDown, true);
+      this.previewEl.addEventListener("pointermove", this.onReadingTouchPointerMove, true);
+      this.previewEl.addEventListener("pointerup", this.onReadingTouchPointerFinish, true);
+      this.previewEl.addEventListener("pointercancel", this.onReadingTouchPointerFinish, true);
+      this.previewEl.addEventListener("click", this.onReadingClick, true);
+    }
     window.addEventListener("resize", this.onResize);
     window.visualViewport?.addEventListener("resize", this.onResize);
     window.visualViewport?.addEventListener("scroll", this.onResize);
@@ -6801,6 +6952,10 @@ var PreviewDrawingController = class {
     }
     this.refreshScrollContainer();
     annotateVisibleMarkdownElements(this.plugin.app, this.previewEl, this.file.path);
+    await this.prepareInitialReadingLayout();
+    if (this.destroyed || !this.previewEl?.isConnected) {
+      return;
+    }
     this.scheduleMarkdownAnnotationRefresh();
     if (typeof MutationObserver !== "undefined") {
       this.markdownRenderObserver = new MutationObserver((mutations) => {
@@ -6823,6 +6978,38 @@ var PreviewDrawingController = class {
     this.resizeCanvas();
     this.render();
     this.plugin.emitApiEvent("surface-changed", { ...this.plugin.describeController(this), phase: "mounted" });
+  }
+  async prepareInitialReadingLayout() {
+    if (this.initialReadingLayoutPrepared || !this.usesVisualReadingZoom()) {
+      this.initialReadingLayoutPrepared = true;
+      return;
+    }
+    const requestFrame = () => new Promise((resolve) => {
+      if (typeof window.requestAnimationFrame === "function") {
+        window.requestAnimationFrame(resolve);
+      } else {
+        window.setTimeout(resolve, 16);
+      }
+    });
+    await waitForStableReadingLayout(() => {
+      const sizer = rootPreviewSizer(this.previewEl);
+      return captureInitialReadingLayout(this.previewEl, sizer, this.readingPreviewRenderer());
+    }, {
+      requestFrame,
+      shouldAbort: () => this.destroyed || !this.previewEl?.isConnected
+    });
+    if (this.destroyed || !this.previewEl?.isConnected) {
+      return;
+    }
+    annotateVisibleMarkdownElements(this.plugin.app, this.previewEl, this.file.path);
+    try {
+      await annotateRenderedMarkdownLines(this.plugin.app, this.previewEl, this.file.path);
+    } catch (error) {
+      void error;
+    }
+    this.responsiveLayoutContext = null;
+    this.responsiveLayoutSignature = "";
+    this.initialReadingLayoutPrepared = true;
   }
   applySettings() {
     const settings = sanitizeSettings(this.plugin?.noteDrawSettings || {});
@@ -6987,11 +7174,17 @@ var PreviewDrawingController = class {
     this.responsiveLayoutSignature = "";
     this.responsivePointsInitialized = false;
     this.responsiveLayoutContext = null;
+    this.initialReadingLayoutPrepared = false;
+    this.readingTouchGuard = createReadingTouchGuardState();
     this.responsiveProjectionPending = null;
     this.invalidateStaticCache();
     this.drawingsLoaded = false;
     this.loadingDrawings = null;
     this.drawingData = createEmptyDrawingData(file);
+    await this.prepareInitialReadingLayout();
+    if (this.destroyed || !this.previewEl?.isConnected) {
+      return;
+    }
     await this.ensureDrawingsLoaded();
     this.resizeCanvas();
     this.render();
@@ -7073,6 +7266,11 @@ var PreviewDrawingController = class {
     this.canvas?.removeEventListener("contextmenu", this.onCanvasContextMenu);
     this.canvas?.removeEventListener("wheel", this.onWheel);
     this.previewEl?.removeEventListener("contextmenu", this.onPreviewContextMenu, true);
+    this.previewEl?.removeEventListener("pointerdown", this.onReadingTouchPointerDown, true);
+    this.previewEl?.removeEventListener("pointermove", this.onReadingTouchPointerMove, true);
+    this.previewEl?.removeEventListener("pointerup", this.onReadingTouchPointerFinish, true);
+    this.previewEl?.removeEventListener("pointercancel", this.onReadingTouchPointerFinish, true);
+    this.previewEl?.removeEventListener("click", this.onReadingClick, true);
     this.plugin.releaseHeaderButton(this);
     this.toolbar?.remove();
     this.palettePanel?.remove();
@@ -7266,6 +7464,7 @@ var PreviewDrawingController = class {
   }
   onScroll() {
     this.lastScrollAt = Date.now();
+    recordReadingTouchScroll(this.readingTouchGuard, { now: this.lastScrollAt });
     if (!this.isReadingZoomInteractionActive()) {
       this.scheduleReadingVirtualSectionSync();
     }
@@ -8784,13 +8983,16 @@ var PreviewDrawingController = class {
   getResponsiveContentFrame() {
     return measureResponsiveContentFrame(this.previewEl, this.surfaceType, this.canvasWidth(), this.canvas, this.readingZoomScale());
   }
+  responsiveViewportScale() {
+    return this.usesVisualReadingZoom() ? 1 : this.readingZoomScale();
+  }
   getResponsiveLayoutContext(refresh = false) {
     if (this.responsiveLayoutContext && !refresh) {
       return this.responsiveLayoutContext;
     }
     this.responsiveLayoutContext = {
       frame: this.getResponsiveContentFrame(),
-      viewportHeight: measureResponsiveViewportHeight(this.previewEl, this.scrollContainer, this.readingZoomScale()),
+      viewportHeight: measureResponsiveViewportHeight(this.previewEl, this.scrollContainer, this.responsiveViewportScale()),
       lineAnchors: [
         ...collectRenderedLineAnchors(this.previewEl, this.canvas, this.canvasWindowTop, this.readingZoomScale()),
         ...collectVirtualMarkdownLineAnchors(this.view, this.previewEl, this.canvas, this.canvasWindowTop, this.file?.path || "", this.readingZoomScale())
@@ -9340,7 +9542,7 @@ var PreviewDrawingController = class {
     this.staticCtx.setTransform(backingStore.scale, 0, 0, backingStore.scale, 0, -canvasWindow.top * backingStore.scale);
     if (this.drawingsLoaded && refreshLayout) {
       const frame = this.getResponsiveContentFrame();
-      const viewportHeight = measureResponsiveViewportHeight(this.previewEl, this.scrollContainer, visualScale);
+      const viewportHeight = measureResponsiveViewportHeight(this.previewEl, this.scrollContainer, this.responsiveViewportScale());
       const signature = responsiveLayoutSignature(width, height, frame, this.surfaceType, viewportHeight);
       if (!this.responsivePointsInitialized || signature !== this.responsiveLayoutSignature) {
         this.responsiveLayoutContext = null;
@@ -10614,6 +10816,50 @@ var PreviewDrawingController = class {
     }
     this.scheduleFloatingControlsPosition();
   }
+  onReadingTouchPointerDown(event) {
+    if (this.active || event.pointerType !== "touch" || event.isPrimary === false) {
+      return;
+    }
+    beginReadingTouch(this.readingTouchGuard, {
+      id: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      now: Date.now()
+    });
+  }
+  onReadingTouchPointerMove(event) {
+    if (this.active || event.pointerType !== "touch") {
+      return;
+    }
+    moveReadingTouch(this.readingTouchGuard, {
+      id: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      now: Date.now()
+    });
+  }
+  onReadingTouchPointerFinish(event) {
+    if (this.active || event.pointerType !== "touch") {
+      return;
+    }
+    const moved = finishReadingTouch(this.readingTouchGuard, {
+      id: event.pointerId,
+      now: Date.now()
+    });
+    if (moved && event.type !== "pointercancel") {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation?.();
+    }
+  }
+  onReadingClick(event) {
+    if (this.active || !shouldSuppressReadingClick(this.readingTouchGuard, Date.now())) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation?.();
+  }
   canZoomReadingSurface() {
     return ["preview", "source"].includes(this.surfaceType) && !this.embeddedSurface;
   }
@@ -11047,7 +11293,9 @@ var PreviewDrawingController = class {
       }
     }
     if (zoomChanged) {
-      this.responsiveLayoutContext = null;
+      if (!this.usesVisualReadingZoom()) {
+        this.responsiveLayoutContext = null;
+      }
       if (options.resize !== false) {
         this.scheduleResize({ layout: !this.usesVisualReadingZoom() });
       }
