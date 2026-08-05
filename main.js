@@ -1929,8 +1929,12 @@ function noteFlowRequiredOffset({
   scale = 1
 } = {}) {
   const safeScale = Math.max(0.01, finite8(scale, 1));
-  const edge = side === "after" ? finite8(anchorBottom) - Math.max(0, finite8(applied)) * safeScale : finite8(anchorTop);
-  return Math.max(0, (finite8(desiredBottom) - edge) / safeScale);
+  const logicalAnchorTop = finite8(anchorTop) / safeScale;
+  const logicalAnchorBottom = finite8(anchorBottom) / safeScale;
+  const logicalDesiredBottom = finite8(desiredBottom) / safeScale;
+  const appliedOffset = Math.max(0, finite8(applied));
+  const edge = side === "after" ? logicalAnchorBottom - appliedOffset : logicalAnchorTop;
+  return Math.max(0, logicalDesiredBottom - edge);
 }
 function shouldRenderStrokeOnSurface(stroke, surfaceType) {
   return !(surfaceType === "source" && stroke?.noteFlow?.enabled);
@@ -4683,7 +4687,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.4.1",
+      version: "3.4.2",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,

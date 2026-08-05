@@ -2048,7 +2048,7 @@ var NoteDrawPlugin = class extends Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.4.1",
+      version: "3.4.2",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,

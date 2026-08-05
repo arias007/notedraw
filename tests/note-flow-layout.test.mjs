@@ -375,6 +375,26 @@ test("note-flow padding preserves Markdown clearance at visual reading zoom", ()
   }
 });
 
+test("note-flow clearance stays precise when screen coordinates become very large", () => {
+  const scale = 1_000_000;
+  assert.equal(noteFlowRequiredOffset({
+    side: "before",
+    anchorTop: 240 * scale,
+    anchorBottom: 272 * scale,
+    desiredBottom: 260 * scale,
+    applied: 40,
+    scale
+  }), 20);
+  assert.equal(noteFlowRequiredOffset({
+    side: "after",
+    anchorTop: 120 * scale,
+    anchorBottom: 156 * scale,
+    desiredBottom: 210 * scale,
+    applied: 80,
+    scale
+  }), 134);
+});
+
 test("inserted note elements are excluded only from the source editing surface", () => {
   const inserted = { noteFlow: { enabled: true } };
   assert.equal(shouldRenderStrokeOnSurface(inserted, "preview"), true);

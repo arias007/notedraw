@@ -313,10 +313,17 @@ export function noteFlowRequiredOffset({
   scale = 1
 } = {}) {
   const safeScale = Math.max(0.01, finite(scale, 1));
+  // Convert screen-space measurements back to logical Markdown coordinates
+  // before subtracting. At very large visual zoom, subtracting huge physical
+  // coordinates first can lose the small clearance that must be preserved.
+  const logicalAnchorTop = finite(anchorTop) / safeScale;
+  const logicalAnchorBottom = finite(anchorBottom) / safeScale;
+  const logicalDesiredBottom = finite(desiredBottom) / safeScale;
+  const appliedOffset = Math.max(0, finite(applied));
   const edge = side === "after"
-    ? finite(anchorBottom) - Math.max(0, finite(applied)) * safeScale
-    : finite(anchorTop);
-  return Math.max(0, (finite(desiredBottom) - edge) / safeScale);
+    ? logicalAnchorBottom - appliedOffset
+    : logicalAnchorTop;
+  return Math.max(0, logicalDesiredBottom - edge);
 }
 
 export function shouldRenderStrokeOnSurface(stroke, surfaceType) {
