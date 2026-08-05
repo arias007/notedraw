@@ -5,6 +5,7 @@ import {
   frozenNoteFlowLayoutSignature,
   hasStableNoteFlowAnchor,
   noteFlowRequiredOffset,
+  noteFlowNeedsActivationRepair,
   noteFlowSurfaceRepairLimits,
   normalizeFrozenNoteFlowLayout,
   preserveAbsoluteNoteFlowPoints,
@@ -70,6 +71,22 @@ test("saved note-flow anchors remain stable while their Markdown block is virtua
     positionBasis: "above",
     positionVersion: 0
   }), false);
+});
+
+test("activation repairs note-flow elements without frozen clearance", () => {
+  assert.equal(noteFlowNeedsActivationRepair([
+    { noteFlow: { enabled: true, avoidancePath: "", avoidanceLine: null } }
+  ], { version: 1, offsets: [] }), true);
+  assert.equal(noteFlowNeedsActivationRepair([
+    { noteFlow: { enabled: true, avoidancePath: "Notes/example.md", avoidanceLine: 12 } }
+  ], { version: 1, offsets: [{ path: "Notes/example.md", line: 12, property: "padding-top", offset: 24 }] }), false);
+  assert.equal(noteFlowNeedsActivationRepair([], { version: 1, offsets: [] }), false);
+});
+
+test("activation repairs note-flow elements when frozen clearance belongs to another line", () => {
+  assert.equal(noteFlowNeedsActivationRepair([
+    { noteFlow: { enabled: true, avoidancePath: "Notes/example.md", avoidanceLine: 12 } }
+  ], { version: 1, offsets: [{ path: "Notes/example.md", line: 18, property: "padding-top", offset: 24 }] }), true);
 });
 
 const layout = {

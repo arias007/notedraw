@@ -47,7 +47,7 @@ test("toolbar mode, brush, panels, and text preset are shared", async () => {
 test("opening the magic wand reveals drawings while long press and right click toggle visibility", async () => {
   const source = await readFile(sourceUrl, "utf8");
 
-  assert.match(source, /const nextActive = !this\.active;\s*if \(nextActive\) \{\s*await this\.ensureDrawingsLoaded\(\);\s*if \(!this\.drawingsVisible\) \{\s*this\.setDrawingsVisible\(true\)/);
+  assert.match(source, /const nextActive = !this\.active;\s*this\.plugin\.setControllerActivation\(this, nextActive\);\s*if \(!nextActive\) \{\s*return;\s*\}\s*if \(nextActive\) \{\s*await this\.ensureDrawingsLoaded\(\);\s*if \(this\.destroyed \|\| !this\.active\) \{\s*return;\s*\}\s*if \(!this\.drawingsVisible\) \{\s*this\.setDrawingsVisible\(true\)/);
   assert.match(source, /this\.buttonLongPressed = true;\s*this\.toggleDrawingsVisiblePersisted\(\)/);
   assert.match(source, /onButtonContextMenu\(event\)[\s\S]*this\.toggleDrawingsVisiblePersisted\(\)/);
   assert.match(source, /async toggleDrawingsVisiblePersisted\(\) \{\s*await this\.ensureDrawingsLoaded\(\);\s*this\.toggleDrawingsVisible\(\)/);

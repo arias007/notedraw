@@ -304,6 +304,31 @@ export function hasStableNoteFlowAnchor(noteFlow) {
     && Number(noteFlow?.positionVersion) >= 1;
 }
 
+export function noteFlowNeedsActivationRepair(strokes, frozenLayout) {
+  const flows = (Array.isArray(strokes) ? strokes : []).filter((stroke) => stroke?.noteFlow?.enabled);
+  if (!flows.length) {
+    return false;
+  }
+  const frozenOffsets = Array.isArray(frozenLayout?.offsets) ? frozenLayout.offsets : [];
+  if (!frozenOffsets.length) {
+    return true;
+  }
+  const frozenKeys = new Set(frozenOffsets.map((item) => {
+    const path = String(item?.path || "").replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+    const line = Number(item?.line);
+    return path && Number.isFinite(line) ? `${path}\0${Math.floor(line)}` : "";
+  }).filter(Boolean));
+  return flows.some((stroke) => {
+    const noteFlow = stroke.noteFlow;
+    const avoidanceLine = Number(noteFlow.avoidanceLine);
+    const avoidancePath = String(noteFlow.avoidancePath || "").replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+    return !avoidancePath
+      || !Number.isFinite(avoidanceLine)
+      || avoidanceLine < 0
+      || !frozenKeys.has(`${avoidancePath}\0${Math.floor(avoidanceLine)}`);
+  });
+}
+
 export function noteFlowRequiredOffset({
   side,
   anchorTop,
