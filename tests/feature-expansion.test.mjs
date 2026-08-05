@@ -189,7 +189,8 @@ test("reading-only note pen and selected elements can reserve Markdown flow spac
   assert.match(flowLayout, /const staleStoredAnchor = canRepairStoredAnchors[\s\S]*&& strokeNearViewport;[\s\S]*if \(!anchor && \(!hasStoredAnchor \|\| staleStoredAnchor\)\)/);
   assert.match(flowLayout, /const canRepairStoredAnchors = this\.noteFlowAnchorRepairReady[\s\S]*Date\.now\(\) - this\.lastScrollAt > 480/);
   assert.match(flowLayout, /this\.noteFlowAvoidanceAnchors\.get\(avoidanceKey\)/);
-  assert.match(flowLayout, /currentNoteFlow\?\.avoidanceLine/);
+  assert.match(flowLayout, /noteFlowAvoidanceReference\(currentNoteFlow, this\.file\?\.path\)/);
+  assert.doesNotMatch(flowLayout, /Number\.isFinite\(Number\(currentNoteFlow\?\.avoidanceLine\)\)/);
   assert.match(flowLayout, /selectNoteFlowAvoidanceCandidate\(candidates, \{ strokeTop, strokeBottom \}\)/);
   assert.match(flowLayout, /selectNoteFlowAvoidanceCandidate\(\[avoidanceAnchor\], \{ strokeTop, strokeBottom \}\)/);
   assert.match(flowLayout, /avoidancePath: avoidanceReference\.path,[\s\S]*avoidanceLine: avoidanceReference\.line/);
@@ -197,6 +198,8 @@ test("reading-only note pen and selected elements can reserve Markdown flow spac
   assert.match(flowLayout, /this\.plugin\.scheduleDrawingSave\(this\.file, this\.drawingData\)/);
   assert.match(flowLayout, /if \(canRepairStoredAnchors\) \{\s*this\.noteFlowAnchorRepairComplete = true/);
   assert.match(source, /noteFlowInlineLineCandidates\(sourceElement, path, start, end\)/);
+  assert.match(source, /const layoutElement = this\.noteFlowLayoutElement\(sourceElement\);[\s\S]*element: layoutElement,[\s\S]*sourceElement/);
+  assert.match(source, /noteFlowVisualLineCandidates\(sourceElement, path, start, end\)[\s\S]*const layoutElement = this\.noteFlowLayoutElement\(sourceElement\)/);
   assert.match(source, /cls: "notedraw-note-flow-line-spacer"/);
   assert.match(source, /NOTEDRAW_OWNED_MUTATION_SELECTOR = \[[\s\S]*"\.notedraw-note-flow-line-spacer"/);
   assert.match(flowLayout, /const element = this\.noteFlowTargetElement\(avoidanceAnchor \|\| anchor\)/);

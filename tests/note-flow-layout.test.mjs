@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   frozenNoteFlowLayoutSignature,
   hasStableNoteFlowAnchor,
+  noteFlowAvoidanceReference,
   noteFlowRequiredOffset,
   noteFlowNeedsActivationRepair,
   noteFlowSurfaceRepairLimits,
@@ -81,6 +82,24 @@ test("activation repairs note-flow elements without frozen clearance", () => {
     { noteFlow: { enabled: true, avoidancePath: "Notes/example.md", avoidanceLine: 12 } }
   ], { version: 1, offsets: [{ path: "Notes/example.md", line: 12, property: "padding-top", offset: 24 }] }), false);
   assert.equal(noteFlowNeedsActivationRepair([], { version: 1, offsets: [] }), false);
+});
+
+test("null avoidance lines never become a stored line-zero reference", () => {
+  assert.equal(noteFlowAvoidanceReference({
+    avoidancePath: "Notes/example.md",
+    avoidanceLine: null
+  }), null);
+  assert.equal(noteFlowAvoidanceReference({
+    avoidancePath: "Notes/example.md",
+    avoidanceLine: ""
+  }), null);
+  assert.deepEqual(noteFlowAvoidanceReference({
+    avoidancePath: "Notes\\example.md",
+    avoidanceLine: 0
+  }), { path: "Notes/example.md", line: 0 });
+  assert.equal(noteFlowNeedsActivationRepair([
+    { noteFlow: { enabled: true, avoidancePath: "Notes/example.md", avoidanceLine: null } }
+  ], { version: 1, offsets: [{ path: "Notes/example.md", line: 0, offset: 24 }] }), true);
 });
 
 test("activation repairs note-flow elements when frozen clearance belongs to another line", () => {
@@ -337,6 +356,14 @@ test("note-flow avoidance never pads a broad multi-line container from its top",
   ], { strokeTop: 170, strokeBottom: 205 });
 
   assert.equal(target, null);
+});
+
+test("note-flow avoidance can pad a block when a large stroke covers the whole block", () => {
+  const target = selectNoteFlowAvoidanceCandidate([
+    { id: "broad", top: 60, bottom: 260, start: 0, end: 8 }
+  ], { strokeTop: 40, strokeBottom: 280 });
+
+  assert.equal(target?.id, "broad");
 });
 
 test("subpixel note-flow projection jitter is suppressed but real movement remains", () => {

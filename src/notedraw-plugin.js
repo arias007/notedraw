@@ -74,6 +74,7 @@ import {
 import {
   frozenNoteFlowLayoutSignature,
   hasStableNoteFlowAnchor,
+  noteFlowAvoidanceReference,
   noteFlowRequiredOffset,
   noteFlowSurfaceRepairLimits,
   normalizeFrozenNoteFlowLayout,
@@ -2081,7 +2082,7 @@ var NoteDrawPlugin = class extends Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.4.6",
+      version: "3.4.7",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -11021,6 +11022,10 @@ var PreviewDrawingController = class {
     if (sourceElement?.tagName !== "P" || !Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
       return [];
     }
+    const layoutElement = this.noteFlowLayoutElement(sourceElement);
+    if (!layoutElement) {
+      return [];
+    }
     const childNodes = Array.from(sourceElement.childNodes || []);
     const breakIndexes = childNodes.map((node, index) => node.nodeName === "BR" ? index : -1).filter((index) => index >= 0);
     if (!breakIndexes.length) {
@@ -11051,7 +11056,7 @@ var PreviewDrawingController = class {
           return;
         }
         candidates.push({
-          element: sourceElement,
+          element: layoutElement,
           sourceElement,
           path,
           start: line,
@@ -11078,6 +11083,10 @@ var PreviewDrawingController = class {
   }
   noteFlowVisualLineCandidates(sourceElement, path, start, end) {
     if (!sourceElement?.ownerDocument?.createRange || !Number.isFinite(start) || !Number.isFinite(end)) {
+      return [];
+    }
+    const layoutElement = this.noteFlowLayoutElement(sourceElement);
+    if (!layoutElement) {
       return [];
     }
     const textNodes = [];
@@ -11134,7 +11143,7 @@ var PreviewDrawingController = class {
     return lines.map((line, index) => {
       const sourceLine = Math.round(lineStart + index * (lineEnd - lineStart) / Math.max(1, lines.length - 1));
       return {
-        element: sourceElement,
+        element: layoutElement,
         sourceElement,
         path,
         start: sourceLine,
@@ -11531,10 +11540,9 @@ var PreviewDrawingController = class {
         }
       }
       const avoidanceKey = strokeElementId(item.stroke) || String(item.index);
-      let avoidanceReference = Number.isFinite(Number(currentNoteFlow?.avoidanceLine)) ? {
-        path: normalizeVaultPath(currentNoteFlow.avoidancePath || currentNoteFlow.path || this.file?.path || ""),
-        line: Number(currentNoteFlow.avoidanceLine)
-      } : this.noteFlowAvoidanceAnchors.get(avoidanceKey) || null;
+      let avoidanceReference = noteFlowAvoidanceReference(currentNoteFlow, this.file?.path)
+        || this.noteFlowAvoidanceAnchors.get(avoidanceKey)
+        || null;
       let avoidanceAnchor = avoidanceReference ? this.noteFlowAnchorElement({
         path: avoidanceReference.path,
         line: avoidanceReference.line,
@@ -11730,6 +11738,11 @@ var PreviewDrawingController = class {
         return;
       }
       this.noteFlowAnchorRepairReady = true;
+      // The first activation can run before Obsidian has attached line
+      // metadata. Refresh the annotations once more before giving up on the
+      // stored anchor; otherwise a failed first pass leaves NoteFlow pending
+      // forever, which is especially visible after a large zoom.
+      this.scheduleMarkdownAnnotationRefresh({ layout: false, delay: 0 });
       this.scheduleNoteFlowLayout();
     }, 700);
   }

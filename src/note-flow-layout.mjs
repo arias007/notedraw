@@ -195,7 +195,15 @@ export function selectNoteFlowAvoidanceCandidate(candidates, {
     return null;
   }
   const threshold = Math.max(0, finite(tolerance, 4));
-  return (Array.isArray(candidates) ? candidates : []).filter((candidate) => {
+  const ordered = (Array.isArray(candidates) ? candidates : []).filter((candidate) => {
+    return candidate && Number.isFinite(Number(candidate.top)) && Number.isFinite(Number(candidate.bottom));
+  }).map((candidate, order) => ({
+    ...candidate,
+    top: finite(candidate.top),
+    bottom: Math.max(finite(candidate.top), finite(candidate.bottom)),
+    order: Number.isFinite(Number(candidate.order)) ? Number(candidate.order) : order
+  }));
+  const preciseOverlap = ordered.filter((candidate) => {
     const start = Number(candidate?.start);
     const end = Number(candidate?.end);
     const precise = Boolean(candidate?.lineSpacer)
@@ -207,12 +215,7 @@ export function selectNoteFlowAvoidanceCandidate(candidates, {
       && Number.isFinite(Number(candidate.bottom))
       && Number(candidate.bottom) >= top + threshold
       && Number(candidate.top) <= bottom - threshold;
-  }).map((candidate, order) => ({
-    ...candidate,
-    top: finite(candidate.top),
-    bottom: Math.max(finite(candidate.top), finite(candidate.bottom)),
-    order: Number.isFinite(Number(candidate.order)) ? Number(candidate.order) : order
-  })).sort((a, b) => {
+  }).sort((a, b) => {
     const aLine = a.lineSpacer || Number(a.start) === Number(a.end) ? 0 : 1;
     const bLine = b.lineSpacer || Number(b.start) === Number(b.end) ? 0 : 1;
     return aLine - bLine
@@ -220,6 +223,25 @@ export function selectNoteFlowAvoidanceCandidate(candidates, {
       || (a.bottom - a.top) - (b.bottom - b.top)
       || a.order - b.order;
   })[0] || null;
+  if (preciseOverlap) {
+    return preciseOverlap;
+  }
+
+  // A large stroke can cover a whole multi-line block while line-level DOM
+  // measurements are temporarily unavailable (virtualized Markdown and the
+  // first zoom frame are common examples). In that narrow case, padding the
+  // block from its top is correct because the stroke already covers the
+  // block's complete vertical extent. Do not use this for a partial overlap:
+  // that would move earlier lines and was the old large-container bug.
+  const fullyCoveredBlock = ordered.filter((candidate) => {
+    const multiLine = Number(candidate.start) !== Number(candidate.end) && !candidate.lineSpacer;
+    return multiLine
+      && top <= candidate.top + threshold
+      && bottom >= candidate.bottom - threshold;
+  }).sort((a, b) => {
+    return (a.bottom - a.top) - (b.bottom - b.top) || a.order - b.order;
+  })[0];
+  return fullyCoveredBlock || null;
 }
 
 function pointBounds(points, canvasWidth, canvasHeight) {
@@ -304,6 +326,21 @@ export function hasStableNoteFlowAnchor(noteFlow) {
     && Number(noteFlow?.positionVersion) >= 1;
 }
 
+export function noteFlowAvoidanceReference(noteFlow, fallbackPath = "") {
+  const rawLine = noteFlow?.avoidanceLine;
+  if (rawLine === null || rawLine === undefined || rawLine === "") {
+    return null;
+  }
+  const line = Number(rawLine);
+  if (!Number.isFinite(line) || line < 0) {
+    return null;
+  }
+  const path = String(noteFlow?.avoidancePath || noteFlow?.path || fallbackPath || "")
+    .replace(/\\/g, "/")
+    .replace(/^\/+|\/+$/g, "");
+  return path ? { path, line } : null;
+}
+
 export function noteFlowNeedsActivationRepair(strokes, frozenLayout) {
   const flows = (Array.isArray(strokes) ? strokes : []).filter((stroke) => stroke?.noteFlow?.enabled);
   if (!flows.length) {
@@ -319,13 +356,9 @@ export function noteFlowNeedsActivationRepair(strokes, frozenLayout) {
     return path && Number.isFinite(line) ? `${path}\0${Math.floor(line)}` : "";
   }).filter(Boolean));
   return flows.some((stroke) => {
-    const noteFlow = stroke.noteFlow;
-    const avoidanceLine = Number(noteFlow.avoidanceLine);
-    const avoidancePath = String(noteFlow.avoidancePath || "").replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
-    return !avoidancePath
-      || !Number.isFinite(avoidanceLine)
-      || avoidanceLine < 0
-      || !frozenKeys.has(`${avoidancePath}\0${Math.floor(avoidanceLine)}`);
+    const avoidance = noteFlowAvoidanceReference(stroke.noteFlow);
+    return !avoidance
+      || !frozenKeys.has(`${avoidance.path}\0${Math.floor(avoidance.line)}`);
   });
 }
 

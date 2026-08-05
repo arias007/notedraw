@@ -1849,21 +1849,34 @@ function selectNoteFlowAvoidanceCandidate(candidates, {
     return null;
   }
   const threshold = Math.max(0, finite8(tolerance, 4));
-  return (Array.isArray(candidates) ? candidates : []).filter((candidate) => {
-    const start = Number(candidate?.start);
-    const end = Number(candidate?.end);
-    const precise = Boolean(candidate?.lineSpacer) || Number.isFinite(start) && Number.isFinite(end) && start === end || Math.abs(Number(candidate?.top) - top) <= threshold;
-    return candidate && precise && Number.isFinite(Number(candidate.top)) && Number.isFinite(Number(candidate.bottom)) && Number(candidate.bottom) >= top + threshold && Number(candidate.top) <= bottom - threshold;
+  const ordered = (Array.isArray(candidates) ? candidates : []).filter((candidate) => {
+    return candidate && Number.isFinite(Number(candidate.top)) && Number.isFinite(Number(candidate.bottom));
   }).map((candidate, order) => ({
     ...candidate,
     top: finite8(candidate.top),
     bottom: Math.max(finite8(candidate.top), finite8(candidate.bottom)),
     order: Number.isFinite(Number(candidate.order)) ? Number(candidate.order) : order
-  })).sort((a, b) => {
+  }));
+  const preciseOverlap = ordered.filter((candidate) => {
+    const start = Number(candidate?.start);
+    const end = Number(candidate?.end);
+    const precise = Boolean(candidate?.lineSpacer) || Number.isFinite(start) && Number.isFinite(end) && start === end || Math.abs(Number(candidate?.top) - top) <= threshold;
+    return candidate && precise && Number.isFinite(Number(candidate.top)) && Number.isFinite(Number(candidate.bottom)) && Number(candidate.bottom) >= top + threshold && Number(candidate.top) <= bottom - threshold;
+  }).sort((a, b) => {
     const aLine = a.lineSpacer || Number(a.start) === Number(a.end) ? 0 : 1;
     const bLine = b.lineSpacer || Number(b.start) === Number(b.end) ? 0 : 1;
     return aLine - bLine || a.top - b.top || a.bottom - a.top - (b.bottom - b.top) || a.order - b.order;
   })[0] || null;
+  if (preciseOverlap) {
+    return preciseOverlap;
+  }
+  const fullyCoveredBlock = ordered.filter((candidate) => {
+    const multiLine = Number(candidate.start) !== Number(candidate.end) && !candidate.lineSpacer;
+    return multiLine && top <= candidate.top + threshold && bottom >= candidate.bottom - threshold;
+  }).sort((a, b) => {
+    return a.bottom - a.top - (b.bottom - b.top) || a.order - b.order;
+  })[0];
+  return fullyCoveredBlock || null;
 }
 function pointBounds(points, canvasWidth, canvasHeight) {
   const width = Math.max(1, finite8(canvasWidth, 1));
@@ -1936,6 +1949,18 @@ function hasStableNoteFlowAnchor(noteFlow) {
   const line = noteFlow?.line;
   return line !== null && line !== void 0 && line !== "" && Number.isFinite(Number(line)) && ["before", "after"].includes(noteFlow?.side) && Boolean(noteFlow?.positionBasis) && Number(noteFlow?.positionVersion) >= 1;
 }
+function noteFlowAvoidanceReference(noteFlow, fallbackPath = "") {
+  const rawLine = noteFlow?.avoidanceLine;
+  if (rawLine === null || rawLine === void 0 || rawLine === "") {
+    return null;
+  }
+  const line = Number(rawLine);
+  if (!Number.isFinite(line) || line < 0) {
+    return null;
+  }
+  const path = String(noteFlow?.avoidancePath || noteFlow?.path || fallbackPath || "").replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+  return path ? { path, line } : null;
+}
 function noteFlowNeedsActivationRepair(strokes, frozenLayout) {
   const flows = (Array.isArray(strokes) ? strokes : []).filter((stroke) => stroke?.noteFlow?.enabled);
   if (!flows.length) {
@@ -1951,10 +1976,8 @@ function noteFlowNeedsActivationRepair(strokes, frozenLayout) {
     return path && Number.isFinite(line) ? `${path}\0${Math.floor(line)}` : "";
   }).filter(Boolean));
   return flows.some((stroke) => {
-    const noteFlow = stroke.noteFlow;
-    const avoidanceLine = Number(noteFlow.avoidanceLine);
-    const avoidancePath = String(noteFlow.avoidancePath || "").replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
-    return !avoidancePath || !Number.isFinite(avoidanceLine) || avoidanceLine < 0 || !frozenKeys.has(`${avoidancePath}\0${Math.floor(avoidanceLine)}`);
+    const avoidance = noteFlowAvoidanceReference(stroke.noteFlow);
+    return !avoidance || !frozenKeys.has(`${avoidance.path}\0${Math.floor(avoidance.line)}`);
   });
 }
 function noteFlowRequiredOffset({
@@ -4786,7 +4809,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.4.6",
+      version: "3.4.7",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -13640,6 +13663,10 @@ var PreviewDrawingController = class {
     if (sourceElement?.tagName !== "P" || !Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
       return [];
     }
+    const layoutElement = this.noteFlowLayoutElement(sourceElement);
+    if (!layoutElement) {
+      return [];
+    }
     const childNodes = Array.from(sourceElement.childNodes || []);
     const breakIndexes = childNodes.map((node, index) => node.nodeName === "BR" ? index : -1).filter((index) => index >= 0);
     if (!breakIndexes.length) {
@@ -13670,7 +13697,7 @@ var PreviewDrawingController = class {
           return;
         }
         candidates.push({
-          element: sourceElement,
+          element: layoutElement,
           sourceElement,
           path,
           start: line,
@@ -13697,6 +13724,10 @@ var PreviewDrawingController = class {
   }
   noteFlowVisualLineCandidates(sourceElement, path, start, end) {
     if (!sourceElement?.ownerDocument?.createRange || !Number.isFinite(start) || !Number.isFinite(end)) {
+      return [];
+    }
+    const layoutElement = this.noteFlowLayoutElement(sourceElement);
+    if (!layoutElement) {
       return [];
     }
     const textNodes = [];
@@ -13753,7 +13784,7 @@ var PreviewDrawingController = class {
     return lines.map((line, index) => {
       const sourceLine = Math.round(lineStart + index * (lineEnd - lineStart) / Math.max(1, lines.length - 1));
       return {
-        element: sourceElement,
+        element: layoutElement,
         sourceElement,
         path,
         start: sourceLine,
@@ -14137,10 +14168,7 @@ var PreviewDrawingController = class {
         }
       }
       const avoidanceKey = strokeElementId(item.stroke) || String(item.index);
-      let avoidanceReference = Number.isFinite(Number(currentNoteFlow?.avoidanceLine)) ? {
-        path: normalizeVaultPath(currentNoteFlow.avoidancePath || currentNoteFlow.path || this.file?.path || ""),
-        line: Number(currentNoteFlow.avoidanceLine)
-      } : this.noteFlowAvoidanceAnchors.get(avoidanceKey) || null;
+      let avoidanceReference = noteFlowAvoidanceReference(currentNoteFlow, this.file?.path) || this.noteFlowAvoidanceAnchors.get(avoidanceKey) || null;
       let avoidanceAnchor = avoidanceReference ? this.noteFlowAnchorElement({
         path: avoidanceReference.path,
         line: avoidanceReference.line,
@@ -14336,6 +14364,7 @@ var PreviewDrawingController = class {
         return;
       }
       this.noteFlowAnchorRepairReady = true;
+      this.scheduleMarkdownAnnotationRefresh({ layout: false, delay: 0 });
       this.scheduleNoteFlowLayout();
     }, 700);
   }
