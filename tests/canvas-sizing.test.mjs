@@ -4,7 +4,8 @@ import test from "node:test";
 import {
   calculateCanvasBackingStore,
   calculateCanvasWindow,
-  calculateQualityWindowLimit
+  calculateQualityWindowLimit,
+  calculateZoomAwareWindowFloor
 } from "../src/canvas-sizing.mjs";
 
 test("small documents use a single full-height canvas window", () => {
@@ -117,6 +118,13 @@ test("window height respects a quality-driven limit below the default minimum", 
   });
 
   assert.equal(result.height, 900);
+});
+
+test("high reading zoom reduces the logical offscreen canvas floor", () => {
+  assert.equal(calculateZoomAwareWindowFloor({ visualScale: 1 }), 1024);
+  assert.equal(calculateZoomAwareWindowFloor({ visualScale: 20 }), 51.2);
+  assert.equal(calculateZoomAwareWindowFloor({ visualScale: 100 }), 32);
+  assert.equal(calculateZoomAwareWindowFloor({ visualScale: 0.6 }), 1024);
 });
 
 test("quality window sizing preserves native mobile DPR within budget", () => {

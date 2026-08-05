@@ -313,10 +313,56 @@ export function noteFlowRequiredOffset({
   scale = 1
 } = {}) {
   const safeScale = Math.max(0.01, finite(scale, 1));
+  const logicalAnchorTop = finite(anchorTop) / safeScale;
+  const logicalAnchorBottom = finite(anchorBottom) / safeScale;
+  const logicalDesiredBottom = finite(desiredBottom) / safeScale;
+  const appliedOffset = Math.max(0, finite(applied));
   const edge = side === "after"
-    ? finite(anchorBottom) - Math.max(0, finite(applied)) * safeScale
-    : finite(anchorTop);
-  return Math.max(0, (finite(desiredBottom) - edge) / safeScale);
+    ? logicalAnchorBottom - appliedOffset
+    : logicalAnchorTop;
+  return Math.max(0, logicalDesiredBottom - edge);
+}
+
+export function normalizeFrozenNoteFlowLayout(value) {
+  const records = new Map();
+  for (const item of Array.isArray(value?.offsets) ? value.offsets : []) {
+    const path = String(item?.path || "").replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+    const line = Number(item?.line);
+    const property = item?.property === "padding-bottom" || item?.side === "after"
+      ? "padding-bottom"
+      : "padding-top";
+    const side = property === "padding-bottom" ? "after" : "before";
+    const offset = clamp(finite(item?.offset), 0, 200_000);
+    if (!path || !Number.isFinite(line) || line < 0 || offset <= 0) {
+      continue;
+    }
+    const normalized = {
+      path,
+      line: Math.floor(line),
+      side,
+      property,
+      offset: Math.round(offset * 1000) / 1000
+    };
+    const key = `${normalized.path}\0${normalized.line}\0${normalized.property}`;
+    const previous = records.get(key);
+    if (!previous || normalized.offset > previous.offset) {
+      records.set(key, normalized);
+    }
+  }
+  return {
+    version: 1,
+    offsets: Array.from(records.values()).sort((a, b) => (
+      a.path.localeCompare(b.path)
+      || a.line - b.line
+      || a.property.localeCompare(b.property)
+    ))
+  };
+}
+
+export function frozenNoteFlowLayoutSignature(value) {
+  return normalizeFrozenNoteFlowLayout(value).offsets.map((item) => (
+    `${item.path}:${item.line}:${item.property}:${item.offset}`
+  )).join("|");
 }
 
 export function shouldRenderStrokeOnSurface(stroke, surfaceType) {

@@ -79,7 +79,10 @@ test("laid-out embedded Markdown loads its own editable drawings without scannin
   assert.match(source, /scheduleEmbeddedMarkdownSync\(\)[\s\S]*this\.syncEmbeddedMarkdownControllers\(\)/);
   assert.match(source, /querySelectorAll\("\.markdown-embed-content"\)/);
   assert.match(source, /surfaceType: "embedded",\s*embeddedSurface: true/);
-  assert.match(source, /await this\.ensureDrawingsLoaded\(\);\s*this\.resizeCanvas\(\);\s*this\.render\(\)/);
+  assert.match(source, /this\.restoreFrozenNoteFlowLayout\(\);\s*this\.resizeCanvas\(\{ layout: false, measure: true \}\);\s*this\.render\(\)/);
+  assert.doesNotMatch(source, /await this\.ensureDrawingsLoaded\(\);\s*this\.resizeCanvas\(\);\s*this\.render\(\)/);
+  assert.match(source, /if \(!isElementNearViewport\(surface\)\) \{\s*continue;\s*}\s*activeSurfaces\.add\(surface\)/);
+  assert.match(source, /this\.plugin\.scheduleEmbeddedMarkdownSync\(\)/);
   assert.match(source, /this\.plugin\.setInteractionController\(this\)/);
   assert.match(source, /findEmbeddedStrokeControllerAtPoint\(controller, event\)/);
   assert.match(source, /embeddedController\.onPointerDown\(event, true\)/);

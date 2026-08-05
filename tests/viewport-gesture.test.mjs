@@ -4,7 +4,8 @@ import test from "node:test";
 import {
   calculatePinchPanScroll,
   calculateReadingZoomMargin,
-  calculateVisualZoomLogicalWindow
+  calculateVisualZoomLogicalWindow,
+  resolveMultiTouchGestureMode
 } from "../src/viewport-gesture.mjs";
 
 test("two-finger translation pans without changing zoom", () => {
@@ -77,6 +78,29 @@ test("subpixel touch jitter cannot slowly drift the note", () => {
   });
 
   assert.deepEqual(scroll, { left: 120, top: 640 });
+});
+
+test("ordinary two-finger movement stays pan despite small distance jitter", () => {
+  assert.equal(resolveMultiTouchGestureMode({
+    initialDistance: 180,
+    distance: 185
+  }), "pan");
+  assert.equal(resolveMultiTouchGestureMode({
+    initialDistance: 400,
+    distance: 414
+  }), "pan");
+});
+
+test("a deliberate pinch crosses both the absolute and relative threshold", () => {
+  assert.equal(resolveMultiTouchGestureMode({
+    initialDistance: 180,
+    distance: 190
+  }), "pinch");
+  assert.equal(resolveMultiTouchGestureMode({
+    mode: "pinch",
+    initialDistance: 180,
+    distance: 181
+  }), "pinch");
 });
 
 test("reading zoom margin is derived from its stable baseline without cumulative drift", () => {

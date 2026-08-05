@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  frozenNoteFlowLayoutSignature,
   hasStableNoteFlowAnchor,
   noteFlowRequiredOffset,
   noteFlowSurfaceRepairLimits,
+  normalizeFrozenNoteFlowLayout,
   preserveAbsoluteNoteFlowPoints,
   projectNoteFlowDocumentPoint,
   reflowNoteFlowIntervals,
@@ -18,6 +20,30 @@ import {
   stabilizeNoteFlowPointProjection,
   stabilizeNoteFlowBounds
 } from "../src/note-flow-layout.mjs";
+
+test("frozen note-flow spacing is deterministic and keeps the largest offset per Markdown line", () => {
+  const normalized = normalizeFrozenNoteFlowLayout({
+    offsets: [
+      { path: "Folder\\Note.md", line: 8.9, side: "before", offset: 42.1254 },
+      { path: "Folder/Note.md", line: 8, property: "padding-top", offset: 56 },
+      { path: "Folder/Note.md", line: 12, side: "after", offset: 20 },
+      { path: "", line: 1, side: "before", offset: 10 },
+      { path: "Folder/Note.md", line: -1, side: "before", offset: 10 }
+    ]
+  });
+
+  assert.deepEqual(normalized, {
+    version: 1,
+    offsets: [
+      { path: "Folder/Note.md", line: 8, side: "before", property: "padding-top", offset: 56 },
+      { path: "Folder/Note.md", line: 12, side: "after", property: "padding-bottom", offset: 20 }
+    ]
+  });
+  assert.equal(
+    frozenNoteFlowLayoutSignature(normalized),
+    "Folder/Note.md:8:padding-top:56|Folder/Note.md:12:padding-bottom:20"
+  );
+});
 
 test("saved note-flow anchors remain stable while their Markdown block is virtualized", () => {
   assert.equal(hasStableNoteFlowAnchor({

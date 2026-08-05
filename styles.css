@@ -53,6 +53,19 @@
   display: block;
 }
 
+.notedraw-reading-stage {
+  position: relative;
+  width: 100%;
+  min-width: 100%;
+  min-height: 1px;
+  transform-origin: 0 0;
+}
+
+.notedraw-reading-stage > .markdown-preview-sizer {
+  position: relative;
+  z-index: 1;
+}
+
 .notedraw-reading-bottom-spacer {
   display: block;
   width: 1px;

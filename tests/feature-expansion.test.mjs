@@ -37,13 +37,14 @@ test("default brushes remain separate from opt-in fountain and watercolor varian
 
 test("scrolling refreshes only the canvas window while real layout changes can reproject", async () => {
   const source = await readFile(sourceUrl, "utf8");
+  const scrollSource = source.slice(source.indexOf("  onScroll() {"), source.indexOf("  isReadingProjectionSettleSurface()"));
 
-  assert.match(source, /onScroll\(\) \{\s*this\.lastScrollAt = Date\.now\(\);[\s\S]*this\.scheduleResize\(\{ layout: false \}\)/);
-  assert.match(source, /this\.scrollSettleTimer = window\.setTimeout\([\s\S]*this\.scheduleResize\(\{ layout: false \}\)/);
+  assert.match(source, /onScroll\(\) \{\s*this\.lastScrollAt = Date\.now\(\);[\s\S]*this\.scheduleResize\(\{ layout: false, measure: false \}\)/);
+  assert.match(source, /this\.scrollSettleTimer = window\.setTimeout\([\s\S]*this\.scheduleResize\(\{ layout: false, measure: false \}\)/);
   assert.match(source, /if \(layout\) \{\s*this\.render\(\);\s*\} else \{\s*this\.renderCanvas\(\);/);
   assert.match(source, /const atScrollEnd = scrollHeight > clientHeight && scrollTop \+ clientHeight >= scrollHeight - 3/);
-  assert.match(source, /scheduleMarkdownAnnotationRefresh\(\{ layout: Date\.now\(\) - this\.lastScrollAt > 220 \}\)/);
-  assert.match(source, /resizeCanvas\(options = \{\}\)[\s\S]*const refreshLayout = \(options\.layout !== false && !this\.isReadingZoomInteractionActive\(\)\)/);
+  assert.doesNotMatch(scrollSource, /scheduleMarkdownAnnotationRefresh/);
+  assert.match(source, /resizeCanvas\(options = \{\}\)[\s\S]*const refreshGeometry = options\.measure !== false/);
   assert.match(source, /if \(this\.drawingsLoaded && refreshLayout\) \{\s*const frame = this\.getResponsiveContentFrame\(\)/);
   assert.match(source, /const readingScrollActive = this\.isReadingProjectionSettleSurface\(\)[\s\S]*sinceScroll < 260/);
   assert.match(source, /if \(readingScrollActive && this\.resizeNeedsLayout\) \{\s*this\.resizeNeedsLayout = false/);
@@ -60,7 +61,7 @@ test("reading zoom preserves wrapping while edit zoom can reflow", async () => {
 
   assert.match(source, /readingViewZoom: true/);
   assert.match(source, /sourceViewLayoutZoom: true/);
-  assert.match(source, /var MAX_READING_ZOOM = 8;/);
+  assert.match(source, /var MAX_READING_ZOOM = 100;/);
   assert.match(source, /setZoom: \(zoom, options = \{\}\) => this\.setApiZoom\(zoom, options\)/);
   assert.match(source, /if \(\(event\.ctrlKey \|\| event\.metaKey\) && this\.canZoomReadingSurface\(\)\)/);
   assert.match(source, /nextZoom = this\.readingZoom \* distance \/ previousDistance/);
@@ -79,12 +80,20 @@ test("reading zoom preserves wrapping while edit zoom can reflow", async () => {
   assert.match(source, /syncReadingVirtualSections\(\)/);
   assert.match(source, /captureReadingZoomBaseOrigin\(target\)[\s\S]*this\.readingZoomBaseOrigin = this\.measureReadingZoomOrigin\(target\)/);
   assert.match(source, /scheduleReadingVirtualSectionSync\(\)[\s\S]*if \(this\.isReadingZoomInteractionActive\(\)\) \{\s*return;/);
-  assert.match(source, /scheduleReadingZoomSettle\(delay = 180\)[\s\S]*this\.hasNoteFlowElements\(\)[\s\S]*this\.scheduleMarkdownAnnotationRefresh\(\{ layout: false \}\)[\s\S]*this\.scheduleNoteFlowLayout\(\)/);
-  assert.match(source, /const hasRenderedAnchors = sectionElements\.some[\s\S]*this\.hasNoteFlowElements\(\) && !hasRenderedAnchors[\s\S]*this\.scheduleMarkdownAnnotationRefresh\(\{ layout: false \}\)/);
+  const zoomSettle = source.slice(source.indexOf("  scheduleReadingZoomSettle("), source.indexOf("  cancelReadingZoomSettle("));
+  assert.match(zoomSettle, /this\.scheduleReadingVirtualSectionSync\(\)/);
+  assert.match(zoomSettle, /this\.scheduleResize\(\{ layout: false, measure: false \}\)/);
+  assert.doesNotMatch(zoomSettle, /scheduleMarkdownAnnotationRefresh|scheduleNoteFlowLayout/);
+  assert.match(source, /const hasRenderedAnchors = sectionElements\.some[\s\S]*this\.noteFlowOperationPending && this\.hasNoteFlowElements\(\) && !hasRenderedAnchors[\s\S]*this\.scheduleMarkdownAnnotationRefresh\(\{ layout: false \}\)/);
   assert.match(source, /scheduleMarkdownAnnotationRefresh\(options = \{\}\)[\s\S]*\.finally\(\(\) => \{[\s\S]*this\.hasNoteFlowElements\(\)[\s\S]*this\.scheduleNoteFlowLayout\(\)/);
   assert.match(source, /renderer\.measureSection\?\.\(sections\[index\]\)/);
-  assert.match(source, /if \(canvasWindow\.changed && visualScale !== 1 && this\.usesVisualReadingZoom\(\)\) \{[\s\S]*this\.applyVisualReadingZoomElement\(canvas, visualScale\)/);
-  assert.match(source, /this\.scheduleResize\(\{ layout: !this\.usesVisualReadingZoom\(\) \}\)/);
+  assert.match(source, /ensureReadingZoomStage\(target = findResponsiveContentElement/);
+  assert.match(source, /readingZoomElements\(target = this\.readingZoomTarget\)[\s\S]*ensureReadingZoomStage\(target\)/);
+  assert.doesNotMatch(source, /if \(canvasWindow\.changed && visualScale !== 1 && this\.usesVisualReadingZoom\(\)\)/);
+  assert.match(source, /const visualReadingZoom = this\.usesVisualReadingZoom\(\);\s*this\.scheduleResize\(\{ layout: !visualReadingZoom, measure: !visualReadingZoom \}\)/);
+  assert.match(source, /onReadingVirtualScrollCapture\(\)[\s\S]*renderer\.lastScroll = Number\(this\.previewEl\.scrollTop\) \|\| 0/);
+  assert.match(source, /captureReadingLogicalSizerHeight\(renderer = this\.readingPreviewRenderer\(\), options = \{\}\)/);
+  assert.match(source, /const documentHeight = Math\.max\(1, cursor - topSpace, this\.captureReadingLogicalSizerHeight\(renderer\)\)/);
   assert.match(source, /responsiveViewportScale\(\) \{\s*return this\.usesVisualReadingZoom\(\) \? 1 : this\.readingZoomScale\(\);/);
   assert.match(source, /if \(!this\.usesVisualReadingZoom\(\)\) \{\s*this\.responsiveLayoutContext = null;/);
   assert.match(source, /measureCanvasExtent\(this\.previewEl, this\.layoutMeasureEl, visualScale\)/);
@@ -163,7 +172,7 @@ test("reading-only note pen and selected elements can reserve Markdown flow spac
   assert.match(source, /stabilizeNoteFlowPointProjection\(previousPoints, projectedPoints/);
   assert.match(source, /applyNoteFlowLayout\(\)/);
   assert.match(source, /selectNoteFlowInsertionPlacement\(candidates, \{ strokeTop, strokeBottom \}\)/);
-  const flowLayout = source.slice(source.indexOf("  applyNoteFlowLayout()"), source.indexOf("  scheduleNoteFlowLayout()"));
+  const flowLayout = source.slice(source.indexOf("  applyNoteFlowLayout()"), source.indexOf("  scheduleNoteFlowLayout(options"));
   assert.match(flowLayout, /const appliedValue = Math\.ceil\(state\.base \+ offset\)/);
   assert.match(flowLayout, /const nextValue = `\$\{appliedValue\}px`/);
   assert.match(flowLayout, /const property = side === "after" \? "padding-bottom" : "padding-top"/);
@@ -173,7 +182,8 @@ test("reading-only note pen and selected elements can reserve Markdown flow spac
   assert.match(flowLayout, /stabilizeNoteFlowBounds\(\{/);
   assert.match(flowLayout, /preferCurrent: Boolean\(normalizeNoteFlow\(stroke\.noteFlow\)\?\.positionBasis\)/);
   assert.match(flowLayout, /this\.repairRunawayNoteFlowSurface\(runawayReferenceHeight\)/);
-  assert.match(flowLayout, /if \(this\.isReadingZoomInteractionActive\(\)\) \{\s*return false;/);
+  assert.match(flowLayout, /const editingNoteFlow = this\.active && \(/);
+  assert.match(flowLayout, /if \(!editingNoteFlow \|\| this\.isReadingZoomInteractionActive\(\)\) \{\s*return false;/);
   assert.match(flowLayout, /const hasStoredAnchor = hasStableNoteFlowAnchor\(currentNoteFlow\)/);
   assert.match(flowLayout, /const strokeNearViewport = strokeTop >= previewRect\.top - 64 && strokeTop <= previewRect\.bottom \+ 64/);
   assert.match(flowLayout, /const staleStoredAnchor = canRepairStoredAnchors[\s\S]*&& strokeNearViewport;[\s\S]*if \(!anchor && \(!hasStoredAnchor \|\| staleStoredAnchor\)\)/);
@@ -228,13 +238,15 @@ test("moving inserted note elements refreshes Markdown avoidance once per animat
   assert.match(refreshSource, /window\.requestAnimationFrame\(\(\) => \{[\s\S]*this\.refreshDraggedNoteFlowAnchors\(\)[\s\S]*this\.applyNoteFlowLayout\(\)/);
   assert.match(refreshSource, /layoutChanged && !this\.draggingStroke/);
   assert.match(dragSource, /stroke\.noteFlow = originalNoteFlow \? \{ \.\.\.originalNoteFlow \} : null/);
-  assert.match(source, /onResize\(\)[\s\S]*this\.scheduleResize\(\{ layout: !this\.draggingStroke \}\)/);
+  assert.match(source, /onResize\(\)[\s\S]*this\.scheduleResize\(\{ layout: false, measure: widthChanged \}\)/);
+  assert.match(source, /scheduleNoteFlowLayout\(options = \{\}\)[\s\S]*options\.operation === true/);
   assert.match(source, /const noteFlowResizeSuppressed = Date\.now\(\) < this\.noteFlowSuppressResizeUntil/);
   assert.match(source, /const wantsLayout = options\.layout !== false[\s\S]*&& !this\.draggingStroke[\s\S]*&& !noteFlowResizeSuppressed[\s\S]*&& !readingScrollActive/);
   assert.match(dragSource, /this\.cancelResizeFrame\(\);\s*this\.draggingStroke = true/);
   assert.match(settleSource, /markNoteFlowLayoutMutation\(\)[\s\S]*Date\.now\(\) \+ 180/);
-  assert.match(settleSource, /this\.resizeFrameId !== null && this\.resizeNeedsLayout[\s\S]*this\.cancelResizeFrame\(\)[\s\S]*this\.scheduleResize\(\{ layout: false \}\)/);
-  assert.match(settleSource, /scheduleNoteFlowSettleResize\(\)[\s\S]*this\.noteFlowSettlePasses >= 2[\s\S]*this\.scheduleResize\(\{ layout: true, preserveNoteFlowAbsolute: true \}\)/);
+  assert.match(settleSource, /this\.resizeFrameId !== null && this\.resizeNeedsLayout[\s\S]*this\.cancelResizeFrame\(\)[\s\S]*this\.scheduleResize\(\{ layout: false, measure: false \}\)/);
+  assert.match(settleSource, /scheduleNoteFlowSettleResize\(\)[\s\S]*this\.noteFlowSettlePasses >= 2[\s\S]*this\.scheduleResize\(\{ layout: false, measure: true, preserveAbsolutePlacement: true \}\)/);
+  assert.match(source, /options\.preserveAbsolutePlacement === true[\s\S]*this\.preserveAbsoluteStrokePlacement\(previousCanvasWidth, previousCanvasHeight\)/);
   assert.match(source, /preserveAbsoluteNoteFlowPoints\(stroke\.points/);
   assert.match(refreshSource, /layoutChanged && !this\.draggingStroke[\s\S]*this\.scheduleNoteFlowSettleResize\(\)/);
   assert.doesNotMatch(refreshSource, /layoutChanged && !this\.draggingStroke[\s\S]{0,120}this\.scheduleResize\(\{ layout: true \}\)/);

@@ -73,6 +73,17 @@ export function calculateQualityWindowLimit({
   );
 }
 
+export function calculateZoomAwareWindowFloor({
+  visualScale = 1,
+  baseWindowHeight = DEFAULT_MIN_WINDOW_HEIGHT,
+  minimumWindowHeight = 32
+} = {}) {
+  const scale = Math.max(1, finitePositive(visualScale, 1));
+  const base = finitePositive(baseWindowHeight, DEFAULT_MIN_WINDOW_HEIGHT);
+  const minimum = finitePositive(minimumWindowHeight, 32);
+  return Math.max(minimum, base / scale);
+}
+
 export function calculateCanvasBackingStore({
   cssWidth,
   cssHeight,

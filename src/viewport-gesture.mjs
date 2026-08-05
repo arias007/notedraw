@@ -37,6 +37,28 @@ export function calculatePinchPanScroll({
   };
 }
 
+export function resolveMultiTouchGestureMode({
+  mode = "undecided",
+  initialDistance = 0,
+  distance = 0,
+  minimumDistanceChange = 8,
+  minimumScaleChange = 0.04
+} = {}) {
+  if (mode === "pinch") {
+    return "pinch";
+  }
+  const initial = Math.max(0, finite(initialDistance));
+  const current = Math.max(0, finite(distance));
+  if (!(initial > 0) || !(current > 0)) {
+    return "pan";
+  }
+  const threshold = Math.max(
+    Math.max(0, finite(minimumDistanceChange, 8)),
+    initial * Math.max(0, finite(minimumScaleChange, 0.04))
+  );
+  return Math.abs(current - initial) >= threshold ? "pinch" : "pan";
+}
+
 export function calculateReadingZoomMargin(baseMargin, targetHeight, zoom) {
   const base = Number.isFinite(Number(baseMargin)) ? Number(baseMargin) : 0;
   const height = Math.max(1, Number.isFinite(Number(targetHeight)) ? Number(targetHeight) : 1);

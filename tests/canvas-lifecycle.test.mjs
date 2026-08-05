@@ -16,15 +16,37 @@ test("canvas layers stay hidden until their backing stores are initialized", asy
   assert.match(styles, /\.notedraw-shell\.has-notedraw-canvas \.notedraw-static-canvas,[^}]*\.is-drawing-active \.notedraw-canvas\s*\{[^}]*display:\s*block;/s);
   assert.match(source, /this\.previewEl\.addClass\("has-notedraw-canvas"\)/);
   assert.match(source, /resetCanvasSurface\(\)\s*\{[^}]*removeClass\("has-notedraw-canvas"\)/s);
+  assert.match(source, /resetCanvasSurface\(\)[\s\S]*this\.ctx = null;\s*this\.underlayCtx = null;\s*this\.staticCtx = null;/);
   assert.match(source, /this\.staticCanvas\.width = 1;\s*this\.staticCanvas\.height = 1;/s);
   assert.match(source, /this\.canvas\.width = 1;\s*this\.canvas\.height = 1;/s);
 });
 
-test("a visible source surface releases cached reading controllers after transitions settle", async () => {
+test("destroyed controllers release canvas backing stores and decoded images", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const destroySource = source.slice(source.indexOf("  destroy() {"), source.indexOf("  async toggle()", source.indexOf("  destroy() {")));
+
+  assert.match(destroySource, /this\.releaseCanvasImageCache\(\);\s*this\.resetCanvasSurface\(\);\s*this\.underlayCanvas\?\.remove\(\)/);
+  assert.match(destroySource, /this\.underlayCanvas = null;\s*this\.staticCanvas = null;\s*this\.canvas = null;/);
+  assert.match(source, /releaseCanvasImageCache\(\)[\s\S]*image\.onload = null;\s*image\.onerror = null;[\s\S]*image\.removeAttribute\?\.\("src"\)/);
+  assert.match(destroySource, /this\.drawingData = null;/);
+});
+
+test("late drawing loads cannot revive a destroyed or reassigned controller", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const loadSource = source.slice(source.indexOf("  async ensureDrawingsLoaded()"), source.indexOf("  onResize()", source.indexOf("  async ensureDrawingsLoaded()")));
+
+  assert.match(loadSource, /const generation = \+\+this\.drawingLoadGeneration;/);
+  assert.match(loadSource, /this\.destroyed \|\| generation !== this\.drawingLoadGeneration \|\| this\.file\?\.path !== file\?\.path/);
+  assert.match(loadSource, /if \(this\.loadingDrawings === loading\) \{\s*this\.loadingDrawings = null;/);
+});
+
+test("hidden or alternate surfaces release cached reading controllers", async () => {
   const source = await readFile(sourceUrl, "utf8");
 
   assert.match(source, /if \(isSourceMode\(view\) && sourceVisible && !previewVisible\) \{\s*for \(const rootPreview of findRootPreviewsForView\(view\)\) \{[\s\S]*controller\?\.destroy\?\.\(\);\s*resetDormantRootPreview\(view, rootPreview\);/s);
-  assert.match(source, /sourceController\?\.syncFloatingControlClasses\(\);\s*if \(!previewVisible\) \{\s*continue;/s);
+  assert.match(source, /sourceController\?\.syncFloatingControlClasses\(\);\s*if \(!previewVisible\) \{\s*if \(alternateSurfaceVisible\)[\s\S]*controller\.destroy\(\);[\s\S]*continue;/s);
+  assert.match(source, /if \(!isMarkdownPreviewVisible\(view, preview\)\) \{[\s\S]*alternateSurfaceVisible \|\| sourceVisible[\s\S]*existingController\.destroy\(\);[\s\S]*this\.scheduleWebviewSync\(\);[\s\S]*return;/s);
+  assert.match(source, /previewController\?\.plugin === this && view\.file && previewController\.file\?\.path !== view\.file\.path[\s\S]*previewController\.destroy\(\);\s*previewController = null/);
   assert.match(source, /previewController\.file\?\.path !== view\.file\?\.path/s);
   assert.match(source, /previewController = this\.resolveLivePreviewController\(view\)/);
 });
@@ -39,7 +61,8 @@ test("root reading controllers wait for Markdown and clear only dormant preview 
   assert.match(source, /shouldResetDormantRootPreview\(rootPreviewLifecycleState\(view, preview\)\)/);
   assert.doesNotMatch(source, /resetDormantRootPreview[\s\S]{0,900}preview\.scrollTop = 0/);
   assert.match(source, /await this\.prepareInitialReadingLayout\(\);\s*if \(this\.destroyed \|\| !this\.previewEl\?\.isConnected\) \{\s*return;/);
-  assert.match(source, /waitForStableReadingLayout[\s\S]*await annotateRenderedMarkdownLines[\s\S]*this\.responsiveLayoutSignature = "";/);
+  assert.match(source, /waitForStableReadingLayout[\s\S]*this\.responsiveLayoutSignature = "";/);
+  assert.doesNotMatch(source, /prepareInitialReadingLayout\(\)[\s\S]*await annotateRenderedMarkdownLines/);
 });
 
 test("virtual Markdown recycling cannot discard a live reading controller", async () => {

@@ -72,15 +72,15 @@ test("registered surfaces expose stable handles and structured actions without c
   assert.match(source, /registeredSurfaceSource/);
 });
 
-test("3.4.0 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
+test("3.4.5 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
   const [source, manifestText] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(manifestUrl, "utf8")
   ]);
   const manifest = JSON.parse(manifestText);
 
-  assert.equal(manifest.version, "3.4.0");
-  assert.match(source, /version: "3\.4\.0"/);
+  assert.equal(manifest.version, "3.4.5");
+  assert.match(source, /version: "3\.4\.5"/);
   assert.match(source, /if \(!this\.responsivePointsInitialized \|\| signature !== this\.responsiveLayoutSignature\)/);
   assert.match(source, /captureElementLayoutForStroke/);
   assert.match(source, /projectElementPoints\(stroke\.points, layout, box/);
@@ -88,14 +88,37 @@ test("3.4.0 preserves reading content and cross-view frames without hidden-surfa
   assert.match(source, /elementLayoutNeedsRepair\(existingLayout\)/);
   assert.match(source, /function normalizeDrawingDataForStorage\(data, file\)/);
   const responsiveMigration = source.slice(source.indexOf("  initializeAndProjectResponsivePoints("), source.indexOf("  resizeCanvas(options = {})"));
+  const surfaceSync = source.slice(source.indexOf("  runSurfaceSync()"), source.indexOf("  scheduleSurfaceSync(", source.indexOf("  runSurfaceSync()")));
   assert.doesNotMatch(responsiveMigration, /scheduleDrawingSave|writeDrawings/);
-  assert.match(source, /for \(const controller of this\.liveControllers\) \{[\s\S]*controller\.syncFloatingControlClasses\(\);\s*if \(isElementVisibleEnough\(controller\.previewEl\)\) \{\s*controller\.scheduleLayoutRefresh\(\{ settle: false \}\);\s*\} else if \(controller\.noteFlowStyledElements\?\.size\) \{\s*controller\.clearNoteFlowLayout\(\)/);
+  assert.match(source, /for \(const controller of this\.liveControllers\) \{[\s\S]*controller\.syncFloatingControlClasses\(\);\s*if \(isElementVisibleEnough\(controller\.previewEl\)\) \{\s*controller\.scheduleFrozenNoteFlowLayoutRestore\(\);\s*controller\.scheduleResize\(\{ layout: false, measure: false \}\);/);
+  assert.doesNotMatch(surfaceSync, /clearNoteFlowLayout/);
   assert.match(source, /pickRootPreview\(previews, rendererPreview, isElementVisibleEnough, isElementLaidOut\)/);
   assert.match(source, /for \(const alternatePreview of findRootPreviewsForView\(view\)\)/);
   assert.match(source, /!this\.canvas\?\.isConnected \|\| !isElementVisibleEnough\(this\.previewEl\)/);
   assert.match(source, /const eager = !enabled \|\| candidate === controller \|\| isElementVisibleEnough\(candidate\.previewEl\);\s*candidate\.applyActiveState\(enabled, \{ eager \}\)/);
   assert.match(source, /scheduleLayoutRefresh\(options = \{\}\)/);
   assert.match(source, /generation === this\.layoutRefreshGeneration/);
+  assert.match(source, /noteFlowLayout: normalizeFrozenNoteFlowLayout\(data\?\.noteFlowLayout\)/);
+  assert.match(source, /scheduleNoteFlowLayout\(options = \{\}\)[\s\S]*options\.operation === true && this\.active[\s\S]*this\.cancelFrozenNoteFlowLayoutRestore\(\)/);
+  assert.match(source, /restoreFrozenNoteFlowLayout\(\)[\s\S]*frozen\.offsets[\s\S]*state\.base \+ offset/);
+  assert.match(source, /const frozenByZoom = Math\.abs\(this\.readingZoomScale\(\) - 1\) >= 0\.001[\s\S]*this\.readingLogicalSizerHeight > 0/);
+  assert.match(source, /captureReadingLogicalSizerHeight\(undefined, \{ allowGrowth: true \}\)/);
+  assert.match(source, /minWindowHeight: calculateZoomAwareWindowFloor\(\{ visualScale \}\)/);
+  assert.doesNotMatch(source, /this\.readingZoomStage\?\.scroll(?:Width|Height)/);
+  assert.doesNotMatch(source.slice(source.indexOf("  resizeCanvas(options = {})"), source.indexOf("  onPointerDown(", source.indexOf("  resizeCanvas(options = {})"))), /applyElementStyles\(this\.readingZoomStage/);
+  assert.match(source, /const layerBacking = this\.drawingsVisible && this\.drawingsLoaded \? backingStore : \{ width: 1, height: 1, scale: 1 \}/);
+  assert.match(source, /const activeBacking = this\.drawingsVisible && this\.drawingsLoaded && this\.active \? backingStore : \{ width: 1, height: 1, scale: 1 \}/);
+  assert.match(source, /hasVisibleAlternateWorkspaceSurface\(view, preview\)[\s\S]*findWebviewSurfaces\(view\.containerEl\)/);
+  assert.match(source, /isDominantEmbeddedWebviewSurface\(preview, surface\)/);
+  assert.match(source, /const primaryDocumentSurface = preview\.classList\?\.contains\("mwv-note-browser-document"\)[\s\S]*otherBodyBlocks\.length === 0/);
+  assert.match(source, /surfaceWidth >= previewWidth \* 0\.8[\s\S]*surfaceHeight >= previewHeight \* 0\.8 \|\| primaryDocumentSurface/);
+  assert.match(source, /if \(!previewVisible\) \{\s*if \(alternateSurfaceVisible\)[\s\S]*controller\.destroy\(\)/);
+  assert.match(source, /this\.restoreFrozenNoteFlowLayout\(\);\s*this\.resizeCanvas\(\{ layout: false, measure: true \}\);\s*this\.render\(\)/);
+  assert.match(source, /const refreshLayout = options\.layout === true && !interactionActive/);
+  const activeState = source.slice(source.indexOf("  applyActiveState(active, options = {})"), source.indexOf("  controlsShouldBeVisible()", source.indexOf("  applyActiveState(active, options = {})")));
+  assert.doesNotMatch(activeState, /scheduleLayoutRefresh/);
+  assert.match(activeState, /if \(wasActive !== this\.active && this\.drawingsLoaded\) \{\s*this\.scheduleResize\(\{ layout: false, measure: false \}\)/);
+  assert.match(source, /this\.registerMarkdownPostProcessor\([\s\S]*this\.runSurfaceSync\(\);\s*this\.scheduleSurfaceSync\(180\);\s*}\s*onunload\(\)/);
 });
 
 test("reading text edits avoid placeholder breaks and support undo, redo, and block sorting", async () => {
@@ -201,7 +224,7 @@ test("two-finger scrolling always releases touch suppression before the next str
   assert.match(source, /activeDocument\.addEventListener\("pointercancel", this\.onDocumentPointerFinish, true\)/);
   assert.match(source, /onDocumentPointerFinish\(event\)[\s\S]*this\.completeTrackedTouch\(event\.pointerId\)/);
   assert.match(source, /event\.isPrimary && this\.touchPointers\.size && !this\.pointerDown && this\.activePointerId === null[\s\S]*this\.resetTouchGestureState\(\)/);
-  assert.match(source, /completeTrackedTouch\(pointerId\)[\s\S]*this\.touchPointers\.size === 0[\s\S]*this\.suppressTouchDrawing = false[\s\S]*this\.scheduleResize\(\{ layout: false \}\)[\s\S]*this\.requestRender\(true\)/);
+  assert.match(source, /completeTrackedTouch\(pointerId\)[\s\S]*this\.touchPointers\.size === 0[\s\S]*this\.suppressTouchDrawing = false[\s\S]*this\.scheduleResize\(\{ layout: false, measure: false \}\)[\s\S]*this\.requestRender\(true\)/);
   assert.match(source, /handleMultiTouchScroll\(event\)[\s\S]*window\.requestAnimationFrame[\s\S]*this\.flushMultiTouchGesture\(\)/);
   assert.match(source, /flushMultiTouchGesture\(\)[\s\S]*previousClientPoint: previous[\s\S]*persist: false[\s\S]*resize: false/);
 });
@@ -213,7 +236,7 @@ test("reading controllers survive zero-sized view transitions until the source s
 
   assert.match(syncSource, /const sourceVisible = isMarkdownSourceVisible\(view, source\)/);
   assert.match(syncSource, /if \(isSourceMode\(view\) && sourceVisible && !previewVisible\) \{\s*for \(const rootPreview of findRootPreviewsForView\(view\)\)/);
-  assert.match(syncSource, /sourceController\?\.syncFloatingControlClasses\(\);\s*if \(!previewVisible\) \{\s*continue;/);
+  assert.match(syncSource, /sourceController\?\.syncFloatingControlClasses\(\);\s*if \(!previewVisible\) \{\s*if \(alternateSurfaceVisible\)[\s\S]*controller\.destroy\(\);[\s\S]*continue;/);
   assert.match(syncSource, /if \(previewController\?\.plugin === this && !previewController\.destroyed[\s\S]*continue;\s*}\s*if \(!isRootPreviewReady/);
   assert.match(syncSource, /if \(!isRootPreviewReady\(view, preview\)\) \{\s*previewController\?\.destroy\(\);\s*resetDormantRootPreview\(view, preview\);\s*continue;/);
 });
@@ -227,9 +250,9 @@ test("scrolling and touch completion cannot trigger a full Markdown layout loop"
 
   assert.doesNotMatch(scrollSource, /scheduleMarkdownAnnotationRefresh/);
   assert.doesNotMatch(scrollSource, /scheduleResize\(\{ layout: true \}\)/);
-  assert.match(scrollSource, /scheduleResize\(\{ layout: false \}\)/);
+  assert.match(scrollSource, /scheduleResize\(\{ layout: false, measure: false \}\)/);
   assert.doesNotMatch(touchSource, /scheduleMarkdownAnnotationRefresh/);
-  assert.match(touchSource, /if \(finishingMultiTouch\) \{\s*this\.scheduleReadingZoomSettle\(80\);\s*this\.scheduleResize\(\{ layout: false \}\)/s);
+  assert.match(touchSource, /if \(finishingMultiTouch\) \{\s*this\.scheduleReadingZoomSettle\(80\);\s*this\.scheduleResize\(\{ layout: false, measure: false \}\)/s);
 });
 
 test("deactivating the wand promotes selected text and drawings back into the static canvas", async () => {
