@@ -260,6 +260,36 @@
   object-fit: contain;
 }
 
+.internal-embed[data-notedraw-portable-resource] > :not(.notedraw-portable-resource) {
+  display: none;
+}
+
+.notedraw-portable-resource {
+  width: 100%;
+  max-width: 100%;
+  color: var(--text-normal);
+}
+
+.notedraw-portable-resource img,
+.notedraw-portable-resource video,
+.notedraw-portable-resource audio {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+.notedraw-portable-resource > a {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.notedraw-portable-resource-icon,
+.notedraw-portable-resource-icon svg {
+  width: 15px;
+  height: 15px;
+}
+
 .notedraw-file-card {
   height: 100%;
   display: grid;

@@ -72,15 +72,15 @@ test("registered surfaces expose stable handles and structured actions without c
   assert.match(source, /registeredSurfaceSource/);
 });
 
-test("3.4.9 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
+test("3.4.10 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
   const [source, manifestText] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(manifestUrl, "utf8")
   ]);
   const manifest = JSON.parse(manifestText);
 
-  assert.equal(manifest.version, "3.4.9");
-  assert.match(source, /version: "3\.4\.9"/);
+  assert.equal(manifest.version, "3.4.10");
+  assert.match(source, /version: "3\.4\.10"/);
   assert.match(source, /if \(!this\.responsivePointsInitialized \|\| signature !== this\.responsiveLayoutSignature\)/);
   assert.match(source, /captureElementLayoutForStroke/);
   assert.match(source, /projectElementPoints\(stroke\.points, layout, box/);
@@ -160,13 +160,40 @@ test("reading text edits avoid placeholder breaks and support undo, redo, and bl
 test("reading and source controllers share the latest in-memory drawing state", async () => {
   const source = await readFile(sourceUrl, "utf8");
 
-  assert.match(source, /const cached = this\.drawingStateCache\.get\(path\);\s*if \(cached\) \{\s*return normalizeDrawingData\(cached, file\)/);
+  assert.match(source, /const storageKey = this\.drawingStorageKey\(file, storageMode\);\s*const cached = this\.drawingStateCache\.get\(storageKey\);\s*if \(cached\) \{\s*return normalizeDrawingData\(cached, file\)/);
   assert.match(source, /const canonical = normalizeDrawingDataForStorage\(data, file\);\s*this\.drawingStateCache\.set\(path, canonical\);\s*this\.pendingDrawingSaves\.set\(path, file\);\s*this\.refreshControllersForFile\(file, canonical, \{ excludeData: options\.excludeData \|\| data \}\)/);
   assert.match(source, /writeDrawings\(file, compacted, \{ refresh: false, updateCache: false \}\)/);
   assert.match(source, /this\.plugin\.setControllerActivation\(this, nextActive\)/);
   assert.match(source, /controller\.scheduleLayoutRefresh\(\{ settle: false \}\);\s*controller\.requestRender\(true\)/);
   assert.match(source, /this\.textPanel = createNoteDrawControlElement\(this\.floatingControlsHost, "notedraw-text-panel"\)/);
   assert.doesNotMatch(source, /if \(this\.surfaceType !== "source"\) \{\s*this\.textButton/);
+});
+
+test("NoteDraw storage locations and single-file sharing stay portable and backward compatible", async () => {
+  const [source, styles] = await Promise.all([
+    readFile(sourceUrl, "utf8"),
+    readFile(stylesUrl, "utf8")
+  ]);
+  const storageSource = source.slice(source.indexOf("  drawingStorageModeForFile("), source.indexOf("  injectExportSnapshot("));
+  const shareSource = source.slice(source.indexOf("  async createPortableBundle("), source.indexOf("  async appendDebugLog("));
+  const settingsSource = source.slice(source.indexOf("  getSettingDefinitions()"), source.indexOf("  addSliderWithValue("));
+
+  assert.match(source, /drawingStorageMode: DRAWING_STORAGE_CONFIG/);
+  assert.match(source, /DRAWING_STORAGE_NOTE_SUBFOLDER[\s\S]*DRAWING_STORAGE_NOTE_FOLDER[\s\S]*DRAWING_STORAGE_EMBEDDED/);
+  assert.match(storageSource, /resolveDrawingStoragePath\([\s\S]*mode/);
+  assert.match(storageSource, /const configPath = this\.drawingPathForFile\(file, DRAWING_STORAGE_CONFIG\)/);
+  assert.match(storageSource, /candidates\.sort\(\(a, b\) => portableTimestamp\(b\.updatedAt\) - portableTimestamp\(a\.updatedAt\)/);
+  assert.match(storageSource, /this\.app\.vault\.process\(realFile, \(source\) => appendEncodedNotedrawDataBlock\(source, block\)\)/);
+  assert.match(settingsSource, /drawingStorageMode[\s\S]*drawingStorageConfig[\s\S]*drawingStorageNoteSubfolder[\s\S]*drawingStorageNoteFolder[\s\S]*drawingStorageEmbedded/);
+  assert.match(source, /this\.app\.workspace\.on\("file-menu"[\s\S]*shareNoteDrawFile[\s\S]*setIcon\("share-2"\)/);
+  assert.match(shareSource, /includeMarkdownLinks[\s\S]*metadataCache\.getFileCache[\s\S]*requestUrl\(\{ url: raw, method: "GET" \}\)/);
+  assert.match(shareSource, /TEXT_RENDER_NOTE[\s\S]*TEXT_RENDER_MARKDOWN[\s\S]*TEXT_RENDER_HTML[\s\S]*mindMapSource/);
+  assert.match(shareSource, /new File\(\[markdown\], name, \{ type: "text\/markdown;charset=utf-8" \}\)/);
+  assert.match(shareSource, /typeof navigator !== "undefined"[\s\S]*navigator\.canShare\(shareData\)[\s\S]*downloadPortableMarkdown/);
+  assert.match(source, /hydratePortableMarkdownResources\(el, renderedSourcePath\)/);
+  assert.match(source, /portableResourceUrl\(this\.file, assetPath\)/);
+  assert.match(source, /const portable = this\.plugin\.portableResource\(this\.file, normalized \|\| link\)[\s\S]*portableResourceText\(portable\)/);
+  assert.match(styles, /\.internal-embed\[data-notedraw-portable-resource\]/);
 });
 
 test("body-level controls are hidden outside the active note surface and behind settings", async () => {

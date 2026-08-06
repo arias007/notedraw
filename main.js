@@ -2884,11 +2884,144 @@ function hoistPlainTextMarker(marker, editor, shouldUnwrap) {
   return marker;
 }
 
+// src/portable-notedraw.mjs
+var DRAWING_STORAGE_CONFIG = "config";
+var DRAWING_STORAGE_NOTE_SUBFOLDER = "note-subfolder";
+var DRAWING_STORAGE_NOTE_FOLDER = "note-folder";
+var DRAWING_STORAGE_EMBEDDED = "note-file";
+var DRAWING_STORAGE_MODES = [
+  DRAWING_STORAGE_CONFIG,
+  DRAWING_STORAGE_NOTE_SUBFOLDER,
+  DRAWING_STORAGE_NOTE_FOLDER,
+  DRAWING_STORAGE_EMBEDDED
+];
+var NOTEDRAW_DATA_BEGIN = "NOTEDRAW_DATA_BEGIN";
+var NOTEDRAW_DATA_END = "NOTEDRAW_DATA_END";
+var DATA_BLOCK_PATTERN = /<!--\s*NOTEDRAW_DATA_BEGIN\s+([a-z0-9-]+)\s*\r?\n([A-Za-z0-9+/=\r\n]+?)\r?\nNOTEDRAW_DATA_END\s*-->/gi;
+function normalizeDrawingStorageMode(value) {
+  return DRAWING_STORAGE_MODES.includes(value) ? value : DRAWING_STORAGE_CONFIG;
+}
+function resolveDrawingStoragePath({
+  filePath,
+  configDir = ".obsidian",
+  pluginId = "notedraw",
+  encodedName = "",
+  mode = DRAWING_STORAGE_CONFIG
+} = {}) {
+  const normalizedPath = normalizePath(filePath);
+  const normalizedMode = normalizeDrawingStorageMode(mode);
+  const fallbackEncoded = `${normalizedPath.replace(/[^a-zA-Z0-9._/-]/g, "_").replace(/\//g, "__")}.json`;
+  if (normalizedMode === DRAWING_STORAGE_CONFIG) {
+    return `${normalizePath(configDir)}/plugins/${normalizePath(pluginId)}/drawings/${encodedName || fallbackEncoded}`;
+  }
+  if (normalizedMode === DRAWING_STORAGE_EMBEDDED) {
+    return `${normalizedPath}#${NOTEDRAW_DATA_BEGIN}`;
+  }
+  const slash = normalizedPath.lastIndexOf("/");
+  const parent = slash >= 0 ? normalizedPath.slice(0, slash) : "";
+  const name = slash >= 0 ? normalizedPath.slice(slash + 1) : normalizedPath;
+  const dot = name.lastIndexOf(".");
+  const basename = (dot > 0 ? name.slice(0, dot) : name) || "Untitled";
+  const dataName = `${basename}.notedraw.json`;
+  const folder = normalizedMode === DRAWING_STORAGE_NOTE_SUBFOLDER ? joinPath(parent, "notedraw") : parent;
+  return joinPath(folder, dataName);
+}
+async function encodeNotedrawDataBlock(bundle, options = {}) {
+  const source = new TextEncoder().encode(JSON.stringify(bundle));
+  const compressed = options.compress !== false ? await gzipBytes(source) : null;
+  const bytes = compressed || source;
+  const codec = compressed ? "gzip-base64" : "base64";
+  const payload = bytesToBase64(bytes);
+  const lines = payload.match(/.{1,8192}/g) || [""];
+  return `<!-- ${NOTEDRAW_DATA_BEGIN} ${codec}
+${lines.join("\n")}
+${NOTEDRAW_DATA_END} -->`;
+}
+async function decodeNotedrawDataBlock(markdown) {
+  const block = findNotedrawDataBlock(markdown);
+  if (!block) {
+    return null;
+  }
+  try {
+    const encoded = block.payload.replace(/\s+/g, "");
+    const bytes = base64ToBytes(encoded);
+    const decoded = block.codec === "gzip-base64" ? await gunzipBytes(bytes) : bytes;
+    return JSON.parse(new TextDecoder().decode(decoded));
+  } catch {
+    return null;
+  }
+}
+function findNotedrawDataBlock(markdown) {
+  const source = String(markdown || "");
+  const matches = Array.from(source.matchAll(DATA_BLOCK_PATTERN));
+  const match = matches[matches.length - 1];
+  return match ? {
+    codec: String(match[1] || "").toLowerCase(),
+    payload: match[2] || "",
+    start: match.index,
+    end: match.index + match[0].length
+  } : null;
+}
+function stripNotedrawDataBlocks(markdown) {
+  return String(markdown || "").replace(DATA_BLOCK_PATTERN, "").replace(/[ \t]+$/gm, "").trimEnd();
+}
+async function appendNotedrawDataBlock(markdown, bundle, options = {}) {
+  const block = await encodeNotedrawDataBlock(bundle, options);
+  return appendEncodedNotedrawDataBlock(markdown, block);
+}
+function appendEncodedNotedrawDataBlock(markdown, block) {
+  const body = stripNotedrawDataBlocks(markdown);
+  return `${body}${body ? "\n\n" : ""}${block}
+`;
+}
+function normalizePath(value) {
+  return String(value || "").replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, "");
+}
+function joinPath(...parts) {
+  return parts.map(normalizePath).filter(Boolean).join("/");
+}
+async function gzipBytes(bytes) {
+  if (typeof CompressionStream !== "function") {
+    return null;
+  }
+  try {
+    const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream("gzip"));
+    return new Uint8Array(await new Response(stream).arrayBuffer());
+  } catch {
+    return null;
+  }
+}
+async function gunzipBytes(bytes) {
+  if (typeof DecompressionStream !== "function") {
+    throw new Error("gzip decoding is unavailable");
+  }
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+function bytesToBase64(bytes) {
+  const chunkSize = 32768;
+  let binary = "";
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+  }
+  return btoa(binary);
+}
+function base64ToBytes(value) {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+}
+
 // src/notedraw-plugin.js
 var activeDocument = window.activeWindow?.document || window.document;
 var PLUGIN_ID = "notedraw";
 var DRAWING_DIR = `${PLUGIN_ID}/drawings`;
 var ASSET_DIR = `${PLUGIN_ID}/assets`;
+var PORTABLE_RESOURCE_CACHE_LIMIT = 48;
+var PORTABLE_RESOURCE_PREFIX = "notedraw-portable";
 var WEBVIEW_DRAWING_PREFIX = "webviews";
 var WORKSPACE_DRAWING_PREFIX = "workspaces";
 var REGISTERED_SURFACE_PREFIX = "registered-surfaces";
@@ -3059,11 +3192,23 @@ var I18N = {
     settingsSectionInteraction: "Interaction",
     settingsSectionPerformance: "Performance",
     settingsSectionLayout: "Layout",
+    settingsSectionStorage: "Data storage and sharing",
     settingsSectionDiagnostics: "Diagnostics",
     settingsSectionSupport: "Support",
     settingsLanguage: "Language",
     settingsLanguageDesc: "Plugin UI language. Auto follows Obsidian when possible.",
     languageAuto: "Auto",
+    drawingStorageMode: "NoteDraw data location",
+    drawingStorageModeDesc: "Where each note's NoteDraw JSON is stored. The plugin config folder remains the default.",
+    drawingStorageConfig: "Plugin config folder (default)",
+    drawingStorageNoteSubfolder: "Current folder / notedraw",
+    drawingStorageNoteFolder: "Current folder",
+    drawingStorageEmbedded: "Current Markdown file (hidden)",
+    shareNoteDrawFile: "Share NoteDraw file",
+    sharePreparing: "Packaging this note and its linked resources...",
+    shareReady: "NoteDraw file is ready with {count} embedded resource(s).",
+    shareDownloaded: "Native sharing is unavailable. The NoteDraw Markdown file was downloaded.",
+    shareFailed: "Could not package the NoteDraw file.",
     defaultPenColor: "Default pen color",
     defaultPenColorDesc: "Initial color for new pen strokes.",
     defaultPenWidth: "Default pen width",
@@ -3201,11 +3346,23 @@ var I18N = {
     settingsSectionInteraction: "\u4EA4\u4E92",
     settingsSectionPerformance: "\u6027\u80FD",
     settingsSectionLayout: "\u5E03\u5C40",
+    settingsSectionStorage: "\u6570\u636E\u5B58\u50A8\u4E0E\u5206\u4EAB",
     settingsSectionDiagnostics: "\u8BCA\u65AD",
     settingsSectionSupport: "\u652F\u6301\u4F5C\u8005",
     settingsLanguage: "\u8BED\u8A00",
     settingsLanguageDesc: "\u63D2\u4EF6\u754C\u9762\u8BED\u8A00\u3002\u81EA\u52A8\u6A21\u5F0F\u4F1A\u5C3D\u91CF\u8DDF\u968F Obsidian\u3002",
     languageAuto: "\u81EA\u52A8",
+    drawingStorageMode: "NoteDraw \u6570\u636E\u4F4D\u7F6E",
+    drawingStorageModeDesc: "\u8BBE\u7F6E\u6BCF\u7BC7\u7B14\u8BB0\u7684 NoteDraw \u6570\u636E\u6587\u4EF6\u4F4D\u7F6E\u3002\u9ED8\u8BA4\u4ECD\u4E3A\u63D2\u4EF6\u914D\u7F6E\u6587\u4EF6\u5939\u3002",
+    drawingStorageConfig: "\u63D2\u4EF6\u914D\u7F6E\u6587\u4EF6\u5939\uFF08\u9ED8\u8BA4\uFF09",
+    drawingStorageNoteSubfolder: "\u5F53\u524D\u6587\u4EF6\u5939 / notedraw",
+    drawingStorageNoteFolder: "\u5F53\u524D\u6587\u4EF6\u5939",
+    drawingStorageEmbedded: "\u5F53\u524D Markdown \u6587\u4EF6\uFF08\u9690\u85CF\uFF09",
+    shareNoteDrawFile: "\u5206\u4EAB NoteDraw \u6587\u4EF6",
+    sharePreparing: "\u6B63\u5728\u6253\u5305\u7B14\u8BB0\u3001NoteDraw \u6570\u636E\u548C\u94FE\u63A5\u8D44\u6E90\u2026\u2026",
+    shareReady: "NoteDraw \u6587\u4EF6\u5DF2\u5C31\u7EEA\uFF0C\u5305\u542B {count} \u4E2A\u8D44\u6E90\u3002",
+    shareDownloaded: "\u7CFB\u7EDF\u5206\u4EAB\u4E0D\u53EF\u7528\uFF0C\u5DF2\u4E0B\u8F7D NoteDraw Markdown \u6587\u4EF6\u3002",
+    shareFailed: "NoteDraw \u6587\u4EF6\u6253\u5305\u5931\u8D25\u3002",
     defaultPenColor: "\u9ED8\u8BA4\u7B14\u989C\u8272",
     defaultPenColorDesc: "\u65B0\u7B14\u753B\u7684\u521D\u59CB\u989C\u8272\u3002",
     defaultPenWidth: "\u9ED8\u8BA4\u7B14\u5BBD",
@@ -3328,11 +3485,23 @@ var I18N = {
     settingsSectionInteraction: "\u4E92\u52D5",
     settingsSectionPerformance: "\u6548\u80FD",
     settingsSectionLayout: "\u4F48\u5C40",
+    settingsSectionStorage: "\u8CC7\u6599\u5132\u5B58\u8207\u5206\u4EAB",
     settingsSectionDiagnostics: "\u8A3A\u65B7",
     settingsSectionSupport: "\u652F\u6301\u4F5C\u8005",
     settingsLanguage: "\u8A9E\u8A00",
     settingsLanguageDesc: "\u63D2\u4EF6\u4ECB\u9762\u8A9E\u8A00\u3002\u81EA\u52D5\u6A21\u5F0F\u6703\u76E1\u91CF\u8DDF\u96A8 Obsidian\u3002",
     languageAuto: "\u81EA\u52D5",
+    drawingStorageMode: "NoteDraw \u8CC7\u6599\u4F4D\u7F6E",
+    drawingStorageModeDesc: "\u8A2D\u5B9A\u6BCF\u7BC7\u7B46\u8A18\u7684 NoteDraw \u8CC7\u6599\u6A94\u4F4D\u7F6E\u3002\u9810\u8A2D\u4ECD\u70BA\u63D2\u4EF6\u8A2D\u5B9A\u8CC7\u6599\u593E\u3002",
+    drawingStorageConfig: "\u63D2\u4EF6\u8A2D\u5B9A\u8CC7\u6599\u593E\uFF08\u9810\u8A2D\uFF09",
+    drawingStorageNoteSubfolder: "\u76EE\u524D\u8CC7\u6599\u593E / notedraw",
+    drawingStorageNoteFolder: "\u76EE\u524D\u8CC7\u6599\u593E",
+    drawingStorageEmbedded: "\u76EE\u524D Markdown \u6A94\u6848\uFF08\u96B1\u85CF\uFF09",
+    shareNoteDrawFile: "\u5206\u4EAB NoteDraw \u6A94\u6848",
+    sharePreparing: "\u6B63\u5728\u5C01\u88DD\u7B46\u8A18\u3001NoteDraw \u8CC7\u6599\u8207\u9023\u7D50\u8CC7\u6E90\u2026\u2026",
+    shareReady: "NoteDraw \u6A94\u6848\u5DF2\u5C31\u7DD2\uFF0C\u5305\u542B {count} \u500B\u8CC7\u6E90\u3002",
+    shareDownloaded: "\u7CFB\u7D71\u5206\u4EAB\u4E0D\u53EF\u7528\uFF0C\u5DF2\u4E0B\u8F09 NoteDraw Markdown \u6A94\u6848\u3002",
+    shareFailed: "NoteDraw \u6A94\u6848\u5C01\u88DD\u5931\u6557\u3002",
     defaultPenColor: "\u9810\u8A2D\u7B46\u8272",
     defaultPenColorDesc: "\u65B0\u7B46\u756B\u7684\u521D\u59CB\u984F\u8272\u3002",
     defaultPenWidth: "\u9810\u8A2D\u7B46\u5BEC",
@@ -3845,6 +4014,7 @@ Object.assign(I18N, {
 });
 var DEFAULT_SETTINGS = {
   language: LANGUAGE_AUTO,
+  drawingStorageMode: DRAWING_STORAGE_CONFIG,
   defaultPenColor: "#e53935",
   defaultPenWidth: 3,
   defaultPenOpacity: DEFAULT_PEN_OPACITY,
@@ -3993,11 +4163,11 @@ var NoteDrawFileSuggestModal = class extends import_obsidian.FuzzySuggestModal {
       return a.path.localeCompare(b.path);
     });
   }
-  getItemText(file) {
-    return file?.path || file?.basename || "";
+  getItemText(file2) {
+    return file2?.path || file2?.basename || "";
   }
-  onChooseItem(file) {
-    this.onChoose?.(file, this.affectsSource);
+  onChooseItem(file2) {
+    this.onChoose?.(file2, this.affectsSource);
   }
   onClose() {
     this.onModalClose?.(this);
@@ -4021,6 +4191,10 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     this.pendingDrawingSaves = /* @__PURE__ */ new Map();
     this.drawingWritePromises = /* @__PURE__ */ new Map();
     this.drawingStateCache = /* @__PURE__ */ new Map();
+    this.portableBundles = /* @__PURE__ */ new Map();
+    this.portableBundleLoads = /* @__PURE__ */ new Map();
+    this.portableResourceCache = /* @__PURE__ */ new Map();
+    this.sharePackagePromises = /* @__PURE__ */ new Map();
     this.viewDrawingActive = /* @__PURE__ */ new WeakMap();
     this.viewToolbarState = /* @__PURE__ */ new WeakMap();
     this.viewEditHistory = /* @__PURE__ */ new WeakMap();
@@ -4072,10 +4246,32 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
         return available;
       }
     });
+    this.addCommand({
+      id: "share-notedraw-file",
+      name: this.t("shareNoteDrawFile"),
+      checkCallback: (checking) => {
+        const file2 = this.app.workspace.getActiveFile?.();
+        const available = Boolean(file2 && String(file2.extension || "").toLowerCase() === "md");
+        if (available && !checking) {
+          void this.shareNoteDrawFile(file2);
+        }
+        return available;
+      }
+    });
     this.addSettingTab(new NoteDrawSettingTab(this.app, this));
     this.registerEvent(this.app.workspace.on("layout-change", () => this.scheduleSurfaceSync(90)));
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.scheduleSurfaceSync(40)));
     this.registerEvent(this.app.workspace.on("file-open", () => this.scheduleSurfaceSync(60)));
+    this.registerEvent(this.app.workspace.on("file-menu", (menu, file2) => {
+      if (!file2 || String(file2.extension || "").toLowerCase() !== "md") {
+        return;
+      }
+      menu.addItem((item) => {
+        item.setTitle(this.t("shareNoteDrawFile")).setIcon("share-2").onClick(() => {
+          void this.shareNoteDrawFile(file2);
+        });
+      });
+    }));
     this.installWebviewObserver();
     this.registerMarkdownPostProcessor((el, ctx) => {
       if (this.runtimeDisposed) {
@@ -4083,6 +4279,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       }
       const renderedSourcePath = resolveRenderedSourcePath(this.app, el, ctx.sourcePath);
       annotateEditableElements(el, ctx, renderedSourcePath);
+      void this.hydratePortableMarkdownResources(el, renderedSourcePath);
       this.scheduleEmbeddedMarkdownSync();
       const preview = el.closest(".markdown-preview-view");
       if (!preview || isEmbeddedPreview(preview)) {
@@ -4139,6 +4336,10 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     this.workspaceControllers.clear();
     this.registeredSurfaceControllers?.clear();
     this.registeredSurfaceRecords?.clear();
+    this.portableBundles?.clear();
+    this.portableBundleLoads?.clear();
+    this.portableResourceCache?.clear();
+    this.sharePackagePromises?.clear();
     for (const state of this.headerActions.values()) {
       state.button?.remove();
     }
@@ -4252,13 +4453,13 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       previousModal.close();
     }
     const affectsSourceByDefault = this.noteDrawSettings?.mindMapAffectsSource !== false;
-    const modal = new NoteDrawFileSuggestModal(this.app, currentFile, (file, affectsSource) => {
+    const modal = new NoteDrawFileSuggestModal(this.app, currentFile, (file2, affectsSource) => {
       const target = !requestedController?.destroyed && requestedController?.previewEl?.isConnected ? requestedController : this.getActiveController() || this.getAllControllers().find((controller) => controller?.previewEl?.isConnected && normalizeVaultPath(controller.file?.path || "") === requestedPath && !controller.embeddedSurface);
       if (!target) {
         new import_obsidian.Notice(this.t("openNoteOrWebviewFirst"));
         return;
       }
-      target.pendingMindMapFile = file;
+      target.pendingMindMapFile = file2;
       target.pendingMindMapOptions = { affectsSource: Boolean(affectsSource) };
       target.textPreset = "mindMap";
       target.setTextMode();
@@ -4287,6 +4488,31 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       controller.refreshLocalizedLabels?.();
     }
     this.refreshLocalizedButtons();
+  }
+  async changeDrawingStorageMode(value) {
+    const nextMode = normalizeDrawingStorageMode(value);
+    const previousMode = normalizeDrawingStorageMode(this.noteDrawSettings?.drawingStorageMode);
+    if (nextMode === previousMode) {
+      return;
+    }
+    const activeFile = this.app.workspace.getActiveFile?.();
+    const interactionController = this.getActiveController();
+    const activeController = normalizeVaultPath(interactionController?.file?.path || "") === normalizeVaultPath(activeFile?.path || "") ? interactionController : this.getAllControllers().find((controller) => {
+      return normalizeVaultPath(controller?.file?.path || "") === normalizeVaultPath(activeFile?.path || "");
+    });
+    const activeSnapshot = activeFile && activeController?.drawingData ? normalizeDrawingDataForStorage(activeController.drawingData, activeFile) : null;
+    for (const [path, timer] of Array.from(this.saveTimers.entries())) {
+      window.clearTimeout(timer);
+      this.saveTimers.delete(path);
+      await this.flushDrawingSave(path);
+    }
+    this.noteDrawSettings.drawingStorageMode = nextMode;
+    this.drawingStateCache.clear();
+    await this.saveSettings();
+    if (activeSnapshot) {
+      await this.writeDrawings(activeFile, activeSnapshot);
+    }
+    this.scheduleSurfaceSync(40);
   }
   scheduleSettingsSave() {
     if (this.settingsSaveTimer !== null) {
@@ -4656,17 +4882,17 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       return true;
     }
     if (entry.kind === "markdown") {
-      const file = getVaultFileByPath(this.app.vault, entry.file?.path);
-      if (!file) {
+      const file2 = getVaultFileByPath(this.app.vault, entry.file?.path);
+      if (!file2) {
         return false;
       }
-      const current = await this.app.vault.read(file);
+      const current = await this.app.vault.read(file2);
       const expected = direction === "before" ? entry.after : entry.before;
       if (current !== String(expected || "")) {
         return false;
       }
-      await this.app.vault.modify(file, String(entry[direction] || ""));
-      this.emitApiEvent("markdown-changed", { file: file.path, history: direction });
+      await this.app.vault.modify(file2, String(entry[direction] || ""));
+      this.emitApiEvent("markdown-changed", { file: file2.path, history: direction });
       return true;
     }
     return false;
@@ -4815,27 +5041,27 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       updateSettings: async (patch = {}) => this.updateApiSettings(patch),
       execute: async (action, options = {}) => this.executeApiAction(action, options),
       readDrawings: async (fileOrPath) => {
-        const file = this.resolveApiFile(fileOrPath);
-        if (!file) {
+        const file2 = this.resolveApiFile(fileOrPath);
+        if (!file2) {
           throw new Error("NoteDraw could not resolve the requested file");
         }
-        return this.readDrawings(file);
+        return this.readDrawings(file2);
       },
       writeDrawings: async (fileOrPath, data) => {
-        const file = this.resolveApiFile(fileOrPath);
-        if (!file) {
+        const file2 = this.resolveApiFile(fileOrPath);
+        if (!file2) {
           throw new Error("NoteDraw could not resolve the requested file");
         }
-        const normalized = normalizeDrawingData(data, file);
-        await this.writeDrawings(file, normalized);
-        this.refreshControllersForFile(file, normalized);
+        const normalized = normalizeDrawingData(data, file2);
+        await this.writeDrawings(file2, normalized);
+        this.refreshControllersForFile(file2, normalized);
         return normalized;
       },
       getStoragePaths: (fileOrPath) => {
-        const file = this.resolveApiFile(fileOrPath);
-        return file ? {
-          current: this.drawingPathForFile(file),
-          legacy: this.legacyDrawingPathForFile(file)
+        const file2 = this.resolveApiFile(fileOrPath);
+        return file2 ? {
+          current: this.drawingPathForFile(file2),
+          legacy: this.legacyDrawingPathForFile(file2)
         } : null;
       },
       replaceText: async (options) => this.replaceTextApi(options),
@@ -4844,21 +5070,21 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       pasteElements: (options = {}) => this.pasteElementsApi(options),
       insertMindMap: async (options = {}) => this.insertMindMapApi(options),
       refresh: async (fileOrPath) => {
-        const file = this.resolveApiFile(fileOrPath);
-        if (!file) {
+        const file2 = this.resolveApiFile(fileOrPath);
+        if (!file2) {
           return { ok: false, reason: "missing-file" };
         }
-        const data = await this.readDrawings(file);
-        return { ok: true, refreshed: this.refreshControllersForFile(file, data) };
+        const data = await this.readDrawings(file2);
+        return { ok: true, refreshed: this.refreshControllersForFile(file2, data) };
       },
       injectExportSnapshot: async (fileOrPath, container) => {
-        const file = this.resolveApiFile(fileOrPath);
-        return file ? this.injectExportSnapshot(file, container) : null;
+        const file2 = this.resolveApiFile(fileOrPath);
+        return file2 ? this.injectExportSnapshot(file2, container) : null;
       },
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.4.9",
+      version: "3.4.10",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -4894,7 +5120,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       getStoragePaths: v1.getStoragePaths,
       refresh: v1.refresh,
       injectExportSnapshot: v1.injectExportSnapshot,
-      replaceSelectionText: async (file, originalText, editedText) => this.replaceTextApi({ file, originalText, editedText }),
+      replaceSelectionText: async (file2, originalText, editedText) => this.replaceTextApi({ file: file2, originalText, editedText }),
       insertStroke: v1.insertStroke,
       copyElements: v1.copyElements,
       pasteElements: v1.pasteElements,
@@ -5398,44 +5624,44 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     if (name === "update-settings") return this.updateApiSettings(options.patch || options.settings || {});
     if (name === "refresh") {
       const controller = this.findApiController(options);
-      const file = controller?.file || this.resolveApiFile(options.file || options.path);
-      if (!file) return { ok: false, reason: "missing-file" };
-      const data = await this.readDrawings(file);
-      return { ok: true, refreshed: this.refreshControllersForFile(file, data) };
+      const file2 = controller?.file || this.resolveApiFile(options.file || options.path);
+      if (!file2) return { ok: false, reason: "missing-file" };
+      const data = await this.readDrawings(file2);
+      return { ok: true, refreshed: this.refreshControllersForFile(file2, data) };
     }
     return { ok: false, reason: "unknown-action", action: name };
   }
   async replaceTextApi(options = {}) {
-    const file = this.resolveApiFile(options.file || options.path, options.sourcePath || "");
-    if (!file) {
+    const file2 = this.resolveApiFile(options.file || options.path, options.sourcePath || "");
+    if (!file2) {
       return { changed: false, reason: "missing-file" };
     }
     const originalText = String(options.originalText || "");
     const editedText = String(options.editedText ?? options.text ?? "");
     const sourceInfo = options.sourceInfo || null;
-    const source = await this.app.vault.read(file);
+    const source = await this.app.vault.read(file2);
     const target = resolveSourceEditTarget(source, sourceInfo, originalText);
     if (!target) {
       return { changed: false, reason: "target-not-found" };
     }
-    const result = await this.saveTextBlock(file, originalText, editedText, sourceInfo, target);
+    const result = await this.saveTextBlock(file2, originalText, editedText, sourceInfo, target);
     if (result.history) {
-      const controller = this.findApiController({ file });
-      controller?.recordMarkdownHistory(file, result.history.before, result.history.after);
+      const controller = this.findApiController({ file: file2 });
+      controller?.recordMarkdownHistory(file2, result.history.before, result.history.after);
     }
     return result;
   }
   async insertStrokeApi(fileOrPath, stroke) {
-    const file = this.resolveApiFile(fileOrPath);
-    if (!file) {
+    const file2 = this.resolveApiFile(fileOrPath);
+    if (!file2) {
       throw new Error("NoteDraw could not resolve the requested file");
     }
-    const data = await this.readDrawings(file);
+    const data = await this.readDrawings(file2);
     const normalized = normalizeStroke(stroke);
     if (normalized.points.length) {
       data.strokes.push(normalized);
-      await this.writeDrawings(file, data);
-      this.refreshControllersForFile(file, data);
+      await this.writeDrawings(file2, data);
+      this.refreshControllersForFile(file2, data);
     }
     return data;
   }
@@ -5490,13 +5716,13 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       affectsSource: options.affectsSource ?? this.noteDrawSettings.mindMapAffectsSource
     });
   }
-  refreshControllersForFile(file, data, options = {}) {
+  refreshControllersForFile(file2, data, options = {}) {
     let refreshed = 0;
     for (const controller of this.getAllControllers()) {
-      if (normalizeVaultPath(controller.file?.path) !== normalizeVaultPath(file?.path) || controller.drawingData === options.excludeData || controller.pointerDown || controller.draggingStroke || controller.resizingSelection) {
+      if (normalizeVaultPath(controller.file?.path) !== normalizeVaultPath(file2?.path) || controller.drawingData === options.excludeData || controller.pointerDown || controller.draggingStroke || controller.resizingSelection) {
         continue;
       }
-      controller.drawingData = normalizeDrawingData(data, file);
+      controller.drawingData = normalizeDrawingData(data, file2);
       controller.drawingsLoaded = true;
       controller.applyDrawingsVisibility(controller.drawingData.visible !== false);
       controller.responsivePointsInitialized = false;
@@ -5720,8 +5946,8 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       });
       for (const surface of surfaces) {
         const sourcePath = resolveRenderedSourcePath(this.app, surface, view.file.path);
-        const file = getVaultFileByPath(this.app.vault, sourcePath);
-        if (!file || normalizeVaultPath(file.path) === normalizeVaultPath(view.file.path)) {
+        const file2 = getVaultFileByPath(this.app.vault, sourcePath);
+        if (!file2 || normalizeVaultPath(file2.path) === normalizeVaultPath(view.file.path)) {
           continue;
         }
         if (!isElementNearViewport(surface)) {
@@ -5730,7 +5956,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
         activeSurfaces.add(surface);
         const existing = this.embeddedControllers.get(surface);
         if (existing?.previewEl === surface && !existing.destroyed) {
-          existing.setFile(file).catch((error) => {
+          existing.setFile(file2).catch((error) => {
             console.error(`[${PLUGIN_ID}] Failed to switch embedded drawing controller file`, error);
           });
           continue;
@@ -5741,7 +5967,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
           mountedOnElement.destroy();
         }
         cleanupDrawingUi(surface);
-        const controller = new PreviewDrawingController(this, surface, view, file, {
+        const controller = new PreviewDrawingController(this, surface, view, file2, {
           allowTextEdit: true,
           surfaceType: "embedded",
           embeddedSurface: true
@@ -5782,10 +6008,10 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
         continue;
       }
       activeSurfaces.add(surface);
-      const file = createWebviewDrawingFile(surface, view);
+      const file2 = createWebviewDrawingFile(surface, view);
       const existing = this.webviewControllers.get(surface);
       if (existing?.previewEl === surface) {
-        existing.setFile(file).catch((error) => {
+        existing.setFile(file2).catch((error) => {
           console.error(`[${PLUGIN_ID}] Failed to switch webview controller file`, error);
         });
         continue;
@@ -5795,7 +6021,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       }
       const mountedOnElement = surface._noteDrawController;
       if (mountedOnElement?.plugin === this && mountedOnElement.surfaceType === "webview") {
-        mountedOnElement.setFile(file).catch((error) => {
+        mountedOnElement.setFile(file2).catch((error) => {
           console.error(`[${PLUGIN_ID}] Failed to switch webview controller file`, error);
         });
         this.webviewControllers.set(surface, mountedOnElement);
@@ -5805,7 +6031,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
         mountedOnElement.destroy();
       }
       cleanupDrawingUi(surface);
-      const controller = new PreviewDrawingController(this, surface, view, file, {
+      const controller = new PreviewDrawingController(this, surface, view, file2, {
         allowTextEdit: true,
         surfaceType: "webview"
       });
@@ -5827,16 +6053,16 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     for (const leaf of collectImageWorkspaceLeaves(this.app)) {
       const view = leaf?.view;
       const viewType = workspaceViewType(view) || "image";
-      const file = view?.file && typeof view.file.path === "string" ? view.file : null;
+      const file2 = view?.file && typeof view.file.path === "string" ? view.file : null;
       const surface = findWorkspaceDrawingSurface(view);
-      if (!view?.containerEl || !file || !surface?.isConnected) {
+      if (!view?.containerEl || !file2 || !surface?.isConnected) {
         continue;
       }
       activeViews.add(view);
       if (!isElementVisibleEnough(surface)) {
         continue;
       }
-      this.mountWorkspaceController(view, viewType, file, surface);
+      this.mountWorkspaceController(view, viewType, file2, surface);
     }
     for (const leaf of collectWorkspaceLeaves(this.app)) {
       const view = leaf?.view;
@@ -5852,7 +6078,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       if (!view?.containerEl || !isMainWorkspaceView(view) || view instanceof import_obsidian.MarkdownView || viewType === "markdown" || viewType === "empty" || isWebviewWorkspaceType(viewType)) {
         continue;
       }
-      const file = view.file && typeof view.file.path === "string" ? view.file : createWorkspaceDrawingFile(view, viewType);
+      const file2 = view.file && typeof view.file.path === "string" ? view.file : createWorkspaceDrawingFile(view, viewType);
       const surface = findWorkspaceDrawingSurface(view);
       if (!surface?.isConnected) {
         continue;
@@ -5861,7 +6087,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       if (!isElementVisibleEnough(surface)) {
         continue;
       }
-      this.mountWorkspaceController(view, viewType, file, surface);
+      this.mountWorkspaceController(view, viewType, file2, surface);
     }
     for (const [view, controller] of Array.from(this.workspaceControllers.entries())) {
       if (!activeViews.has(view) || !controller.previewEl?.isConnected) {
@@ -5870,11 +6096,11 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       }
     }
   }
-  mountWorkspaceController(view, viewType, file, surface) {
+  mountWorkspaceController(view, viewType, file2, surface) {
     const existing = this.workspaceControllers.get(view);
     if (existing?.previewEl === surface && !existing.destroyed) {
       existing.workspaceViewType = viewType;
-      existing.setFile(file).catch((error) => {
+      existing.setFile(file2).catch((error) => {
         console.error(`[${PLUGIN_ID}] Failed to switch workspace drawing file`, error);
       });
       if (!existing.button?.isConnected) {
@@ -5888,7 +6114,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       mountedOnElement.destroy();
     }
     cleanupDrawingUi(surface);
-    const controller = new PreviewDrawingController(this, surface, view, file, {
+    const controller = new PreviewDrawingController(this, surface, view, file2, {
       allowTextEdit: false,
       surfaceType: "workspace",
       workspaceSurface: true,
@@ -6126,18 +6352,50 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       }
     }
   }
-  encodedDrawingNameForFile(file) {
-    const encoded = file.path.replace(/\\/g, "/").replace(/[^a-zA-Z0-9._/-]/g, "_").replace(/\//g, "__");
+  encodedDrawingNameForFile(file2) {
+    const encoded = file2.path.replace(/\\/g, "/").replace(/[^a-zA-Z0-9._/-]/g, "_").replace(/\//g, "__");
     return `${encoded}.json`;
   }
-  drawingPathForFile(file) {
-    return `${this.app.vault.configDir}/plugins/${DRAWING_DIR}/${this.encodedDrawingNameForFile(file)}`;
+  drawingStorageModeForFile(file2, requestedMode = this.noteDrawSettings?.drawingStorageMode) {
+    const mode = normalizeDrawingStorageMode(requestedMode);
+    if (mode === DRAWING_STORAGE_CONFIG) {
+      return mode;
+    }
+    const realFile = getVaultFileByPath(this.app.vault, file2?.path || "");
+    return realFile && String(realFile.extension || "").toLowerCase() === "md" ? mode : DRAWING_STORAGE_CONFIG;
+  }
+  drawingPathForFile(file2, requestedMode = this.noteDrawSettings?.drawingStorageMode) {
+    const mode = this.drawingStorageModeForFile(file2, requestedMode);
+    return resolveDrawingStoragePath({
+      filePath: file2?.path || "",
+      configDir: this.app.vault.configDir,
+      pluginId: PLUGIN_ID,
+      encodedName: this.encodedDrawingNameForFile(file2),
+      mode
+    });
+  }
+  drawingStorageKey(file2, requestedMode = this.noteDrawSettings?.drawingStorageMode) {
+    const mode = this.drawingStorageModeForFile(file2, requestedMode);
+    return `${mode}:${this.drawingPathForFile(file2, mode)}`;
+  }
+  async ensureDrawingStorageDir(file2, requestedMode = this.noteDrawSettings?.drawingStorageMode) {
+    const mode = this.drawingStorageModeForFile(file2, requestedMode);
+    if (mode === DRAWING_STORAGE_EMBEDDED) {
+      return "";
+    }
+    const path = this.drawingPathForFile(file2, mode);
+    const slash = path.lastIndexOf("/");
+    const directory = slash >= 0 ? path.slice(0, slash) : "";
+    if (directory) {
+      await this.ensureFolder(directory);
+    }
+    return directory;
   }
   assetPathForName(name) {
     return `${this.app.vault.configDir}/plugins/${ASSET_DIR}/${sanitizeAssetFileName(name)}`;
   }
-  legacyDrawingPathForFile(file) {
-    return `${this.app.vault.configDir}/plugins/${LEGACY_DRAWING_DIR}/${this.encodedDrawingNameForFile(file)}`;
+  legacyDrawingPathForFile(file2) {
+    return `${this.app.vault.configDir}/plugins/${LEGACY_DRAWING_DIR}/${this.encodedDrawingNameForFile(file2)}`;
   }
   debugLogPath() {
     return `${this.app.vault.configDir}/plugins/${PLUGIN_ID}/${DEBUG_LOG_FILE}`;
@@ -6164,9 +6422,13 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       imageDataUrl
     };
   }
-  async assetDataUrl(assetPath, mime = "") {
+  async assetDataUrl(assetPath, mime = "", file2 = null) {
     if (!assetPath) {
       return "";
+    }
+    const portable = this.portableResourceUrl(file2, assetPath);
+    if (portable) {
+      return portable;
     }
     try {
       const buffer = await this.app.vault.adapter.readBinary(normalizeVaultPath(assetPath));
@@ -6175,6 +6437,320 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       void error;
       return "";
     }
+  }
+  async createPortableBundle(file2, data, options = {}) {
+    const sourceMarkdown = typeof options.sourceMarkdown === "string" ? stripNotedrawDataBlocks(options.sourceMarkdown) : stripNotedrawDataBlocks(await this.app.vault.cachedRead(file2));
+    const collected = await this.collectPortableResources(file2, data, {
+      includeMarkdownLinks: options.includeMarkdownLinks === true,
+      sourceMarkdown
+    });
+    return {
+      format: "notedraw-portable",
+      version: 1,
+      purpose: options.purpose === "share" ? "share" : "storage",
+      sourcePath: normalizeVaultPath(file2.path),
+      updatedAt: options.updatedAt || (/* @__PURE__ */ new Date()).toISOString(),
+      drawing: normalizeDrawingDataForStorage(data, file2),
+      resources: collected.resources,
+      skippedResources: collected.failed
+    };
+  }
+  async collectPortableResources(file2, data, options = {}) {
+    const resources = /* @__PURE__ */ new Map();
+    const failed = [];
+    const existing = normalizePortableResources(this.portableBundles.get(normalizeVaultPath(file2?.path || ""))?.resources);
+    const addExisting = (reference, aliases = []) => {
+      const resource = findPortableResource(existing, reference, aliases);
+      if (!resource) {
+        return false;
+      }
+      resources.set(portableResourceIdentity(resource), resource);
+      return true;
+    };
+    const addReference = async (reference, aliases = []) => {
+      const normalizedReference = String(reference || "").trim();
+      if (!normalizedReference) {
+        return;
+      }
+      if (addExisting(normalizedReference, aliases)) {
+        return;
+      }
+      try {
+        const resource = await this.loadPortableResource(normalizedReference, file2, aliases);
+        if (resource) {
+          resources.set(portableResourceIdentity(resource), resource);
+        } else {
+          failed.push(normalizedReference);
+        }
+      } catch (error) {
+        console.warn(`[${PLUGIN_ID}] Skipped portable resource`, normalizedReference, error);
+        failed.push(normalizedReference);
+      }
+    };
+    const drawingReferences = [];
+    for (const stroke of Array.isArray(data?.strokes) ? data.strokes : []) {
+      if (stroke?.assetPath) {
+        drawingReferences.push(addReference(stroke.assetPath, [stroke.assetName, stroke.text].filter(Boolean)));
+      }
+      const renderMode = normalizeTextRenderMode(stroke?.render);
+      if (renderMode === TEXT_RENDER_NOTE && stroke?.text) {
+        drawingReferences.push(addReference(stroke.text));
+      } else if (renderMode === TEXT_RENDER_MARKDOWN) {
+        for (const reference of extractPortableMarkdownLinks(stroke?.text)) {
+          drawingReferences.push(addReference(reference));
+        }
+      } else if (renderMode === TEXT_RENDER_HTML) {
+        for (const reference of extractPortableHtmlLinks(stroke?.text)) {
+          drawingReferences.push(addReference(reference));
+        }
+      }
+      const mindMapSource = normalizeMindMapNode(stroke?.mindMapNode)?.sourcePath;
+      if (mindMapSource) {
+        drawingReferences.push(addReference(mindMapSource));
+      }
+    }
+    await Promise.all(drawingReferences);
+    if (options.includeMarkdownLinks) {
+      const cache = this.app.metadataCache.getFileCache?.(file2);
+      const links = [...Array.from(cache?.embeds || []), ...Array.from(cache?.links || [])].map((entry) => entry?.link).filter(Boolean);
+      const fallbackLinks = extractPortableMarkdownLinks(options.sourceMarkdown);
+      const markdownReferences = Array.from(/* @__PURE__ */ new Set([...links, ...fallbackLinks]));
+      for (const reference of markdownReferences) {
+        await addReference(reference);
+      }
+    } else if (existing.length) {
+      for (const reference of extractPortableMarkdownLinks(options.sourceMarkdown)) {
+        addExisting(reference);
+      }
+    }
+    return {
+      resources: Array.from(resources.values()),
+      failed: Array.from(new Set(failed))
+    };
+  }
+  async loadPortableResource(reference, ownerFile, aliases = []) {
+    const raw = String(reference || "").trim();
+    if (!raw || raw.startsWith("#") || /^(?:mailto|tel|obsidian):/i.test(raw)) {
+      return null;
+    }
+    const cacheKey = /^(?:https?:|data:)/i.test(raw) ? raw : `${normalizeVaultPath(ownerFile?.path || "")}|${raw}`;
+    const existingPromise = this.portableResourceCache.get(cacheKey);
+    if (existingPromise) {
+      return existingPromise;
+    }
+    const loading = this.readPortableResource(raw, ownerFile, aliases).finally(() => {
+      while (this.portableResourceCache.size > PORTABLE_RESOURCE_CACHE_LIMIT) {
+        this.portableResourceCache.delete(this.portableResourceCache.keys().next().value);
+      }
+    });
+    this.portableResourceCache.set(cacheKey, loading);
+    return loading;
+  }
+  async readPortableResource(reference, ownerFile, aliases = []) {
+    const raw = String(reference || "").trim();
+    if (/^data:[^;,]+;base64,/i.test(raw)) {
+      const comma = raw.indexOf(",");
+      const mime = raw.slice(5, raw.indexOf(";", 5)) || "application/octet-stream";
+      const dataBase64 = raw.slice(comma + 1).replace(/\s+/g, "");
+      return normalizePortableResource({
+        id: portableResourceId(raw),
+        source: raw,
+        resolvedPath: raw,
+        aliases,
+        name: "embedded-resource",
+        mime,
+        size: Math.floor(dataBase64.length * 0.75),
+        dataBase64
+      });
+    }
+    if (/^https?:\/\//i.test(raw)) {
+      const response = await (0, import_obsidian.requestUrl)({ url: raw, method: "GET" });
+      const buffer2 = response.arrayBuffer;
+      const mime = portableResponseMime(response.headers) || portableMimeType(raw);
+      return normalizePortableResource({
+        id: portableResourceId(raw),
+        source: raw,
+        resolvedPath: raw,
+        aliases,
+        name: portableUrlName(raw),
+        mime,
+        size: buffer2.byteLength,
+        dataBase64: arrayBufferToBase64(buffer2)
+      });
+    }
+    const linkPath = unwrapWikiLink(raw.replace(/^!/, "")).split("|")[0].split("#")[0].trim();
+    const linkedFile = this.app.metadataCache.getFirstLinkpathDest?.(linkPath, ownerFile?.path || "") || getVaultFileByPath(this.app.vault, linkPath);
+    if (linkedFile) {
+      const buffer2 = await this.app.vault.readBinary(linkedFile);
+      return normalizePortableResource({
+        id: portableResourceId(linkedFile.path),
+        source: raw,
+        resolvedPath: normalizeVaultPath(linkedFile.path),
+        aliases: [linkPath, linkedFile.name, ...aliases],
+        name: linkedFile.name,
+        mime: portableMimeType(linkedFile.name),
+        size: buffer2.byteLength,
+        dataBase64: arrayBufferToBase64(buffer2)
+      });
+    }
+    const adapterPath = normalizeVaultPath(linkPath || raw);
+    if (!adapterPath || !await this.app.vault.adapter.exists(adapterPath)) {
+      return null;
+    }
+    const buffer = await this.app.vault.adapter.readBinary(adapterPath);
+    return normalizePortableResource({
+      id: portableResourceId(adapterPath),
+      source: raw,
+      resolvedPath: adapterPath,
+      aliases: [adapterPath.split("/").pop(), ...aliases],
+      name: adapterPath.split("/").pop() || "attachment.bin",
+      mime: portableMimeType(adapterPath),
+      size: buffer.byteLength,
+      dataBase64: arrayBufferToBase64(buffer)
+    });
+  }
+  portableResource(file2, reference) {
+    const bundle = this.portableBundles.get(normalizeVaultPath(file2?.path || ""));
+    return findPortableResource(bundle?.resources, reference);
+  }
+  portableResourceUrl(file2, reference) {
+    const resource = this.portableResource(file2, reference);
+    return resource ? portableResourceDataUrl(resource) : "";
+  }
+  async hydratePortableMarkdownResources(root, sourcePath) {
+    if (!root?.querySelectorAll) {
+      return;
+    }
+    const file2 = getVaultFileByPath(this.app.vault, sourcePath);
+    const bundle = file2 ? await this.loadPortableBundle(file2) : null;
+    const resources = normalizePortableResources(bundle?.resources);
+    if (!resources.length || !root.isConnected) {
+      return;
+    }
+    const elements = [root, ...Array.from(root.querySelectorAll("img, video, audio, source, a, .internal-embed"))];
+    for (const element of elements) {
+      if (!element?.matches?.("img, video, audio, source, a, .internal-embed")) {
+        continue;
+      }
+      const references = portableElementReferences(element);
+      const resource = references.map((reference) => findPortableResource(resources, reference)).find(Boolean);
+      if (!resource) {
+        continue;
+      }
+      const dataUrl = portableResourceDataUrl(resource);
+      const tag = String(element.tagName || "").toLowerCase();
+      if (["img", "video", "audio", "source"].includes(tag)) {
+        element.setAttribute("src", dataUrl);
+        element.dataset.notedrawPortableResource = resource.id;
+        continue;
+      }
+      if (tag === "a") {
+        element.setAttribute("href", dataUrl);
+        element.setAttribute("download", resource.name || "attachment.bin");
+        element.classList.remove("internal-link", "is-unresolved");
+        element.dataset.notedrawPortableResource = resource.id;
+        continue;
+      }
+      await this.renderPortableInternalEmbed(element, resource, file2);
+    }
+  }
+  async renderPortableInternalEmbed(element, resource, ownerFile) {
+    if (element.dataset.notedrawPortableResource === resource.id) {
+      return;
+    }
+    element.dataset.notedrawPortableResource = resource.id;
+    const dataUrl = portableResourceDataUrl(resource);
+    const mime = String(resource.mime || "").toLowerCase();
+    const host = element.createDiv({ cls: "notedraw-portable-resource" });
+    if (mime.startsWith("image/")) {
+      host.createEl("img", { attr: { src: dataUrl, alt: resource.name || "Image" } });
+      return;
+    }
+    if (mime.startsWith("video/")) {
+      host.createEl("video", { attr: { src: dataUrl, controls: "true", playsinline: "true" } });
+      return;
+    }
+    if (mime.startsWith("audio/")) {
+      host.createEl("audio", { attr: { src: dataUrl, controls: "true" } });
+      return;
+    }
+    if (mime === "text/markdown") {
+      await import_obsidian.MarkdownRenderer.render(this.app, portableResourceText(resource), host, ownerFile?.path || "", this);
+      return;
+    }
+    const link = host.createEl("a", {
+      text: resource.name || "Attachment",
+      attr: { href: dataUrl, download: resource.name || "attachment.bin" }
+    });
+    (0, import_obsidian.setIcon)(link.createSpan({ cls: "notedraw-portable-resource-icon" }), "paperclip");
+  }
+  async shareNoteDrawFile(file2) {
+    const key = normalizeVaultPath(file2?.path || "");
+    if (!key || this.sharePackagePromises.has(key)) {
+      return this.sharePackagePromises.get(key);
+    }
+    new import_obsidian.Notice(this.t("sharePreparing"));
+    const sharing = (async () => {
+      try {
+        const source = await this.app.vault.cachedRead(file2);
+        const activeController = this.getActiveController();
+        const controller = normalizeVaultPath(activeController?.file?.path || "") === key && activeController?.drawingData ? activeController : this.getAllControllers().find((candidate) => {
+          return normalizeVaultPath(candidate?.file?.path || "") === key && candidate?.drawingData;
+        });
+        const data = controller?.drawingData || await this.readDrawings(file2);
+        const bundle = await this.createPortableBundle(file2, data, {
+          purpose: "share",
+          includeMarkdownLinks: true,
+          sourceMarkdown: source
+        });
+        const markdown = await appendNotedrawDataBlock(source, bundle);
+        const name = `${sanitizeAssetFileName(file2.basename || file2.name || "NoteDraw")}.notedraw.md`;
+        const shareFile = typeof File === "function" ? new File([markdown], name, { type: "text/markdown;charset=utf-8" }) : null;
+        const shareData = shareFile ? { title: file2.basename || "NoteDraw", files: [shareFile] } : null;
+        let shared = false;
+        let canUseNativeShare = Boolean(shareData && typeof navigator !== "undefined" && typeof navigator.share === "function");
+        if (canUseNativeShare && typeof navigator.canShare === "function") {
+          try {
+            canUseNativeShare = navigator.canShare(shareData);
+          } catch {
+            canUseNativeShare = false;
+          }
+        }
+        if (canUseNativeShare) {
+          try {
+            await navigator.share(shareData);
+            shared = true;
+          } catch (error) {
+            if (error?.name === "AbortError") {
+              return;
+            }
+          }
+        }
+        if (!shared) {
+          this.downloadPortableMarkdown(markdown, name);
+          new import_obsidian.Notice(this.t("shareDownloaded"));
+        } else {
+          new import_obsidian.Notice(this.t("shareReady", { count: bundle.resources.length }));
+        }
+      } catch (error) {
+        console.error(`[${PLUGIN_ID}] Failed to share portable NoteDraw file`, error);
+        new import_obsidian.Notice(this.t("shareFailed"));
+      }
+    })().finally(() => {
+      this.sharePackagePromises.delete(key);
+    });
+    this.sharePackagePromises.set(key, sharing);
+    return sharing;
+  }
+  downloadPortableMarkdown(markdown, name) {
+    const blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = activeDocument.body.createEl("a", {
+      attr: { href: url, download: name, "aria-hidden": "true" }
+    });
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1e3);
   }
   async appendDebugLog(entry) {
     if (!this.noteDrawSettings?.enableDebugLog) {
@@ -6199,39 +6775,112 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       console.error(`[${PLUGIN_ID}] Failed to write debug log`, error);
     }
   }
-  async readDrawings(file) {
-    const path = this.drawingPathForFile(file);
-    const legacyPath = this.legacyDrawingPathForFile(file);
-    const adapter = this.app.vault.adapter;
-    const cached = this.drawingStateCache.get(path);
+  async readDrawings(file2) {
+    const storageMode = this.drawingStorageModeForFile(file2);
+    const storageKey = this.drawingStorageKey(file2, storageMode);
+    const cached = this.drawingStateCache.get(storageKey);
     if (cached) {
-      return normalizeDrawingData(cached, file);
+      return normalizeDrawingData(cached, file2);
     }
     try {
-      if (await adapter.exists(path)) {
-        const data = normalizeDrawingData(JSON.parse(await adapter.read(path)), file);
-        this.drawingStateCache.set(path, normalizeDrawingData(data, file));
-        return data;
+      const adapter = this.app.vault.adapter;
+      const selectedPath = storageMode === DRAWING_STORAGE_EMBEDDED ? "" : this.drawingPathForFile(file2, storageMode);
+      const configPath = this.drawingPathForFile(file2, DRAWING_STORAGE_CONFIG);
+      const legacyPath = this.legacyDrawingPathForFile(file2);
+      const portableBundle = await this.loadPortableBundle(file2);
+      const candidates = [];
+      if (portableBundle?.drawing) {
+        candidates.push({
+          kind: "portable",
+          priority: storageMode === DRAWING_STORAGE_EMBEDDED ? 4 : portableBundle.purpose === "share" ? 3 : 2,
+          updatedAt: portableBundle.updatedAt || portableBundle.drawing.updatedAt,
+          data: portableBundle.drawing
+        });
+      }
+      const storedPaths = Array.from(new Set([selectedPath, configPath].filter(Boolean)));
+      for (const path of storedPaths) {
+        if (!await adapter.exists(path)) {
+          continue;
+        }
+        try {
+          const data2 = JSON.parse(await adapter.read(path));
+          candidates.push({
+            kind: path === selectedPath ? "selected" : "config",
+            priority: path === selectedPath ? 5 : 2,
+            updatedAt: data2?.updatedAt,
+            data: data2
+          });
+        } catch (error) {
+          console.warn(`[${PLUGIN_ID}] Skipped invalid drawing data`, path, error);
+        }
       }
       if (await adapter.exists(legacyPath)) {
-        const migrated = normalizeDrawingData(JSON.parse(await adapter.read(legacyPath)), file);
-        await this.writeDrawings(file, migrated);
-        return migrated;
+        try {
+          const data2 = JSON.parse(await adapter.read(legacyPath));
+          candidates.push({ kind: "legacy", priority: 1, updatedAt: data2?.updatedAt, data: data2 });
+        } catch (error) {
+          console.warn(`[${PLUGIN_ID}] Skipped invalid legacy drawing data`, legacyPath, error);
+        }
       }
-      const empty = createEmptyDrawingData(file);
-      this.drawingStateCache.set(path, normalizeDrawingData(empty, file));
-      return empty;
+      candidates.sort((a, b) => portableTimestamp(b.updatedAt) - portableTimestamp(a.updatedAt) || b.priority - a.priority);
+      const selected = candidates[0] || null;
+      const data = selected ? normalizeDrawingData(selected.data, file2) : createEmptyDrawingData(file2);
+      this.drawingStateCache.set(storageKey, normalizeDrawingData(data, file2));
+      if (selected?.kind === "legacy") {
+        await this.writeDrawings(file2, data, { refresh: false });
+      }
+      return data;
     } catch (error) {
       console.error(`[${PLUGIN_ID}] Failed to read drawing file`, error);
-      return createEmptyDrawingData(file);
+      return createEmptyDrawingData(file2);
     }
   }
-  scheduleDrawingSave(file, data, options = {}) {
-    const path = this.drawingPathForFile(file);
-    const canonical = normalizeDrawingDataForStorage(data, file);
+  async loadPortableBundle(file2, options = {}) {
+    const realFile = getVaultFileByPath(this.app.vault, file2?.path || "");
+    if (!realFile || String(realFile.extension || "").toLowerCase() !== "md") {
+      return null;
+    }
+    const key = normalizeVaultPath(realFile.path);
+    if (!options.refresh && this.portableBundles.has(key)) {
+      return this.portableBundles.get(key);
+    }
+    if (!options.refresh && this.portableBundleLoads.has(key)) {
+      return this.portableBundleLoads.get(key);
+    }
+    const loading = this.app.vault.cachedRead(realFile).then(async (source) => {
+      const decoded = await decodeNotedrawDataBlock(source);
+      const bundle = normalizePortableBundle(decoded, realFile);
+      this.rememberPortableBundle(realFile, bundle);
+      return bundle;
+    }).catch((error) => {
+      console.error(`[${PLUGIN_ID}] Failed to read embedded NoteDraw data`, error);
+      this.rememberPortableBundle(realFile, null);
+      return null;
+    }).finally(() => {
+      if (this.portableBundleLoads.get(key) === loading) {
+        this.portableBundleLoads.delete(key);
+      }
+    });
+    this.portableBundleLoads.set(key, loading);
+    return loading;
+  }
+  rememberPortableBundle(file2, bundle) {
+    const key = normalizeVaultPath(file2?.path || "");
+    if (!key) {
+      return;
+    }
+    this.portableBundles.delete(key);
+    this.portableBundles.set(key, bundle || null);
+    while (this.portableBundles.size > PORTABLE_RESOURCE_CACHE_LIMIT) {
+      this.portableBundles.delete(this.portableBundles.keys().next().value);
+    }
+  }
+  scheduleDrawingSave(file2, data, options = {}) {
+    const path = this.drawingStorageKey(file2);
+    const canonical = normalizeDrawingDataForStorage(data, file2);
     this.drawingStateCache.set(path, canonical);
-    this.pendingDrawingSaves.set(path, file);
-    this.refreshControllersForFile(file, canonical, { excludeData: options.excludeData || data });
+    this.pendingDrawingSaves.set(path, file2);
+    this.refreshControllersForFile(file2, canonical, { excludeData: options.excludeData || data });
     const previous = this.saveTimers.get(path);
     if (previous) {
       window.clearTimeout(previous);
@@ -6246,9 +6895,9 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     this.saveTimers.set(path, timer);
   }
   async flushDrawingSave(path) {
-    const file = this.pendingDrawingSaves.get(path);
+    const file2 = this.pendingDrawingSaves.get(path);
     const latest = this.drawingStateCache.get(path);
-    if (!file) {
+    if (!file2) {
       return;
     }
     this.pendingDrawingSaves.delete(path);
@@ -6257,9 +6906,9 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       if (!latest) {
         return;
       }
-      const compacted = normalizeDrawingDataForStorage(latest, file);
+      const compacted = normalizeDrawingDataForStorage(latest, file2);
       compactDrawingData(compacted, this.noteDrawSettings?.drawingCompactDistance ?? DEFAULT_SETTINGS.drawingCompactDistance);
-      await this.writeDrawings(file, compacted, { refresh: false, updateCache: false });
+      await this.writeDrawings(file2, compacted, { refresh: false, updateCache: false });
     });
     this.drawingWritePromises.set(path, write);
     try {
@@ -6270,48 +6919,72 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       }
     }
   }
-  async writeDrawings(file, data, options = {}) {
-    await this.ensureDrawingDir();
-    const path = this.drawingPathForFile(file);
-    const normalized = normalizeDrawingDataForStorage(data, file);
+  async writeDrawings(file2, data, options = {}) {
+    const storageMode = this.drawingStorageModeForFile(file2);
+    const path = this.drawingPathForFile(file2, storageMode);
+    const storageKey = this.drawingStorageKey(file2, storageMode);
+    const normalized = normalizeDrawingDataForStorage(data, file2);
     const updatedAt = (/* @__PURE__ */ new Date()).toISOString();
     normalized.updatedAt = updatedAt;
     if (options.updateCache !== false) {
-      this.drawingStateCache.set(path, normalizeDrawingData(normalized, file));
+      this.drawingStateCache.set(storageKey, normalizeDrawingData(normalized, file2));
     }
-    const body = JSON.stringify({
-      ...normalized,
-      sourcePath: file.path,
-      updatedAt
-    }, null, 2);
-    await this.app.vault.adapter.write(path, body);
+    let storagePath = path;
+    if (storageMode === DRAWING_STORAGE_EMBEDDED) {
+      const realFile = getVaultFileByPath(this.app.vault, file2?.path || "");
+      if (!realFile) {
+        throw new Error(`Cannot embed NoteDraw data in missing Markdown file: ${file2?.path || ""}`);
+      }
+      const bundle = await this.createPortableBundle(realFile, normalized, {
+        purpose: "storage",
+        includeMarkdownLinks: false,
+        updatedAt
+      });
+      const block = await encodeNotedrawDataBlock(bundle);
+      if (typeof this.app.vault.process === "function") {
+        await this.app.vault.process(realFile, (source) => appendEncodedNotedrawDataBlock(source, block));
+      } else {
+        const source = await this.app.vault.cachedRead(realFile);
+        await this.app.vault.modify(realFile, appendEncodedNotedrawDataBlock(source, block));
+      }
+      this.rememberPortableBundle(realFile, bundle);
+      storagePath = `${realFile.path}#NOTEDRAW_DATA_BEGIN`;
+    } else {
+      await this.ensureDrawingStorageDir(file2, storageMode);
+      const body = JSON.stringify({
+        ...normalized,
+        sourcePath: file2.path,
+        updatedAt
+      }, null, 2);
+      await this.app.vault.adapter.write(path, body);
+    }
     if (options.refresh !== false) {
-      this.refreshControllersForFile(file, normalized, { excludeData: data });
+      this.refreshControllersForFile(file2, normalized, { excludeData: data });
     }
     this.emitApiEvent("drawings-changed", {
-      file: file.path,
-      storagePath: path,
+      file: file2.path,
+      storagePath,
       strokeCount: normalized.strokes.length,
       updatedAt
     });
   }
-  async injectExportSnapshot(file, container) {
-    if (!file || !(container instanceof HTMLElement)) {
+  async injectExportSnapshot(file2, container) {
+    if (!file2 || !(container instanceof HTMLElement)) {
       return null;
     }
     const host = findNoteDrawExportHost(container);
     const liveLayers = Array.from(host.querySelectorAll(".notedraw-underlay-embed-layer, .notedraw-embed-layer"));
     const liveDrawingData = host._noteDrawController?.drawingData || container._noteDrawController?.drawingData || null;
-    const imageLayer = await this.injectExportImageCanvasLayer(file, host, liveDrawingData);
+    const imageLayer = await this.injectExportImageCanvasLayer(file2, host, liveDrawingData);
     if (liveLayers.length) {
       await Promise.all(liveLayers.map((layer) => prepareExportImages(layer)));
       return imageLayer || liveLayers[liveLayers.length - 1];
     }
     return imageLayer;
   }
-  async injectExportImageCanvasLayer(file, container, drawingData = null) {
+  async injectExportImageCanvasLayer(file2, container, drawingData = null) {
     container.querySelectorAll(".notedraw-export-image-canvas-layer").forEach((element) => element.remove());
-    const data = drawingData || await this.readDrawings(file);
+    const data = drawingData || await this.readDrawings(file2);
     const imageStrokes = (Array.isArray(data?.strokes) ? data.strokes : []).filter(isImageEmbedStroke);
     if (!imageStrokes.length) {
       return null;
@@ -6356,7 +7029,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     if (!bounds) {
       return false;
     }
-    const source = normalizeImageDataUrl(stroke.exportImageDataUrl) || await this.assetDataUrl(stroke.assetPath, stroke.assetMime || guessMimeType(stroke.assetName || stroke.assetPath));
+    const source = normalizeImageDataUrl(stroke.exportImageDataUrl) || await this.assetDataUrl(stroke.assetPath, stroke.assetMime || guessMimeType(stroke.assetName || stroke.assetPath), file);
     if (!source) {
       return false;
     }
@@ -6415,15 +7088,15 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     }
     return this.app.vault.adapter.getResourcePath(assetPath);
   }
-  prepareTextEditState(file, originalText, element, controller = null) {
-    const state = this.getTextSaveState(file, originalText, element);
-    state.file = file;
+  prepareTextEditState(file2, originalText, element, controller = null) {
+    const state = this.getTextSaveState(file2, originalText, element);
+    state.file = file2;
     state.baselineText = originalText;
     state.latestText = originalText;
     state.latestSourceInfo = getSourceInfo(element);
     state.target = null;
     state.controller = controller || state.controller;
-    state.targetPromise = this.resolveTextEditTarget(file, originalText, element).then((target) => {
+    state.targetPromise = this.resolveTextEditTarget(file2, originalText, element).then((target) => {
       state.target = target;
       return target;
     }).catch((error) => {
@@ -6432,13 +7105,13 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     });
     return state;
   }
-  async resolveTextEditTarget(file, originalText, element) {
+  async resolveTextEditTarget(file2, originalText, element) {
     const sourceInfo = getSourceInfo(element);
-    const source = await this.app.vault.read(file);
+    const source = await this.app.vault.read(file2);
     const target = resolveSourceEditTarget(source, sourceInfo, originalText);
     this.appendDebugLog({
       event: "resolve-target",
-      file: file.path,
+      file: file2.path,
       sourceInfo: summarizeSourceInfo(sourceInfo),
       original: shortText(originalText),
       hasTarget: Boolean(target),
@@ -6446,16 +7119,16 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     });
     return target;
   }
-  scheduleTextSave(file, originalText, editedText, element, controller = null) {
-    const state = this.getTextSaveState(file, originalText, element);
-    state.file = file;
+  scheduleTextSave(file2, originalText, editedText, element, controller = null) {
+    const state = this.getTextSaveState(file2, originalText, element);
+    state.file = file2;
     state.latestText = editedText;
     state.latestSourceInfo = getSourceInfo(element);
     state.controller = controller || state.controller;
     state.saveBlocked = false;
     state.saveLogged = false;
     if (!state.target && !state.targetPromise) {
-      state.targetPromise = this.resolveTextEditTarget(file, originalText, element).then((target) => {
+      state.targetPromise = this.resolveTextEditTarget(file2, originalText, element).then((target) => {
         state.target = target;
         return target;
       }).catch((error) => {
@@ -6472,16 +7145,16 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       this.flushTextSave(element);
     }, TEXT_SAVE_DELAY_MS);
   }
-  stageTextSave(file, originalText, editedText, element, controller = null) {
-    const state = this.getTextSaveState(file, originalText, element);
-    state.file = file;
+  stageTextSave(file2, originalText, editedText, element, controller = null) {
+    const state = this.getTextSaveState(file2, originalText, element);
+    state.file = file2;
     state.latestText = editedText;
     state.latestSourceInfo = getSourceInfo(element);
     state.controller = controller || state.controller;
     state.saveBlocked = false;
     state.saveLogged = false;
     if (!state.target && !state.targetPromise) {
-      state.targetPromise = this.resolveTextEditTarget(file, originalText, element).then((target) => {
+      state.targetPromise = this.resolveTextEditTarget(file2, originalText, element).then((target) => {
         state.target = target;
         return target;
       }).catch((error) => {
@@ -6495,16 +7168,16 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     }
     return state;
   }
-  scheduleTextSaveNow(file, originalText, editedText, element, controller = null) {
-    const state = this.getTextSaveState(file, originalText, element);
-    state.file = file;
+  scheduleTextSaveNow(file2, originalText, editedText, element, controller = null) {
+    const state = this.getTextSaveState(file2, originalText, element);
+    state.file = file2;
     state.latestText = editedText;
     state.latestSourceInfo = getSourceInfo(element);
     state.controller = controller || state.controller;
     state.saveBlocked = false;
     state.saveLogged = false;
     if (!state.target && !state.targetPromise) {
-      state.targetPromise = this.resolveTextEditTarget(file, originalText, element).then((target) => {
+      state.targetPromise = this.resolveTextEditTarget(file2, originalText, element).then((target) => {
         state.target = target;
         return target;
       }).catch((error) => {
@@ -6519,11 +7192,11 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     element.addClass("notedraw-saving");
     return this.flushTextSave(element);
   }
-  getTextSaveState(file, originalText, element) {
+  getTextSaveState(file2, originalText, element) {
     let state = this.textSaveStates.get(element);
     if (!state) {
       state = {
-        file,
+        file: file2,
         baselineText: originalText,
         latestText: originalText,
         latestSourceInfo: getSourceInfo(element),
@@ -6671,12 +7344,12 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     }
     this.textSaveStates.delete(element);
   }
-  async saveTextBlock(file, originalText, editedText, sourceInfo, target) {
+  async saveTextBlock(file2, originalText, editedText, sourceInfo, target) {
     const normalizedOriginal = normalizeRenderedText2(originalText);
     if (!normalizedOriginal || normalizeEditableSourceText(originalText) === normalizeEditableSourceText(editedText)) {
       return { changed: true, target };
     }
-    const source = await this.app.vault.read(file);
+    const source = await this.app.vault.read(file2);
     const match = resolveLockedTarget(source, target, originalText) || resolveSourceEditTarget(source, sourceInfo, originalText);
     if (!match) {
       return { changed: false, target };
@@ -6692,9 +7365,9 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     }, sourceInfo, editedText);
     if (currentText !== replacement) {
       const nextSource = `${source.slice(0, start)}${replacement}${source.slice(end)}`;
-      await this.app.vault.modify(file, nextSource);
+      await this.app.vault.modify(file2, nextSource);
       this.emitApiEvent("markdown-changed", {
-        file: file.path,
+        file: file2.path,
         start,
         end,
         replacementLength: replacement.length
@@ -6703,11 +7376,11 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     }
     return { changed: true, target: nextTarget };
   }
-  async reorderTextBlock(file, movingElement, targetElement, placeAfter = false, sourceState = {}) {
-    if (!file || !movingElement || !targetElement || movingElement === targetElement) {
+  async reorderTextBlock(file2, movingElement, targetElement, placeAfter = false, sourceState = {}) {
+    if (!file2 || !movingElement || !targetElement || movingElement === targetElement) {
       return false;
     }
-    const source = await this.app.vault.read(file);
+    const source = await this.app.vault.read(file2);
     const moving = resolveSourceEditTarget(source, sourceState.movingInfo || getSourceInfo(movingElement), sourceState.movingText || movingElement.innerText);
     const target = resolveSourceEditTarget(source, sourceState.targetInfo || getSourceInfo(targetElement), sourceState.targetText || targetElement.innerText);
     if (!moving || !target || moving.start === target.start || moving.start < target.end && moving.end > target.start) {
@@ -6724,16 +7397,16 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     const separatorBefore = before && !before.endsWith("\n\n") ? before.endsWith("\n") ? "\n" : "\n\n" : "";
     const separatorAfter = after && !after.startsWith("\n\n") ? after.startsWith("\n") ? "\n" : "\n\n" : "";
     const nextSource = `${before}${separatorBefore}${block}${separatorAfter}${after}`;
-    await this.app.vault.modify(file, nextSource);
+    await this.app.vault.modify(file2, nextSource);
     return { changed: true, before: source, after: nextSource };
   }
 };
 var PreviewDrawingController = class {
-  constructor(plugin, previewEl, view, file, options = {}) {
+  constructor(plugin, previewEl, view, file2, options = {}) {
     this.plugin = plugin;
     this.previewEl = previewEl;
     this.view = view;
-    this.file = file;
+    this.file = file2;
     this.allowTextEdit = options.allowTextEdit !== false;
     this.surfaceType = options.surfaceType || "preview";
     this.embeddedSurface = Boolean(options.embeddedSurface);
@@ -6752,7 +7425,7 @@ var PreviewDrawingController = class {
     this.active = this.plugin.controllerActivationState(this);
     this.drawingData = {
       version: 3,
-      sourcePath: file.path,
+      sourcePath: file2.path,
       strokes: [],
       updatedAt: null
     };
@@ -7144,14 +7817,14 @@ var PreviewDrawingController = class {
       }
     });
     this.hiddenFileInput.addEventListener("change", () => {
-      const file = this.hiddenFileInput?.files?.[0] || null;
+      const file2 = this.hiddenFileInput?.files?.[0] || null;
       const pending = this.pendingEmbedTool;
       this.hiddenFileInput.value = "";
-      if (!file || !pending?.point) {
+      if (!file2 || !pending?.point) {
         this.pendingEmbedTool = null;
         return;
       }
-      this.insertImportedAsset(file, pending.point).catch((error) => {
+      this.insertImportedAsset(file2, pending.point).catch((error) => {
         console.error(`[${PLUGIN_ID}] Failed to import asset`, error);
         new import_obsidian.Notice(this.plugin.t("failedImportFile"));
       });
@@ -7405,8 +8078,8 @@ var PreviewDrawingController = class {
   createHeaderButton() {
     return this.plugin.installHeaderButton(this);
   }
-  async setFile(file) {
-    if (this.destroyed || !file || this.file?.path === file.path) {
+  async setFile(file2) {
+    if (this.destroyed || !file2 || this.file?.path === file2.path) {
       return;
     }
     this.endTextEdit();
@@ -7430,7 +8103,7 @@ var PreviewDrawingController = class {
     this.readingZoomBaseTarget = null;
     this.readingZoomBaseOrigin = null;
     this.resetCanvasSurface();
-    this.file = file;
+    this.file = file2;
     this.currentStroke = null;
     this.pointerDown = false;
     this.pointerStartEditable = null;
@@ -7471,7 +8144,7 @@ var PreviewDrawingController = class {
     this.invalidateStaticCache();
     this.drawingsLoaded = false;
     this.loadingDrawings = null;
-    this.drawingData = createEmptyDrawingData(file);
+    this.drawingData = createEmptyDrawingData(file2);
     await this.prepareInitialReadingLayout();
     if (this.destroyed || !this.previewEl?.isConnected) {
       return;
@@ -7774,10 +8447,10 @@ var PreviewDrawingController = class {
       await this.loadingDrawings;
       return;
     }
-    const file = this.file;
+    const file2 = this.file;
     const generation = ++this.drawingLoadGeneration;
-    const loading = this.plugin.readDrawings(file).then((data) => {
-      if (this.destroyed || generation !== this.drawingLoadGeneration || this.file?.path !== file?.path) {
+    const loading = this.plugin.readDrawings(file2).then((data) => {
+      if (this.destroyed || generation !== this.drawingLoadGeneration || this.file?.path !== file2?.path) {
         return;
       }
       this.drawingData = data;
@@ -8545,13 +9218,13 @@ var PreviewDrawingController = class {
   }
   async openSelectedMindMapSource() {
     const node = this.selectedMindMapSource();
-    const file = node ? this.plugin.resolveApiFile(node.sourcePath, this.file?.path || "") : null;
-    if (!file) {
+    const file2 = node ? this.plugin.resolveApiFile(node.sourcePath, this.file?.path || "") : null;
+    if (!file2) {
       return false;
     }
     this.hideSelectionMenu();
     const leaf = this.plugin.app.workspace.getLeaf(false);
-    await leaf.openFile(file, Number.isFinite(node.sourceLine) && node.sourceLine >= 0 ? { eState: { line: node.sourceLine } } : void 0);
+    await leaf.openFile(file2, Number.isFinite(node.sourceLine) && node.sourceLine >= 0 ? { eState: { line: node.sourceLine } } : void 0);
     const editor = leaf.view?.editor;
     if (editor && Number.isFinite(node.sourceLine) && node.sourceLine >= 0) {
       editor.setCursor({ line: node.sourceLine, ch: 0 });
@@ -9022,8 +9695,8 @@ var PreviewDrawingController = class {
     this.queueCurrentTextSave(true);
     this.positionFormatToolbar();
   }
-  queueTextSaveAndWait(file, original, editedSource, element) {
-    const scheduled = this.plugin.scheduleTextSaveNow(file, original, editedSource, element, this);
+  queueTextSaveAndWait(file2, original, editedSource, element) {
+    const scheduled = this.plugin.scheduleTextSaveNow(file2, original, editedSource, element, this);
     return this.textCommitBarrier.track(Promise.resolve(scheduled).then(() => this.plugin.flushTextSaveAndWait(element)));
   }
   queueCurrentTextSave(immediate = true) {
@@ -9033,13 +9706,13 @@ var PreviewDrawingController = class {
     }
     const original = element.dataset.noteDrawOriginal || "";
     const editedSource = serializeControllerEditableSource(element, this.currentEditorEmbedded);
-    const file = this.currentEditorFile || this.file;
+    const file2 = this.currentEditorFile || this.file;
     if (this.currentEditorEmbedded) {
-      this.plugin.stageTextSave(file, original, editedSource, element, this);
+      this.plugin.stageTextSave(file2, original, editedSource, element, this);
     } else if (immediate) {
-      this.queueTextSaveAndWait(file, original, editedSource, element);
+      this.queueTextSaveAndWait(file2, original, editedSource, element);
     } else {
-      this.plugin.scheduleTextSave(file, original, editedSource, element, this);
+      this.plugin.scheduleTextSave(file2, original, editedSource, element, this);
     }
   }
   toggleTextPanel() {
@@ -10966,12 +11639,12 @@ var PreviewDrawingController = class {
     this.openFloatingTextInput(snappedPoint);
   }
   async insertMindMapAt(point, sourceFile, options = {}) {
-    const file = this.plugin.resolveApiFile(sourceFile, this.file?.path || "");
-    if (!file) {
+    const file2 = this.plugin.resolveApiFile(sourceFile, this.file?.path || "");
+    if (!file2) {
       return { ok: false, reason: "source-not-found" };
     }
-    const source = await this.plugin.app.vault.cachedRead(file);
-    const model = parseMarkdownMindMap(source, { title: file.basename || file.name || "Mind map", maxNodes: 240 });
+    const source = await this.plugin.app.vault.cachedRead(file2);
+    const model = parseMarkdownMindMap(source, { title: file2.basename || file2.name || "Mind map", maxNodes: 240 });
     if (model.nodes.length <= 1 && !String(source || "").trim()) {
       if (!options.quiet) {
         new import_obsidian.Notice(this.plugin.t("emptyMindMap"));
@@ -11029,7 +11702,7 @@ var PreviewDrawingController = class {
           depth: node.depth,
           role: node.type === "root" ? "root" : node.type === "heading" ? "heading" : "node",
           type: node.type,
-          sourcePath: file.path,
+          sourcePath: file2.path,
           sourceLine: node.sourceLine,
           sourceEndLine: node.sourceEndLine,
           sourceText: node.sourceText,
@@ -11091,13 +11764,13 @@ var PreviewDrawingController = class {
     if (!node?.affectsSource || node.role === "root" || !node.sourcePath) {
       return fallbackToDrawingHistory();
     }
-    const file = this.plugin.resolveApiFile(node.sourcePath, this.file?.path || "");
-    if (!file) {
+    const file2 = this.plugin.resolveApiFile(node.sourcePath, this.file?.path || "");
+    if (!file2) {
       return fallbackToDrawingHistory();
     }
     try {
-      const source = await this.plugin.app.vault.cachedRead(file);
-      const currentModel = parseMarkdownMindMap(source, { title: file.basename || file.name || "Mind map", maxNodes: 240 });
+      const source = await this.plugin.app.vault.cachedRead(file2);
+      const currentModel = parseMarkdownMindMap(source, { title: file2.basename || file2.name || "Mind map", maxNodes: 240 });
       const currentSourceNode = currentModel.nodes.find((candidate) => candidate.id === node.nodeId);
       const result = replaceMarkdownMindMapNodeText(source, { ...node, ...currentSourceNode || {} }, text);
       if (!result.changed) {
@@ -11106,11 +11779,11 @@ var PreviewDrawingController = class {
         }
         return fallbackToDrawingHistory();
       }
-      await this.plugin.app.vault.modify(file, result.source);
+      await this.plugin.app.vault.modify(file2, result.source);
       this.refreshMindMapSourceMetadata(node.mapId, node.sourcePath, result.source);
       this.plugin.scheduleDrawingSave(this.file, this.drawingData);
       if (options.drawingBefore) {
-        this.recordCompoundHistory(file, source, result.source, options.drawingBefore);
+        this.recordCompoundHistory(file2, source, result.source, options.drawingBefore);
       }
       return true;
     } catch (error) {
@@ -11120,8 +11793,8 @@ var PreviewDrawingController = class {
     }
   }
   refreshMindMapSourceMetadata(mapId, sourcePath, source) {
-    const file = this.plugin.resolveApiFile(sourcePath, this.file?.path || "");
-    const model = parseMarkdownMindMap(source, { title: file?.basename || file?.name || "Mind map", maxNodes: 240 });
+    const file2 = this.plugin.resolveApiFile(sourcePath, this.file?.path || "");
+    const model = parseMarkdownMindMap(source, { title: file2?.basename || file2?.name || "Mind map", maxNodes: 240 });
     const byId = new Map(model.nodes.map((node) => [node.id, node]));
     for (const stroke of this.drawingData.strokes) {
       const linked = normalizeMindMapNode(stroke.mindMapNode);
@@ -12965,7 +13638,7 @@ var PreviewDrawingController = class {
       node.createEl("img", {
         attr: {
           alt: stroke.assetName || "Image",
-          src: this.assetResourceUrl(stroke.assetPath)
+          src: this.assetResourceUrl(stroke.assetPath || stroke.assetName)
         }
       });
       return;
@@ -12973,7 +13646,7 @@ var PreviewDrawingController = class {
     if (stroke.embedType === EMBED_VIDEO) {
       node.createEl("video", {
         attr: {
-          src: this.assetResourceUrl(stroke.assetPath),
+          src: this.assetResourceUrl(stroke.assetPath || stroke.assetName),
           controls: "true",
           playsinline: "true"
         }
@@ -12992,6 +13665,7 @@ var PreviewDrawingController = class {
     const content = String(stroke.text || "");
     if (renderMode === TEXT_RENDER_HTML) {
       node.appendChild(sanitizeHTMLToDomSafe(content));
+      await this.plugin.hydratePortableMarkdownResources(node, this.file.path);
       return;
     }
     if (renderMode === TEXT_RENDER_NOTE) {
@@ -13032,15 +13706,23 @@ var PreviewDrawingController = class {
   async resolveNotePreviewContent(text) {
     const link = String(text || "").trim();
     const normalized = unwrapWikiLink(link);
-    const file = this.plugin.app.metadataCache.getFirstLinkpathDest(normalized, this.file.path) || getVaultFileByPath(this.plugin.app.vault, normalized);
-    if (!file) {
-      return `> ${link || "Note not found"}`;
+    const file2 = this.plugin.app.metadataCache.getFirstLinkpathDest(normalized, this.file.path) || getVaultFileByPath(this.plugin.app.vault, normalized);
+    if (file2) {
+      return this.plugin.app.vault.cachedRead(file2);
     }
-    return this.plugin.app.vault.cachedRead(file);
+    const portable = this.plugin.portableResource(this.file, normalized || link);
+    if (portable && (String(portable.mime || "").startsWith("text/") || /\.md$/i.test(portable.name || ""))) {
+      return portableResourceText(portable);
+    }
+    return `> ${link || "Note not found"}`;
   }
   assetResourceUrl(assetPath) {
     if (!assetPath) {
       return "";
+    }
+    const portable = this.plugin.portableResourceUrl(this.file, assetPath);
+    if (portable) {
+      return portable;
     }
     try {
       return this.plugin.app.vault.adapter.getResourcePath(normalizeVaultPath(assetPath));
@@ -13332,7 +14014,7 @@ var PreviewDrawingController = class {
       image.src = embedded;
       return image;
     }
-    this.plugin.assetDataUrl(stroke.assetPath, stroke.assetMime || guessMimeType(stroke.assetName || stroke.assetPath)).then((dataUrl) => {
+    this.plugin.assetDataUrl(stroke.assetPath, stroke.assetMime || guessMimeType(stroke.assetName || stroke.assetPath), this.file).then((dataUrl) => {
       if (this.destroyed) {
         return;
       }
@@ -15179,9 +15861,9 @@ var PreviewDrawingController = class {
       }
       event.preventDefault();
       const after = placeAfter;
-      const file = this.currentEditorFile || this.file;
+      const file2 = this.currentEditorFile || this.file;
       const targetFile = this.plugin.resolveEditableFile(target, this.file);
-      if (normalizeVaultPath(targetFile?.path) !== normalizeVaultPath(file?.path)) {
+      if (normalizeVaultPath(targetFile?.path) !== normalizeVaultPath(file2?.path)) {
         clearTarget();
         return;
       }
@@ -15201,9 +15883,9 @@ var PreviewDrawingController = class {
       delete element.dataset.noteDrawSortDragging;
       this.endTextEdit({ save: false });
       this.plugin.discardTextSaveState(element);
-      const result = await this.plugin.reorderTextBlock(file, element, target, after, sourceState);
+      const result = await this.plugin.reorderTextBlock(file2, element, target, after, sourceState);
       if (result?.changed) {
-        this.recordMarkdownHistory(file, result.before, result.after);
+        this.recordMarkdownHistory(file2, result.before, result.after);
       }
     };
     const cleanup = element._noteDrawCleanup;
@@ -15286,11 +15968,11 @@ var PreviewDrawingController = class {
       used.add(element);
     }
   }
-  recordMarkdownHistory(file, before, after, coalesceKey = null) {
+  recordMarkdownHistory(file2, before, after, coalesceKey = null) {
     if (String(before ?? "") === String(after ?? "")) {
       return;
     }
-    this.plugin.recordControllerHistory(this, { kind: "markdown", file, before, after }, { coalesceKey });
+    this.plugin.recordControllerHistory(this, { kind: "markdown", file: file2, before, after }, { coalesceKey });
   }
   recordCompoundHistory(markdownFile, markdownBefore, markdownAfter, drawingBefore) {
     const drawingAfter = this.captureDrawingHistorySnapshot();
@@ -15391,6 +16073,15 @@ var NoteDrawSettingTab = class extends import_obsidian.PluginSettingTab {
           component.setValue(settings.language).onChange(async (value) => {
             this.plugin.noteDrawSettings.language = value;
             await this.plugin.saveSettings();
+            this.refreshSettingsView();
+          });
+        });
+      }),
+      this.createSectionDefinition("settingsSectionStorage"),
+      this.createSettingDefinition("drawingStorageMode", "drawingStorageModeDesc", (setting) => {
+        setting.addDropdown((component) => {
+          component.addOption(DRAWING_STORAGE_CONFIG, this.plugin.t("drawingStorageConfig")).addOption(DRAWING_STORAGE_NOTE_SUBFOLDER, this.plugin.t("drawingStorageNoteSubfolder")).addOption(DRAWING_STORAGE_NOTE_FOLDER, this.plugin.t("drawingStorageNoteFolder")).addOption(DRAWING_STORAGE_EMBEDDED, this.plugin.t("drawingStorageEmbedded")).setValue(settings.drawingStorageMode).onChange(async (value) => {
+            await this.plugin.changeDrawingStorageMode(value);
             this.refreshSettingsView();
           });
         });
@@ -15745,6 +16436,7 @@ function sanitizeSettings(settings) {
   const input = settings || {};
   return {
     language: normalizeLanguageCode(input.language ?? DEFAULT_SETTINGS.language),
+    drawingStorageMode: normalizeDrawingStorageMode(input.drawingStorageMode ?? DEFAULT_SETTINGS.drawingStorageMode),
     defaultPenColor: isCssColor(input.defaultPenColor) ? input.defaultPenColor : DEFAULT_SETTINGS.defaultPenColor,
     defaultPenWidth: clamp9(Number(input.defaultPenWidth ?? DEFAULT_SETTINGS.defaultPenWidth), MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH),
     defaultPenOpacity: clamp9(Number(input.defaultPenOpacity ?? DEFAULT_SETTINGS.defaultPenOpacity), 0, 1),
@@ -16320,8 +17012,8 @@ function resolveRenderedSourcePath(app, root, fallbackPath) {
   if (!link) {
     return normalizeVaultPath(fallbackPath);
   }
-  const file = app.metadataCache.getFirstLinkpathDest?.(link, fallbackPath || "") || getVaultFileByPath(app.vault, link);
-  return normalizeVaultPath(file?.path || fallbackPath);
+  const file2 = app.metadataCache.getFirstLinkpathDest?.(link, fallbackPath || "") || getVaultFileByPath(app.vault, link);
+  return normalizeVaultPath(file2?.path || fallbackPath);
 }
 function annotateVisibleMarkdownElements(app, root, fallbackPath) {
   for (const element of root?.querySelectorAll?.(EDITABLE_SELECTOR) || []) {
@@ -16349,12 +17041,12 @@ async function annotateRenderedMarkdownLines(app, root, fallbackPath) {
   });
   const sources = /* @__PURE__ */ new Map();
   for (const path of new Set(elements.map((element) => normalizeVaultPath(element.dataset.noteDrawSourcePath || fallbackPath)))) {
-    const file = getVaultFileByPath(app.vault, path);
-    if (!file) {
+    const file2 = getVaultFileByPath(app.vault, path);
+    if (!file2) {
       continue;
     }
     try {
-      sources.set(path, await app.vault.cachedRead(file));
+      sources.set(path, await app.vault.cachedRead(file2));
     } catch (error) {
       void error;
     }
@@ -16554,7 +17246,7 @@ function normalizeRegisteredSurfaceOptions(app, options = {}) {
     title: String(options.title || id)
   };
   const capabilities = normalizeRegisteredSurfaceCapabilities(options.capabilities);
-  const file = createRegisteredSurfaceDrawingFile(app, { owner, id, key, source });
+  const file2 = createRegisteredSurfaceDrawingFile(app, { owner, id, key, source });
   return {
     owner,
     id,
@@ -16564,7 +17256,7 @@ function normalizeRegisteredSurfaceOptions(app, options = {}) {
     source,
     capabilities,
     viewport: options.viewport || {},
-    file
+    file: file2
   };
 }
 function normalizeRegisteredSurfaceSource(source = {}, fallback = {}) {
@@ -16603,9 +17295,9 @@ function normalizeRegisteredSurfaceCapabilities(capabilities = {}) {
 function createRegisteredSurfaceDrawingFile(app, record) {
   const source = record.source || {};
   if (source.kind === "vault" && source.path) {
-    const file = getVaultFileByPath(app?.vault, source.path);
-    if (file) {
-      return file;
+    const file2 = getVaultFileByPath(app?.vault, source.path);
+    if (file2) {
+      return file2;
     }
     return {
       path: source.path,
@@ -17337,8 +18029,8 @@ function getVaultFileByPath(vault, path) {
   if (!vault || !normalized) {
     return null;
   }
-  const file = vault.getAbstractFileByPath((0, import_obsidian.normalizePath)(normalized));
-  return file && typeof file.extension === "string" ? file : null;
+  const file2 = vault.getAbstractFileByPath((0, import_obsidian.normalizePath)(normalized));
+  return file2 && typeof file2.extension === "string" ? file2 : null;
 }
 function normalizeVaultPath(path) {
   return String(path || "").replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, "");
@@ -17586,10 +18278,218 @@ function sanitizeHTMLToDomSafe(content) {
   });
   return fragment;
 }
-function createEmptyDrawingData(file) {
+function portableTimestamp(value) {
+  const timestamp = Date.parse(String(value || ""));
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+function normalizePortableBundle(value, file2) {
+  if (!value || typeof value !== "object" || !value.drawing || typeof value.drawing !== "object") {
+    return null;
+  }
+  return {
+    format: "notedraw-portable",
+    version: Math.max(1, Number(value.version) || 1),
+    purpose: value.purpose === "share" ? "share" : "storage",
+    sourcePath: normalizeVaultPath(value.sourcePath || file2?.path || ""),
+    updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : value.drawing?.updatedAt || null,
+    drawing: normalizeDrawingData(value.drawing, file2),
+    resources: normalizePortableResources(value.resources),
+    skippedResources: Array.isArray(value.skippedResources) ? value.skippedResources.map(String).filter(Boolean) : []
+  };
+}
+function normalizePortableResources(value) {
+  return Array.isArray(value) ? value.map(normalizePortableResource).filter(Boolean) : [];
+}
+function normalizePortableResource(value) {
+  const dataBase64 = typeof value?.dataBase64 === "string" ? value.dataBase64.replace(/\s+/g, "") : "";
+  if (!dataBase64 || !/^[A-Za-z0-9+/]*={0,2}$/.test(dataBase64)) {
+    return null;
+  }
+  const source = typeof value?.source === "string" ? value.source : "";
+  const resolvedPath = typeof value?.resolvedPath === "string" ? value.resolvedPath : "";
+  const name = sanitizeAssetFileName(value?.name || portableUrlName(resolvedPath || source) || "attachment.bin");
+  const aliases = Array.from(new Set([
+    source,
+    resolvedPath,
+    name,
+    ...Array.from(Array.isArray(value?.aliases) ? value.aliases : [])
+  ].map((item) => String(item || "").trim()).filter(Boolean)));
+  return {
+    id: typeof value?.id === "string" && value.id ? value.id : portableResourceId(resolvedPath || source || name),
+    source,
+    resolvedPath,
+    aliases,
+    name,
+    mime: String(value?.mime || portableMimeType(name) || "application/octet-stream").split(";")[0].trim().toLowerCase(),
+    size: Number.isFinite(Number(value?.size)) ? Math.max(0, Number(value.size)) : Math.floor(dataBase64.length * 0.75),
+    dataBase64
+  };
+}
+function findPortableResource(resources, reference, aliases = []) {
+  const targets = portableReferenceKeys([reference, ...aliases]);
+  if (!targets.exact.size && !targets.basename.size) {
+    return null;
+  }
+  let basenameMatch = null;
+  for (const resource of normalizePortableResources(resources)) {
+    const keys = portableReferenceKeys([resource.source, resource.resolvedPath, resource.name, ...resource.aliases]);
+    if (Array.from(targets.exact).some((key) => keys.exact.has(key))) {
+      return resource;
+    }
+    if (!basenameMatch && Array.from(targets.basename).some((key) => keys.basename.has(key))) {
+      basenameMatch = resource;
+    }
+  }
+  return basenameMatch;
+}
+function portableReferenceKeys(values) {
+  const exact = /* @__PURE__ */ new Set();
+  const basename = /* @__PURE__ */ new Set();
+  for (const value of values.flatMap((item) => Array.isArray(item) ? item : [item])) {
+    let text = String(value || "").trim();
+    if (!text) {
+      continue;
+    }
+    try {
+      text = decodeURIComponent(text);
+    } catch {
+    }
+    text = unwrapWikiLink(text.replace(/^!/, "")).split("|")[0].trim();
+    const withoutFragment = text.replace(/[?#].*$/, "").replace(/\\/g, "/").replace(/^\/+/, "");
+    for (const candidate of [text, withoutFragment]) {
+      if (candidate) {
+        exact.add(candidate.toLowerCase());
+      }
+    }
+    let name = withoutFragment.split("/").pop() || "";
+    if (/^[a-z]+:\/\//i.test(text)) {
+      try {
+        name = decodeURIComponent(new URL(text).pathname.split("/").pop() || name);
+      } catch {
+      }
+    }
+    if (name) {
+      basename.add(name.toLowerCase());
+    }
+  }
+  return { exact, basename };
+}
+function portableResourceIdentity(resource) {
+  return String(resource?.resolvedPath || resource?.source || resource?.id || "");
+}
+function portableResourceId(value) {
+  return `${PORTABLE_RESOURCE_PREFIX}-${hashString(String(value || "resource"))}`;
+}
+function portableResourceDataUrl(resource) {
+  const normalized = normalizePortableResource(resource);
+  return normalized ? `data:${normalized.mime || "application/octet-stream"};base64,${normalized.dataBase64}` : "";
+}
+function portableResourceText(resource) {
+  const normalized = normalizePortableResource(resource);
+  if (!normalized) {
+    return "";
+  }
+  const binary = atob(normalized.dataBase64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return new TextDecoder().decode(bytes);
+}
+function portableMimeType(name) {
+  const lower = String(name || "").split(/[?#]/)[0].toLowerCase();
+  const types = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".bmp": "image/bmp",
+    ".svg": "image/svg+xml",
+    ".mp4": "video/mp4",
+    ".webm": "video/webm",
+    ".mov": "video/quicktime",
+    ".m4v": "video/x-m4v",
+    ".mp3": "audio/mpeg",
+    ".wav": "audio/wav",
+    ".m4a": "audio/mp4",
+    ".ogg": "audio/ogg",
+    ".pdf": "application/pdf",
+    ".md": "text/markdown",
+    ".markdown": "text/markdown",
+    ".txt": "text/plain",
+    ".csv": "text/csv",
+    ".json": "application/json",
+    ".html": "text/html",
+    ".htm": "text/html",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  };
+  const extension = Object.keys(types).find((candidate) => lower.endsWith(candidate));
+  return extension ? types[extension] : "application/octet-stream";
+}
+function portableResponseMime(headers) {
+  if (!headers) {
+    return "";
+  }
+  if (typeof headers.get === "function") {
+    return String(headers.get("content-type") || "").split(";")[0].trim();
+  }
+  const entry = Object.entries(headers).find(([key]) => key.toLowerCase() === "content-type");
+  return String(entry?.[1] || "").split(";")[0].trim();
+}
+function portableUrlName(value) {
+  try {
+    const url = new URL(String(value || ""));
+    return decodeURIComponent(url.pathname.split("/").pop() || url.hostname || "resource.bin");
+  } catch {
+    return String(value || "").replace(/\\/g, "/").split("/").pop() || "resource.bin";
+  }
+}
+function extractPortableMarkdownLinks(markdown) {
+  const source = stripNotedrawDataBlocks(markdown);
+  const links = [];
+  for (const match of source.matchAll(/!?\[\[([^\]]+)\]\]/g)) {
+    links.push(match[1]);
+  }
+  for (const match of source.matchAll(/!?\[[^\]]*\]\(\s*(?:<([^>]+)>|([^\s)]+))/g)) {
+    links.push(match[1] || match[2]);
+  }
+  for (const match of source.matchAll(/<((?:https?):\/\/[^>]+)>/gi)) {
+    links.push(match[1]);
+  }
+  return Array.from(new Set(links.map((link) => String(link || "").trim()).filter(Boolean)));
+}
+function extractPortableHtmlLinks(html) {
+  const links = [];
+  for (const match of String(html || "").matchAll(/\b(?:src|href)\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))/gi)) {
+    links.push(match[1] || match[2] || match[3]);
+  }
+  return Array.from(new Set(links.map((link) => String(link || "").trim()).filter(Boolean)));
+}
+function portableElementReferences(element) {
+  const values = [
+    element.getAttribute?.("src"),
+    element.getAttribute?.("href"),
+    element.getAttribute?.("data-src"),
+    element.getAttribute?.("data-href"),
+    element.getAttribute?.("data-path"),
+    element.getAttribute?.("alt"),
+    element.dataset?.href,
+    element.dataset?.src,
+    element.dataset?.path
+  ];
+  const text = String(element.textContent || "").trim();
+  if (text && text.length <= 240) {
+    values.push(text);
+  }
+  return Array.from(new Set(values.map((value) => String(value || "").trim()).filter(Boolean)));
+}
+function createEmptyDrawingData(file2) {
   return {
     version: 3,
-    sourcePath: file.path,
+    sourcePath: file2.path,
     visible: true,
     strokes: [],
     noteFlowLayout: normalizeFrozenNoteFlowLayout(null),
@@ -17597,11 +18497,11 @@ function createEmptyDrawingData(file) {
     updatedAt: null
   };
 }
-function normalizeDrawingData(data, file) {
+function normalizeDrawingData(data, file2) {
   const strokes = Array.isArray(data?.strokes) ? data.strokes : [];
   return {
     version: Math.max(1, Number.isFinite(data?.version) ? data.version : 1),
-    sourcePath: file.path,
+    sourcePath: file2.path,
     visible: data?.visible !== false,
     strokes: strokes.map(normalizeStroke).map((stroke) => ({
       ...stroke,
@@ -17612,8 +18512,8 @@ function normalizeDrawingData(data, file) {
     updatedAt: data?.updatedAt || null
   };
 }
-function normalizeDrawingDataForStorage(data, file) {
-  const normalized = normalizeDrawingData(data, file);
+function normalizeDrawingDataForStorage(data, file2) {
+  const normalized = normalizeDrawingData(data, file2);
   normalized.strokes = normalized.strokes.map((stroke) => {
     const layout = normalizeElementLayout(stroke.layout);
     if (!layout || elementLayoutNeedsRepair(layout) || !stroke.points.some((point) => point.anchor)) {
@@ -17636,8 +18536,8 @@ function normalizeDrawingDataForStorage(data, file) {
   });
   return normalized;
 }
-function cloneDrawingData(data, file) {
-  return JSON.parse(JSON.stringify(normalizeDrawingDataForStorage(data, file)));
+function cloneDrawingData(data, file2) {
+  return JSON.parse(JSON.stringify(normalizeDrawingDataForStorage(data, file2)));
 }
 function normalizeWebEdits(value) {
   if (!Array.isArray(value)) {

@@ -34,7 +34,8 @@ It is built as a surface layer: the same drawing and text-edit logic works on Ob
 - Reading view uses non-reflowing visual zoom: original line breaks stay fixed, enlarged content can overflow horizontally, and two-axis panning keeps every NoteDraw layer aligned.
 - Source/edit view keeps layout zoom, so text can reflow to the edited working width.
 - Click-to-caret behavior inside active text blocks.
-- Drawing data stored outside Markdown so notes stay clean.
+- Configurable drawing storage, with the plugin config folder remaining the default.
+- Portable single-file sharing that keeps normal Markdown readable while embedding NoteDraw data and linked resources in a hidden block.
 - Public API for scripts, other plugins, and AI agents.
 - Drawings made inside embedded note previews are stored against the embedded note path, so opening that note shows the same layer.
 - Embedded `![[Markdown notes]]` can be edited in place: direct editing in source view and the floating format toolbar in reading view.
@@ -45,13 +46,22 @@ It is built as a surface layer: the same drawing and text-edit logic works on Ob
 
 ## Storage
 
-New drawing files are stored here:
+By default, new drawing files are stored here:
 
 ```text
 <vault>/.obsidian/plugins/notedraw/drawings/
 ```
 
-Each note gets a JSON file derived from its vault path. NoteDraw keeps drawing data separate from Markdown text, so Markdown sync and normal editing remain predictable.
+The **NoteDraw data location** setting provides four choices:
+
+- Plugin config folder (default): `<vault>/.obsidian/plugins/notedraw/drawings/`
+- Current note folder / `notedraw`: `<note-folder>/notedraw/<note>.notedraw.json`
+- Current note folder: `<note-folder>/<note>.notedraw.json`
+- Current Markdown file: a hidden, compressed NoteDraw block appended to the note
+
+Changing the setting preserves old data and copies the active note's current drawing into the selected location. NoteDraw can still read existing config-folder, embedded, and legacy data and uses the newest valid copy.
+
+**Share NoteDraw file** is available in the note menu and command palette. It creates one `<note>.notedraw.md` file containing the readable Markdown body plus a hidden portable bundle with the drawing layer, NoteDraw attachments, internal linked files, and reachable HTTP/HTTPS resources. Normal Markdown readers ignore the hidden block; NoteDraw restores it when the file is opened in a compatible Obsidian environment.
 
 ## Migration
 
@@ -117,6 +127,7 @@ The settings page currently includes:
 - Default pen color, width, opacity.
 - Default watercolor color, width, opacity.
 - UI language.
+- NoteDraw data location.
 - Toolbar top offset.
 - Long-press delay, tap tolerance, selection hit padding, and selected-element opacity.
 - Stroke smoothing, input sampling, save compaction, and auto-save delay.
@@ -278,4 +289,4 @@ The current package focuses on the local Obsidian plugin runtime. The API and DO
 
 ## Version
 
-Current version: `3.4.9`.
+Current version: `3.4.10`.
