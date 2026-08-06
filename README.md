@@ -61,7 +61,7 @@ The **NoteDraw data location** setting provides four choices:
 
 Changing the setting preserves old data and copies the active note's current drawing into the selected location. NoteDraw can still read existing config-folder, embedded, and legacy data and uses the newest valid copy.
 
-**Share NoteDraw file** is available in the note menu and command palette. It creates one `<note>.notedraw.md` file containing the readable Markdown body plus a hidden portable bundle with the drawing layer, NoteDraw attachments, internal linked files, and reachable HTTP/HTTPS resources. Normal Markdown readers ignore the hidden block; NoteDraw restores it when the file is opened in a compatible Obsidian environment.
+**Share NoteDraw file** is available in the note menu and command palette. It creates a uniquely named `<note>.notedraw.md` copy containing the readable Markdown body plus a hidden portable bundle with the drawing layer, NoteDraw attachments, internal linked files, and reachable HTTP/HTTPS resources. NoteDraw opens that copy in Obsidian reading view and waits for its Markdown, resources, and drawing layer to render before opening system sharing. The source note and existing copies are never overwritten. Normal Markdown readers ignore the hidden block; NoteDraw restores it when the file is opened in a compatible Obsidian environment.
 
 ## Migration
 
@@ -172,6 +172,12 @@ await noteDraw.updateElements({ ids: ["element-id"], patch: { color: "#43a047", 
 await noteDraw.reorderElements({ ids: ["element-id"], direction: "front" });
 await noteDraw.undo();
 await noteDraw.readDrawings("Notes/example.md");
+const bundle = await noteDraw.drawingData.read("Notes/example.md", {
+  includeResources: true,
+  includeMarkdownLinks: true
+});
+const hiddenBlock = await noteDraw.drawingData.serialize(bundle, { format: "block" });
+const restoredBundle = await noteDraw.drawingData.parse(hiddenBlock);
 await noteDraw.writeDrawings("Notes/example.md", drawingData);
 await noteDraw.replaceText({
   path: "Notes/example.md",
@@ -182,6 +188,8 @@ await noteDraw.insertStroke("Notes/example.md", stroke);
 const unsubscribe = noteDraw.on("markdown-changed", (event) => console.log(event));
 await noteDraw.execute("set-tool", { tool: "select" });
 ```
+
+`drawingData.read/parse/serialize` is the placement-neutral integration API for temporary exports. It only returns data and does not create, modify, move, or delete Vault files or change NoteDraw's storage setting. The calling plugin decides whether to embed the serialized block in a Markdown copy, save JSON beside a note, use a subfolder, or keep the result in memory. `parse` reads standard bundle objects, JSON, hidden blocks, and complete Markdown containing a hidden block. The older `writeDrawings` method remains available separately for integrations that explicitly intend to change NoteDraw data.
 
 Custom views from Cancip, NoteWeb, or another plugin can register their visible surface without copying NoteDraw internals:
 
@@ -289,4 +297,4 @@ The current package focuses on the local Obsidian plugin runtime. The API and DO
 
 ## Version
 
-Current version: `3.4.10`.
+Current version: `3.4.11`.

@@ -72,15 +72,15 @@ test("registered surfaces expose stable handles and structured actions without c
   assert.match(source, /registeredSurfaceSource/);
 });
 
-test("3.4.10 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
+test("3.4.11 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
   const [source, manifestText] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(manifestUrl, "utf8")
   ]);
   const manifest = JSON.parse(manifestText);
 
-  assert.equal(manifest.version, "3.4.10");
-  assert.match(source, /version: "3\.4\.10"/);
+  assert.equal(manifest.version, "3.4.11");
+  assert.match(source, /version: "3\.4\.11"/);
   assert.match(source, /if \(!this\.responsivePointsInitialized \|\| signature !== this\.responsiveLayoutSignature\)/);
   assert.match(source, /captureElementLayoutForStroke/);
   assert.match(source, /projectElementPoints\(stroke\.points, layout, box/);
@@ -176,6 +176,7 @@ test("NoteDraw storage locations and single-file sharing stay portable and backw
   ]);
   const storageSource = source.slice(source.indexOf("  drawingStorageModeForFile("), source.indexOf("  injectExportSnapshot("));
   const shareSource = source.slice(source.indexOf("  async createPortableBundle("), source.indexOf("  async appendDebugLog("));
+  const drawingDataApi = source.slice(source.indexOf("  async readDrawingDataApi("), source.indexOf("  registeredSurfaceViewportState("));
   const settingsSource = source.slice(source.indexOf("  getSettingDefinitions()"), source.indexOf("  addSliderWithValue("));
 
   assert.match(source, /drawingStorageMode: DRAWING_STORAGE_CONFIG/);
@@ -186,8 +187,17 @@ test("NoteDraw storage locations and single-file sharing stay portable and backw
   assert.match(storageSource, /this\.app\.vault\.process\(realFile, \(source\) => appendEncodedNotedrawDataBlock\(source, block\)\)/);
   assert.match(settingsSource, /drawingStorageMode[\s\S]*drawingStorageConfig[\s\S]*drawingStorageNoteSubfolder[\s\S]*drawingStorageNoteFolder[\s\S]*drawingStorageEmbedded/);
   assert.match(source, /this\.app\.workspace\.on\("file-menu"[\s\S]*shareNoteDrawFile[\s\S]*setIcon\("share-2"\)/);
+  assert.match(source, /drawingDataExchange: \["read", "parse", "serialize"\]/);
+  assert.match(source, /drawingData = Object\.freeze\(\{[\s\S]*read:[\s\S]*parse:[\s\S]*serialize:/);
+  assert.match(drawingDataApi, /readDrawings\(file, \{ migrateLegacy: false \}\)/);
+  assert.match(drawingDataApi, /decodeNotedrawDataBlock\(value\)[\s\S]*JSON\.parse\(value\)/);
+  assert.match(drawingDataApi, /format === "json"[\s\S]*format === "block"[\s\S]*format === "markdown"/);
+  assert.doesNotMatch(drawingDataApi, /vault\.(?:create|modify|process|delete|rename)|adapter\.(?:write|writeBinary|remove|rename)|changeDrawingStorageMode|writeDrawings\(/);
   assert.match(shareSource, /includeMarkdownLinks[\s\S]*metadataCache\.getFileCache[\s\S]*requestUrl\(\{ url: raw, method: "GET" \}\)/);
   assert.match(shareSource, /TEXT_RENDER_NOTE[\s\S]*TEXT_RENDER_MARKDOWN[\s\S]*TEXT_RENDER_HTML[\s\S]*mindMapSource/);
+  assert.match(shareSource, /createAndOpenShareCopy\(file, markdown, bundle\)[\s\S]*vault\.create\(path, markdown\)[\s\S]*leaf\.openFile\(copyFile[\s\S]*mode: "preview"[\s\S]*waitForShareCopyPreview\(copyFile, leaf\)/);
+  assert.match(shareSource, /waitForShareCopyPreview\(file, leaf\)[\s\S]*hydratePortableMarkdownResources\(preview, path\)[\s\S]*ensureDrawingsLoaded\(\)[\s\S]*waitForNextFrame\(\)[\s\S]*waitForNextFrame\(\)/);
+  assert.match(shareSource, /buildPortableMarkdownCopy\(file\)[\s\S]*createAndOpenShareCopy\(file, markdown, bundle\)[\s\S]*navigator\.share\(shareData\)/);
   assert.match(shareSource, /new File\(\[markdown\], name, \{ type: "text\/markdown;charset=utf-8" \}\)/);
   assert.match(shareSource, /typeof navigator !== "undefined"[\s\S]*navigator\.canShare\(shareData\)[\s\S]*downloadPortableMarkdown/);
   assert.match(source, /hydratePortableMarkdownResources\(el, renderedSourcePath\)/);

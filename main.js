@@ -5000,6 +5000,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       stateBackedWorkspaceSurfaces: true,
       agentActions: true,
       settingsApi: true,
+      drawingDataExchange: ["read", "parse", "serialize"],
       brushVariants: {
         [BRUSH_PEN]: [BRUSH_VARIANT_DEFAULT, PEN_VARIANT_FOUNTAIN, PEN_VARIANT_NOTE],
         [BRUSH_WATERCOLOR]: [BRUSH_VARIANT_DEFAULT, WATERCOLOR_VARIANT_TEXT, WATERCOLOR_VARIANT_STRAIGHT]
@@ -5011,9 +5012,15 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       elementActions: ["get", "select", "update", "delete", "reorder", "set-locked", "set-note-flow", "copy", "paste"],
       historyActions: ["undo", "redo"]
     });
+    const drawingData = Object.freeze({
+      read: async (fileOrPath, options = {}) => this.readDrawingDataApi(fileOrPath, options),
+      parse: async (input, options = {}) => this.parseDrawingDataApi(input, options),
+      serialize: async (data, options = {}) => this.serializeDrawingDataApi(data, options)
+    });
     const v1 = {
       apiVersion: "1.0",
       capabilities,
+      drawingData,
       resolveFile: (fileOrPath, sourcePath = "") => this.resolveApiFile(fileOrPath, sourcePath),
       registerSurface: (options = {}) => this.registerApiSurface(options),
       listSurfaces: () => this.getAllControllers().map((controller) => this.describeController(controller)),
@@ -5047,6 +5054,9 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
         }
         return this.readDrawings(file2);
       },
+      readDrawingData: drawingData.read,
+      parseDrawingData: drawingData.parse,
+      serializeDrawingData: drawingData.serialize,
       writeDrawings: async (fileOrPath, data) => {
         const file2 = this.resolveApiFile(fileOrPath);
         if (!file2) {
@@ -5084,10 +5094,11 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.4.10",
+      version: "3.4.11",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
+      drawingData,
       resolveFile: v1.resolveFile,
       registerSurface: v1.registerSurface,
       listSurfaces: v1.listSurfaces,
@@ -5116,6 +5127,9 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       execute: v1.execute,
       getActiveController: () => this.getActiveController(),
       readDrawings: v1.readDrawings,
+      readDrawingData: v1.readDrawingData,
+      parseDrawingData: v1.parseDrawingData,
+      serializeDrawingData: v1.serializeDrawingData,
       writeDrawings: v1.writeDrawings,
       getStoragePaths: v1.getStoragePaths,
       refresh: v1.refresh,
@@ -5138,6 +5152,85 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     }
     const surfaceFile = this.getAllControllers().find((controller) => normalizeVaultPath(controller.file?.path) === path)?.file;
     return getVaultFileByPath(this.app.vault, path) || surfaceFile || this.app.metadataCache.getFirstLinkpathDest?.(path, sourcePath || "") || null;
+  }
+  async readDrawingDataApi(fileOrPath, options = {}) {
+    const file2 = this.resolveApiFile(fileOrPath, options.sourcePath || "");
+    if (!file2) {
+      throw new Error("NoteDraw could not resolve the requested file");
+    }
+    const key = normalizeVaultPath(file2.path);
+    const controller = this.getAllControllers().find((candidate) => normalizeVaultPath(candidate?.file?.path || "") === key && candidate?.drawingsLoaded && candidate?.drawingData);
+    const drawing = normalizeDrawingDataForStorage(
+      controller?.drawingData || await this.readDrawings(file2, { migrateLegacy: false }),
+      file2
+    );
+    if (options.includeResources === false) {
+      return clonePortableValue({
+        format: "notedraw-portable",
+        version: 1,
+        purpose: "storage",
+        sourcePath: key,
+        updatedAt: drawing.updatedAt || null,
+        drawing,
+        resources: [],
+        skippedResources: []
+      });
+    }
+    const sourceMarkdown = typeof options.sourceMarkdown === "string" ? options.sourceMarkdown : await this.app.vault.cachedRead(file2);
+    return clonePortableValue(await this.createPortableBundle(file2, drawing, {
+      purpose: options.purpose === "share" ? "share" : "storage",
+      sourceMarkdown,
+      includeMarkdownLinks: options.includeMarkdownLinks === true
+    }));
+  }
+  async parseDrawingDataApi(input, options = {}) {
+    let value = input;
+    if (typeof value === "string") {
+      const decoded = await decodeNotedrawDataBlock(value);
+      if (decoded) {
+        value = decoded;
+      } else {
+        try {
+          value = JSON.parse(value);
+        } catch {
+          throw new Error("NoteDraw data is neither an embedded block nor valid JSON");
+        }
+      }
+    }
+    const sourcePath = normalizeVaultPath(
+      options.sourcePath || options.file?.path || value?.sourcePath || value?.drawing?.sourcePath || "NoteDraw.md"
+    ) || "NoteDraw.md";
+    const file2 = this.resolveApiFile(options.file || sourcePath) || createDrawingDataFile(sourcePath);
+    const bundle = value?.drawing ? normalizePortableBundle(value, file2) : normalizePortableBundle({
+      format: "notedraw-portable",
+      version: 1,
+      purpose: "storage",
+      sourcePath,
+      updatedAt: value?.updatedAt || null,
+      drawing: value,
+      resources: options.resources || []
+    }, file2);
+    if (!bundle) {
+      throw new Error("NoteDraw data is invalid");
+    }
+    return clonePortableValue(bundle);
+  }
+  async serializeDrawingDataApi(input, options = {}) {
+    const bundle = await this.parseDrawingDataApi(input, options);
+    const format = String(options.format || "json").trim().toLowerCase();
+    if (format === "object") {
+      return bundle;
+    }
+    if (format === "json") {
+      return JSON.stringify(bundle, null, options.pretty === false ? 0 : 2);
+    }
+    if (format === "block") {
+      return encodeNotedrawDataBlock(bundle, { compress: options.compress !== false });
+    }
+    if (format === "markdown") {
+      return appendNotedrawDataBlock(options.markdown || "", bundle, { compress: options.compress !== false });
+    }
+    throw new Error(`Unsupported NoteDraw serialization format: ${format}`);
   }
   registeredSurfaceViewportState(controller) {
     const viewport = controller?.registeredSurfaceViewport;
@@ -6455,6 +6548,77 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       skippedResources: collected.failed
     };
   }
+  async buildPortableMarkdownCopy(file2) {
+    const source = await this.app.vault.cachedRead(file2);
+    const bundle = await this.readDrawingDataApi(file2, {
+      purpose: "share",
+      includeResources: true,
+      includeMarkdownLinks: true,
+      sourceMarkdown: source
+    });
+    return {
+      bundle,
+      markdown: await appendNotedrawDataBlock(source, bundle)
+    };
+  }
+  shareCopyPathForFile(file2) {
+    const normalizedPath = normalizeVaultPath(file2?.path || "");
+    const slash = normalizedPath.lastIndexOf("/");
+    const parent = slash >= 0 ? normalizedPath.slice(0, slash) : "";
+    const originalBase = String(file2?.basename || file2?.name || "NoteDraw").replace(/\.notedraw$/i, "");
+    const base = sanitizeAssetFileName(originalBase || "NoteDraw");
+    let index = 1;
+    while (true) {
+      const suffix = index === 1 ? "" : `-${index}`;
+      const name = `${base}.notedraw${suffix}.md`;
+      const path = normalizeVaultPath(parent ? `${parent}/${name}` : name);
+      if (!getVaultFileByPath(this.app.vault, path)) {
+        return path;
+      }
+      index += 1;
+    }
+  }
+  async createAndOpenShareCopy(file2, markdown, bundle) {
+    const path = this.shareCopyPathForFile(file2);
+    const copyFile = await this.app.vault.create(path, markdown);
+    this.rememberPortableBundle(copyFile, normalizePortableBundle(bundle, copyFile));
+    const leaf = this.app.workspace.getLeaf(false);
+    await leaf.openFile(copyFile, { active: true });
+    if (typeof leaf.setViewState === "function") {
+      await leaf.setViewState({
+        type: "markdown",
+        state: { file: copyFile.path, mode: "preview", source: false },
+        active: true
+      });
+    }
+    await this.app.workspace.revealLeaf?.(leaf);
+    await this.waitForShareCopyPreview(copyFile, leaf);
+    return copyFile;
+  }
+  async waitForShareCopyPreview(file2, leaf) {
+    const path = normalizeVaultPath(file2?.path || "");
+    const deadline = Date.now() + 1e4;
+    while (Date.now() < deadline) {
+      const view = leaf?.view;
+      const preview = view instanceof import_obsidian.MarkdownView && normalizeVaultPath(view.file?.path || "") === path ? findRootPreviewForView(view) : null;
+      if (preview?.isConnected && isMarkdownPreviewVisible(view, preview) && isRootPreviewReady(view, preview)) {
+        await this.hydratePortableMarkdownResources(preview, path);
+        const controller = this.resolveLivePreviewController(view);
+        if (controller) {
+          await controller.ensureDrawingsLoaded();
+          controller.requestRender(true);
+          await waitForNextFrame();
+          await waitForNextFrame();
+          if (controller.drawingsLoaded && controller.canvas?.isConnected && controller.renderFrameId === null) {
+            return controller;
+          }
+        }
+      }
+      this.runSurfaceSync();
+      await waitForNextFrame();
+    }
+    throw new Error("NoteDraw share copy did not finish its first preview frame");
+  }
   async collectPortableResources(file2, data, options = {}) {
     const resources = /* @__PURE__ */ new Map();
     const failed = [];
@@ -6692,21 +6856,11 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     new import_obsidian.Notice(this.t("sharePreparing"));
     const sharing = (async () => {
       try {
-        const source = await this.app.vault.cachedRead(file2);
-        const activeController = this.getActiveController();
-        const controller = normalizeVaultPath(activeController?.file?.path || "") === key && activeController?.drawingData ? activeController : this.getAllControllers().find((candidate) => {
-          return normalizeVaultPath(candidate?.file?.path || "") === key && candidate?.drawingData;
-        });
-        const data = controller?.drawingData || await this.readDrawings(file2);
-        const bundle = await this.createPortableBundle(file2, data, {
-          purpose: "share",
-          includeMarkdownLinks: true,
-          sourceMarkdown: source
-        });
-        const markdown = await appendNotedrawDataBlock(source, bundle);
-        const name = `${sanitizeAssetFileName(file2.basename || file2.name || "NoteDraw")}.notedraw.md`;
+        const { markdown, bundle } = await this.buildPortableMarkdownCopy(file2);
+        const copyFile = await this.createAndOpenShareCopy(file2, markdown, bundle);
+        const name = copyFile.name;
         const shareFile = typeof File === "function" ? new File([markdown], name, { type: "text/markdown;charset=utf-8" }) : null;
-        const shareData = shareFile ? { title: file2.basename || "NoteDraw", files: [shareFile] } : null;
+        const shareData = shareFile ? { title: copyFile.basename || file2.basename || "NoteDraw", files: [shareFile] } : null;
         let shared = false;
         let canUseNativeShare = Boolean(shareData && typeof navigator !== "undefined" && typeof navigator.share === "function");
         if (canUseNativeShare && typeof navigator.canShare === "function") {
@@ -6775,7 +6929,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       console.error(`[${PLUGIN_ID}] Failed to write debug log`, error);
     }
   }
-  async readDrawings(file2) {
+  async readDrawings(file2, options = {}) {
     const storageMode = this.drawingStorageModeForFile(file2);
     const storageKey = this.drawingStorageKey(file2, storageMode);
     const cached = this.drawingStateCache.get(storageKey);
@@ -6826,7 +6980,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       const selected = candidates[0] || null;
       const data = selected ? normalizeDrawingData(selected.data, file2) : createEmptyDrawingData(file2);
       this.drawingStateCache.set(storageKey, normalizeDrawingData(data, file2));
-      if (selected?.kind === "legacy") {
+      if (selected?.kind === "legacy" && options.migrateLegacy !== false) {
         await this.writeDrawings(file2, data, { refresh: false });
       }
       return data;
@@ -18496,6 +18650,29 @@ function createEmptyDrawingData(file2) {
     webEdits: [],
     updatedAt: null
   };
+}
+function createDrawingDataFile(path) {
+  const normalized = normalizeVaultPath(path) || "NoteDraw.md";
+  const name = normalized.split("/").pop() || "NoteDraw.md";
+  const dot = name.lastIndexOf(".");
+  return {
+    path: normalized,
+    name,
+    basename: dot > 0 ? name.slice(0, dot) : name,
+    extension: dot > 0 ? name.slice(dot + 1) : "md"
+  };
+}
+function clonePortableValue(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+function waitForNextFrame() {
+  return new Promise((resolve) => {
+    if (typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(resolve);
+    } else {
+      window.setTimeout(resolve, 16);
+    }
+  });
 }
 function normalizeDrawingData(data, file2) {
   const strokes = Array.isArray(data?.strokes) ? data.strokes : [];
