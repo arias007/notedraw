@@ -83,6 +83,7 @@ import {
   projectNoteFlowDocumentPoint,
   reflowNoteFlowIntervals,
   selectNoteFlowAvoidanceCandidate,
+  selectNoteFlowDropPlacement,
   selectNoteFlowInsertionPlacement,
   selectNoteFlowPositionAnchor,
   selectStoredNoteFlowAnchorCandidate,
@@ -2082,7 +2083,7 @@ var NoteDrawPlugin = class extends Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.4.8",
+      version: "3.4.9",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -4063,6 +4064,11 @@ var PreviewDrawingController = class {
     this.dragStrokeMoved = false;
     this.dragStrokeHitIndex = -1;
     this.dragStrokePreserveSelection = false;
+    this.dragNoteFlowDropFrameId = null;
+    this.dragNoteFlowDropClientY = null;
+    this.dragNoteFlowPlacement = null;
+    this.dragNoteFlowTargetElement = null;
+    this.noteFlowDropIndicator = null;
     this.resizingSelection = false;
     this.resizeSelectionHandle = null;
     this.resizeSelectionStartPoint = null;
@@ -4646,6 +4652,7 @@ var PreviewDrawingController = class {
     this.drawingLoadGeneration += 1;
     this.cancelNoteFlowLayout();
     this.cancelFrozenNoteFlowLayoutRestore();
+    this.clearDraggedNoteFlowPlacement();
     this.clearNoteFlowLayout();
     this.noteFlowLayoutSignature = "";
     this.resetNoteFlowSettle();
@@ -4756,6 +4763,7 @@ var PreviewDrawingController = class {
     const surfaceBeforeDestroy = this.plugin.describeController(this);
     this.endTextEdit();
     this.endFloatingTextInput(true);
+    this.clearDraggedNoteFlowPlacement();
     this.destroyed = true;
     this.drawingLoadGeneration += 1;
     this.layoutRefreshGeneration += 1;
@@ -4817,6 +4825,8 @@ var PreviewDrawingController = class {
     this.textPanel?.remove();
     this.selectionMenu?.remove();
     this.formatToolbar?.remove();
+    this.noteFlowDropIndicator?.remove();
+    this.noteFlowDropIndicator = null;
     this.hiddenFileInput?.remove();
     this.embedNodes.forEach((node) => node.remove());
     this.underlayEmbedLayer?.remove();
@@ -9329,6 +9339,7 @@ var PreviewDrawingController = class {
     }
     const movableIndexes = indexes.filter((index) => !this.drawingData.strokes[index]?.locked);
     this.endTextEdit();
+    this.clearDraggedNoteFlowPlacement();
     this.pointerDown = false;
     this.currentStroke = null;
     if (!movableIndexes.length) {
@@ -9485,7 +9496,11 @@ var PreviewDrawingController = class {
     if (this.syncBoundConnectors({ elementIds: movedElementIds })) {
       this.invalidateStaticCache();
     }
-    this.queueDraggedNoteFlowRefresh(this.dragStrokeOriginalPoints.keys());
+    if (this.usesDraggedNoteFlowPlacement()) {
+      this.queueDraggedNoteFlowPlacement(event.clientY);
+    } else {
+      this.queueDraggedNoteFlowRefresh(this.dragStrokeOriginalPoints.keys());
+    }
     this.requestRender(this.selectionHasDomStrokes());
     event.preventDefault();
     event.stopPropagation();
@@ -9493,17 +9508,34 @@ var PreviewDrawingController = class {
   finishSelectedStrokeDrag(event) {
     this.clearSelectionLongPress();
     const didMove = this.dragStrokeMoved;
+    let requestedDropPlacement = null;
+    if (didMove && this.usesDraggedNoteFlowPlacement()) {
+      this.updateDraggedNoteFlowPlacement(event.clientY);
+      requestedDropPlacement = this.dragNoteFlowPlacement ? {
+        path: this.dragNoteFlowPlacement.path,
+        line: this.dragNoteFlowPlacement.line,
+        side: this.dragNoteFlowPlacement.side
+      } : null;
+    }
+    this.clearDraggedNoteFlowPlacement();
     if (didMove) {
       const movedIndexes = Array.from(this.dragStrokeOriginalPoints?.keys() || []);
       this.resetNoteFlowSettle();
       this.clearNoteFlowLayout();
       this.noteFlowAvoidanceAnchors.clear();
+      const resolvedDropPlacement = this.resolveDraggedNoteFlowPlacement(requestedDropPlacement, movedIndexes);
+      if (resolvedDropPlacement) {
+        this.snapDraggedSelectionToNoteFlowPlacement(resolvedDropPlacement, movedIndexes);
+      }
       const flowedIndexes = this.reflowNoteFlowElementsAfterDrag(movedIndexes);
       const affectedIndexes = Array.from(new Set([...movedIndexes, ...flowedIndexes]));
+      const droppedNoteFlowIndexes = new Set(this.draggedNoteFlowIndexes(movedIndexes));
       for (const index of affectedIndexes) {
         const stroke = this.drawingData.strokes[index];
         if (stroke?.noteFlow?.enabled) {
-          stroke.noteFlow = this.captureNoteFlowAnchor(stroke);
+          stroke.noteFlow = this.captureNoteFlowAnchor(stroke, {
+            placement: droppedNoteFlowIndexes.has(index) ? resolvedDropPlacement : null
+          });
         }
       }
       this.captureResponsiveAnchorsForIndexes(affectedIndexes);
@@ -9529,6 +9561,7 @@ var PreviewDrawingController = class {
   }
   cancelSelectedStrokeDrag(restoreOriginal = false) {
     this.clearSelectionLongPress();
+    this.clearDraggedNoteFlowPlacement();
     if (restoreOriginal && this.dragStrokeOriginalPoints?.size) {
       this.resetNoteFlowSettle();
       this.clearNoteFlowLayout();
@@ -9551,6 +9584,7 @@ var PreviewDrawingController = class {
     this.render();
   }
   clearSelectedStrokeDragState() {
+    this.clearDraggedNoteFlowPlacement();
     this.draggingStroke = false;
     this.dragStrokeStartPoint = null;
     this.dragStrokeOriginalPoints = null;
@@ -10979,6 +11013,147 @@ var PreviewDrawingController = class {
     const rects = [this.canvas, this.staticCanvas, this.underlayCanvas].map((canvas) => canvas?.getBoundingClientRect?.()).filter(Boolean);
     return rects.find((rect) => rect.width > 1 && rect.height > 1) || rects[0] || null;
   }
+  draggedNoteFlowIndexes(indexes = this.dragStrokeOriginalPoints?.keys?.() || []) {
+    return Array.from(indexes || []).filter((index) => {
+      const stroke = this.drawingData?.strokes?.[index];
+      return Boolean(normalizeNoteFlow(stroke?.noteFlow)) && !isConnectorStroke(stroke);
+    });
+  }
+  usesDraggedNoteFlowPlacement() {
+    return this.toolMode === TOOL_SELECT
+      && this.supportsNoteFlow()
+      && this.draggedNoteFlowIndexes().length > 0;
+  }
+  ensureNoteFlowDropIndicator() {
+    if (this.noteFlowDropIndicator?.isConnected) {
+      return this.noteFlowDropIndicator;
+    }
+    this.noteFlowDropIndicator = createNoteDrawControlElement(activeDocument.body, "notedraw-note-flow-drop-indicator");
+    this.noteFlowDropIndicator._noteDrawController = this;
+    return this.noteFlowDropIndicator;
+  }
+  removeDraggedNoteFlowPlacementVisual() {
+    this.dragNoteFlowTargetElement?.classList?.remove("notedraw-text-sort-target-before", "notedraw-text-sort-target-after");
+    this.dragNoteFlowTargetElement = null;
+    this.noteFlowDropIndicator?.classList?.remove("is-visible", "is-notedraw-controls-visible");
+    if (this.noteFlowDropIndicator) {
+      delete this.noteFlowDropIndicator.dataset.noteDrawDropSide;
+      delete this.noteFlowDropIndicator.dataset.noteDrawDropLine;
+    }
+  }
+  clearDraggedNoteFlowPlacement() {
+    if (this.dragNoteFlowDropFrameId !== null) {
+      window.cancelAnimationFrame(this.dragNoteFlowDropFrameId);
+      this.dragNoteFlowDropFrameId = null;
+    }
+    this.dragNoteFlowDropClientY = null;
+    this.dragNoteFlowPlacement = null;
+    this.removeDraggedNoteFlowPlacementVisual();
+  }
+  queueDraggedNoteFlowPlacement(clientY) {
+    if (!this.usesDraggedNoteFlowPlacement() || !Number.isFinite(Number(clientY))) {
+      this.clearDraggedNoteFlowPlacement();
+      return;
+    }
+    this.dragNoteFlowDropClientY = Number(clientY);
+    if (this.dragNoteFlowDropFrameId !== null) {
+      return;
+    }
+    this.dragNoteFlowDropFrameId = window.requestAnimationFrame(() => {
+      this.dragNoteFlowDropFrameId = null;
+      const pendingY = this.dragNoteFlowDropClientY;
+      this.dragNoteFlowDropClientY = null;
+      this.updateDraggedNoteFlowPlacement(pendingY);
+    });
+  }
+  updateDraggedNoteFlowPlacement(clientY) {
+    if (!this.usesDraggedNoteFlowPlacement() || !Number.isFinite(Number(clientY))) {
+      this.clearDraggedNoteFlowPlacement();
+      return null;
+    }
+    const placement = selectNoteFlowDropPlacement(this.noteFlowCandidates(), { dropY: Number(clientY) });
+    const target = placement?.candidate?.sourceElement || placement?.candidate?.element || null;
+    const targetRect = target?.getBoundingClientRect?.();
+    if (!placement || !target || !targetRect || targetRect.width <= 1) {
+      this.clearDraggedNoteFlowPlacement();
+      return null;
+    }
+    this.removeDraggedNoteFlowPlacementVisual();
+    this.dragNoteFlowTargetElement = target;
+    target.classList.add(placement.side === "after" ? "notedraw-text-sort-target-after" : "notedraw-text-sort-target-before");
+    const indicator = this.ensureNoteFlowDropIndicator();
+    const viewport = window.visualViewport;
+    const viewportLeft = Number(viewport?.offsetLeft) || 0;
+    const viewportWidth = Math.max(1, Number(viewport?.width) || window.innerWidth || targetRect.width);
+    const minLeft = viewportLeft + 8;
+    const maxRight = viewportLeft + viewportWidth - 8;
+    const left = clamp(targetRect.left, minLeft, Math.max(minLeft, maxRight - 16));
+    const right = clamp(targetRect.right, left + 16, maxRight);
+    applyElementStyles(indicator, {
+      left: `${Math.round(left)}px`,
+      top: `${Math.round(placement.boundary)}px`,
+      width: `${Math.max(16, Math.round(right - left))}px`
+    });
+    indicator.dataset.noteDrawDropSide = placement.side;
+    indicator.dataset.noteDrawDropLine = String(placement.line);
+    indicator.classList.add("is-notedraw-controls-visible", "is-visible");
+    this.dragNoteFlowPlacement = {
+      path: normalizeVaultPath(placement.candidate.path || this.file?.path || ""),
+      line: Number(placement.line),
+      side: placement.side,
+      candidate: placement.candidate
+    };
+    return this.dragNoteFlowPlacement;
+  }
+  resolveDraggedNoteFlowPlacement(placement, indexes) {
+    const line = Number(placement?.line);
+    const side = placement?.side;
+    const path = normalizeVaultPath(placement?.path || this.file?.path || "");
+    if (!Number.isFinite(line) || !["before", "after"].includes(side)) {
+      return null;
+    }
+    const candidates = this.noteFlowCandidates();
+    const matching = candidates.filter((candidate) => {
+      return candidate.path === path && line >= candidate.start && line <= candidate.end;
+    });
+    const bounds = this.getStrokeIndexesBounds(this.draggedNoteFlowIndexes(indexes));
+    const canvasRect = this.noteFlowCanvasRect();
+    const scaleY = canvasRect?.height > 0 ? canvasRect.height / Math.max(1, this.canvasRenderHeight) : 1;
+    const strokeTop = bounds && canvasRect
+      ? canvasRect.top + (bounds.minY - this.canvasWindowTop) * scaleY
+      : Number.NaN;
+    const candidate = selectStoredNoteFlowAnchorCandidate(matching, { side, strokeTop });
+    return candidate ? { candidate, path, line, side } : null;
+  }
+  snapDraggedSelectionToNoteFlowPlacement(placement, indexes) {
+    const movedIndexes = Array.from(indexes || []);
+    const flowBounds = this.getStrokeIndexesBounds(this.draggedNoteFlowIndexes(movedIndexes));
+    const allBounds = this.getStrokeIndexesBounds(movedIndexes);
+    const canvasRect = this.noteFlowCanvasRect();
+    if (!placement?.candidate || !flowBounds || !allBounds || !canvasRect || canvasRect.height <= 1) {
+      return false;
+    }
+    const scaleY = canvasRect.height / Math.max(1, this.canvasRenderHeight);
+    const boundary = placement.side === "after" ? placement.candidate.bottom : placement.candidate.top;
+    const targetCanvasY = this.canvasWindowTop + (boundary - canvasRect.top) / Math.max(0.0001, scaleY);
+    const deltaY = clamp(targetCanvasY - flowBounds.minY, -allBounds.minY, this.canvasHeight() - allBounds.maxY);
+    if (Math.abs(deltaY) < 0.25) {
+      return false;
+    }
+    const normalizedDeltaY = deltaY / Math.max(1, this.canvasHeight());
+    for (const index of movedIndexes) {
+      const stroke = this.drawingData?.strokes?.[index];
+      if (!stroke || stroke.locked) {
+        continue;
+      }
+      stroke.points = stroke.points.map((point) => ({
+        ...point,
+        y: clamp(Number(point.y) + normalizedDeltaY, 0, 1)
+      }));
+    }
+    this.invalidateStaticCache();
+    return true;
+  }
   captureNoteFlowAnchor(stroke, options = {}) {
     const previous = normalizeNoteFlow(stroke?.noteFlow);
     const bounds = getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight());
@@ -11000,7 +11175,9 @@ var PreviewDrawingController = class {
     const strokeTop = canvasRect.top + (bounds.minY - this.canvasWindowTop) * scaleY;
     const strokeBottom = canvasRect.top + (bounds.maxY - this.canvasWindowTop) * scaleY;
     const candidates = this.noteFlowCandidates();
-    const placement = selectNoteFlowInsertionPlacement(candidates, { strokeTop, strokeBottom });
+    const placement = options.placement?.candidate
+      ? options.placement
+      : selectNoteFlowInsertionPlacement(candidates, { strokeTop, strokeBottom });
     const previousAnchor = options.preservePlacement === true && Number.isFinite(previous?.line) && ["before", "after"].includes(previous?.side)
       ? candidates.filter((candidate) => {
         return candidate.path === previous.path && previous.line >= candidate.start && previous.line <= candidate.end;

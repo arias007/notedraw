@@ -72,15 +72,15 @@ test("registered surfaces expose stable handles and structured actions without c
   assert.match(source, /registeredSurfaceSource/);
 });
 
-test("3.4.8 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
+test("3.4.9 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
   const [source, manifestText] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(manifestUrl, "utf8")
   ]);
   const manifest = JSON.parse(manifestText);
 
-  assert.equal(manifest.version, "3.4.8");
-  assert.match(source, /version: "3\.4\.8"/);
+  assert.equal(manifest.version, "3.4.9");
+  assert.match(source, /version: "3\.4\.9"/);
   assert.match(source, /if \(!this\.responsivePointsInitialized \|\| signature !== this\.responsiveLayoutSignature\)/);
   assert.match(source, /captureElementLayoutForStroke/);
   assert.match(source, /projectElementPoints\(stroke\.points, layout, box/);
@@ -265,7 +265,7 @@ test("non-empty floating text commits before wand, view, file, or controller tea
   const source = await readFile(sourceUrl, "utf8");
 
   assert.match(source, /async setFile\(file\)[\s\S]*this\.endTextEdit\(\);\s*this\.endFloatingTextInput\(true\)/);
-  assert.match(source, /destroy\(\)[\s\S]*this\.endTextEdit\(\);\s*this\.endFloatingTextInput\(true\);\s*this\.destroyed = true/);
+  assert.match(source, /destroy\(\)[\s\S]*this\.endTextEdit\(\);\s*this\.endFloatingTextInput\(true\);\s*this\.clearDraggedNoteFlowPlacement\(\);\s*this\.destroyed = true/);
   assert.match(source, /if \(!this\.active && wasActive\)[\s\S]*this\.endFloatingTextInput\(true\)/);
   assert.match(source, /setEditMarkdownMode\(\)[\s\S]*this\.endFloatingTextInput\(true\)/);
   assert.match(source, /openFloatingTextInput\(point, index = -1\) \{\s*this\.endFloatingTextInput\(true\)/);
@@ -322,4 +322,25 @@ test("note pen ignores element selection and selection-only gestures preserve Ma
   assert.match(finishSource, /const didMove = this\.dragStrokeMoved;[\s\S]*if \(didMove\) \{[\s\S]*this\.clearNoteFlowLayout\(\)[\s\S]*this\.scheduleNoteFlowLayout\([\s\S]*\} else if \(!this\.dragStrokePreserveSelection/);
   assert.doesNotMatch(finishSource, /cancelSelectedStrokeDrag\(true\)/);
   assert.doesNotMatch(selectionStateSource, /clearNoteFlowLayout|scheduleNoteFlowLayout|scheduleResize|scheduleLayoutRefresh|noteFlowOperationPending/);
+});
+
+test("selection tool previews and commits exact NoteFlow Markdown insertion targets", async () => {
+  const [source, styles] = await Promise.all([
+    readFile(sourceUrl, "utf8"),
+    readFile(stylesUrl, "utf8")
+  ]);
+  const dragSource = source.slice(source.indexOf("  startSelectedStrokeDrag("), source.indexOf("  startSelectedStrokeResize("));
+  const dropSource = source.slice(source.indexOf("  draggedNoteFlowIndexes("), source.indexOf("  captureNoteFlowAnchor("));
+  const finishSource = dragSource.slice(dragSource.indexOf("  finishSelectedStrokeDrag("), dragSource.indexOf("  cancelSelectedStrokeDrag("));
+
+  assert.match(source, /selectNoteFlowDropPlacement/);
+  assert.match(dropSource, /this\.toolMode === TOOL_SELECT[\s\S]*queueDraggedNoteFlowPlacement\(clientY\)[\s\S]*window\.requestAnimationFrame/);
+  assert.match(dropSource, /notedraw-text-sort-target-after[\s\S]*notedraw-text-sort-target-before/);
+  assert.match(dropSource, /noteDrawDropSide[\s\S]*noteDrawDropLine/);
+  assert.match(dragSource, /this\.usesDraggedNoteFlowPlacement\(\)[\s\S]*this\.queueDraggedNoteFlowPlacement\(event\.clientY\)[\s\S]*this\.queueDraggedNoteFlowRefresh/);
+  assert.match(finishSource, /requestedDropPlacement[\s\S]*this\.clearNoteFlowLayout\(\)[\s\S]*this\.resolveDraggedNoteFlowPlacement[\s\S]*this\.snapDraggedSelectionToNoteFlowPlacement/);
+  assert.match(finishSource, /placement: droppedNoteFlowIndexes\.has\(index\) \? resolvedDropPlacement : null/);
+  assert.doesNotMatch(dropSource, /vault\.modify|reorderTextBlock/);
+  assert.match(styles, /\.notedraw-note-flow-drop-indicator \{[\s\S]*position: fixed;[\s\S]*pointer-events: none;/);
+  assert.match(styles, /\.notedraw-body-control\.notedraw-note-flow-drop-indicator\.is-notedraw-controls-visible\.is-visible/);
 });

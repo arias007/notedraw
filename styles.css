@@ -588,6 +588,22 @@
   box-shadow: inset 0 -2px 0 var(--interactive-accent);
 }
 
+.notedraw-note-flow-drop-indicator {
+  position: fixed;
+  z-index: 10003;
+  display: none;
+  height: 4px;
+  pointer-events: none;
+  border-radius: 2px;
+  background: var(--interactive-accent);
+  box-shadow: 0 0 0 1px var(--background-primary), 0 0 0 3px color-mix(in srgb, var(--interactive-accent) 28%, transparent);
+  transform: translateY(-2px) translateZ(0);
+}
+
+.notedraw-body-control.notedraw-note-flow-drop-indicator.is-notedraw-controls-visible.is-visible {
+  display: block;
+}
+
 .notedraw-format-toolbar {
   position: fixed;
   z-index: 1003;

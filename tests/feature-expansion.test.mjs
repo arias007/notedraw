@@ -224,7 +224,7 @@ test("reading-only note pen and selected elements can reserve Markdown flow spac
   assert.match(styles, /\.notedraw-underlay-embed-layer \{\s*z-index: 0;/);
 });
 
-test("moving inserted note elements refreshes Markdown avoidance once per animation frame", async () => {
+test("dragged inserted note elements use stable drop placement or frame-batched avoidance refresh", async () => {
   const source = await readFile(sourceUrl, "utf8");
   const dragSource = source.slice(source.indexOf("  startSelectedStrokeDrag("), source.indexOf("  startSelectedStrokeResize("));
   const refreshSource = source.slice(source.indexOf("  queueDraggedNoteFlowRefresh("), source.indexOf("  cancelNoteFlowLayout()"));
@@ -232,7 +232,7 @@ test("moving inserted note elements refreshes Markdown avoidance once per animat
   const moveSource = dragSource.slice(dragSource.indexOf("  moveSelectedStroke("), dragSource.indexOf("  finishSelectedStrokeDrag("));
 
   assert.match(dragSource, /this\.dragStrokeOriginalNoteFlows = new Map/);
-  assert.match(moveSource, /this\.queueDraggedNoteFlowRefresh\(this\.dragStrokeOriginalPoints\.keys\(\)\)/);
+  assert.match(moveSource, /if \(this\.usesDraggedNoteFlowPlacement\(\)\) \{\s*this\.queueDraggedNoteFlowPlacement\(event\.clientY\);\s*} else \{\s*this\.queueDraggedNoteFlowRefresh\(this\.dragStrokeOriginalPoints\.keys\(\)\)/);
   assert.doesNotMatch(moveSource, /captureNoteFlowAnchor|scheduleDrawingSave/);
   assert.match(refreshSource, /this\.pendingDraggedNoteFlowIndexes\.add\(index\)/);
   assert.match(refreshSource, /refreshDraggedNoteFlowAnchors\(\)/);

@@ -14,6 +14,7 @@ import {
   reflowNoteFlowIntervals,
   selectNoteFlowAnchorPlacement,
   selectNoteFlowAvoidanceCandidate,
+  selectNoteFlowDropPlacement,
   selectNoteFlowInsertionPlacement,
   selectNoteFlowPositionAnchor,
   selectStoredNoteFlowAnchorCandidate,
@@ -226,6 +227,36 @@ test("note-flow starts at a precise rendered line crossed by the stroke", () => 
   assert.equal(placement?.candidate.id, "line-5");
   assert.equal(placement?.side, "before");
   assert.equal(placement?.line, 5);
+});
+
+test("dragged note-flow elements choose the nearest Markdown block boundary", () => {
+  const candidates = [
+    { id: "first", top: 80, bottom: 112, start: 0, end: 0, order: 0 },
+    { id: "second", top: 180, bottom: 214, start: 5, end: 6, order: 1 }
+  ];
+
+  assert.deepEqual(selectNoteFlowDropPlacement(candidates, { dropY: 87 }), {
+    candidate: candidates[0],
+    side: "before",
+    line: 0,
+    boundary: 80
+  });
+  assert.equal(selectNoteFlowDropPlacement(candidates, { dropY: 108 })?.side, "after");
+  assert.equal(selectNoteFlowDropPlacement(candidates, { dropY: 166 })?.candidate.id, "second");
+  assert.equal(selectNoteFlowDropPlacement(candidates, { dropY: 166 })?.side, "before");
+  assert.equal(selectNoteFlowDropPlacement(candidates, { dropY: 260 })?.side, "after");
+});
+
+test("dragged note-flow elements prefer a precise rendered line boundary", () => {
+  const placement = selectNoteFlowDropPlacement([
+    { id: "paragraph", top: 80, bottom: 260, start: 0, end: 7, order: 0 },
+    { id: "line-5", top: 168, bottom: 194, start: 5, end: 5, order: 1, lineSpacer: {} }
+  ], { dropY: 171 });
+
+  assert.equal(placement?.candidate.id, "line-5");
+  assert.equal(placement?.side, "before");
+  assert.equal(placement?.line, 5);
+  assert.equal(placement?.boundary, 168);
 });
 
 test("note-flow skips a broad paragraph above the stroke and starts at the next block", () => {

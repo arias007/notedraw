@@ -114,6 +114,63 @@ export function selectNoteFlowInsertionPlacement(candidates, {
   return { candidate: last, side: "after", line: last.end };
 }
 
+export function selectNoteFlowDropPlacement(candidates, { dropY } = {}) {
+  const y = finite(dropY, Number.NaN);
+  if (!Number.isFinite(y)) {
+    return null;
+  }
+  const ordered = (Array.isArray(candidates) ? candidates : []).filter((candidate) => {
+    return candidate
+      && Number.isFinite(Number(candidate.top))
+      && Number.isFinite(Number(candidate.bottom))
+      && Number.isFinite(Number(candidate.start));
+  }).map((candidate, index) => ({
+    ...candidate,
+    top: finite(candidate.top),
+    bottom: Math.max(finite(candidate.top), finite(candidate.bottom)),
+    start: finite(candidate.start),
+    end: Math.max(finite(candidate.start), finite(candidate.end, candidate.start)),
+    order: Number.isFinite(Number(candidate.order)) ? Number(candidate.order) : index
+  }));
+  const boundaries = ordered.flatMap((candidate) => {
+    const height = candidate.bottom - candidate.top;
+    const precise = candidate.lineSpacer || candidate.start === candidate.end ? 0 : 1;
+    return [
+      {
+        candidate,
+        side: "before",
+        line: candidate.start,
+        boundary: candidate.top,
+        distance: Math.abs(y - candidate.top),
+        precise,
+        height
+      },
+      {
+        candidate,
+        side: "after",
+        line: candidate.end,
+        boundary: candidate.bottom,
+        distance: Math.abs(y - candidate.bottom),
+        precise,
+        height
+      }
+    ];
+  }).sort((a, b) => {
+    return a.distance - b.distance
+      || a.precise - b.precise
+      || a.height - b.height
+      || a.candidate.order - b.candidate.order
+      || (a.side === "before" ? -1 : 1);
+  });
+  const placement = boundaries[0];
+  return placement ? {
+    candidate: placement.candidate,
+    side: placement.side,
+    line: placement.line,
+    boundary: placement.boundary
+  } : null;
+}
+
 export function selectNoteFlowAnchorPlacement(candidates, options = {}) {
   return selectNoteFlowInsertionPlacement(candidates, options);
 }
