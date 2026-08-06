@@ -2082,7 +2082,7 @@ var NoteDrawPlugin = class extends Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.4.7",
+      version: "3.4.8",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -5412,7 +5412,11 @@ var PreviewDrawingController = class {
     this.brushMode = mode;
     this.toolMode = TOOL_DRAW;
     this.previewEl.removeClass("is-select-mode");
-    this.hideSelectionMenu();
+    if (this.isNoteFlowPenActive()) {
+      this.clearSelectedStrokes();
+    } else {
+      this.hideSelectionMenu();
+    }
     this.endTextEdit();
     this.cancelCurrentStroke();
     this.cancelSelectionDrag(true);
@@ -5501,6 +5505,9 @@ var PreviewDrawingController = class {
     this.previewEl.toggleClass("is-palette-open", this.paletteOpen);
     this.previewEl.toggleClass("is-brush-panel-open", this.brushPanelOpen);
     this.previewEl.toggleClass("is-text-panel-open", this.textPanelOpen);
+    if (this.isNoteFlowPenActive() && this.getSelectedStrokeIndexes().length) {
+      this.clearSelectedStrokes();
+    }
     this.syncPaletteInputs();
     this.syncBrushPanelButtons?.();
     this.syncTextPanelButtons?.();
@@ -5554,6 +5561,12 @@ var PreviewDrawingController = class {
   currentBrushVariant() {
     const variant = normalizeBrushVariant(this.brushMode, this.brushVariants[this.brushMode]);
     return variant === PEN_VARIANT_NOTE && !this.supportsNoteFlow() ? BRUSH_VARIANT_DEFAULT : variant;
+  }
+  isNoteFlowPenActive() {
+    return this.toolMode === TOOL_DRAW
+      && this.brushMode === BRUSH_PEN
+      && this.currentBrushVariant() === PEN_VARIANT_NOTE
+      && this.supportsNoteFlow();
   }
   supportsNoteFlow() {
     return this.surfaceType === "preview" && !this.embeddedSurface;
@@ -5863,6 +5876,11 @@ var PreviewDrawingController = class {
     if (this.shouldPassThroughHeaderPoint(event)) {
       return;
     }
+    if (this.isNoteFlowPenActive()) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     const point = this.eventToPoint(event);
     const hitStrokeIndex = this.findStrokeAt(point);
     if (hitStrokeIndex >= 0) {
@@ -5885,6 +5903,9 @@ var PreviewDrawingController = class {
   }
   onPreviewContextMenu(event) {
     if (!this.active || this.shouldPassThroughHeaderPoint(event)) {
+      return;
+    }
+    if (this.isNoteFlowPenActive()) {
       return;
     }
     const target = event.target;
@@ -7288,8 +7309,12 @@ var PreviewDrawingController = class {
     const editable = editableCandidate && (this.allowTextEdit || editsEmbeddedFile) ? editableCandidate : null;
     const sourceTextTarget = this.surfaceType === "source" && canEditMarkdownText && isSourceTextTarget(target, this.previewEl);
     const point = this.eventToPoint(event);
-    const hitStrokeIndex = this.findStrokeAt(point);
-    const resizeHandle = this.findSelectionHandleAt(point);
+    const noteFlowPenActive = this.isNoteFlowPenActive();
+    if (noteFlowPenActive && this.getSelectedStrokeIndexes().length) {
+      this.clearSelectedStrokes();
+    }
+    const hitStrokeIndex = noteFlowPenActive ? -1 : this.findStrokeAt(point);
+    const resizeHandle = noteFlowPenActive ? null : this.findSelectionHandleAt(point);
     const hadSelection = this.getSelectedStrokeIndexes().length > 0;
     const selectedDrawGesture = resolveSelectedDrawGesture({
       toolMode: this.toolMode,
@@ -7459,10 +7484,6 @@ var PreviewDrawingController = class {
       belowMarkdown: this.currentBrushVariant() === PEN_VARIANT_NOTE && this.supportsNoteFlow(),
       points: [this.pointerStartPoint]
     };
-    if (this.currentStroke.noteFlow?.enabled) {
-      this.noteFlowOperationPending = true;
-      this.scheduleMarkdownAnnotationRefresh({ layout: false });
-    }
     if (this.isTextHighlightStroke(this.currentStroke)) {
       this.prepareTextHighlightGesture({ x: event.clientX, y: event.clientY });
     }
@@ -7719,6 +7740,10 @@ var PreviewDrawingController = class {
     if (this.didMove && !wasDrawing) {
       this.endTextEdit();
       this.clearSelectedStrokes();
+      if (this.currentStroke.noteFlow?.enabled) {
+        this.noteFlowOperationPending = true;
+        this.scheduleMarkdownAnnotationRefresh({ layout: false });
+      }
     }
     if (this.didMove) {
       this.requestRender();
@@ -7803,6 +7828,8 @@ var PreviewDrawingController = class {
         this.clearSelectedStrokes();
       } else if (this.toolMode === TOOL_TEXT) {
         this.handleTextToolTap(point);
+      } else if (this.isNoteFlowPenActive()) {
+        this.clearSelectedStrokes();
       } else {
         this.setSelectedStrokes(this.findStrokeAt(point));
       }
@@ -7851,6 +7878,11 @@ var PreviewDrawingController = class {
   }
   onCanvasDoubleClick(event) {
     if (!this.active || event.button !== 0) {
+      return;
+    }
+    if (this.isNoteFlowPenActive()) {
+      event.preventDefault();
+      event.stopPropagation();
       return;
     }
     const point = this.eventToPoint(event);
@@ -9305,7 +9337,6 @@ var PreviewDrawingController = class {
       event.stopPropagation();
       return;
     }
-    this.cancelResizeFrame();
     this.draggingStroke = true;
     this.dragStrokeStartPoint = point;
     this.dragStrokeOriginalPoints = new Map(movableIndexes.map((index) => [
@@ -9322,7 +9353,6 @@ var PreviewDrawingController = class {
     this.dragStrokeMoved = false;
     this.dragStrokeHitIndex = hitIndex;
     this.dragStrokePreserveSelection = Boolean(options.preserveSelection);
-    this.prepareReadingBottomExtentForDrag();
     this.pointerStartClient = { x: event.clientX, y: event.clientY };
     this.activePointerId = event.pointerId;
     this.previewEl.addClass("is-moving-selection");
@@ -9400,7 +9430,6 @@ var PreviewDrawingController = class {
     if (!this.dragStrokeStartPoint || !this.dragStrokeOriginalPoints?.size) {
       return;
     }
-    this.extendReadingBottomExtentDuringDrag(event);
     const point = this.eventToPoint(event);
     let minX = 1;
     let maxX = 0;
@@ -9422,10 +9451,18 @@ var PreviewDrawingController = class {
       this.canvasWidth(),
       this.canvasHeight()
     );
-    if (movedDistance > this.tapDistancePx()) {
+    if (!this.dragStrokeMoved && movedDistance <= this.tapDistancePx()) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    if (!this.dragStrokeMoved) {
       this.dragStrokeMoved = true;
       this.clearSelectionLongPress();
+      this.cancelResizeFrame();
+      this.prepareReadingBottomExtentForDrag();
     }
+    this.extendReadingBottomExtentDuringDrag(event);
     let snappedDx = dx;
     let snappedDy = dy;
     if (this.shouldSnapStrokeIndexes(Array.from(this.dragStrokeOriginalPoints.keys())) && this.dragStrokeOriginalBounds) {
@@ -9455,7 +9492,8 @@ var PreviewDrawingController = class {
   }
   finishSelectedStrokeDrag(event) {
     this.clearSelectionLongPress();
-    if (this.dragStrokeMoved) {
+    const didMove = this.dragStrokeMoved;
+    if (didMove) {
       const movedIndexes = Array.from(this.dragStrokeOriginalPoints?.keys() || []);
       this.resetNoteFlowSettle();
       this.clearNoteFlowLayout();
@@ -9479,10 +9517,10 @@ var PreviewDrawingController = class {
       });
     } else if (!this.dragStrokePreserveSelection && this.getSelectedStrokeIndexes().length > 1 && this.dragStrokeHitIndex >= 0) {
       this.setSelectedStrokes(this.dragStrokeHitIndex);
-    } else {
-      this.cancelSelectedStrokeDrag(true);
     }
-    this.settleReadingBottomExtent();
+    if (didMove) {
+      this.settleReadingBottomExtent();
+    }
     this.releasePointerCapture(event.pointerId);
     this.clearSelectedStrokeDragState();
     this.render();
@@ -9696,7 +9734,12 @@ var PreviewDrawingController = class {
       this.canvasWidth(),
       this.canvasHeight()
     );
-    if (movedDistance > this.tapDistancePx()) {
+    if (!this.resizeSelectionMoved && movedDistance <= this.tapDistancePx()) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    if (!this.resizeSelectionMoved) {
       this.resizeSelectionMoved = true;
     }
     this.applySelectedStrokeResize(point);
@@ -9776,7 +9819,7 @@ var PreviewDrawingController = class {
         operation: resizedIndexes.some((index) => this.drawingData.strokes[index]?.noteFlow?.enabled)
       });
     } else {
-      this.cancelSelectedStrokeResize(true);
+      this.cancelSelectedStrokeResize(false);
     }
     this.releasePointerCapture(event.pointerId);
     this.clearSelectedStrokeResizeState();
