@@ -10,6 +10,70 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
+function measureWithoutFloatingMarkdown(root, measure) {
+  const elements = Array.from(root?.querySelectorAll?.(".notedraw-md-block.is-floating") || []);
+  if (!elements.length) {
+    return measure();
+  }
+  const states = elements.map((element) => ({
+    element,
+    value: element.style?.getPropertyValue?.("display") || "",
+    priority: element.style?.getPropertyPriority?.("display") || ""
+  }));
+  try {
+    for (const { element } of states) {
+      element.style?.setProperty?.("display", "none", "important");
+    }
+    return measure();
+  } finally {
+    for (const { element, value, priority } of states) {
+      if (value) {
+        element.style?.setProperty?.("display", value, priority);
+      } else {
+        element.style?.removeProperty?.("display");
+      }
+    }
+  }
+}
+
+export function measureCanvasExtent(previewEl, measureEl = null, visualScale = 1) {
+  const previewRect = previewEl.getBoundingClientRect();
+  const measureRect = measureEl?.getBoundingClientRect?.();
+  const measureIsPreview = !measureEl || measureEl === previewEl;
+  const scale = Math.max(0.01, Number(visualScale) || 1);
+  const scrollLeft = Math.max(0, Number(previewEl.scrollLeft) || 0);
+  const scrollTop = Math.max(0, Number(previewEl.scrollTop) || 0);
+  const relativeRight = measureRect ? (measureRect.right - previewRect.left + scrollLeft) / scale : 0;
+  const relativeBottom = measureRect ? (measureRect.bottom - previewRect.top + scrollTop) / scale : 0;
+  const horizontalOverflow = measureWithoutFloatingMarkdown(measureEl || previewEl, () => Math.max(
+    measureIsPreview ? (previewEl.scrollWidth || 0) / scale : 0,
+    measureEl?.scrollWidth || 0
+  ));
+  const width = Math.max(
+    horizontalOverflow,
+    previewEl.clientWidth || 0,
+    measureEl?.offsetWidth || 0,
+    relativeRight,
+    previewRect.width || 0,
+    (measureRect?.width || 0) / scale
+  );
+  const height = Math.max(
+    measureIsPreview ? (previewEl.scrollHeight || 0) / scale : 0,
+    previewEl.clientHeight || 0,
+    measureEl?.scrollHeight || 0,
+    measureEl?.offsetHeight || 0,
+    relativeBottom,
+    measureIsPreview ? previewEl.offsetHeight || 0 : 0,
+    previewRect.height || 0,
+    (measureRect?.height || 0) / scale
+  );
+  return {
+    width: Math.max(1, width),
+    height: Math.max(1, height),
+    visibleWidth: Math.max(1, previewRect.width || width)
+  };
+}
+
 export function calculateCanvasWindow({
   documentHeight,
   viewportTop = 0,

@@ -5,8 +5,51 @@ import {
   calculateCanvasBackingStore,
   calculateCanvasWindow,
   calculateQualityWindowLimit,
-  calculateZoomAwareWindowFloor
+  calculateZoomAwareWindowFloor,
+  measureCanvasExtent
 } from "../src/canvas-sizing.mjs";
+
+function createStyleState() {
+  const values = new Map();
+  const priorities = new Map();
+  return {
+    getPropertyValue: (name) => values.get(name) || "",
+    getPropertyPriority: (name) => priorities.get(name) || "",
+    setProperty: (name, value, priority = "") => {
+      values.set(name, value);
+      priorities.set(name, priority);
+    },
+    removeProperty: (name) => {
+      values.delete(name);
+      priorities.delete(name);
+    }
+  };
+}
+
+test("floating Markdown overflow cannot expand the logical canvas width", () => {
+  const floatingStyle = createStyleState();
+  const floating = { style: floatingStyle };
+  const measureEl = {
+    querySelectorAll: () => [floating],
+    get scrollWidth() {
+      return floatingStyle.getPropertyValue("display") === "none" ? 500 : 134_095;
+    },
+    scrollHeight: 900,
+    offsetWidth: 500,
+    offsetHeight: 900,
+    getBoundingClientRect: () => ({ left: 8, right: 508, top: 20, bottom: 920, width: 500, height: 900 })
+  };
+  const previewEl = {
+    scrollLeft: 0,
+    scrollTop: 0,
+    clientWidth: 516,
+    clientHeight: 878,
+    getBoundingClientRect: () => ({ left: 0, right: 516, top: 0, bottom: 878, width: 516, height: 878 })
+  };
+
+  assert.equal(measureCanvasExtent(previewEl, measureEl).width, 516);
+  assert.equal(floatingStyle.getPropertyValue("display"), "");
+});
 
 test("small documents use a single full-height canvas window", () => {
   assert.deepEqual(calculateCanvasWindow({

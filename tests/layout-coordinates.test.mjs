@@ -5,9 +5,42 @@ import {
   RESPONSIVE_POINT_BASIS,
   constrainWideContentFrame,
   createResponsivePoint,
+  mapClientPointToCanvas,
   normalizeResponsiveAnchor,
   projectResponsivePoint
 } from "../src/layout-coordinates.mjs";
+
+test("a frozen pointer geometry prevents resize feedback when the live canvas grows", () => {
+  const pointer = { clientX: 500, clientY: 650 };
+  const initialGeometry = {
+    rect: { left: 100, top: 50, width: 800, height: 600 },
+    canvasWidth: 800,
+    canvasHeight: 2400,
+    canvasRenderHeight: 600,
+    canvasWindowTop: 400
+  };
+  const initial = mapClientPointToCanvas(pointer, initialGeometry);
+  const remappedWithGrowingCanvas = mapClientPointToCanvas(pointer, {
+    ...initialGeometry,
+    rect: { ...initialGeometry.rect, height: 900 },
+    canvasHeight: 3600,
+    canvasRenderHeight: 900
+  });
+  const remappedWithFrozenGeometry = mapClientPointToCanvas(pointer, initialGeometry);
+
+  assert.deepEqual(initial, {
+    canvasX: 400,
+    canvasY: 1000,
+    canvasWidth: 800,
+    canvasHeight: 2400
+  });
+  assert.notDeepEqual(remappedWithGrowingCanvas, initial);
+  assert.notEqual(
+    remappedWithGrowingCanvas.canvasY / remappedWithGrowingCanvas.canvasHeight,
+    initial.canvasY / initial.canvasHeight
+  );
+  assert.deepEqual(remappedWithFrozenGeometry, initial);
+});
 
 test("wide desktop surfaces keep a left-aligned Markdown lane instead of stretching into blank space", () => {
   assert.deepEqual(constrainWideContentFrame({

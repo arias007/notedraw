@@ -619,17 +619,17 @@
 }
 
 .notedraw-text-sort-target-left {
-  box-shadow: inset 3px 0 0 var(--interactive-accent);
+  box-shadow: inset 4px 0 0 var(--interactive-accent), -5px 0 12px color-mix(in srgb, var(--interactive-accent) 24%, transparent);
 }
 
 .notedraw-text-sort-target-right {
-  box-shadow: inset -3px 0 0 var(--interactive-accent);
+  box-shadow: inset -4px 0 0 var(--interactive-accent), 5px 0 12px color-mix(in srgb, var(--interactive-accent) 24%, transparent);
 }
 
 .notedraw-md-grid {
   display: grid !important;
   grid-template-columns: repeat(12, minmax(0, 1fr));
-  gap: 10px;
+  gap: 6px;
   container-type: inline-size;
 }
 
@@ -701,6 +701,11 @@
   background: var(--interactive-accent);
   box-shadow: 0 0 0 1px var(--background-primary), 0 0 0 3px color-mix(in srgb, var(--interactive-accent) 28%, transparent);
   transform: translateY(-2px) translateZ(0);
+}
+
+.notedraw-note-flow-drop-indicator[data-note-draw-drop-side="left"],
+.notedraw-note-flow-drop-indicator[data-note-draw-drop-side="right"] {
+  transform: translateX(-2px) translateZ(0);
 }
 
 .notedraw-body-control.notedraw-note-flow-drop-indicator.is-notedraw-controls-visible.is-visible {

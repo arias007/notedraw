@@ -474,6 +474,29 @@ export function normalizeFrozenNoteFlowLayout(value) {
   };
 }
 
+export function mergeFrozenNoteFlowLayout(previousValue, resolvedValue) {
+  const previous = normalizeFrozenNoteFlowLayout(previousValue);
+  const resolved = normalizeFrozenNoteFlowLayout(resolvedValue);
+  const records = new Map(previous.offsets.map((item) => [
+    `${item.path}\0${item.line}\0${item.property}`,
+    item
+  ]));
+  for (const item of Array.isArray(resolvedValue?.offsets) ? resolvedValue.offsets : []) {
+    const path = String(item?.path || "").replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+    const line = Number(item?.line);
+    const property = item?.property === "padding-bottom" || item?.side === "after"
+      ? "padding-bottom"
+      : "padding-top";
+    if (path && Number.isFinite(line) && line >= 0) {
+      records.delete(`${path}\0${Math.floor(line)}\0${property}`);
+    }
+  }
+  for (const item of resolved.offsets) {
+    records.set(`${item.path}\0${item.line}\0${item.property}`, item);
+  }
+  return normalizeFrozenNoteFlowLayout({ version: 1, offsets: Array.from(records.values()) });
+}
+
 export function frozenNoteFlowLayoutSignature(value) {
   return normalizeFrozenNoteFlowLayout(value).offsets.map((item) => (
     `${item.path}:${item.line}:${item.property}:${item.offset}`

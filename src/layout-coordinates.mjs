@@ -50,6 +50,26 @@ export function normalizeContentFrame({ surfaceWidth, contentLeft = 0, contentWi
   return { left, width: frameWidth, surfaceWidth: width };
 }
 
+export function mapClientPointToCanvas({ clientX, clientY } = {}, geometry = {}) {
+  const rect = geometry.rect || geometry;
+  const rectLeft = finite(rect?.left, 0);
+  const rectTop = finite(rect?.top, 0);
+  const rectWidth = finite(rect?.width, 0);
+  const rectHeight = finite(rect?.height, 0);
+  const canvasWidth = Math.max(1, finite(geometry.canvasWidth, Math.max(1, rectWidth)));
+  const canvasHeight = Math.max(1, finite(geometry.canvasHeight, Math.max(1, rectHeight)));
+  const canvasRenderHeight = Math.max(1, finite(geometry.canvasRenderHeight, Math.max(1, rectHeight)));
+  const canvasWindowTop = finite(geometry.canvasWindowTop, 0);
+  const xScale = rectWidth > 0 ? canvasWidth / rectWidth : 1;
+  const yScale = rectHeight > 0 ? canvasRenderHeight / rectHeight : 1;
+  return {
+    canvasX: (finite(clientX, rectLeft) - rectLeft) * xScale,
+    canvasY: (finite(clientY, rectTop) - rectTop) * yScale + canvasWindowTop,
+    canvasWidth,
+    canvasHeight
+  };
+}
+
 export function constrainWideContentFrame(frameInput, {
   isMobile = false,
   minSurfaceWidth = 900,

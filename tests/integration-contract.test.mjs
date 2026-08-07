@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const sourceUrl = new URL("../src/notedraw-plugin.js", import.meta.url);
+const canvasSizingUrl = new URL("../src/canvas-sizing.mjs", import.meta.url);
 const manifestUrl = new URL("../manifest.json", import.meta.url);
 const stylesUrl = new URL("../styles.css", import.meta.url);
 
@@ -72,15 +73,15 @@ test("registered surfaces expose stable handles and structured actions without c
   assert.match(source, /registeredSurfaceSource/);
 });
 
-test("3.4.13 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
+test("3.4.14 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
   const [source, manifestText] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(manifestUrl, "utf8")
   ]);
   const manifest = JSON.parse(manifestText);
 
-  assert.equal(manifest.version, "3.4.13");
-  assert.match(source, /version: "3\.4\.13"/);
+  assert.equal(manifest.version, "3.4.14");
+  assert.match(source, /version: "3\.4\.14"/);
   assert.match(source, /if \(!this\.responsivePointsInitialized \|\| signature !== this\.responsiveLayoutSignature\)/);
   assert.match(source, /captureElementLayoutForStroke/);
   assert.match(source, /projectElementPoints\(stroke\.points, layout, box/);
@@ -95,7 +96,11 @@ test("3.4.13 preserves reading content and cross-view frames without hidden-surf
   assert.match(source, /pickRootPreview\(previews, rendererPreview, isElementVisibleEnough, isElementLaidOut\)/);
   assert.match(source, /for \(const alternatePreview of findRootPreviewsForView\(view\)\)/);
   assert.match(source, /!this\.canvas\?\.isConnected \|\| !isElementVisibleEnough\(this\.previewEl\)/);
-  assert.match(source, /const eager = !enabled \|\| candidate === controller \|\| isElementVisibleEnough\(candidate\.previewEl\);\s*candidate\.applyActiveState\(enabled, \{ eager \}\)/);
+  const activationSource = source.slice(source.indexOf("  setControllerActivation(controller, active)"), source.indexOf("  installWebviewObserver()", source.indexOf("  setControllerActivation(controller, active)")));
+  assert.match(activationSource, /setControllerActivation\(controller, active\)[\s\S]*this\.viewDrawingActive\.set\(key, enabled\)[\s\S]*this\.reconcileControllerActivation\(controller\)/);
+  assert.match(activationSource, /reconcileControllerActivation\(controller = null\)[\s\S]*const visible = candidates\.filter\([\s\S]*!candidate\.embeddedSurface[\s\S]*isElementVisibleEnough\(candidate\.previewEl\)/);
+  assert.match(activationSource, /const preferred = enabled[\s\S]*visible\.find\(\(candidate\) => candidate === controller\)[\s\S]*visible\[0\]/);
+  assert.match(activationSource, /const nextActive = Boolean\(enabled && candidate === preferred\);[\s\S]*candidate\.applyActiveState\(nextActive, \{ eager: nextActive \|\| !enabled \}\)/);
   assert.match(source, /scheduleLayoutRefresh\(options = \{\}\)/);
   assert.match(source, /generation === this\.layoutRefreshGeneration/);
   assert.match(source, /noteFlowLayout: normalizeFrozenNoteFlowLayout\(data\?\.noteFlowLayout\)/);
@@ -311,16 +316,17 @@ test("non-empty floating text commits before wand, view, file, or controller tea
 });
 
 test("runtime layout uses a capped desktop Markdown lane and mobile-aware vertical flow", async () => {
-  const [source, styles] = await Promise.all([
+  const [source, canvasSizing, styles] = await Promise.all([
     readFile(sourceUrl, "utf8"),
+    readFile(canvasSizingUrl, "utf8"),
     readFile(stylesUrl, "utf8")
   ]);
 
   assert.match(source, /constrainWideContentFrame\(\{\s*surfaceWidth,[\s\S]*contentWidth: contentRect\.width[\s\S]*\}, \{ isMobile: isMobileRuntime\(\) \}\)/);
   assert.match(source, /preferDocumentFlow: isMobileRuntime\(\)/);
   assert.match(source, /estimateStableElementLayoutExtent/);
-  assert.match(source, /relativeRight/);
-  assert.match(source, /relativeBottom/);
+  assert.match(canvasSizing, /relativeRight/);
+  assert.match(canvasSizing, /relativeBottom/);
   assert.match(source, /annotateRenderedMarkdownLines/);
   assert.match(source, /collectVirtualMarkdownLineAnchors/);
   assert.match(source, /buildVirtualMarkdownSectionAnchors/);
@@ -372,13 +378,46 @@ test("selection tool previews and commits exact NoteFlow Markdown insertion targ
   const finishSource = dragSource.slice(dragSource.indexOf("  finishSelectedStrokeDrag("), dragSource.indexOf("  cancelSelectedStrokeDrag("));
 
   assert.match(source, /selectNoteFlowDropPlacement/);
-  assert.match(dropSource, /this\.toolMode === TOOL_SELECT[\s\S]*queueDraggedNoteFlowPlacement\(clientY\)[\s\S]*window\.requestAnimationFrame/);
-  assert.match(dropSource, /notedraw-text-sort-target-after[\s\S]*notedraw-text-sort-target-before/);
+  assert.match(dropSource, /this\.toolMode === TOOL_SELECT[\s\S]*queueDraggedNoteFlowPlacement\(clientX, clientY\)[\s\S]*window\.requestAnimationFrame/);
+  assert.match(dropSource, /notedraw-text-sort-target-before[\s\S]*notedraw-text-sort-target-after[\s\S]*notedraw-text-sort-target-left[\s\S]*notedraw-text-sort-target-right/);
   assert.match(dropSource, /noteDrawDropSide[\s\S]*noteDrawDropLine/);
-  assert.match(dragSource, /this\.usesDraggedNoteFlowPlacement\(\)[\s\S]*this\.queueDraggedNoteFlowPlacement\(event\.clientY\)[\s\S]*this\.queueDraggedNoteFlowRefresh/);
+  assert.match(dropSource, /const horizontalSide = nearFarLeft[\s\S]*\? "left"[\s\S]*\? "right"[\s\S]*horizontalSide,[\s\S]*candidate: placement\.candidate/);
+  assert.match(dropSource, /applyElementStyles\(indicator, horizontalSide \? \{[\s\S]*width: "4px"[\s\S]*height: `\$\{Math\.max\(16, Math\.round\(targetRect\.height\)\)\}px`/);
+  assert.match(dropSource, /snapDraggedSelectionToNoteFlowPlacement[\s\S]*if \(horizontalSide\)[\s\S]*targetBounds\.minX - gap - allBounds\.maxX[\s\S]*targetBounds\.maxX \+ gap - allBounds\.minX/);
+  assert.match(dragSource, /this\.usesDraggedNoteFlowPlacement\(\)[\s\S]*this\.queueDraggedNoteFlowPlacement\(event\.clientX, event\.clientY\)[\s\S]*this\.queueDraggedNoteFlowRefresh/);
   assert.match(finishSource, /requestedDropPlacement[\s\S]*this\.clearNoteFlowLayout\(\)[\s\S]*this\.resolveDraggedNoteFlowPlacement[\s\S]*this\.snapDraggedSelectionToNoteFlowPlacement/);
   assert.match(finishSource, /placement: droppedNoteFlowIndexes\.has\(index\) \? resolvedDropPlacement : null/);
   assert.doesNotMatch(dropSource, /vault\.modify|reorderTextBlock/);
   assert.match(styles, /\.notedraw-note-flow-drop-indicator \{[\s\S]*position: fixed;[\s\S]*pointer-events: none;/);
   assert.match(styles, /\.notedraw-body-control\.notedraw-note-flow-drop-indicator\.is-notedraw-controls-visible\.is-visible/);
+});
+
+test("selection requires a completed tap before moving an element and reserves resize for frame corners", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const pointerSource = source.slice(source.indexOf("  onPointerDown("), source.indexOf("  startConnectorGesture(", source.indexOf("  onPointerDown(")));
+  const strokeSelection = pointerSource.slice(pointerSource.indexOf("if (this.toolMode === TOOL_SELECT && hitStrokeIndex >= 0)"), pointerSource.indexOf("if (this.toolMode === TOOL_SELECT && hitStrokeIndex < 0 && markdownSelectionCandidate)"));
+  const markdownSelection = pointerSource.slice(pointerSource.indexOf("if (this.toolMode === TOOL_SELECT && hitStrokeIndex < 0 && markdownSelectionCandidate)"), pointerSource.indexOf("if (this.toolMode === TOOL_SELECT && hitStrokeIndex < 0 && !markdownSelectionCandidate)"));
+  const boxedSelection = pointerSource.slice(pointerSource.indexOf("if (this.toolMode === TOOL_SELECT && hitStrokeIndex < 0 && !markdownSelectionCandidate)"), pointerSource.indexOf("if (selectedDrawGesture ==="));
+
+  assert.match(pointerSource, /const resizeHandle = noteFlowPenActive \? null : this\.findSelectionHandleAt\(point\);/);
+  assert.match(pointerSource, /if \(resizeHandle\) \{\s*this\.startSelectedStrokeResize\(event, resizeHandle\);/);
+  assert.match(strokeSelection, /const wasSelected = this\.isStrokeSelected\(hitStrokeIndex\);/);
+  assert.match(strokeSelection, /if \(!wasSelected\) \{/);
+  assert.match(strokeSelection, /this\.setSelectedStrokes\(hitStrokeIndex\);/);
+  assert.match(strokeSelection, /this\.toggleStrokeSelection\(hitStrokeIndex\);/);
+  const strokeSelectIndex = strokeSelection.indexOf("this.setSelectedStrokes(hitStrokeIndex);");
+  const strokeDragIndex = strokeSelection.indexOf("this.startSelectedStrokeDrag(event, point, hitStrokeIndex", strokeSelectIndex);
+  assert.ok(strokeSelectIndex >= 0 && strokeDragIndex > strokeSelectIndex);
+  assert.match(strokeSelection.slice(strokeSelectIndex, strokeDragIndex), /return;/);
+  assert.match(markdownSelection, /this\.toggleMarkdownBlockSelection\(markdownSelectionCandidate\);/);
+  assert.match(markdownSelection, /this\.selectMarkdownBlock\(markdownSelectionCandidate\);/);
+  const markdownSelectIndex = markdownSelection.indexOf("this.selectMarkdownBlock(markdownSelectionCandidate);");
+  const markdownDragIndex = markdownSelection.indexOf("this.startSelectedStrokeDrag(event, point, -1", markdownSelectIndex);
+  assert.ok(markdownSelectIndex >= 0 && markdownDragIndex > markdownSelectIndex);
+  assert.match(markdownSelection.slice(markdownSelectIndex, markdownDragIndex), /return;/);
+  assert.match(boxedSelection, /this\.selectElementGroup\(boxedGroup\.id\);/);
+  const groupSelectIndex = boxedSelection.indexOf("this.selectElementGroup(boxedGroup.id);");
+  const groupDragIndex = boxedSelection.indexOf("this.startSelectedStrokeDrag(event, point);", groupSelectIndex);
+  assert.ok(groupSelectIndex >= 0 && groupDragIndex > groupSelectIndex);
+  assert.match(boxedSelection.slice(groupSelectIndex, groupDragIndex), /return;/);
 });

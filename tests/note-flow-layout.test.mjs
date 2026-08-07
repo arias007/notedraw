@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   frozenNoteFlowLayoutSignature,
   hasStableNoteFlowAnchor,
+  mergeFrozenNoteFlowLayout,
   noteFlowAvoidanceReference,
   noteFlowRequiredOffset,
   noteFlowNeedsActivationRepair,
@@ -23,6 +24,49 @@ import {
   stabilizeNoteFlowPointProjection,
   stabilizeNoteFlowBounds
 } from "../src/note-flow-layout.mjs";
+
+test("partial NoteFlow repair preserves unresolved offsets and replaces resolved ones", () => {
+  assert.deepEqual(mergeFrozenNoteFlowLayout({
+    version: 1,
+    offsets: [
+      { path: "note.md", line: 5, property: "padding-top", offset: 120 },
+      { path: "note.md", line: 11, property: "padding-top", offset: 173 }
+    ]
+  }, {
+    version: 1,
+    offsets: [
+      { path: "note.md", line: 11, property: "padding-top", offset: 390 },
+      { path: "note.md", line: 12, property: "padding-top", offset: 398 }
+    ]
+  }), {
+    version: 1,
+    offsets: [
+      { path: "note.md", line: 5, side: "before", property: "padding-top", offset: 120 },
+      { path: "note.md", line: 11, side: "before", property: "padding-top", offset: 390 },
+      { path: "note.md", line: 12, side: "before", property: "padding-top", offset: 398 }
+    ]
+  });
+});
+
+test("partial NoteFlow repair removes a resolved offset that has reached zero", () => {
+  assert.deepEqual(mergeFrozenNoteFlowLayout({
+    version: 1,
+    offsets: [
+      { path: "note.md", line: 7, property: "padding-top", offset: 104 },
+      { path: "note.md", line: 11, property: "padding-top", offset: 173 }
+    ]
+  }, {
+    version: 1,
+    offsets: [
+      { path: "note.md", line: 7, property: "padding-top", offset: 0 }
+    ]
+  }), {
+    version: 1,
+    offsets: [
+      { path: "note.md", line: 11, side: "before", property: "padding-top", offset: 173 }
+    ]
+  });
+});
 
 test("frozen note-flow spacing is deterministic and keeps the largest offset per Markdown line", () => {
   const normalized = normalizeFrozenNoteFlowLayout({

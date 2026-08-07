@@ -54,9 +54,10 @@ test("scrolling refreshes only the canvas window while real layout changes can r
 });
 
 test("reading zoom preserves wrapping while edit zoom can reflow", async () => {
-  const [source, styles] = await Promise.all([
+  const [source, styles, coordinates] = await Promise.all([
     readFile(sourceUrl, "utf8"),
-    readFile(stylesUrl, "utf8")
+    readFile(stylesUrl, "utf8"),
+    readFile(new URL("../src/layout-coordinates.mjs", import.meta.url), "utf8")
   ]);
 
   assert.match(source, /readingViewZoom: true/);
@@ -98,8 +99,9 @@ test("reading zoom preserves wrapping while edit zoom can reflow", async () => {
   assert.match(source, /if \(!this\.usesVisualReadingZoom\(\)\) \{\s*this\.responsiveLayoutContext = null;/);
   assert.match(source, /measureCanvasExtent\(this\.previewEl, this\.layoutMeasureEl, visualScale\)/);
   assert.match(source, /measureVisibleSurfaceWindow\(this\.previewEl, this\.scrollContainer, height, visualScale\)/);
-  assert.match(source, /const xScale = rect\.width > 0 \? width \/ rect\.width : 1/);
-  assert.match(source, /const yScale = rect\.height > 0 \? this\.canvasRenderHeight \/ rect\.height : 1/);
+  assert.match(source, /const mapped = mapClientPointToCanvas\(event, pointerGeometry\)/);
+  assert.match(coordinates, /const xScale = rectWidth > 0 \? canvasWidth \/ rectWidth : 1/);
+  assert.match(coordinates, /const yScale = rectHeight > 0 \? canvasRenderHeight \/ rectHeight : 1/);
   assert.match(styles, /\.notedraw-shell\.is-reading-zoomed,[\s\S]*overflow-x: auto !important/);
   assert.match(styles, /\.notedraw-reading-zoom-extent\[data-active="true"\] \{[\s\S]*display: block/);
 });
@@ -150,6 +152,62 @@ test("structured element clipboard supports long-press actions, commands, and cr
   assert.match(source, /\{ icon: "clipboard-paste", key: "pasteElement"/);
 });
 
+test("the long-press menu filters overlapping selections without changing element data", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const filterSource = source.slice(source.indexOf("  selectionFilterContext()"), source.indexOf("  selectedMindMapSource()"));
+
+  assert.match(source, /\{ icon: "list-filter", key: "selectFloatingOnly", action: \(\) => this\.cycleSelectionFilter\(\) \}/);
+  assert.match(source, /selectFloatingOnly: "只选悬浮元素"/);
+  assert.match(source, /selectMarkdownOnly: "只选 MD 和插入元素"/);
+  assert.match(source, /selectAllElements: "选择全部重叠元素"/);
+  assert.match(source, /filterButton\.toggleAttribute\("hidden", !filterContext\.snapshot\.hasMixedSelection\)/);
+  assert.match(filterSource, /selectionMatchesFilterMode\([\s\S]*createSelectionFilterSnapshot/);
+  assert.match(filterSource, /nextSelectionFilterMode\(context\.mode\)[\s\S]*selectionForFilterMode\(context\.snapshot, mode\)/);
+  assert.match(filterSource, /this\.selectedStrokeIndexes = new Set\(selection\.strokeIndexes\)/);
+  assert.match(filterSource, /this\.selectedMarkdownBlockIds = new Set\(selection\.markdownBlockIds\.filter/);
+  assert.doesNotMatch(filterSource, /scheduleDrawingSave|recordDrawingHistory|expandSelectedGroups|hideSelectionMenu/);
+});
+
+test("element links are portable, multi-select aware, and routed through the active NoteDraw surface", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+
+  assert.match(source, /copy-selected-element-link/);
+  assert.match(source, /notedraw:\/\/element\?\$\{params\.toString\(\)\}/);
+  assert.match(source, /new URL\(raw\)/);
+  assert.match(source, /url\.hostname\.toLowerCase\(\) !== "element"/);
+  assert.match(source, /getAll\("id"\)/);
+  assert.match(source, /getAll\("ids"\)\.flatMap\(\(value\) => value\.split\(","\)\)/);
+  assert.match(source, /selectElementsById\(ids = \[\]\)/);
+  assert.match(source, /this\.setSelectedStrokes\(indexes, \{ preserveMarkdown: true \}\)/);
+  assert.match(source, /this\.selectedMarkdownBlockIds = markdownIds/);
+  assert.match(source, /activeDocument\.addEventListener\("click", this\.onElementLinkClick, true\)/);
+  assert.match(source, /event\.stopImmediatePropagation\?\.\(\)/);
+  assert.match(source, /await leaf\.openFile\(file\)/);
+  assert.match(source, /state: \{ file: file\.path, mode: "preview", source: false \}/);
+  assert.match(source, /controller\.selectElementsById\(target\.ids\)/);
+  assert.match(source, /\{ icon: "link-2", key: "copyElementLink"/);
+});
+
+test("selection frames freeze between operations and drag drops retain the last valid Markdown target", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const frameSource = source.slice(source.indexOf("  selectionStateKey()"), source.indexOf("  markdownElementCanvasBounds(", source.indexOf("  selectionStateKey()")));
+  const dragSource = source.slice(source.indexOf("  updateMarkdownBlockDropTarget("), source.indexOf("  markdownDropRowMetrics(", source.indexOf("  updateMarkdownBlockDropTarget(")));
+  const finishSource = source.slice(source.indexOf("  finishSelectedStrokeDrag("), source.indexOf("  cancelSelectedStrokeDrag(", source.indexOf("  finishSelectedStrokeDrag(")));
+  const heightSource = source.slice(source.indexOf("  captureReadingLogicalSizerHeight("), source.indexOf("  readingVirtualZoomOrigin(", source.indexOf("  captureReadingLogicalSizerHeight(")));
+
+  assert.match(frameSource, /this\.selectionFrameSnapshot = null/);
+  assert.match(frameSource, /if \(!force && this\.selectionFrameSnapshot\?\.key === key\)/);
+  assert.match(frameSource, /this\.selectionFrameSnapshot = \{ key, rect \}/);
+  assert.match(source, /if \(this\.draggingStroke \|\| this\.resizingSelection\)[\s\S]*const bounds = this\.getSelectedStrokeBounds\(\)[\s\S]*return this\.captureSelectionFrameSnapshot\(\) \|\| null/);
+  assert.match(source, /this\.dragMarkdownLastValidDrop = \{ element: target, side \}/);
+  assert.match(dragSource, /if \(!target\) \{\s*return this\.dragMarkdownLastValidDrop \? \{ \.\.\.this\.dragMarkdownLastValidDrop \} : null;/);
+  assert.match(finishSource, /const lastDrop = this\.dragMarkdownLastValidDrop\?\.element\?\.isConnected/);
+  assert.match(finishSource, /const markdownDrop = lastDrop \? \{/);
+  assert.match(heightSource, /const transientGrowth = observedHeight > runawayThreshold/);
+  assert.match(heightSource, /const staleGrowth = priorHeight > runawayThreshold/);
+  assert.match(heightSource, /sectionHeight \+ Math\.max\(192, Math\.min\(640, sectionHeight \* 0\.35\)\)/);
+});
+
 test("reading-only note pen and selected elements can reserve Markdown flow space without editing Markdown", async () => {
   const [source, styles] = await Promise.all([
     readFile(sourceUrl, "utf8"),
@@ -180,7 +238,7 @@ test("reading-only note pen and selected elements can reserve Markdown flow spac
   assert.match(flowLayout, /noteFlowRequiredOffset\(\{[\s\S]*applied: state\.applied/);
   assert.match(flowLayout, /state\.applied = Math\.max\(0, appliedValue - state\.base\)/);
   assert.match(flowLayout, /stabilizeNoteFlowBounds\(\{/);
-  assert.match(flowLayout, /preferCurrent: Boolean\(normalizeNoteFlow\(stroke\.noteFlow\)\?\.positionBasis\)/);
+  assert.match(flowLayout, /preferCurrent: this\.draggingStroke \|\| this\.resizingSelection \|\| this\.currentStroke === stroke/);
   assert.match(flowLayout, /this\.repairRunawayNoteFlowSurface\(runawayReferenceHeight\)/);
   assert.match(flowLayout, /const editingNoteFlow = this\.active && \(/);
   assert.match(flowLayout, /if \(!editingNoteFlow \|\| this\.isReadingZoomInteractionActive\(\)\) \{\s*return false;/);
@@ -235,12 +293,11 @@ test("heading NoteFlow spacing moves the complete heading and restores after rea
 
   assert.match(targetSource, /matches\?\.\("h1,h2,h3,h4,h5,h6"\)/);
   assert.match(targetSource, /heading\.closest\?\.\(`\.el-\$\{headingTag\}`\) \|\| heading/);
-  assert.match(targetSource, /parent\.insertBefore\(spacer, side === "after" \? wrapper\.nextSibling : wrapper\)/);
-  assert.match(targetSource, /headingTopBefore[\s\S]*headingTopAfter[\s\S]*baseHeight = clamp\([\s\S]*spacer\.style\.height/);
-  assert.match(targetSource, /className = "notedraw-note-flow-block-spacer"/);
-  assert.match(targetSource, /wrapper\.nextSibling === existing[\s\S]*existing\?\.nextSibling === wrapper/);
+  assert.match(targetSource, /return wrapper;/);
+  assert.doesNotMatch(targetSource, /parent\.insertBefore\(spacer, side ===/);
+  assert.doesNotMatch(targetSource, /className = "notedraw-note-flow-block-spacer"/);
   assert.doesNotMatch(targetSource, /heading\.style\.(?:setProperty|removeProperty)/);
-  assert.match(flowLayout, /blockMeasureElement[\s\S]*rect\.top - state\.applied \* scaleY[\s\S]*rect\.bottom \+ state\.applied \* scaleY/);
+  assert.match(flowLayout, /element\.style\.setProperty\(state\.styleProperty, nextValue, "important"\)/);
   assert.match(source, /noteFlowStyleProperty\(element, property\) \{\s*return element\?\.classList\?\.contains\("notedraw-note-flow-block-spacer"\) \? "height" : property;/);
   assert.match(flowLayout, /const styleProperty = this\.noteFlowStyleProperty\(element, property\)[\s\S]*element\.style\.setProperty\(state\.styleProperty, nextValue, "important"\)/);
   assert.match(source, /element\.classList\?\.contains\("notedraw-note-flow-block-spacer"\)[\s\S]*properties\.push\("height"\)/);
@@ -253,6 +310,10 @@ test("heading NoteFlow spacing moves the complete heading and restores after rea
   assert.match(source, /this\.prepareFrozenNoteFlowLayout\(\)\.catch[\s\S]*this\.resizeCanvas\(\{ layout: false, measure: true \}\)/);
   assert.match(source, /noteFlowTargetElement\(anchor, record\.side\)/);
   assert.match(source, /for \(const spacer of this\.noteFlowBlockSpacers\?\.values\?\.\(\) \|\| \[\]\)/);
+  assert.match(source, /pruneDisconnectedNoteFlowLayout\(\)/);
+  assert.match(flowLayout, /mergeFrozenNoteFlowLayout\(this\.drawingData\?\.noteFlowLayout/);
+  assert.match(flowLayout, /layoutStyleChanged/);
+  assert.match(flowLayout, /preferCurrent: this\.draggingStroke \|\| this\.resizingSelection \|\| this\.currentStroke === stroke/);
   assert.match(source, /cleanupOrphanedNoteFlowLayout\(preview\)[\s\S]*\.notedraw-note-flow-block-spacer/);
   assert.match(source, /NOTEDRAW_OWNED_MUTATION_SELECTOR = \[[\s\S]*"\.notedraw-note-flow-block-spacer"/);
   assert.match(styles, /\.notedraw-note-flow-block-spacer \{[\s\S]*display: block;[\s\S]*height: 0;[\s\S]*overflow-anchor: none;/);
@@ -266,7 +327,7 @@ test("dragged inserted note elements use stable drop placement or frame-batched 
   const moveSource = dragSource.slice(dragSource.indexOf("  moveSelectedStroke("), dragSource.indexOf("  finishSelectedStrokeDrag("));
 
   assert.match(dragSource, /this\.dragStrokeOriginalNoteFlows = new Map/);
-  assert.match(moveSource, /if \(this\.usesDraggedNoteFlowPlacement\(\)\) \{\s*this\.queueDraggedNoteFlowPlacement\(event\.clientY\);\s*} else \{\s*this\.queueDraggedNoteFlowRefresh\(this\.dragStrokeOriginalPoints\.keys\(\)\)/);
+  assert.match(moveSource, /if \(this\.usesDraggedNoteFlowPlacement\(\)\) \{\s*this\.queueDraggedNoteFlowPlacement\(event\.clientX, event\.clientY\);\s*} else \{\s*this\.queueDraggedNoteFlowRefresh\(this\.dragStrokeOriginalPoints\.keys\(\)\)/);
   assert.doesNotMatch(moveSource, /captureNoteFlowAnchor|scheduleDrawingSave/);
   assert.match(refreshSource, /this\.pendingDraggedNoteFlowIndexes\.add\(index\)/);
   assert.match(refreshSource, /refreshDraggedNoteFlowAnchors\(\)/);
