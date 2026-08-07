@@ -126,7 +126,7 @@ test("palette changes update the selected NoteDraw elements", async () => {
   assert.match(source, /setCurrentBrushColor\(color\)[\s\S]*this\.applyColorToSelectedStrokes\(color\)/);
   assert.match(source, /applyColorToSelectedStrokes\(color\)[\s\S]*this\.drawingData\.strokes\[index\]\.color = color/);
   assert.match(source, /recordDrawingHistory\(historyBefore\)/);
-  assert.match(source, /this\.toolMode === TOOL_SELECT && !this\.getSelectedStrokeIndexes\(\)\.length/);
+  assert.match(source, /const selectedElements = this\.hasHybridSelection\(\)/);
   assert.match(source, /const paletteDisabled = this\.toolMode === TOOL_EDIT_MD \|\| this\.toolMode === TOOL_SELECT && !selectedElements/);
   assert.match(source, /this\.paletteButton\?\.classList\.toggle\("is-selection-available", this\.toolMode === TOOL_SELECT && selectedElements\)/);
   assert.match(source, /setSelectedStrokes\(indexes\)[\s\S]*this\.updateToolButtons\(\)/);

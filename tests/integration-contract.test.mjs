@@ -72,15 +72,15 @@ test("registered surfaces expose stable handles and structured actions without c
   assert.match(source, /registeredSurfaceSource/);
 });
 
-test("3.4.12 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
+test("3.4.13 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
   const [source, manifestText] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(manifestUrl, "utf8")
   ]);
   const manifest = JSON.parse(manifestText);
 
-  assert.equal(manifest.version, "3.4.12");
-  assert.match(source, /version: "3\.4\.12"/);
+  assert.equal(manifest.version, "3.4.13");
+  assert.match(source, /version: "3\.4\.13"/);
   assert.match(source, /if \(!this\.responsivePointsInitialized \|\| signature !== this\.responsiveLayoutSignature\)/);
   assert.match(source, /captureElementLayoutForStroke/);
   assert.match(source, /projectElementPoints\(stroke\.points, layout, box/);
@@ -141,9 +141,10 @@ test("reading text edits avoid placeholder breaks and support undo, redo, and bl
   assert.match(source, /installTextSortHandle\(element\)/);
   assert.match(source, /async reorderTextBlock\(file, movingElement, targetElement, placeAfter = false, sourceState = \{\}\)/);
   assert.match(source, /element\.dataset\.noteDrawSortDragging === "true"/);
-  assert.match(source, /const target = dropTarget \|\| findEditableTarget\(event\.target, this\.previewEl\)/);
-  assert.match(source, /const flushed = await this\.plugin\.flushTextSaveAndWait\(element\)/);
-  assert.match(source, /this\.endTextEdit\(\{ save: false \}\);\s*this\.plugin\.discardTextSaveState\(element\)/);
+  assert.match(source, /this\.updateMarkdownBlockDropTarget\(event\.clientX, event\.clientY\)/);
+  assert.match(source, /this\.dragMarkdownTextCommit = this\.endTextEdit\(\)/);
+  assert.match(source, /const textCommitted = await Promise\.resolve\(drop\?\.textCommit\)\.catch\(\(\) => false\)/);
+  assert.match(source, /if \(textCommitted === false\)/);
   assert.match(source, /normalizeEditableSourceText\(state\.baselineText\) === normalizeEditableSourceText\(state\.latestText\)/);
   assert.match(source, /this\.currentEditor\.replaceChildren\(textNode\)/);
   assert.match(source, /hoistPlainTextMarker\(marker, this\.currentEditor, isClearableInlineFormattingElement\)/);
