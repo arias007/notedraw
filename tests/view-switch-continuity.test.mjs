@@ -51,8 +51,8 @@ test("opening the magic wand reveals drawings while long press and right click t
   assert.match(source, /this\.buttonLongPressed = true;\s*this\.toggleDrawingsVisiblePersisted\(\)/);
   assert.match(source, /onButtonContextMenu\(event\)[\s\S]*this\.toggleDrawingsVisiblePersisted\(\)/);
   assert.match(source, /async toggleDrawingsVisiblePersisted\(\) \{\s*await this\.ensureDrawingsLoaded\(\);\s*this\.toggleDrawingsVisible\(\)/);
-  assert.match(source, /toggleDrawingsVisible\(\) \{\s*this\.setDrawingsVisible\(!this\.drawingsVisible\)/);
-  assert.match(source, /setDrawingsVisible\(visible\) \{\s*this\.applyDrawingsVisibility\(visible\);\s*this\.drawingData\.visible = this\.drawingsVisible;\s*this\.plugin\.scheduleDrawingSave\(this\.file, this\.drawingData\)/);
+  assert.match(source, /toggleDrawingsVisible\(\) \{\s*this\.setDrawingsVisible\(!this\.drawingsVisible, \{ persist: true \}\)/);
+  assert.match(source, /setDrawingsVisible\(visible, options = \{\}\) \{\s*this\.applyDrawingsVisibility\(visible\);\s*this\.drawingData\.visible = this\.drawingsVisible;\s*if \(options\.persist === true\) \{\s*this\.plugin\.scheduleDrawingSave\(this\.file, this\.drawingData, \{ userOperation: true \}\)/);
   assert.match(source, /visible: data\?\.visible !== false/);
   assert.match(source, /this\.applyDrawingsVisibility\(data\.visible !== false\)/);
   assert.match(source, /controller\.applyDrawingsVisibility\(controller\.drawingData\.visible !== false\)/);

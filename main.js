@@ -173,6 +173,16 @@ function calculateZoomAwareWindowFloor({
   const minimum = finitePositive(minimumWindowHeight, 32);
   return Math.max(minimum, base / scale);
 }
+function shouldClearStaleReadingVirtualMinHeight({
+  inlineMinHeight,
+  sectionHeight,
+  viewportHeight
+} = {}) {
+  const inline = Math.max(0, Number(inlineMinHeight) || 0);
+  const sections = Math.max(1, Number(sectionHeight) || 1);
+  const viewport = Math.max(1, Number(viewportHeight) || 1);
+  return inline > Math.max(sections * 1.75, sections + viewport * 2);
+}
 function calculateCanvasBackingStore({
   cssWidth,
   cssHeight,
@@ -204,6 +214,57 @@ function calculateCanvasBackingStore({
     height: backingHeight,
     scale: effectiveScale,
     limited: effectiveScale + 1e-6 < deviceScale
+  };
+}
+
+// src/drawing-persistence.mjs
+function recordId(record) {
+  if (typeof record?.id === "string") {
+    return record.id;
+  }
+  return typeof record?.elementId === "string" ? record.elementId : "";
+}
+function mergeRetainedRecords(latestRecords, incomingRecords) {
+  const latest = Array.isArray(latestRecords) ? latestRecords : [];
+  const incoming = Array.isArray(incomingRecords) ? incomingRecords : [];
+  const incomingById = new Map(incoming.map((record) => [recordId(record), record]).filter(([id]) => id));
+  const latestIds = new Set(latest.map(recordId).filter(Boolean));
+  const merged = [];
+  for (const record of latest) {
+    const id = recordId(record);
+    if (!id) {
+      continue;
+    }
+    merged.push(incomingById.get(id) || record);
+  }
+  for (const record of incoming) {
+    const id = recordId(record);
+    if (!id || !latestIds.has(id)) {
+      merged.push(record);
+    }
+  }
+  return merged;
+}
+function mergeControllerDrawingSnapshot(latest, incoming) {
+  if (!latest || !incoming) {
+    return incoming;
+  }
+  const strokes = mergeRetainedRecords(latest.strokes, incoming.strokes);
+  const markdownBlocks = mergeRetainedRecords(latest.markdownBlocks, incoming.markdownBlocks);
+  const referencedGroupIds = new Set([
+    ...strokes,
+    ...markdownBlocks
+  ].map((record) => record?.groupId).filter(Boolean));
+  const incomingGroupIds = new Set((Array.isArray(incoming.elementGroups) ? incoming.elementGroups : []).map(recordId).filter(Boolean));
+  const elementGroups = mergeRetainedRecords(latest.elementGroups, incoming.elementGroups).filter((group) => {
+    const id = recordId(group);
+    return incomingGroupIds.has(id) || referencedGroupIds.has(id);
+  });
+  return {
+    ...incoming,
+    strokes,
+    markdownBlocks,
+    elementGroups
   };
 }
 
@@ -1364,7 +1425,11 @@ function resizeMarkdownBlockMinHeight({
   const natural = Math.max(1, Number(naturalHeight) || 1);
   const current = Math.max(natural, Number(currentHeight) || natural);
   const desired = normalizeMarkdownBlockMinHeight(current * Math.max(0.12, Math.abs(Number(scaleY) || 1)), maxHeight);
-  return desired > natural + 0.5 ? desired : 0;
+  const intentionalGrowth = Math.max(8, natural * 0.08);
+  return desired >= natural + intentionalGrowth ? desired : 0;
+}
+function markdownBlockPresentationMinHeight(block) {
+  return block?.floating ? 0 : normalizeMarkdownBlockMinHeight(block?.minHeight);
 }
 function normalizeMarkdownFloatBox(value) {
   if (!value || !Number.isFinite(Number(value.x)) || !Number.isFinite(Number(value.y))) {
@@ -1373,8 +1438,8 @@ function normalizeMarkdownFloatBox(value) {
   const width = clamp4(Number(value.width) || 0.5, 0.08, 1);
   const height = clamp4(Number(value.height) || 0.1, 0.02, 1);
   return {
-    x: clamp4(Number(value.x), 0, Math.max(0, 1 - width)),
-    y: clamp4(Number(value.y), 0, Math.max(0, 1 - height)),
+    x: clamp4(Number(value.x), 0, 1),
+    y: clamp4(Number(value.y), 0, 1),
     width,
     height
   };
@@ -1876,26 +1941,6 @@ function normalizeFrozenNoteFlowLayout(value) {
     offsets: Array.from(records.values()).sort((a, b) => a.path.localeCompare(b.path) || a.line - b.line || a.property.localeCompare(b.property))
   };
 }
-function mergeFrozenNoteFlowLayout(previousValue, resolvedValue) {
-  const previous = normalizeFrozenNoteFlowLayout(previousValue);
-  const resolved = normalizeFrozenNoteFlowLayout(resolvedValue);
-  const records = new Map(previous.offsets.map((item) => [
-    `${item.path}\0${item.line}\0${item.property}`,
-    item
-  ]));
-  for (const item of Array.isArray(resolvedValue?.offsets) ? resolvedValue.offsets : []) {
-    const path = String(item?.path || "").replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
-    const line = Number(item?.line);
-    const property = item?.property === "padding-bottom" || item?.side === "after" ? "padding-bottom" : "padding-top";
-    if (path && Number.isFinite(line) && line >= 0) {
-      records.delete(`${path}\0${Math.floor(line)}\0${property}`);
-    }
-  }
-  for (const item of resolved.offsets) {
-    records.set(`${item.path}\0${item.line}\0${item.property}`, item);
-  }
-  return normalizeFrozenNoteFlowLayout({ version: 1, offsets: Array.from(records.values()) });
-}
 function frozenNoteFlowLayoutSignature(value) {
   return normalizeFrozenNoteFlowLayout(value).offsets.map((item) => `${item.path}:${item.line}:${item.property}:${item.offset}${item.ownerId ? `:${item.ownerId}` : ""}`).join("|");
 }
@@ -2386,6 +2431,18 @@ function shouldResetDormantRootPreview({
   renderedContent
 } = {}) {
   return Boolean(sourceHasContent && !renderedContent && sourceMode && !visible);
+}
+function shouldRecoverEmptyRootPreview({
+  sourceMode,
+  visible,
+  hasSurface,
+  sourceHasContent,
+  renderedContent,
+  rendererMatches
+} = {}) {
+  return Boolean(
+    hasSurface && visible && !sourceMode && sourceHasContent && !renderedContent && rendererMatches
+  );
 }
 function pickRootPreview(previews = [], rendererPreview = null, isVisible = () => false, isLaidOut = () => false) {
   const candidates = Array.from(new Set(previews)).filter(Boolean);
@@ -3369,7 +3426,6 @@ var I18N = {
     boxElements: "Put selection in a box",
     unboxElements: "Remove box",
     floatMarkdownBlock: "Make Markdown block floating",
-    dockMarkdownBlock: "Put Markdown block back in note flow",
     penWidth: "Pen width",
     penOpacity: "Pen opacity",
     textGroup: "Text and links",
@@ -3492,7 +3548,7 @@ var I18N = {
     moveBackward: "Move down",
     lockElement: "Lock",
     unlockElement: "Unlock",
-    copyElement: "Copy",
+    copyElement: "Copy element/link",
     selectFloatingOnly: "Select floating elements only",
     selectMarkdownOnly: "Select Markdown and inserted elements only",
     selectAllElements: "Select all overlapping elements",
@@ -3538,7 +3594,6 @@ var I18N = {
     boxElements: "\u6846\u6210\u76D2\u5B50\u7EC4",
     unboxElements: "\u53D6\u6D88\u76D2\u5B50\u6846",
     floatMarkdownBlock: "\u8BBE\u4E3A\u60AC\u6D6E Markdown \u5757",
-    dockMarkdownBlock: "\u653E\u56DE\u7B14\u8BB0\u6D41",
     penWidth: "\u7B14\u5BBD",
     penOpacity: "\u7B14\u900F\u660E\u5EA6",
     textGroup: "\u6587\u5B57\u94FE\u63A5",
@@ -3661,7 +3716,7 @@ var I18N = {
     moveBackward: "\u4E0B\u79FB\u4E00\u5C42",
     lockElement: "\u9501\u5B9A",
     unlockElement: "\u89E3\u9501",
-    copyElement: "\u590D\u5236\u5143\u7D20",
+    copyElement: "\u590D\u5236\u5143\u7D20/\u94FE\u63A5",
     selectFloatingOnly: "\u53EA\u9009\u60AC\u6D6E\u5143\u7D20",
     selectMarkdownOnly: "\u53EA\u9009 MD \u548C\u63D2\u5165\u5143\u7D20",
     selectAllElements: "\u9009\u62E9\u5168\u90E8\u91CD\u53E0\u5143\u7D20",
@@ -3704,7 +3759,6 @@ var I18N = {
     boxElements: "\u6846\u6210\u76D2\u5B50\u7FA4\u7D44",
     unboxElements: "\u53D6\u6D88\u76D2\u5B50\u6846",
     floatMarkdownBlock: "\u8A2D\u70BA\u6D6E\u52D5 Markdown \u5340\u584A",
-    dockMarkdownBlock: "\u653E\u56DE\u7B46\u8A18\u6D41",
     penWidth: "\u7B46\u5BEC",
     penOpacity: "\u7B46\u900F\u660E\u5EA6",
     textGroup: "\u6587\u5B57\u9023\u7D50",
@@ -4459,11 +4513,13 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     this.saveTimers = /* @__PURE__ */ new Map();
     this.pendingDrawingSaves = /* @__PURE__ */ new Map();
     this.drawingWritePromises = /* @__PURE__ */ new Map();
+    this.suppressedDrawingSaves = [];
     this.drawingStateCache = /* @__PURE__ */ new Map();
     this.portableBundles = /* @__PURE__ */ new Map();
     this.portableBundleLoads = /* @__PURE__ */ new Map();
     this.portableResourceCache = /* @__PURE__ */ new Map();
     this.sharePackagePromises = /* @__PURE__ */ new Map();
+    this.previewRenderRecovery = /* @__PURE__ */ new Map();
     this.viewDrawingActive = /* @__PURE__ */ new WeakMap();
     this.viewToolbarState = /* @__PURE__ */ new WeakMap();
     this.viewEditHistory = /* @__PURE__ */ new WeakMap();
@@ -4624,6 +4680,12 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     this.portableBundleLoads?.clear();
     this.portableResourceCache?.clear();
     this.sharePackagePromises?.clear();
+    for (const state of this.previewRenderRecovery?.values?.() || []) {
+      if (state.timer !== null) {
+        window.clearTimeout(state.timer);
+      }
+    }
+    this.previewRenderRecovery?.clear?.();
     for (const state of this.headerActions.values()) {
       state.button?.remove();
     }
@@ -4637,6 +4699,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     }
     this.saveTimers.clear();
     this.pendingDrawingSaves.clear();
+    this.suppressedDrawingSaves = [];
     if (this.settingsSaveTimer !== null) {
       window.clearTimeout(this.settingsSaveTimer);
       this.settingsSaveTimer = null;
@@ -5158,13 +5221,13 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       }
       await this.app.vault.modify(markdownFile, String(direction === "before" ? entry.markdownBefore : entry.markdownAfter || ""));
       const data = cloneDrawingData(direction === "before" ? entry.drawingBefore : entry.drawingAfter, drawingFile);
-      this.scheduleDrawingSave(drawingFile, data);
+      this.scheduleDrawingSave(drawingFile, data, { replace: true });
       this.emitApiEvent("markdown-changed", { file: markdownFile.path, history: direction });
       return true;
     }
     if (entry.kind === "drawing") {
       const data = cloneDrawingData(entry[direction], entry.file);
-      this.scheduleDrawingSave(entry.file, data);
+      this.scheduleDrawingSave(entry.file, data, { replace: true });
       return true;
     }
     if (entry.kind === "markdown") {
@@ -5399,7 +5462,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.4.17",
+      version: "3.4.18",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -5742,7 +5805,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     if (!controller) {
       return { ok: false, reason: "surface-not-found" };
     }
-    controller.setDrawingsVisible(visible !== false);
+    controller.setDrawingsVisible(visible !== false, { persist: true });
     const surface = this.describeController(controller);
     this.emitApiEvent("surface-changed", { ...surface, phase: "updated" });
     return { ok: true, surface };
@@ -5860,7 +5923,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     controller.rebuildElementRelations();
     controller.invalidateStaticCache();
     controller.setSelectedStrokes(indexes);
-    this.scheduleDrawingSave(controller.file, controller.drawingData);
+    this.scheduleDrawingSave(controller.file, controller.drawingData, { userOperation: true });
     controller.recordDrawingHistory(before);
     controller.scheduleNoteFlowLayout({
       operation: indexes.some((index) => controller.drawingData.strokes[index]?.noteFlow?.enabled)
@@ -6318,6 +6381,50 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       }
     }
   }
+  clearPreviewRenderRecovery(preview) {
+    const state = this.previewRenderRecovery?.get(preview);
+    if (state?.timer !== null && state?.timer !== void 0) {
+      window.clearTimeout(state.timer);
+    }
+    this.previewRenderRecovery?.delete(preview);
+  }
+  schedulePreviewRenderRecovery(view, preview) {
+    const lifecycle = rootPreviewLifecycleState(view, preview);
+    const renderer = view?.previewMode?.renderer;
+    if (this.runtimeDisposed || !shouldRecoverEmptyRootPreview({
+      ...lifecycle,
+      rendererMatches: renderer?.previewEl === preview
+    })) {
+      this.clearPreviewRenderRecovery(preview);
+      return false;
+    }
+    const path = normalizeVaultPath(view?.file?.path || "");
+    let state = this.previewRenderRecovery.get(preview);
+    if (!state || state.path !== path) {
+      this.clearPreviewRenderRecovery(preview);
+      state = { path, attempts: 0, timer: null };
+      this.previewRenderRecovery.set(preview, state);
+    }
+    if (state.timer !== null || state.attempts >= 2) {
+      return false;
+    }
+    const delay = state.attempts === 0 ? 0 : 120;
+    state.attempts += 1;
+    state.timer = window.setTimeout(() => {
+      state.timer = null;
+      if (this.runtimeDisposed || !preview?.isConnected || view?.previewMode?.renderer?.previewEl !== preview) {
+        this.clearPreviewRenderRecovery(preview);
+        return;
+      }
+      try {
+        view.previewMode?.rerender?.(true);
+      } catch (error) {
+        void error;
+      }
+      this.scheduleSurfaceSync(60);
+    }, delay);
+    return true;
+  }
   syncMarkdownControllerModes() {
     const leaves = this.app.workspace.getLeavesOfType?.("markdown") || [];
     for (const leaf of leaves) {
@@ -6338,6 +6445,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       }
       if (isSourceMode(view) && sourceVisible && !previewVisible) {
         for (const rootPreview of findRootPreviewsForView(view)) {
+          this.clearPreviewRenderRecovery(rootPreview);
           const controller = this.controllers.get(rootPreview) || rootPreview._noteDrawController;
           controller?.destroy?.();
           resetDormantRootPreview(view, rootPreview);
@@ -6371,9 +6479,13 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       }
       if (!isRootPreviewReady(view, preview)) {
         previewController?.destroy();
+        if (this.schedulePreviewRenderRecovery(view, preview)) {
+          continue;
+        }
         resetDormantRootPreview(view, preview);
         continue;
       }
+      this.clearPreviewRenderRecovery(preview);
       if (previewVisible && (!previewController || previewController.destroyed || previewController.file?.path !== view.file?.path)) {
         previewController?.destroy();
         previewController = this.resolveLivePreviewController(view);
@@ -7388,7 +7500,19 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
   }
   scheduleDrawingSave(file2, data, options = {}) {
     const path = this.drawingStorageKey(file2);
-    const canonical = normalizeDrawingDataForStorage(data, file2);
+    if (options.replace !== true && options.userOperation !== true) {
+      this.suppressedDrawingSaves.push({
+        at: Date.now(),
+        path,
+        strokeCount: Array.isArray(data?.strokes) ? data.strokes.length : 0,
+        markdownBlockCount: Array.isArray(data?.markdownBlocks) ? data.markdownBlocks.length : 0,
+        stack: new Error().stack || ""
+      });
+      this.suppressedDrawingSaves.splice(0, Math.max(0, this.suppressedDrawingSaves.length - 20));
+      return false;
+    }
+    const incoming = normalizeDrawingDataForStorage(data, file2);
+    const canonical = options.replace === true ? incoming : mergeControllerDrawingSnapshot(this.drawingStateCache.get(path), incoming);
     this.drawingStateCache.set(path, canonical);
     this.pendingDrawingSaves.set(path, file2);
     this.refreshControllersForFile(file2, canonical, { excludeData: options.excludeData || data });
@@ -7404,6 +7528,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       });
     }, this.noteDrawSettings?.autoSaveDelayMs ?? DEFAULT_SETTINGS.autoSaveDelayMs);
     this.saveTimers.set(path, timer);
+    return true;
   }
   async flushDrawingSave(path) {
     const file2 = this.pendingDrawingSaves.get(path);
@@ -8118,6 +8243,7 @@ var PreviewDrawingController = class {
     this.readingVirtualSectionFrameId = null;
     this.readingVirtualSectionsManaged = false;
     this.readingVirtualSectionSignature = "";
+    this.readingVirtualStyleState = /* @__PURE__ */ new Map();
     this.readingLogicalSizerHeight = 0;
     this.readingZoomInteractionUntil = 0;
     this.readingZoomSettleTimer = null;
@@ -8127,8 +8253,10 @@ var PreviewDrawingController = class {
     this.pendingMindMapFile = null;
     this.pendingMindMapOptions = null;
     this.noteFlowFrameId = null;
+    this.noteFlowFallbackTimer = null;
     this.frozenNoteFlowRestoreFrameId = null;
     this.noteFlowOperationPending = false;
+    this.noteFlowPersistencePending = false;
     this.noteFlowResizeTimer = null;
     this.noteFlowSuppressResizeUntil = 0;
     this.noteFlowSettleEpoch = "";
@@ -8193,6 +8321,7 @@ var PreviewDrawingController = class {
     this.pendingDomRender = false;
     this.pendingInteractionRender = false;
     this.resizeFrameId = null;
+    this.resizeFallbackTimer = null;
     this.resizeNeedsLayout = false;
     this.resizeNeedsMeasure = false;
     this.resizePreserveNoteFlowAbsolute = false;
@@ -8502,6 +8631,7 @@ var PreviewDrawingController = class {
       }
     }
     this.refreshScrollContainer();
+    this.repairConnectedReadingSections();
     await this.prepareInitialReadingLayout();
     if (this.destroyed || !this.previewEl?.isConnected) {
       return;
@@ -8509,6 +8639,7 @@ var PreviewDrawingController = class {
     if (typeof MutationObserver !== "undefined") {
       this.markdownRenderObserver = new MutationObserver((mutations) => {
         if (mutations.some((mutation) => isMarkdownContentMutation(mutation))) {
+          this.repairConnectedReadingSections();
           const editingLayout = this.active && (this.toolMode === TOOL_EDIT_MD || this.noteFlowOperationPending || this.draggingStroke || this.resizingSelection);
           if (editingLayout) {
             this.scheduleMarkdownAnnotationRefresh({ layout: false });
@@ -8528,6 +8659,7 @@ var PreviewDrawingController = class {
     this.applyReadingZoom();
     this.applyActiveState(this.active);
     await this.ensureDrawingsLoaded();
+    this.repairConnectedReadingSections();
     this.plugin.emitApiEvent("surface-changed", { ...this.plugin.describeController(this), phase: "mounted" });
   }
   async prepareInitialReadingLayout() {
@@ -8541,7 +8673,24 @@ var PreviewDrawingController = class {
     }
     const requestFrame = () => new Promise((resolve) => {
       if (typeof window.requestAnimationFrame === "function") {
-        window.requestAnimationFrame(resolve);
+        let settled = false;
+        let frameId = null;
+        let fallbackTimer = null;
+        const finish = () => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          if (frameId !== null) {
+            window.cancelAnimationFrame(frameId);
+          }
+          if (fallbackTimer !== null) {
+            window.clearTimeout(fallbackTimer);
+          }
+          resolve();
+        };
+        frameId = window.requestAnimationFrame(finish);
+        fallbackTimer = window.setTimeout(finish, 120);
       } else {
         window.setTimeout(resolve, 16);
       }
@@ -8688,6 +8837,7 @@ var PreviewDrawingController = class {
     this.resetNoteFlowSettle();
     this.noteFlowAnchorRepairReady = false;
     this.noteFlowAnchorRepairComplete = false;
+    this.noteFlowPersistencePending = false;
     this.noteFlowActivationRepairAttempted = false;
     this.noteFlowLayoutIncomplete = false;
     this.noteFlowAvoidanceAnchors.clear();
@@ -9192,36 +9342,52 @@ var PreviewDrawingController = class {
     }
     this.resizePreserveAbsolutePlacement = this.resizePreserveAbsolutePlacement || options.preserveAbsolutePlacement === true;
     this.resizeNeedsMeasure = this.resizeNeedsMeasure || wantsMeasure || wantsLayout;
-    if (this.resizeFrameId !== null) {
+    if (this.resizeFrameId !== null || this.resizeFallbackTimer !== null) {
       return;
     }
-    this.resizeFrameId = window.requestAnimationFrame(() => {
+    this.resizeFrameId = window.requestAnimationFrame(() => this.flushScheduledResize());
+    this.resizeFallbackTimer = window.setTimeout(() => this.flushScheduledResize(), 120);
+  }
+  flushScheduledResize() {
+    if (this.resizeFrameId !== null) {
+      window.cancelAnimationFrame(this.resizeFrameId);
       this.resizeFrameId = null;
-      const layout = this.resizeNeedsLayout;
-      const measure = this.resizeNeedsMeasure;
-      const preserveNoteFlowAbsolute = layout && this.resizePreserveNoteFlowAbsolute;
-      const preserveAbsolutePlacement = this.resizePreserveAbsolutePlacement;
-      this.resizeNeedsLayout = false;
-      this.resizeNeedsMeasure = false;
-      this.resizePreserveNoteFlowAbsolute = false;
-      this.resizePreserveAbsolutePlacement = false;
-      const canvasChanged = this.resizeCanvas({ layout, measure, preserveNoteFlowAbsolute, preserveAbsolutePlacement });
-      this.updateFloatingControlsPosition();
-      this.positionFormatToolbar();
-      this.positionFloatingTextInput();
-      if (canvasChanged) {
-        if (layout) {
-          this.render();
-        } else {
-          this.renderCanvas();
-        }
+    }
+    if (this.resizeFallbackTimer !== null) {
+      window.clearTimeout(this.resizeFallbackTimer);
+      this.resizeFallbackTimer = null;
+    }
+    if (this.destroyed) {
+      return;
+    }
+    const layout = this.resizeNeedsLayout;
+    const measure = this.resizeNeedsMeasure;
+    const preserveNoteFlowAbsolute = layout && this.resizePreserveNoteFlowAbsolute;
+    const preserveAbsolutePlacement = this.resizePreserveAbsolutePlacement;
+    this.resizeNeedsLayout = false;
+    this.resizeNeedsMeasure = false;
+    this.resizePreserveNoteFlowAbsolute = false;
+    this.resizePreserveAbsolutePlacement = false;
+    const canvasChanged = this.resizeCanvas({ layout, measure, preserveNoteFlowAbsolute, preserveAbsolutePlacement });
+    this.updateFloatingControlsPosition();
+    this.positionFormatToolbar();
+    this.positionFloatingTextInput();
+    if (canvasChanged) {
+      if (layout) {
+        this.render();
+      } else {
+        this.renderCanvas();
       }
-    });
+    }
   }
   cancelResizeFrame() {
     if (this.resizeFrameId !== null) {
       window.cancelAnimationFrame(this.resizeFrameId);
       this.resizeFrameId = null;
+    }
+    if (this.resizeFallbackTimer !== null) {
+      window.clearTimeout(this.resizeFallbackTimer);
+      this.resizeFallbackTimer = null;
     }
     this.resizeNeedsLayout = false;
     this.resizeNeedsMeasure = false;
@@ -9309,7 +9475,7 @@ var PreviewDrawingController = class {
           this.scheduleNoteFlowAnchorRepair();
         }
         if (this.noteFlowOperationPending && this.hasNoteFlowElements()) {
-          this.scheduleNoteFlowLayout({ operation: true });
+          this.scheduleNoteFlowLayout();
         }
         if (this.drawingsLoaded) {
           if (layout) {
@@ -9621,6 +9787,7 @@ var PreviewDrawingController = class {
     this.cancelFrozenNoteFlowLayoutRestore();
     this.noteFlowAnchorRepairReady = false;
     this.noteFlowAnchorRepairComplete = false;
+    this.noteFlowPersistencePending = false;
     this.noteFlowOperationPending = true;
     this.scheduleMarkdownAnnotationRefresh({ layout: false, delay: 32 });
     return true;
@@ -9770,7 +9937,6 @@ var PreviewDrawingController = class {
     const actions = [
       { icon: "list-filter", key: "selectFloatingOnly", action: () => this.cycleSelectionFilter() },
       { icon: "copy", key: "copyElement", action: () => this.copySelectedElements() },
-      { icon: "link-2", key: "copyElementLink", action: () => void this.copySelectedElementLink() },
       { icon: "clipboard-paste", key: "pasteElement", action: () => this.pasteCopiedElements() },
       { icon: "external-link", key: "openSourceNote", action: () => void this.openSelectedMindMapSource() },
       { icon: "wrap-text", key: "insertIntoNote", action: () => this.toggleSelectedNoteFlow() },
@@ -9850,13 +10016,11 @@ var PreviewDrawingController = class {
     }
     const markdownBlocks = this.getSelectedMarkdownBlocks();
     const floating = markdownBlocks.length > 0 && markdownBlocks.every((block) => block.floating);
-    const floatButton = this.selectionMenu.querySelector('[data-note-draw-title-key="floatMarkdownBlock"], [data-note-draw-title-key="dockMarkdownBlock"]');
+    const floatButton = this.selectionMenu.querySelector('[data-note-draw-title-key="floatMarkdownBlock"]');
     if (floatButton) {
-      const key = floating ? "dockMarkdownBlock" : "floatMarkdownBlock";
-      floatButton.dataset.noteDrawTitleKey = key;
-      this.plugin.setAccessibleLabel(floatButton, key);
-      (0, import_obsidian.setIcon)(floatButton, floating ? "pin-off" : "pin");
-      floatButton.toggleAttribute("hidden", !markdownBlocks.length);
+      this.plugin.setAccessibleLabel(floatButton, "floatMarkdownBlock");
+      (0, import_obsidian.setIcon)(floatButton, "pin");
+      floatButton.toggleAttribute("hidden", !markdownBlocks.length || floating);
     }
   }
   selectionFilterContext() {
@@ -10525,7 +10689,7 @@ var PreviewDrawingController = class {
     }
     this.redoStack = [];
     this.invalidateStaticCache();
-    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
     this.recordDrawingHistory(historyBefore);
     this.render();
     return true;
@@ -10547,7 +10711,7 @@ var PreviewDrawingController = class {
     }
     this.redoStack = [];
     this.invalidateStaticCache();
-    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
     this.recordDrawingHistory(historyBefore);
     this.render();
     return true;
@@ -10568,7 +10732,7 @@ var PreviewDrawingController = class {
     }
     this.redoStack = [];
     this.invalidateStaticCache();
-    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
     this.recordDrawingHistory(historyBefore);
     this.render();
     return true;
@@ -10605,7 +10769,7 @@ var PreviewDrawingController = class {
     }
     this.redoStack = [];
     this.invalidateStaticCache();
-    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
     this.recordDrawingHistory(historyBefore);
     this.render();
     return true;
@@ -10778,16 +10942,18 @@ var PreviewDrawingController = class {
     }
   }
   toggleDrawingsVisible() {
-    this.setDrawingsVisible(!this.drawingsVisible);
+    this.setDrawingsVisible(!this.drawingsVisible, { persist: true });
   }
   async toggleDrawingsVisiblePersisted() {
     await this.ensureDrawingsLoaded();
     this.toggleDrawingsVisible();
   }
-  setDrawingsVisible(visible) {
+  setDrawingsVisible(visible, options = {}) {
     this.applyDrawingsVisibility(visible);
     this.drawingData.visible = this.drawingsVisible;
-    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    if (options.persist === true) {
+      this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
+    }
     this.syncSharedToolbarState();
   }
   applyDrawingsVisibility(visible) {
@@ -11794,7 +11960,7 @@ var PreviewDrawingController = class {
     this.setSelectedStrokes(insertedIndex);
     this.redoStack = [];
     this.invalidateStaticCache();
-    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
     this.recordDrawingHistory(this.connectorGesture?.historyBefore);
     this.currentStroke = null;
     this.connectorGesture = null;
@@ -12064,7 +12230,7 @@ var PreviewDrawingController = class {
       this.clearSelectedStrokes();
       this.redoStack = [];
       this.invalidateStaticCache();
-      this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+      this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
       this.recordDrawingHistory(historyBefore);
       this.scheduleNoteFlowLayout({ operation: Boolean(this.currentStroke.noteFlow?.enabled) });
       this.currentStroke = null;
@@ -12371,7 +12537,7 @@ var PreviewDrawingController = class {
     this.captureResponsiveAnchorsForIndexes(this.getSelectedStrokeIndexes());
     this.redoStack = [];
     this.invalidateStaticCache();
-    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
     if (mindMapStrokeToSync) {
       this.textCommitBarrier.track(this.syncMindMapNodeToSource(mindMapStrokeToSync, text, { drawingBefore: historyBefore }));
     } else {
@@ -12551,7 +12717,7 @@ var PreviewDrawingController = class {
     this.syncTextPanelButtons();
     this.redoStack = [];
     this.invalidateStaticCache();
-    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
     this.recordDrawingHistory(historyBefore);
     this.scheduleLayoutRefresh({ settle: false });
     this.render();
@@ -12588,7 +12754,7 @@ var PreviewDrawingController = class {
       }
       await this.plugin.app.vault.modify(file2, result.source);
       this.refreshMindMapSourceMetadata(node.mapId, node.sourcePath, result.source);
-      this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+      this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
       if (options.drawingBefore) {
         this.recordCompoundHistory(file2, source, result.source, options.drawingBefore);
       }
@@ -12649,7 +12815,7 @@ var PreviewDrawingController = class {
     this.captureResponsiveAnchorsForIndexes([this.drawingData.strokes.length - 1]);
     this.redoStack = [];
     this.invalidateStaticCache();
-    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
     this.recordDrawingHistory(historyBefore);
     this.scheduleLayoutRefresh({ settle: false });
     this.render();
@@ -12692,7 +12858,7 @@ var PreviewDrawingController = class {
       this.captureResponsiveAnchorsForIndexes([this.drawingData.strokes.length - 1]);
       this.redoStack = [];
       this.invalidateStaticCache();
-      this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+      this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
       this.recordDrawingHistory(historyBefore);
       this.render();
       return;
@@ -12723,7 +12889,7 @@ var PreviewDrawingController = class {
     this.captureResponsiveAnchorsForIndexes([this.drawingData.strokes.length - 1]);
     this.redoStack = [];
     this.invalidateStaticCache();
-    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
     this.recordDrawingHistory(historyBefore);
     this.render();
   }
@@ -12850,6 +13016,27 @@ var PreviewDrawingController = class {
     const renderer = this.view?.previewMode?.renderer;
     return renderer?.previewEl === this.previewEl && Array.isArray(renderer?.sections) ? renderer : null;
   }
+  repairConnectedReadingSections(renderer = this.readingPreviewRenderer()) {
+    if (!renderer || !this.previewEl?.isConnected) {
+      return 0;
+    }
+    let repaired = 0;
+    try {
+      renderer.updateVirtualDisplay?.();
+      for (const section of renderer.sections || []) {
+        if (section?.shown === false || !section?.el?.isConnected || section.rendered !== false) {
+          continue;
+        }
+        section.render?.();
+        renderer.measureSection?.(section);
+        repaired += 1;
+      }
+      renderer.updateVirtualDisplay?.();
+    } catch (error) {
+      void error;
+    }
+    return repaired;
+  }
   captureReadingLogicalSizerHeight(renderer = this.readingPreviewRenderer(), options = {}) {
     const sizer = renderer?.sizerEl;
     const allowGrowth = options.allowGrowth === true;
@@ -12860,12 +13047,22 @@ var PreviewDrawingController = class {
     const sectionHeight = (renderer.sections || []).reduce((total, section) => {
       return total + (section?.shown === false ? 0 : Math.max(0, Number(section?.height) || 0));
     }, Math.max(0, Number(renderer.topSpace) || 0));
+    const viewportHeight = Math.max(1, Number(this.previewEl?.clientHeight) || 1);
+    const orphanedManagedHeight = sizer.hasAttribute("data-note-draw-virtual-height") && !this.readingVirtualStyleState.has(sizer);
+    const staleLegacyHeight = !sizer.hasAttribute("data-note-draw-virtual-height") && shouldClearStaleReadingVirtualMinHeight({
+      inlineMinHeight: Number.parseFloat(sizer.style.minHeight) || 0,
+      sectionHeight,
+      viewportHeight
+    });
+    if (orphanedManagedHeight || staleLegacyHeight) {
+      sizer.style.removeProperty("min-height");
+      sizer.removeAttribute("data-note-draw-virtual-height");
+    }
     const observedHeight = Math.max(
       sectionHeight,
       Math.max(0, Number(sizer.scrollHeight) || 0) - Math.max(0, Number(this.readingBottomSpacerHeight) || 0),
       Math.max(0, Number(sizer.offsetHeight) || 0)
     );
-    const viewportHeight = Math.max(1, Number(this.previewEl?.clientHeight) || 1);
     const runawayThreshold = Math.max(8e3, sectionHeight * 4, viewportHeight * 8);
     const priorHeight = this.readingLogicalSizerHeight;
     const transientGrowth = observedHeight > runawayThreshold && sectionHeight > 0 && observedHeight > sectionHeight * 4;
@@ -12922,25 +13119,52 @@ var PreviewDrawingController = class {
   }
   restoreReadingVirtualSections() {
     this.cancelReadingVirtualSectionSync();
-    if (!this.readingVirtualSectionsManaged) {
+    if (!this.readingVirtualSectionsManaged && !this.readingVirtualStyleState.size) {
       return;
     }
     this.readingVirtualSectionsManaged = false;
     this.readingVirtualSectionSignature = "";
+    this.restoreReadingVirtualStyles();
     const renderer = this.readingPreviewRenderer();
     if (!renderer || !this.previewEl?.isConnected) {
       return;
     }
-    try {
-      renderer.updateVirtualDisplay?.();
-    } catch (error) {
-      void error;
-    }
+    this.repairConnectedReadingSections(renderer);
     this.readingLogicalSizerHeight = 0;
     this.captureReadingLogicalSizerHeight(renderer);
     if (this.readingBottomSpacerHeight > 0) {
       this.ensureReadingBottomSpacer();
     }
+  }
+  rememberReadingVirtualStyle(element, property) {
+    if (!element?.style) {
+      return;
+    }
+    let properties = this.readingVirtualStyleState.get(element);
+    if (!properties) {
+      properties = /* @__PURE__ */ new Map();
+      this.readingVirtualStyleState.set(element, properties);
+    }
+    if (!properties.has(property)) {
+      properties.set(property, {
+        value: element.style.getPropertyValue(property),
+        priority: element.style.getPropertyPriority(property)
+      });
+    }
+  }
+  restoreReadingVirtualStyles() {
+    for (const [element, properties] of this.readingVirtualStyleState) {
+      for (const [property, state] of properties) {
+        if (state.value) {
+          element.style?.setProperty(property, state.value, state.priority || "");
+        } else {
+          element.style?.removeProperty(property);
+        }
+      }
+      element.removeAttribute?.("data-note-draw-virtual-height");
+      element.removeAttribute?.("data-note-draw-virtual-pusher");
+    }
+    this.readingVirtualStyleState.clear();
   }
   syncReadingVirtualSections() {
     if (this.isReadingZoomInteractionActive()) {
@@ -12955,6 +13179,8 @@ var PreviewDrawingController = class {
     if (!renderer || target !== sizer || !target?.isConnected || !this.readingZoomStage?.contains?.(sizer) || !pusher || !sections.length || Math.abs(zoom - 1) < 1e-3) {
       return false;
     }
+    this.rememberReadingVirtualStyle(sizer, "min-height");
+    this.rememberReadingVirtualStyle(pusher, "margin-bottom");
     const shown = sections.filter((section) => section?.shown !== false && section?.el);
     const knownHeights = shown.map((section) => Number(section.height) || 0).filter((height) => height > 0);
     const averageHeight = knownHeights.length ? knownHeights.reduce((sum, height) => sum + height, 0) / knownHeights.length : 48;
@@ -13029,6 +13255,8 @@ var PreviewDrawingController = class {
     if (sizer.style.minHeight !== minimumHeight) {
       sizer.style.minHeight = minimumHeight;
     }
+    sizer.setAttribute("data-note-draw-virtual-height", "true");
+    pusher.setAttribute("data-note-draw-virtual-pusher", "true");
     const visibleIndexes = visible.map((record) => sections.indexOf(record.section)).filter((index) => index >= 0);
     const firstIndex = visibleIndexes[0] ?? 0;
     const lastIndex = visibleIndexes[visibleIndexes.length - 1] ?? firstIndex;
@@ -13784,7 +14012,7 @@ var PreviewDrawingController = class {
       return false;
     }
     this.redoStack = [];
-    this.plugin.scheduleDrawingSave(file2, this.drawingData);
+    this.plugin.scheduleDrawingSave(file2, this.drawingData, { userOperation: true });
     this.recordCompoundHistory(file2, result.before, result.after, drawingHistoryBefore);
     this.scheduleMarkdownAnnotationRefresh({ layout: true, delay: 0 });
     this.scheduleNoteFlowLayout({ operation: this.hasNoteFlowElements() });
@@ -14131,7 +14359,7 @@ var PreviewDrawingController = class {
       this.syncBoundConnectors({ elementIds: this.connectorTargetIdsForStrokeIndexes(affectedIndexes) });
       this.lastTextTap = null;
       this.redoStack = [];
-      this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+      this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
       if (!markdownDrop) {
         this.recordDrawingHistory(drawingHistoryBefore);
       }
@@ -14160,7 +14388,8 @@ var PreviewDrawingController = class {
   cancelSelectedStrokeDrag(restoreOriginal = false) {
     this.clearSelectionLongPress();
     this.clearDraggedNoteFlowPlacement();
-    if (restoreOriginal && this.dragStrokeOriginalPoints?.size) {
+    const restoredDrag = Boolean(restoreOriginal && this.dragStrokeOriginalPoints?.size);
+    if (restoredDrag) {
       this.resetNoteFlowSettle();
       this.clearNoteFlowLayout();
       for (const [index, points] of this.dragStrokeOriginalPoints.entries()) {
@@ -14176,7 +14405,7 @@ var PreviewDrawingController = class {
       this.releasePointerCapture(this.activePointerId);
     }
     this.clearSelectedStrokeDragState();
-    if (restoreOriginal) {
+    if (restoredDrag) {
       this.scheduleNoteFlowLayout({ operation: true });
     }
     this.render();
@@ -14362,8 +14591,7 @@ var PreviewDrawingController = class {
       const currentHeight = Math.max(
         naturalHeight,
         Number(element?.offsetHeight) || 0,
-        normalizeMarkdownBlockMinHeight(block.minHeight),
-        block.floating && block.floatBox ? block.floatBox.height * Math.max(1, this.canvasHeight()) : 0
+        normalizeMarkdownBlockMinHeight(block.minHeight)
       );
       return [block.id, {
         block,
@@ -14469,12 +14697,11 @@ var PreviewDrawingController = class {
       const block = state.block;
       if (state.floating && state.floatBox) {
         block.floating = true;
-        const minimumNormalizedHeight = state.naturalHeight / Math.max(1, this.canvasHeight());
         block.floatBox = normalizeMarkdownFloatBox({
           x: anchor.x + (state.floatBox.x - anchor.x) * scaleX,
-          y: anchor.y + (state.floatBox.y - anchor.y) * scaleY,
+          y: state.floatBox.y,
           width: state.floatBox.width * Math.abs(scaleX),
-          height: Math.max(minimumNormalizedHeight, state.floatBox.height * Math.abs(scaleY))
+          height: clamp10(state.naturalHeight / Math.max(1, this.canvasHeight()), 0.02, 1)
         });
       } else {
         block.span = clamp10(Math.round(state.span * Math.abs(scaleX)), 2, 12);
@@ -14509,7 +14736,7 @@ var PreviewDrawingController = class {
       this.captureResponsiveAnchorsForIndexes(resizedIndexes);
       this.syncBoundConnectors({ elementIds: this.connectorTargetIdsForStrokeIndexes(resizedIndexes) });
       this.redoStack = [];
-      this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+      this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
       this.recordDrawingHistory(this.resizeDrawingHistoryBefore);
       if (resizedIndexes.some((index) => this.drawingData.strokes[index]?.noteFlow?.enabled)) {
         this.scheduleNoteFlowLayout({ operation: true });
@@ -15044,7 +15271,7 @@ var PreviewDrawingController = class {
         stroke.text = nextText;
         this.redoStack = [];
         this.invalidateStaticCache();
-        this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+        this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
         this.render();
         if (normalizeMindMapNode(stroke.mindMapNode)?.affectsSource) {
           this.textCommitBarrier.track(this.syncMindMapNodeToSource(stroke, nextText.replace(/^\s*(?:[-+*]|\d+[.)])\s+/, ""), { drawingBefore: historyBefore }));
@@ -15917,13 +16144,17 @@ var PreviewDrawingController = class {
     return natural;
   }
   applyMarkdownBlockHeightPresentation(block, element) {
-    const requested = block?.floating && block.floatBox ? block.floatBox.height * Math.max(1, this.canvasHeight()) : block?.minHeight;
-    const height = normalizeMarkdownBlockMinHeight(requested);
+    const height = markdownBlockPresentationMinHeight(block);
+    const previousHeight = element.style.getPropertyValue("--notedraw-md-min-height");
+    const wasResized = element.hasAttribute("data-note-draw-resized-height");
     element.toggleAttribute("data-note-draw-resized-height", height > 0);
     if (height > 0) {
       element.style.setProperty("--notedraw-md-min-height", `${height}px`);
     } else {
       element.style.removeProperty("--notedraw-md-min-height");
+    }
+    if (wasResized !== height > 0 || previousHeight !== (height > 0 ? `${height}px` : "")) {
+      this.readingLogicalSizerHeight = 0;
     }
   }
   refreshMarkdownBlockPresentation(blockIds = this.selectedMarkdownBlockIds) {
@@ -16263,7 +16494,7 @@ var PreviewDrawingController = class {
     }
     return true;
   }
-  async copySelectedElementLink(options = {}) {
+  selectedElementLinkPayload() {
     const indexes = this.getSelectedStrokeIndexes();
     const blockIds = this.getSelectedMarkdownBlocks().map((block) => block.id);
     const ids = [
@@ -16272,11 +16503,19 @@ var PreviewDrawingController = class {
     ];
     const file2 = normalizeVaultPath(this.file?.path || "");
     if (!ids.length || !file2) {
-      return { ok: false, reason: "selection-not-found" };
+      return null;
     }
     const params = new URLSearchParams({ file: file2, ids: Array.from(new Set(ids)).join(",") });
     const uri = `notedraw://element?${params.toString()}`;
     const markdown = `[${this.plugin.t("elementLinkLabel")}](${uri})`;
+    return { uri, markdown, ids: Array.from(new Set(ids)), file: file2 };
+  }
+  async copySelectedElementLink(options = {}) {
+    const payload = this.selectedElementLinkPayload();
+    if (!payload) {
+      return { ok: false, reason: "selection-not-found" };
+    }
+    const { uri, markdown, ids, file: file2 } = payload;
     const copied = await writeTextToClipboard(markdown);
     if (!copied) {
       return { ok: false, reason: "clipboard-unavailable", uri, markdown };
@@ -16285,7 +16524,7 @@ var PreviewDrawingController = class {
     if (!options.quiet) {
       new import_obsidian.Notice(this.plugin.t("copiedElementLink"));
     }
-    return { ok: true, uri, markdown, ids: Array.from(new Set(ids)), file: file2 };
+    return { ok: true, uri, markdown, ids, file: file2 };
   }
   copySelectedElements(options = {}) {
     const indexes = this.getSelectedStrokeIndexes();
@@ -16310,6 +16549,10 @@ var PreviewDrawingController = class {
       strokes,
       copiedAt: Date.now()
     };
+    const link = this.selectedElementLinkPayload();
+    if (link) {
+      void writeTextToClipboard(link.markdown);
+    }
     this.hideSelectionMenu();
     if (!options.quiet) {
       new import_obsidian.Notice(this.plugin.t("copiedElements", { count: strokes.length }));
@@ -16397,7 +16640,7 @@ var PreviewDrawingController = class {
     this.setSelectedStrokes(indexes);
     this.redoStack = [];
     this.invalidateStaticCache();
-    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
     this.recordDrawingHistory(historyBefore);
     this.scheduleNoteFlowLayout({
       operation: pasted.some((stroke) => stroke?.noteFlow?.enabled)
@@ -16671,7 +16914,7 @@ var PreviewDrawingController = class {
     this.captureResponsiveAnchorsForIndexes(indexes);
     this.hideSelectionMenu();
     this.redoStack = [];
-    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
     this.recordDrawingHistory(historyBefore);
     this.scheduleNoteFlowLayout({ operation: true });
     this.scheduleLayoutRefresh({ settle: false });
@@ -17251,7 +17494,7 @@ var PreviewDrawingController = class {
         layout: normalizeElementLayout(stroke.layout),
         contentWidth: contentFrame.width,
         viewportHeight,
-        preferCurrent: this.draggingStroke || this.resizingSelection || this.currentStroke === stroke
+        preferCurrent: Boolean(normalizeNoteFlow(stroke.noteFlow)?.positionBasis)
       });
       return { stroke, index, ...stabilized };
     }).filter(Boolean).sort((a, b) => a.bounds.minY - b.bounds.minY);
@@ -17261,8 +17504,8 @@ var PreviewDrawingController = class {
       const changed2 = Boolean(this.noteFlowLayoutSignature) || frozenLayoutChanged2;
       this.clearNoteFlowLayout();
       this.noteFlowLayoutSignature = "";
-      if (frozenLayoutChanged2 && this.file && this.drawingData) {
-        this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+      if (frozenLayoutChanged2 && this.noteFlowPersistencePending && this.file && this.drawingData) {
+        this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: this.noteFlowPersistencePending });
       }
       return changed2;
     }
@@ -17486,8 +17729,7 @@ var PreviewDrawingController = class {
         }
       }
     }
-    const frozenLayout = missingStableAnchor ? mergeFrozenNoteFlowLayout(this.drawingData?.noteFlowLayout, { version: 1, offsets: frozenOffsets }) : { version: 1, offsets: frozenOffsets };
-    const frozenLayoutChanged = this.updateFrozenNoteFlowLayout(frozenLayout.offsets);
+    const frozenLayoutChanged = !missingStableAnchor && this.updateFrozenNoteFlowLayout(frozenOffsets);
     this.captureReadingLogicalSizerHeight(void 0, { allowGrowth: true });
     this.noteFlowLayoutIncomplete = missingStableAnchor;
     if (canRepairStoredAnchors) {
@@ -17496,8 +17738,8 @@ var PreviewDrawingController = class {
         this.noteFlowAnchorRepairComplete = false;
       }
     }
-    if ((migratedAnchor || updatedNoteFlowMetadata || frozenLayoutChanged) && this.file && this.drawingData) {
-      this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    if (this.noteFlowPersistencePending && (migratedAnchor || updatedNoteFlowMetadata || frozenLayoutChanged) && this.file && this.drawingData) {
+      this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: this.noteFlowPersistencePending });
     }
     const changed = migratedAnchor || updatedNoteFlowMetadata || frozenLayoutChanged || layoutStyleChanged || signature !== this.noteFlowLayoutSignature;
     this.noteFlowLayoutSignature = signature;
@@ -17684,16 +17926,27 @@ var PreviewDrawingController = class {
     if (options.operation === true && this.active) {
       this.cancelFrozenNoteFlowLayoutRestore();
       this.noteFlowOperationPending = true;
+      this.noteFlowPersistencePending = true;
     }
     const editingNoteFlow = this.active && (this.noteFlowOperationPending || this.draggingStroke || this.resizingSelection || this.currentStroke?.noteFlow?.enabled);
     if (!editingNoteFlow) {
       return;
     }
-    if (this.noteFlowFrameId !== null) {
+    if (this.noteFlowFrameId !== null || this.noteFlowFallbackTimer !== null) {
       return;
     }
-    this.noteFlowFrameId = window.requestAnimationFrame(() => {
-      this.noteFlowFrameId = null;
+    const run = () => {
+      if (this.noteFlowFrameId !== null) {
+        window.cancelAnimationFrame(this.noteFlowFrameId);
+        this.noteFlowFrameId = null;
+      }
+      if (this.noteFlowFallbackTimer !== null) {
+        window.clearTimeout(this.noteFlowFallbackTimer);
+        this.noteFlowFallbackTimer = null;
+      }
+      if (this.destroyed) {
+        return;
+      }
       const refreshedDraggedFlow = this.refreshDraggedNoteFlowAnchors();
       const layoutChanged = this.applyNoteFlowLayout() || refreshedDraggedFlow;
       if (!this.draggingStroke && !this.resizingSelection) {
@@ -17701,19 +17954,27 @@ var PreviewDrawingController = class {
           this.scheduleNoteFlowAnchorRepair();
         } else {
           this.noteFlowOperationPending = false;
+          this.noteFlowPersistencePending = false;
         }
       }
       if (layoutChanged && !this.draggingStroke) {
         this.scheduleNoteFlowSettleResize();
       }
-    });
+    };
+    this.noteFlowFrameId = window.requestAnimationFrame(run);
+    this.noteFlowFallbackTimer = window.setTimeout(run, 120);
   }
   cancelNoteFlowLayout() {
     this.noteFlowOperationPending = false;
+    this.noteFlowPersistencePending = false;
     this.noteFlowLayoutIncomplete = false;
     if (this.noteFlowFrameId !== null) {
       window.cancelAnimationFrame(this.noteFlowFrameId);
       this.noteFlowFrameId = null;
+    }
+    if (this.noteFlowFallbackTimer !== null) {
+      window.clearTimeout(this.noteFlowFallbackTimer);
+      this.noteFlowFallbackTimer = null;
     }
     if (this.noteFlowResizeTimer !== null) {
       window.clearTimeout(this.noteFlowResizeTimer);
@@ -17934,7 +18195,7 @@ var PreviewDrawingController = class {
     this.hideSelectionMenu();
     this.redoStack = [];
     this.invalidateStaticCache();
-    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
     this.recordDrawingHistory(historyBefore);
     this.scheduleNoteFlowLayout();
     this.render();
@@ -17976,7 +18237,7 @@ var PreviewDrawingController = class {
     this.hideSelectionMenu();
     this.redoStack = [];
     this.invalidateStaticCache();
-    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
     this.recordDrawingHistory(historyBefore);
     this.render();
   }
@@ -18023,7 +18284,7 @@ var PreviewDrawingController = class {
     this.pruneElementGroups();
     this.redoStack = [];
     this.invalidateStaticCache();
-    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
     this.recordDrawingHistory(historyBefore);
     this.syncSelectionMenuButtons();
     this.render();
@@ -18055,7 +18316,7 @@ var PreviewDrawingController = class {
       block.span = 12;
     }
     this.redoStack = [];
-    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
     this.recordDrawingHistory(historyBefore);
     this.syncSelectionMenuButtons();
     this.render();
@@ -18271,7 +18532,7 @@ var PreviewDrawingController = class {
     this.currentEditorFile = null;
     this.currentEditorEmbedded = false;
     if (markdownMetadataChanged && this.surfaceType === "preview") {
-      this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+      this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
     }
     return commit;
   }
@@ -18347,7 +18608,7 @@ var PreviewDrawingController = class {
     this.drawingData.webEdits = edits;
     this.redoStack = [];
     this.recordDrawingHistory(historyBefore);
-    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
     this.render();
     return true;
   }
@@ -18446,7 +18707,7 @@ var PreviewDrawingController = class {
     this.clearSelectedStrokes();
     this.redoStack = [];
     this.rebuildElementRelations();
-    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true, replace: true });
     this.recordDrawingHistory(historyBefore);
     this.scheduleNoteFlowLayout({ operation: removedNoteFlow });
     this.render();

@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { pickRootPreview, shouldMountRootPreview, shouldResetDormantRootPreview } from "../src/preview-lifecycle.mjs";
+import {
+  pickRootPreview,
+  shouldMountRootPreview,
+  shouldRecoverEmptyRootPreview,
+  shouldResetDormantRootPreview
+} from "../src/preview-lifecycle.mjs";
 
 const renderedPreview = {
   sourceMode: false,
@@ -45,6 +50,25 @@ test("only hidden source-mode previews are eligible for dormant geometry reset",
     ...renderedPreview,
     sourceHasContent: false,
     renderedContent: false
+  }), false);
+});
+
+test("a visible empty renderer is eligible for bounded preview recovery", () => {
+  assert.equal(shouldRecoverEmptyRootPreview({
+    ...renderedPreview,
+    renderedContent: false,
+    rendererMatches: true
+  }), true);
+  assert.equal(shouldRecoverEmptyRootPreview({
+    ...renderedPreview,
+    renderedContent: false,
+    rendererMatches: false
+  }), false);
+  assert.equal(shouldRecoverEmptyRootPreview({
+    ...renderedPreview,
+    sourceMode: true,
+    renderedContent: false,
+    rendererMatches: true
   }), false);
 });
 

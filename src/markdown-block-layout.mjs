@@ -19,7 +19,12 @@ export function resizeMarkdownBlockMinHeight({
   const natural = Math.max(1, Number(naturalHeight) || 1);
   const current = Math.max(natural, Number(currentHeight) || natural);
   const desired = normalizeMarkdownBlockMinHeight(current * Math.max(0.12, Math.abs(Number(scaleY) || 1)), maxHeight);
-  return desired > natural + 0.5 ? desired : 0;
+  const intentionalGrowth = Math.max(8, natural * 0.08);
+  return desired >= natural + intentionalGrowth ? desired : 0;
+}
+
+export function markdownBlockPresentationMinHeight(block) {
+  return block?.floating ? 0 : normalizeMarkdownBlockMinHeight(block?.minHeight);
 }
 
 export function normalizeMarkdownFloatBox(value) {
@@ -29,8 +34,8 @@ export function normalizeMarkdownFloatBox(value) {
   const width = clamp(Number(value.width) || 0.5, 0.08, 1);
   const height = clamp(Number(value.height) || 0.1, 0.02, 1);
   return {
-    x: clamp(Number(value.x), 0, Math.max(0, 1 - width)),
-    y: clamp(Number(value.y), 0, Math.max(0, 1 - height)),
+    x: clamp(Number(value.x), 0, 1),
+    y: clamp(Number(value.y), 0, 1),
     width,
     height
   };

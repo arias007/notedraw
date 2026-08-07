@@ -40,6 +40,16 @@ test("late drawing loads cannot revive a destroyed or reassigned controller", as
   assert.match(loadSource, /if \(this\.loadingDrawings === loading\) \{\s*this\.loadingDrawings = null;/);
 });
 
+test("background tabs cannot leave the initial canvas resize pending forever", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const scheduleSource = source.slice(source.indexOf("  scheduleResize(options = {})"), source.indexOf("  scheduleFloatingControlsPosition()"));
+
+  assert.match(scheduleSource, /this\.resizeFrameId = window\.requestAnimationFrame\(\(\) => this\.flushScheduledResize\(\)\)/);
+  assert.match(scheduleSource, /this\.resizeFallbackTimer = window\.setTimeout\(\(\) => this\.flushScheduledResize\(\), 120\)/);
+  assert.match(scheduleSource, /flushScheduledResize\(\)[\s\S]*this\.resizeFrameId = null[\s\S]*this\.resizeFallbackTimer = null/);
+  assert.match(scheduleSource, /cancelResizeFrame\(\)[\s\S]*window\.cancelAnimationFrame\(this\.resizeFrameId\)[\s\S]*window\.clearTimeout\(this\.resizeFallbackTimer\)/);
+});
+
 test("hidden or alternate surfaces release cached reading controllers", async () => {
   const source = await readFile(sourceUrl, "utf8");
 

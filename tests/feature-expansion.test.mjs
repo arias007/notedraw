@@ -141,6 +141,8 @@ test("structured element clipboard supports long-press actions, commands, and cr
   assert.match(source, /id: "copy-selected-elements"/);
   assert.match(source, /id: "paste-elements"/);
   assert.match(source, /copySelectedElements\(options = \{\}\)/);
+  assert.match(source, /selectedElementLinkPayload\(\)[\s\S]*notedraw:\/\/element/);
+  assert.match(source, /void writeTextToClipboard\(link\.markdown\)/);
   assert.match(source, /pasteCopiedElements\(options = \{\}\)/);
   assert.match(source, /stroke\.layout = null/);
   assert.match(source, /idMap\.get\(stroke\.connector\.fromId\)/);
@@ -161,6 +163,7 @@ test("the long-press menu filters overlapping selections without changing elemen
   assert.match(source, /selectMarkdownOnly: "只选 MD 和插入元素"/);
   assert.match(source, /selectAllElements: "选择全部重叠元素"/);
   assert.match(source, /filterButton\.toggleAttribute\("hidden", !filterContext\.snapshot\.hasMixedSelection\)/);
+  assert.doesNotMatch(source, /dockMarkdownBlock|放回笔记流|放回筆記流/);
   assert.match(filterSource, /selectionMatchesFilterMode\([\s\S]*createSelectionFilterSnapshot/);
   assert.match(filterSource, /nextSelectionFilterMode\(context\.mode\)[\s\S]*selectionForFilterMode\(context\.snapshot, mode\)/);
   assert.match(filterSource, /this\.selectedStrokeIndexes = new Set\(selection\.strokeIndexes\)/);
@@ -185,7 +188,8 @@ test("element links are portable, multi-select aware, and routed through the act
   assert.match(source, /await leaf\.openFile\(file\)/);
   assert.match(source, /state: \{ file: file\.path, mode: "preview", source: false \}/);
   assert.match(source, /controller\.selectElementsById\(target\.ids\)/);
-  assert.match(source, /\{ icon: "link-2", key: "copyElementLink"/);
+  assert.doesNotMatch(source, /\{ icon: "link-2", key: "copyElementLink"/);
+  assert.match(source, /copyElement: "复制元素\/链接"/);
 });
 
 test("selection frames freeze between operations and drag drops retain the last valid Markdown target", async () => {
@@ -238,7 +242,7 @@ test("reading-only note pen and selected elements can reserve Markdown flow spac
   assert.match(flowLayout, /noteFlowRequiredOffset\(\{[\s\S]*applied: state\.applied/);
   assert.match(flowLayout, /state\.applied = Math\.max\(0, appliedValue - state\.base\)/);
   assert.match(flowLayout, /stabilizeNoteFlowBounds\(\{/);
-  assert.match(flowLayout, /preferCurrent: this\.draggingStroke \|\| this\.resizingSelection \|\| this\.currentStroke === stroke/);
+  assert.match(flowLayout, /preferCurrent: Boolean\(normalizeNoteFlow\(stroke\.noteFlow\)\?\.positionBasis\)/);
   assert.match(flowLayout, /this\.repairRunawayNoteFlowSurface\(runawayReferenceHeight\)/);
   assert.match(flowLayout, /const editingNoteFlow = this\.active && \(/);
   assert.match(flowLayout, /if \(!editingNoteFlow \|\| this\.isReadingZoomInteractionActive\(\)\) \{\s*return false;/);
@@ -253,7 +257,7 @@ test("reading-only note pen and selected elements can reserve Markdown flow spac
   assert.match(flowLayout, /selectNoteFlowAvoidanceCandidate\(\[avoidanceAnchor\], \{ strokeTop, strokeBottom \}\)/);
   assert.match(flowLayout, /avoidancePath: avoidanceReference\.path,[\s\S]*avoidanceLine: avoidanceReference\.line/);
   assert.match(flowLayout, /if \(avoidanceReference && !avoidanceAnchor\) \{[\s\S]*missingStableAnchor = true;[\s\S]*continue;/);
-  assert.match(flowLayout, /this\.plugin\.scheduleDrawingSave\(this\.file, this\.drawingData\)/);
+  assert.match(flowLayout, /this\.plugin\.scheduleDrawingSave\(this\.file, this\.drawingData, \{ userOperation: this\.noteFlowPersistencePending \}\)/);
   assert.match(flowLayout, /if \(canRepairStoredAnchors\) \{\s*this\.noteFlowAnchorRepairComplete = true/);
   assert.match(source, /noteFlowInlineLineCandidates\(sourceElement, path, start, end\)/);
   assert.match(source, /const layoutElement = this\.noteFlowLayoutElement\(sourceElement\);[\s\S]*element: layoutElement,[\s\S]*sourceElement/);
@@ -311,9 +315,10 @@ test("heading NoteFlow spacing moves the complete heading and restores after rea
   assert.match(source, /noteFlowTargetElement\(anchor, record\.side\)/);
   assert.match(source, /for \(const spacer of this\.noteFlowBlockSpacers\?\.values\?\.\(\) \|\| \[\]\)/);
   assert.match(source, /pruneDisconnectedNoteFlowLayout\(\)/);
-  assert.match(flowLayout, /mergeFrozenNoteFlowLayout\(this\.drawingData\?\.noteFlowLayout/);
+  assert.match(flowLayout, /const frozenLayoutChanged = !missingStableAnchor && this\.updateFrozenNoteFlowLayout\(frozenOffsets\)/);
+  assert.doesNotMatch(flowLayout, /mergeFrozenNoteFlowLayout/);
   assert.match(flowLayout, /layoutStyleChanged/);
-  assert.match(flowLayout, /preferCurrent: this\.draggingStroke \|\| this\.resizingSelection \|\| this\.currentStroke === stroke/);
+  assert.match(flowLayout, /preferCurrent: Boolean\(normalizeNoteFlow\(stroke\.noteFlow\)\?\.positionBasis\)/);
   assert.match(source, /cleanupOrphanedNoteFlowLayout\(preview\)[\s\S]*\.notedraw-note-flow-block-spacer/);
   assert.match(source, /NOTEDRAW_OWNED_MUTATION_SELECTOR = \[[\s\S]*"\.notedraw-note-flow-block-spacer"/);
   assert.match(styles, /\.notedraw-note-flow-block-spacer \{[\s\S]*display: block;[\s\S]*height: 0;[\s\S]*overflow-anchor: none;/);
@@ -333,7 +338,7 @@ test("dragged inserted note elements use stable drop placement or frame-batched 
   assert.match(refreshSource, /refreshDraggedNoteFlowAnchors\(\)/);
   assert.match(refreshSource, /this\.clearNoteFlowLayout\(\)/);
   assert.match(refreshSource, /path: captured\.path,[\s\S]*line: captured\.line,[\s\S]*side: captured\.side/);
-  assert.match(refreshSource, /window\.requestAnimationFrame\(\(\) => \{[\s\S]*this\.refreshDraggedNoteFlowAnchors\(\)[\s\S]*this\.applyNoteFlowLayout\(\)/);
+  assert.match(refreshSource, /const run = \(\) => \{[\s\S]*this\.refreshDraggedNoteFlowAnchors\(\)[\s\S]*this\.applyNoteFlowLayout\(\)[\s\S]*window\.requestAnimationFrame\(run\)/);
   assert.match(refreshSource, /layoutChanged && !this\.draggingStroke/);
   assert.match(dragSource, /stroke\.noteFlow = originalNoteFlow \? \{ \.\.\.originalNoteFlow \} : null/);
   assert.match(source, /onResize\(\)[\s\S]*this\.scheduleResize\(\{ layout: false, measure: widthChanged \}\)/);

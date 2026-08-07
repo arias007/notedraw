@@ -148,6 +148,17 @@ export function calculateZoomAwareWindowFloor({
   return Math.max(minimum, base / scale);
 }
 
+export function shouldClearStaleReadingVirtualMinHeight({
+  inlineMinHeight,
+  sectionHeight,
+  viewportHeight
+} = {}) {
+  const inline = Math.max(0, Number(inlineMinHeight) || 0);
+  const sections = Math.max(1, Number(sectionHeight) || 1);
+  const viewport = Math.max(1, Number(viewportHeight) || 1);
+  return inline > Math.max(sections * 1.75, sections + viewport * 2);
+}
+
 export function calculateCanvasBackingStore({
   cssWidth,
   cssHeight,

@@ -73,15 +73,29 @@ test("registered surfaces expose stable handles and structured actions without c
   assert.match(source, /registeredSurfaceSource/);
 });
 
-test("3.4.17 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
+test("3.4.18 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
   const [source, manifestText] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(manifestUrl, "utf8")
   ]);
   const manifest = JSON.parse(manifestText);
 
-  assert.equal(manifest.version, "3.4.17");
-  assert.match(source, /version: "3\.4\.17"/);
+  assert.equal(manifest.version, "3.4.18");
+  assert.match(source, /version: "3\.4\.18"/);
+  assert.match(source, /this\.readingVirtualStyleState = \/\* @__PURE__ \*\/ new Map\(\)/);
+  assert.match(source, /shouldClearStaleReadingVirtualMinHeight\(\{/);
+  assert.match(source, /this\.rememberReadingVirtualStyle\(sizer, "min-height"\)/);
+  assert.match(source, /this\.restoreReadingVirtualStyles\(\)/);
+  assert.match(source, /data-note-draw-virtual-height/);
+  assert.match(source, /this\.resizeFallbackTimer = null/);
+  assert.match(source, /window\.setTimeout\(\(\) => this\.flushScheduledResize\(\), 120\)/);
+  assert.match(source, /flushScheduledResize\(\)[\s\S]*window\.cancelAnimationFrame\(this\.resizeFrameId\)[\s\S]*window\.clearTimeout\(this\.resizeFallbackTimer\)/);
+  assert.match(source, /this\.repairConnectedReadingSections\(\);\s*await this\.prepareInitialReadingLayout\(\)/);
+  assert.match(source, /new MutationObserver\(\(mutations\) => \{\s*if \(mutations\.some\(\(mutation\) => isMarkdownContentMutation\(mutation\)\)\) \{\s*this\.repairConnectedReadingSections\(\)/);
+  assert.match(source, /await this\.ensureDrawingsLoaded\(\);\s*this\.repairConnectedReadingSections\(\);/);
+  assert.match(source, /repairConnectedReadingSections\(renderer = this\.readingPreviewRenderer\(\)\)[\s\S]*renderer\.updateVirtualDisplay\?\.\(\);[\s\S]*section\.rendered !== false[\s\S]*section\.render\?\.\(\);[\s\S]*renderer\.measureSection\?\.\(section\);[\s\S]*renderer\.updateVirtualDisplay\?\.\(\)/);
+  assert.match(source, /restoreReadingVirtualSections\(\)[\s\S]*this\.repairConnectedReadingSections\(renderer\)/);
+  assert.match(source, /const requestFrame = \(\) => new Promise[\s\S]*window\.requestAnimationFrame\(finish\)[\s\S]*window\.setTimeout\(finish, 120\)/);
   assert.match(source, /if \(!this\.responsivePointsInitialized \|\| signature !== this\.responsiveLayoutSignature\)/);
   assert.match(source, /captureElementLayoutForStroke/);
   assert.match(source, /projectElementPoints\(stroke\.points, layout, box/);
@@ -167,7 +181,8 @@ test("reading and source controllers share the latest in-memory drawing state", 
   const source = await readFile(sourceUrl, "utf8");
 
   assert.match(source, /const storageKey = this\.drawingStorageKey\(file, storageMode\);\s*const cached = this\.drawingStateCache\.get\(storageKey\);\s*if \(cached\) \{\s*return normalizeDrawingData\(cached, file\)/);
-  assert.match(source, /const canonical = normalizeDrawingDataForStorage\(data, file\);\s*this\.drawingStateCache\.set\(path, canonical\);\s*this\.pendingDrawingSaves\.set\(path, file\);\s*this\.refreshControllersForFile\(file, canonical, \{ excludeData: options\.excludeData \|\| data \}\)/);
+  assert.match(source, /const incoming = normalizeDrawingDataForStorage\(data, file\);\s*const canonical = options\.replace === true[\s\S]*mergeControllerDrawingSnapshot\(this\.drawingStateCache\.get\(path\), incoming\);\s*this\.drawingStateCache\.set\(path, canonical\);\s*this\.pendingDrawingSaves\.set\(path, file\);\s*this\.refreshControllersForFile\(file, canonical, \{ excludeData: options\.excludeData \|\| data \}\)/);
+  assert.match(source, /this\.scheduleDrawingSave\(entry\.file, data, \{ replace: true \}\)/);
   assert.match(source, /writeDrawings\(file, compacted, \{ refresh: false, updateCache: false \}\)/);
   assert.match(source, /this\.plugin\.setControllerActivation\(this, nextActive\)/);
   assert.match(source, /controller\.scheduleLayoutRefresh\(\{ settle: false \}\);\s*controller\.requestRender\(true\)/);
@@ -281,7 +296,8 @@ test("reading controllers survive zero-sized view transitions until the source s
   assert.match(syncSource, /if \(isSourceMode\(view\) && sourceVisible && !previewVisible\) \{\s*for \(const rootPreview of findRootPreviewsForView\(view\)\)/);
   assert.match(syncSource, /sourceController\?\.syncFloatingControlClasses\(\);\s*if \(!previewVisible\) \{\s*if \(alternateSurfaceVisible\)[\s\S]*controller\.destroy\(\);[\s\S]*continue;/);
   assert.match(syncSource, /if \(previewController\?\.plugin === this && !previewController\.destroyed[\s\S]*continue;\s*}\s*if \(!isRootPreviewReady/);
-  assert.match(syncSource, /if \(!isRootPreviewReady\(view, preview\)\) \{\s*previewController\?\.destroy\(\);\s*resetDormantRootPreview\(view, preview\);\s*continue;/);
+  assert.match(syncSource, /if \(!isRootPreviewReady\(view, preview\)\) \{\s*previewController\?\.destroy\(\);\s*if \(this\.schedulePreviewRenderRecovery\(view, preview\)\) \{\s*continue;\s*}\s*resetDormantRootPreview\(view, preview\);\s*continue;/);
+  assert.match(source, /schedulePreviewRenderRecovery\(view, preview\)[\s\S]*state\.attempts >= 2[\s\S]*view\.previewMode\?\.rerender\?\.\(true\)[\s\S]*this\.scheduleSurfaceSync\(60\)/);
 });
 
 test("scrolling and touch completion cannot trigger a full Markdown layout loop", async () => {

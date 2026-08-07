@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
+  markdownBlockPresentationMinHeight,
   normalizeMarkdownBlockMinHeight,
   normalizeMarkdownFloatBox,
   resizeMarkdownBlockMinHeight
@@ -11,17 +12,28 @@ import {
 const sourceUrl = new URL("../src/notedraw-plugin.js", import.meta.url);
 const stylesUrl = new URL("../styles.css", import.meta.url);
 
-test("floating Markdown boxes stay fully inside the normalized note surface", () => {
+test("floating Markdown positions stay independent from their saved size", () => {
   assert.deepEqual(normalizeMarkdownFloatBox({
     x: 0.447892974,
     y: 0.99,
     width: 0.855297191,
     height: 0.08
   }), {
-    x: 1 - 0.855297191,
-    y: 0.92,
+    x: 0.447892974,
+    y: 0.99,
     width: 0.855297191,
     height: 0.08
+  });
+  assert.deepEqual(normalizeMarkdownFloatBox({
+    x: 0,
+    y: 0.41,
+    width: 0.53,
+    height: 1
+  }), {
+    x: 0,
+    y: 0.41,
+    width: 0.53,
+    height: 1
   });
 });
 
@@ -39,6 +51,22 @@ test("Markdown block height creates owned whitespace without shrinking below its
     naturalHeight: 64,
     scaleY: 0.4
   }), 0);
+  assert.equal(resizeMarkdownBlockMinHeight({
+    currentHeight: 64,
+    naturalHeight: 64,
+    scaleY: 1.05
+  }), 0);
+  assert.equal(markdownBlockPresentationMinHeight({ floating: true, minHeight: 120 }), 0);
+  assert.equal(markdownBlockPresentationMinHeight({ floating: false, minHeight: 120 }), 120);
+});
+
+test("floating Markdown height never feeds the document height", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+
+  assert.match(source, /const height = markdownBlockPresentationMinHeight\(block\);/);
+  assert.match(source, /y: state\.floatBox\.y,/);
+  assert.doesNotMatch(source, /floatBox\.height \* Math\.max\(1, this\.canvasHeight\(\)\)/);
+  assert.doesNotMatch(source, /y: anchor\.y \+ \(state\.floatBox\.y - anchor\.y\) \* scaleY/);
 });
 
 test("Markdown blocks persist layout, floating state, and hybrid group membership", async () => {

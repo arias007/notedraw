@@ -19,8 +19,10 @@ import {
   calculateCanvasWindow,
   calculateQualityWindowLimit,
   calculateZoomAwareWindowFloor,
-  measureCanvasExtent
+  measureCanvasExtent,
+  shouldClearStaleReadingVirtualMinHeight
 } from "./canvas-sizing.mjs";
+import { mergeControllerDrawingSnapshot } from "./drawing-persistence.mjs";
 import {
   RESPONSIVE_POINT_BASIS,
   constrainWideContentFrame,
@@ -47,6 +49,7 @@ import {
 } from "./element-layout.mjs";
 import { matchRenderedTextToMarkdown } from "./markdown-anchors.mjs";
 import {
+  markdownBlockPresentationMinHeight,
   normalizeMarkdownBlockMinHeight,
   normalizeMarkdownFloatBox,
   resizeMarkdownBlockMinHeight
@@ -91,7 +94,6 @@ import {
 import {
   frozenNoteFlowLayoutSignature,
   hasStableNoteFlowAnchor,
-  mergeFrozenNoteFlowLayout,
   noteFlowAvoidanceReference,
   noteFlowRequiredOffset,
   noteFlowSurfaceRepairLimits,
@@ -111,7 +113,7 @@ import {
   stabilizeNoteFlowPointProjection,
   stabilizeNoteFlowBounds
 } from "./note-flow-layout.mjs";
-import { pickRootPreview, shouldMountRootPreview, shouldResetDormantRootPreview } from "./preview-lifecycle.mjs";
+import { pickRootPreview, shouldMountRootPreview, shouldRecoverEmptyRootPreview, shouldResetDormantRootPreview } from "./preview-lifecycle.mjs";
 import { buildSnappedConnectorPoints, connectorSnapThreshold } from "./connector-binding.mjs";
 import {
   buildFountainPenSegments,
@@ -259,7 +261,6 @@ var I18N = {
     boxElements: "Put selection in a box",
     unboxElements: "Remove box",
     floatMarkdownBlock: "Make Markdown block floating",
-    dockMarkdownBlock: "Put Markdown block back in note flow",
     penWidth: "Pen width",
     penOpacity: "Pen opacity",
     textGroup: "Text and links",
@@ -382,7 +383,7 @@ var I18N = {
     moveBackward: "Move down",
     lockElement: "Lock",
     unlockElement: "Unlock",
-    copyElement: "Copy",
+    copyElement: "Copy element/link",
     selectFloatingOnly: "Select floating elements only",
     selectMarkdownOnly: "Select Markdown and inserted elements only",
     selectAllElements: "Select all overlapping elements",
@@ -428,7 +429,6 @@ var I18N = {
     boxElements: "框成盒子组",
     unboxElements: "取消盒子框",
     floatMarkdownBlock: "设为悬浮 Markdown 块",
-    dockMarkdownBlock: "放回笔记流",
     penWidth: "笔宽",
     penOpacity: "笔透明度",
     textGroup: "文字链接",
@@ -551,7 +551,7 @@ var I18N = {
     moveBackward: "下移一层",
     lockElement: "锁定",
     unlockElement: "解锁",
-    copyElement: "复制元素",
+    copyElement: "复制元素/链接",
     selectFloatingOnly: "只选悬浮元素",
     selectMarkdownOnly: "只选 MD 和插入元素",
     selectAllElements: "选择全部重叠元素",
@@ -594,7 +594,6 @@ var I18N = {
     boxElements: "框成盒子群組",
     unboxElements: "取消盒子框",
     floatMarkdownBlock: "設為浮動 Markdown 區塊",
-    dockMarkdownBlock: "放回筆記流",
     penWidth: "筆寬",
     penOpacity: "筆透明度",
     textGroup: "文字連結",
@@ -1351,11 +1350,13 @@ var NoteDrawPlugin = class extends Plugin {
     this.saveTimers = /* @__PURE__ */ new Map();
     this.pendingDrawingSaves = /* @__PURE__ */ new Map();
     this.drawingWritePromises = /* @__PURE__ */ new Map();
+    this.suppressedDrawingSaves = [];
     this.drawingStateCache = /* @__PURE__ */ new Map();
     this.portableBundles = /* @__PURE__ */ new Map();
     this.portableBundleLoads = /* @__PURE__ */ new Map();
     this.portableResourceCache = /* @__PURE__ */ new Map();
     this.sharePackagePromises = /* @__PURE__ */ new Map();
+    this.previewRenderRecovery = /* @__PURE__ */ new Map();
     this.viewDrawingActive = /* @__PURE__ */ new WeakMap();
     this.viewToolbarState = /* @__PURE__ */ new WeakMap();
     this.viewEditHistory = /* @__PURE__ */ new WeakMap();
@@ -1516,6 +1517,12 @@ var NoteDrawPlugin = class extends Plugin {
     this.portableBundleLoads?.clear();
     this.portableResourceCache?.clear();
     this.sharePackagePromises?.clear();
+    for (const state of this.previewRenderRecovery?.values?.() || []) {
+      if (state.timer !== null) {
+        window.clearTimeout(state.timer);
+      }
+    }
+    this.previewRenderRecovery?.clear?.();
     for (const state of this.headerActions.values()) {
       state.button?.remove();
     }
@@ -1529,6 +1536,7 @@ var NoteDrawPlugin = class extends Plugin {
     }
     this.saveTimers.clear();
     this.pendingDrawingSaves.clear();
+    this.suppressedDrawingSaves = [];
     if (this.settingsSaveTimer !== null) {
       window.clearTimeout(this.settingsSaveTimer);
       this.settingsSaveTimer = null;
@@ -2061,13 +2069,13 @@ var NoteDrawPlugin = class extends Plugin {
       }
       await this.app.vault.modify(markdownFile, String(direction === "before" ? entry.markdownBefore : entry.markdownAfter || ""));
       const data = cloneDrawingData(direction === "before" ? entry.drawingBefore : entry.drawingAfter, drawingFile);
-      this.scheduleDrawingSave(drawingFile, data);
+      this.scheduleDrawingSave(drawingFile, data, { replace: true });
       this.emitApiEvent("markdown-changed", { file: markdownFile.path, history: direction });
       return true;
     }
     if (entry.kind === "drawing") {
       const data = cloneDrawingData(entry[direction], entry.file);
-      this.scheduleDrawingSave(entry.file, data);
+      this.scheduleDrawingSave(entry.file, data, { replace: true });
       return true;
     }
     if (entry.kind === "markdown") {
@@ -2307,7 +2315,7 @@ var NoteDrawPlugin = class extends Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.4.17",
+      version: "3.4.18",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -2656,7 +2664,7 @@ var NoteDrawPlugin = class extends Plugin {
     if (!controller) {
       return { ok: false, reason: "surface-not-found" };
     }
-    controller.setDrawingsVisible(visible !== false);
+    controller.setDrawingsVisible(visible !== false, { persist: true });
     const surface = this.describeController(controller);
     this.emitApiEvent("surface-changed", { ...surface, phase: "updated" });
     return { ok: true, surface };
@@ -2774,7 +2782,7 @@ var NoteDrawPlugin = class extends Plugin {
     controller.rebuildElementRelations();
     controller.invalidateStaticCache();
     controller.setSelectedStrokes(indexes);
-    this.scheduleDrawingSave(controller.file, controller.drawingData);
+    this.scheduleDrawingSave(controller.file, controller.drawingData, { userOperation: true });
     controller.recordDrawingHistory(before);
     controller.scheduleNoteFlowLayout({
       operation: indexes.some((index) => controller.drawingData.strokes[index]?.noteFlow?.enabled)
@@ -3240,6 +3248,50 @@ var NoteDrawPlugin = class extends Plugin {
       }
     }
   }
+  clearPreviewRenderRecovery(preview) {
+    const state = this.previewRenderRecovery?.get(preview);
+    if (state?.timer !== null && state?.timer !== void 0) {
+      window.clearTimeout(state.timer);
+    }
+    this.previewRenderRecovery?.delete(preview);
+  }
+  schedulePreviewRenderRecovery(view, preview) {
+    const lifecycle = rootPreviewLifecycleState(view, preview);
+    const renderer = view?.previewMode?.renderer;
+    if (this.runtimeDisposed || !shouldRecoverEmptyRootPreview({
+      ...lifecycle,
+      rendererMatches: renderer?.previewEl === preview
+    })) {
+      this.clearPreviewRenderRecovery(preview);
+      return false;
+    }
+    const path = normalizeVaultPath(view?.file?.path || "");
+    let state = this.previewRenderRecovery.get(preview);
+    if (!state || state.path !== path) {
+      this.clearPreviewRenderRecovery(preview);
+      state = { path, attempts: 0, timer: null };
+      this.previewRenderRecovery.set(preview, state);
+    }
+    if (state.timer !== null || state.attempts >= 2) {
+      return false;
+    }
+    const delay = state.attempts === 0 ? 0 : 120;
+    state.attempts += 1;
+    state.timer = window.setTimeout(() => {
+      state.timer = null;
+      if (this.runtimeDisposed || !preview?.isConnected || view?.previewMode?.renderer?.previewEl !== preview) {
+        this.clearPreviewRenderRecovery(preview);
+        return;
+      }
+      try {
+        view.previewMode?.rerender?.(true);
+      } catch (error) {
+        void error;
+      }
+      this.scheduleSurfaceSync(60);
+    }, delay);
+    return true;
+  }
   syncMarkdownControllerModes() {
     const leaves = this.app.workspace.getLeavesOfType?.("markdown") || [];
     for (const leaf of leaves) {
@@ -3260,6 +3312,7 @@ var NoteDrawPlugin = class extends Plugin {
       }
       if (isSourceMode(view) && sourceVisible && !previewVisible) {
         for (const rootPreview of findRootPreviewsForView(view)) {
+          this.clearPreviewRenderRecovery(rootPreview);
           const controller = this.controllers.get(rootPreview) || rootPreview._noteDrawController;
           controller?.destroy?.();
           resetDormantRootPreview(view, rootPreview);
@@ -3293,9 +3346,13 @@ var NoteDrawPlugin = class extends Plugin {
       }
       if (!isRootPreviewReady(view, preview)) {
         previewController?.destroy();
+        if (this.schedulePreviewRenderRecovery(view, preview)) {
+          continue;
+        }
         resetDormantRootPreview(view, preview);
         continue;
       }
+      this.clearPreviewRenderRecovery(preview);
       if (previewVisible && (!previewController || previewController.destroyed || previewController.file?.path !== view.file?.path)) {
         previewController?.destroy();
         previewController = this.resolveLivePreviewController(view);
@@ -4323,7 +4380,21 @@ var NoteDrawPlugin = class extends Plugin {
   }
   scheduleDrawingSave(file, data, options = {}) {
     const path = this.drawingStorageKey(file);
-    const canonical = normalizeDrawingDataForStorage(data, file);
+    if (options.replace !== true && options.userOperation !== true) {
+      this.suppressedDrawingSaves.push({
+        at: Date.now(),
+        path,
+        strokeCount: Array.isArray(data?.strokes) ? data.strokes.length : 0,
+        markdownBlockCount: Array.isArray(data?.markdownBlocks) ? data.markdownBlocks.length : 0,
+        stack: new Error().stack || ""
+      });
+      this.suppressedDrawingSaves.splice(0, Math.max(0, this.suppressedDrawingSaves.length - 20));
+      return false;
+    }
+    const incoming = normalizeDrawingDataForStorage(data, file);
+    const canonical = options.replace === true
+      ? incoming
+      : mergeControllerDrawingSnapshot(this.drawingStateCache.get(path), incoming);
     this.drawingStateCache.set(path, canonical);
     this.pendingDrawingSaves.set(path, file);
     this.refreshControllersForFile(file, canonical, { excludeData: options.excludeData || data });
@@ -4339,6 +4410,7 @@ var NoteDrawPlugin = class extends Plugin {
       });
     }, this.noteDrawSettings?.autoSaveDelayMs ?? DEFAULT_SETTINGS.autoSaveDelayMs);
     this.saveTimers.set(path, timer);
+    return true;
   }
   async flushDrawingSave(path) {
     const file = this.pendingDrawingSaves.get(path);
@@ -5053,6 +5125,7 @@ var PreviewDrawingController = class {
     this.readingVirtualSectionFrameId = null;
     this.readingVirtualSectionsManaged = false;
     this.readingVirtualSectionSignature = "";
+    this.readingVirtualStyleState = /* @__PURE__ */ new Map();
     this.readingLogicalSizerHeight = 0;
     this.readingZoomInteractionUntil = 0;
     this.readingZoomSettleTimer = null;
@@ -5062,8 +5135,10 @@ var PreviewDrawingController = class {
     this.pendingMindMapFile = null;
     this.pendingMindMapOptions = null;
     this.noteFlowFrameId = null;
+    this.noteFlowFallbackTimer = null;
     this.frozenNoteFlowRestoreFrameId = null;
     this.noteFlowOperationPending = false;
+    this.noteFlowPersistencePending = false;
     this.noteFlowResizeTimer = null;
     this.noteFlowSuppressResizeUntil = 0;
     this.noteFlowSettleEpoch = "";
@@ -5128,6 +5203,7 @@ var PreviewDrawingController = class {
     this.pendingDomRender = false;
     this.pendingInteractionRender = false;
     this.resizeFrameId = null;
+    this.resizeFallbackTimer = null;
     this.resizeNeedsLayout = false;
     this.resizeNeedsMeasure = false;
     this.resizePreserveNoteFlowAbsolute = false;
@@ -5439,6 +5515,7 @@ var PreviewDrawingController = class {
       }
     }
     this.refreshScrollContainer();
+    this.repairConnectedReadingSections();
     await this.prepareInitialReadingLayout();
     if (this.destroyed || !this.previewEl?.isConnected) {
       return;
@@ -5446,6 +5523,7 @@ var PreviewDrawingController = class {
     if (typeof MutationObserver !== "undefined") {
       this.markdownRenderObserver = new MutationObserver((mutations) => {
         if (mutations.some((mutation) => isMarkdownContentMutation(mutation))) {
+          this.repairConnectedReadingSections();
           const editingLayout = this.active && (
             this.toolMode === TOOL_EDIT_MD
             || this.noteFlowOperationPending
@@ -5470,6 +5548,7 @@ var PreviewDrawingController = class {
     this.applyReadingZoom();
     this.applyActiveState(this.active);
     await this.ensureDrawingsLoaded();
+    this.repairConnectedReadingSections();
     this.plugin.emitApiEvent("surface-changed", { ...this.plugin.describeController(this), phase: "mounted" });
   }
   async prepareInitialReadingLayout() {
@@ -5483,7 +5562,24 @@ var PreviewDrawingController = class {
     }
     const requestFrame = () => new Promise((resolve) => {
       if (typeof window.requestAnimationFrame === "function") {
-        window.requestAnimationFrame(resolve);
+        let settled = false;
+        let frameId = null;
+        let fallbackTimer = null;
+        const finish = () => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          if (frameId !== null) {
+            window.cancelAnimationFrame(frameId);
+          }
+          if (fallbackTimer !== null) {
+            window.clearTimeout(fallbackTimer);
+          }
+          resolve();
+        };
+        frameId = window.requestAnimationFrame(finish);
+        fallbackTimer = window.setTimeout(finish, 120);
       } else {
         window.setTimeout(resolve, 16);
       }
@@ -5630,6 +5726,7 @@ var PreviewDrawingController = class {
     this.resetNoteFlowSettle();
     this.noteFlowAnchorRepairReady = false;
     this.noteFlowAnchorRepairComplete = false;
+    this.noteFlowPersistencePending = false;
     this.noteFlowActivationRepairAttempted = false;
     this.noteFlowLayoutIncomplete = false;
     this.noteFlowAvoidanceAnchors.clear();
@@ -6146,36 +6243,52 @@ var PreviewDrawingController = class {
     this.resizePreserveAbsolutePlacement = this.resizePreserveAbsolutePlacement
       || options.preserveAbsolutePlacement === true;
     this.resizeNeedsMeasure = this.resizeNeedsMeasure || wantsMeasure || wantsLayout;
-    if (this.resizeFrameId !== null) {
+    if (this.resizeFrameId !== null || this.resizeFallbackTimer !== null) {
       return;
     }
-    this.resizeFrameId = window.requestAnimationFrame(() => {
+    this.resizeFrameId = window.requestAnimationFrame(() => this.flushScheduledResize());
+    this.resizeFallbackTimer = window.setTimeout(() => this.flushScheduledResize(), 120);
+  }
+  flushScheduledResize() {
+    if (this.resizeFrameId !== null) {
+      window.cancelAnimationFrame(this.resizeFrameId);
       this.resizeFrameId = null;
-      const layout = this.resizeNeedsLayout;
-      const measure = this.resizeNeedsMeasure;
-      const preserveNoteFlowAbsolute = layout && this.resizePreserveNoteFlowAbsolute;
-      const preserveAbsolutePlacement = this.resizePreserveAbsolutePlacement;
-      this.resizeNeedsLayout = false;
-      this.resizeNeedsMeasure = false;
-      this.resizePreserveNoteFlowAbsolute = false;
-      this.resizePreserveAbsolutePlacement = false;
-      const canvasChanged = this.resizeCanvas({ layout, measure, preserveNoteFlowAbsolute, preserveAbsolutePlacement });
-      this.updateFloatingControlsPosition();
-      this.positionFormatToolbar();
-      this.positionFloatingTextInput();
-      if (canvasChanged) {
-        if (layout) {
-          this.render();
-        } else {
-          this.renderCanvas();
-        }
+    }
+    if (this.resizeFallbackTimer !== null) {
+      window.clearTimeout(this.resizeFallbackTimer);
+      this.resizeFallbackTimer = null;
+    }
+    if (this.destroyed) {
+      return;
+    }
+    const layout = this.resizeNeedsLayout;
+    const measure = this.resizeNeedsMeasure;
+    const preserveNoteFlowAbsolute = layout && this.resizePreserveNoteFlowAbsolute;
+    const preserveAbsolutePlacement = this.resizePreserveAbsolutePlacement;
+    this.resizeNeedsLayout = false;
+    this.resizeNeedsMeasure = false;
+    this.resizePreserveNoteFlowAbsolute = false;
+    this.resizePreserveAbsolutePlacement = false;
+    const canvasChanged = this.resizeCanvas({ layout, measure, preserveNoteFlowAbsolute, preserveAbsolutePlacement });
+    this.updateFloatingControlsPosition();
+    this.positionFormatToolbar();
+    this.positionFloatingTextInput();
+    if (canvasChanged) {
+      if (layout) {
+        this.render();
+      } else {
+        this.renderCanvas();
       }
-    });
+    }
   }
   cancelResizeFrame() {
     if (this.resizeFrameId !== null) {
       window.cancelAnimationFrame(this.resizeFrameId);
       this.resizeFrameId = null;
+    }
+    if (this.resizeFallbackTimer !== null) {
+      window.clearTimeout(this.resizeFallbackTimer);
+      this.resizeFallbackTimer = null;
     }
     this.resizeNeedsLayout = false;
     this.resizeNeedsMeasure = false;
@@ -6270,7 +6383,7 @@ var PreviewDrawingController = class {
           this.scheduleNoteFlowAnchorRepair();
         }
         if (this.noteFlowOperationPending && this.hasNoteFlowElements()) {
-          this.scheduleNoteFlowLayout({ operation: true });
+          this.scheduleNoteFlowLayout();
         }
         if (this.drawingsLoaded) {
           if (layout) {
@@ -6585,6 +6698,7 @@ var PreviewDrawingController = class {
     this.cancelFrozenNoteFlowLayoutRestore();
     this.noteFlowAnchorRepairReady = false;
     this.noteFlowAnchorRepairComplete = false;
+    this.noteFlowPersistencePending = false;
     this.noteFlowOperationPending = true;
     this.scheduleMarkdownAnnotationRefresh({ layout: false, delay: 32 });
     return true;
@@ -6734,7 +6848,6 @@ var PreviewDrawingController = class {
     const actions = [
       { icon: "list-filter", key: "selectFloatingOnly", action: () => this.cycleSelectionFilter() },
       { icon: "copy", key: "copyElement", action: () => this.copySelectedElements() },
-      { icon: "link-2", key: "copyElementLink", action: () => void this.copySelectedElementLink() },
       { icon: "clipboard-paste", key: "pasteElement", action: () => this.pasteCopiedElements() },
       { icon: "external-link", key: "openSourceNote", action: () => void this.openSelectedMindMapSource() },
       { icon: "wrap-text", key: "insertIntoNote", action: () => this.toggleSelectedNoteFlow() },
@@ -6818,13 +6931,11 @@ var PreviewDrawingController = class {
     }
     const markdownBlocks = this.getSelectedMarkdownBlocks();
     const floating = markdownBlocks.length > 0 && markdownBlocks.every((block) => block.floating);
-    const floatButton = this.selectionMenu.querySelector('[data-note-draw-title-key="floatMarkdownBlock"], [data-note-draw-title-key="dockMarkdownBlock"]');
+    const floatButton = this.selectionMenu.querySelector('[data-note-draw-title-key="floatMarkdownBlock"]');
     if (floatButton) {
-      const key = floating ? "dockMarkdownBlock" : "floatMarkdownBlock";
-      floatButton.dataset.noteDrawTitleKey = key;
-      this.plugin.setAccessibleLabel(floatButton, key);
-      setIcon(floatButton, floating ? "pin-off" : "pin");
-      floatButton.toggleAttribute("hidden", !markdownBlocks.length);
+      this.plugin.setAccessibleLabel(floatButton, "floatMarkdownBlock");
+      setIcon(floatButton, "pin");
+      floatButton.toggleAttribute("hidden", !markdownBlocks.length || floating);
     }
   }
   selectionFilterContext() {
@@ -7494,7 +7605,7 @@ var PreviewDrawingController = class {
     }
     this.redoStack = [];
     this.invalidateStaticCache();
-    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
     this.recordDrawingHistory(historyBefore);
     this.render();
     return true;
@@ -7516,7 +7627,7 @@ var PreviewDrawingController = class {
     }
     this.redoStack = [];
     this.invalidateStaticCache();
-    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
     this.recordDrawingHistory(historyBefore);
     this.render();
     return true;
@@ -7537,7 +7648,7 @@ var PreviewDrawingController = class {
     }
     this.redoStack = [];
     this.invalidateStaticCache();
-    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
     this.recordDrawingHistory(historyBefore);
     this.render();
     return true;
@@ -7574,7 +7685,7 @@ var PreviewDrawingController = class {
     }
     this.redoStack = [];
     this.invalidateStaticCache();
-    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
     this.recordDrawingHistory(historyBefore);
     this.render();
     return true;
@@ -7747,16 +7858,18 @@ var PreviewDrawingController = class {
     }
   }
   toggleDrawingsVisible() {
-    this.setDrawingsVisible(!this.drawingsVisible);
+    this.setDrawingsVisible(!this.drawingsVisible, { persist: true });
   }
   async toggleDrawingsVisiblePersisted() {
     await this.ensureDrawingsLoaded();
     this.toggleDrawingsVisible();
   }
-  setDrawingsVisible(visible) {
+  setDrawingsVisible(visible, options = {}) {
     this.applyDrawingsVisibility(visible);
     this.drawingData.visible = this.drawingsVisible;
-    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    if (options.persist === true) {
+      this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
+    }
     this.syncSharedToolbarState();
   }
   applyDrawingsVisibility(visible) {
@@ -8783,7 +8896,7 @@ var PreviewDrawingController = class {
     this.setSelectedStrokes(insertedIndex);
     this.redoStack = [];
     this.invalidateStaticCache();
-    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
     this.recordDrawingHistory(this.connectorGesture?.historyBefore);
     this.currentStroke = null;
     this.connectorGesture = null;
@@ -9053,7 +9166,7 @@ var PreviewDrawingController = class {
       this.clearSelectedStrokes();
       this.redoStack = [];
       this.invalidateStaticCache();
-      this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+      this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
       this.recordDrawingHistory(historyBefore);
       this.scheduleNoteFlowLayout({ operation: Boolean(this.currentStroke.noteFlow?.enabled) });
       this.currentStroke = null;
@@ -9369,7 +9482,7 @@ var PreviewDrawingController = class {
     this.captureResponsiveAnchorsForIndexes(this.getSelectedStrokeIndexes());
     this.redoStack = [];
     this.invalidateStaticCache();
-    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
     if (mindMapStrokeToSync) {
       this.textCommitBarrier.track(this.syncMindMapNodeToSource(mindMapStrokeToSync, text, { drawingBefore: historyBefore }));
     } else {
@@ -9549,7 +9662,7 @@ var PreviewDrawingController = class {
     this.syncTextPanelButtons();
     this.redoStack = [];
     this.invalidateStaticCache();
-    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
     this.recordDrawingHistory(historyBefore);
     this.scheduleLayoutRefresh({ settle: false });
     this.render();
@@ -9586,7 +9699,7 @@ var PreviewDrawingController = class {
       }
       await this.plugin.app.vault.modify(file, result.source);
       this.refreshMindMapSourceMetadata(node.mapId, node.sourcePath, result.source);
-      this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+      this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
       if (options.drawingBefore) {
         this.recordCompoundHistory(file, source, result.source, options.drawingBefore);
       }
@@ -9647,7 +9760,7 @@ var PreviewDrawingController = class {
     this.captureResponsiveAnchorsForIndexes([this.drawingData.strokes.length - 1]);
     this.redoStack = [];
     this.invalidateStaticCache();
-    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
     this.recordDrawingHistory(historyBefore);
     this.scheduleLayoutRefresh({ settle: false });
     this.render();
@@ -9690,7 +9803,7 @@ var PreviewDrawingController = class {
       this.captureResponsiveAnchorsForIndexes([this.drawingData.strokes.length - 1]);
       this.redoStack = [];
       this.invalidateStaticCache();
-      this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+      this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
       this.recordDrawingHistory(historyBefore);
       this.render();
       return;
@@ -9721,7 +9834,7 @@ var PreviewDrawingController = class {
     this.captureResponsiveAnchorsForIndexes([this.drawingData.strokes.length - 1]);
     this.redoStack = [];
     this.invalidateStaticCache();
-    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
     this.recordDrawingHistory(historyBefore);
     this.render();
   }
@@ -9850,6 +9963,27 @@ var PreviewDrawingController = class {
     const renderer = this.view?.previewMode?.renderer;
     return renderer?.previewEl === this.previewEl && Array.isArray(renderer?.sections) ? renderer : null;
   }
+  repairConnectedReadingSections(renderer = this.readingPreviewRenderer()) {
+    if (!renderer || !this.previewEl?.isConnected) {
+      return 0;
+    }
+    let repaired = 0;
+    try {
+      renderer.updateVirtualDisplay?.();
+      for (const section of renderer.sections || []) {
+        if (section?.shown === false || !section?.el?.isConnected || section.rendered !== false) {
+          continue;
+        }
+        section.render?.();
+        renderer.measureSection?.(section);
+        repaired += 1;
+      }
+      renderer.updateVirtualDisplay?.();
+    } catch (error) {
+      void error;
+    }
+    return repaired;
+  }
   captureReadingLogicalSizerHeight(renderer = this.readingPreviewRenderer(), options = {}) {
     const sizer = renderer?.sizerEl;
     const allowGrowth = options.allowGrowth === true;
@@ -9861,12 +9995,24 @@ var PreviewDrawingController = class {
     const sectionHeight = (renderer.sections || []).reduce((total, section) => {
       return total + (section?.shown === false ? 0 : Math.max(0, Number(section?.height) || 0));
     }, Math.max(0, Number(renderer.topSpace) || 0));
+    const viewportHeight = Math.max(1, Number(this.previewEl?.clientHeight) || 1);
+    const orphanedManagedHeight = sizer.hasAttribute("data-note-draw-virtual-height")
+      && !this.readingVirtualStyleState.has(sizer);
+    const staleLegacyHeight = !sizer.hasAttribute("data-note-draw-virtual-height")
+      && shouldClearStaleReadingVirtualMinHeight({
+        inlineMinHeight: Number.parseFloat(sizer.style.minHeight) || 0,
+        sectionHeight,
+        viewportHeight
+      });
+    if (orphanedManagedHeight || staleLegacyHeight) {
+      sizer.style.removeProperty("min-height");
+      sizer.removeAttribute("data-note-draw-virtual-height");
+    }
     const observedHeight = Math.max(
       sectionHeight,
       Math.max(0, Number(sizer.scrollHeight) || 0) - Math.max(0, Number(this.readingBottomSpacerHeight) || 0),
       Math.max(0, Number(sizer.offsetHeight) || 0)
     );
-    const viewportHeight = Math.max(1, Number(this.previewEl?.clientHeight) || 1);
     const runawayThreshold = Math.max(8_000, sectionHeight * 4, viewportHeight * 8);
     const priorHeight = this.readingLogicalSizerHeight;
     const transientGrowth = observedHeight > runawayThreshold && sectionHeight > 0 && observedHeight > sectionHeight * 4;
@@ -9929,25 +10075,52 @@ var PreviewDrawingController = class {
   }
   restoreReadingVirtualSections() {
     this.cancelReadingVirtualSectionSync();
-    if (!this.readingVirtualSectionsManaged) {
+    if (!this.readingVirtualSectionsManaged && !this.readingVirtualStyleState.size) {
       return;
     }
     this.readingVirtualSectionsManaged = false;
     this.readingVirtualSectionSignature = "";
+    this.restoreReadingVirtualStyles();
     const renderer = this.readingPreviewRenderer();
     if (!renderer || !this.previewEl?.isConnected) {
       return;
     }
-    try {
-      renderer.updateVirtualDisplay?.();
-    } catch (error) {
-      void error;
-    }
+    this.repairConnectedReadingSections(renderer);
     this.readingLogicalSizerHeight = 0;
     this.captureReadingLogicalSizerHeight(renderer);
     if (this.readingBottomSpacerHeight > 0) {
       this.ensureReadingBottomSpacer();
     }
+  }
+  rememberReadingVirtualStyle(element, property) {
+    if (!element?.style) {
+      return;
+    }
+    let properties = this.readingVirtualStyleState.get(element);
+    if (!properties) {
+      properties = /* @__PURE__ */ new Map();
+      this.readingVirtualStyleState.set(element, properties);
+    }
+    if (!properties.has(property)) {
+      properties.set(property, {
+        value: element.style.getPropertyValue(property),
+        priority: element.style.getPropertyPriority(property)
+      });
+    }
+  }
+  restoreReadingVirtualStyles() {
+    for (const [element, properties] of this.readingVirtualStyleState) {
+      for (const [property, state] of properties) {
+        if (state.value) {
+          element.style?.setProperty(property, state.value, state.priority || "");
+        } else {
+          element.style?.removeProperty(property);
+        }
+      }
+      element.removeAttribute?.("data-note-draw-virtual-height");
+      element.removeAttribute?.("data-note-draw-virtual-pusher");
+    }
+    this.readingVirtualStyleState.clear();
   }
   syncReadingVirtualSections() {
     if (this.isReadingZoomInteractionActive()) {
@@ -9962,6 +10135,8 @@ var PreviewDrawingController = class {
     if (!renderer || target !== sizer || !target?.isConnected || !this.readingZoomStage?.contains?.(sizer) || !pusher || !sections.length || Math.abs(zoom - 1) < 0.001) {
       return false;
     }
+    this.rememberReadingVirtualStyle(sizer, "min-height");
+    this.rememberReadingVirtualStyle(pusher, "margin-bottom");
 
     const shown = sections.filter((section) => section?.shown !== false && section?.el);
     const knownHeights = shown.map((section) => Number(section.height) || 0).filter((height) => height > 0);
@@ -10050,6 +10225,8 @@ var PreviewDrawingController = class {
     if (sizer.style.minHeight !== minimumHeight) {
       sizer.style.minHeight = minimumHeight;
     }
+    sizer.setAttribute("data-note-draw-virtual-height", "true");
+    pusher.setAttribute("data-note-draw-virtual-pusher", "true");
 
     const visibleIndexes = visible.map((record) => sections.indexOf(record.section)).filter((index) => index >= 0);
     const firstIndex = visibleIndexes[0] ?? 0;
@@ -10817,7 +10994,7 @@ var PreviewDrawingController = class {
       return false;
     }
     this.redoStack = [];
-    this.plugin.scheduleDrawingSave(file, this.drawingData);
+    this.plugin.scheduleDrawingSave(file, this.drawingData, { userOperation: true });
     this.recordCompoundHistory(file, result.before, result.after, drawingHistoryBefore);
     this.scheduleMarkdownAnnotationRefresh({ layout: true, delay: 0 });
     this.scheduleNoteFlowLayout({ operation: this.hasNoteFlowElements() });
@@ -11170,7 +11347,7 @@ var PreviewDrawingController = class {
       this.syncBoundConnectors({ elementIds: this.connectorTargetIdsForStrokeIndexes(affectedIndexes) });
       this.lastTextTap = null;
       this.redoStack = [];
-      this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+      this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
       if (!markdownDrop) {
         this.recordDrawingHistory(drawingHistoryBefore);
       }
@@ -11199,7 +11376,8 @@ var PreviewDrawingController = class {
   cancelSelectedStrokeDrag(restoreOriginal = false) {
     this.clearSelectionLongPress();
     this.clearDraggedNoteFlowPlacement();
-    if (restoreOriginal && this.dragStrokeOriginalPoints?.size) {
+    const restoredDrag = Boolean(restoreOriginal && this.dragStrokeOriginalPoints?.size);
+    if (restoredDrag) {
       this.resetNoteFlowSettle();
       this.clearNoteFlowLayout();
       for (const [index, points] of this.dragStrokeOriginalPoints.entries()) {
@@ -11215,7 +11393,7 @@ var PreviewDrawingController = class {
       this.releasePointerCapture(this.activePointerId);
     }
     this.clearSelectedStrokeDragState();
-    if (restoreOriginal) {
+    if (restoredDrag) {
       this.scheduleNoteFlowLayout({ operation: true });
     }
     this.render();
@@ -11401,8 +11579,7 @@ var PreviewDrawingController = class {
       const currentHeight = Math.max(
         naturalHeight,
         Number(element?.offsetHeight) || 0,
-        normalizeMarkdownBlockMinHeight(block.minHeight),
-        block.floating && block.floatBox ? block.floatBox.height * Math.max(1, this.canvasHeight()) : 0
+        normalizeMarkdownBlockMinHeight(block.minHeight)
       );
       return [block.id, {
         block,
@@ -11508,12 +11685,11 @@ var PreviewDrawingController = class {
       const block = state.block;
       if (state.floating && state.floatBox) {
         block.floating = true;
-        const minimumNormalizedHeight = state.naturalHeight / Math.max(1, this.canvasHeight());
         block.floatBox = normalizeMarkdownFloatBox({
           x: anchor.x + (state.floatBox.x - anchor.x) * scaleX,
-          y: anchor.y + (state.floatBox.y - anchor.y) * scaleY,
+          y: state.floatBox.y,
           width: state.floatBox.width * Math.abs(scaleX),
-          height: Math.max(minimumNormalizedHeight, state.floatBox.height * Math.abs(scaleY))
+          height: clamp(state.naturalHeight / Math.max(1, this.canvasHeight()), 0.02, 1)
         });
       } else {
         block.span = clamp(Math.round(state.span * Math.abs(scaleX)), 2, 12);
@@ -11548,7 +11724,7 @@ var PreviewDrawingController = class {
       this.captureResponsiveAnchorsForIndexes(resizedIndexes);
       this.syncBoundConnectors({ elementIds: this.connectorTargetIdsForStrokeIndexes(resizedIndexes) });
       this.redoStack = [];
-      this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+      this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
       this.recordDrawingHistory(this.resizeDrawingHistoryBefore);
       if (resizedIndexes.some((index) => this.drawingData.strokes[index]?.noteFlow?.enabled)) {
         this.scheduleNoteFlowLayout({ operation: true });
@@ -12090,7 +12266,7 @@ var PreviewDrawingController = class {
         stroke.text = nextText;
         this.redoStack = [];
         this.invalidateStaticCache();
-        this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+        this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
         this.render();
         if (normalizeMindMapNode(stroke.mindMapNode)?.affectsSource) {
           this.textCommitBarrier.track(this.syncMindMapNodeToSource(stroke, nextText.replace(/^\s*(?:[-+*]|\d+[.)])\s+/, ""), { drawingBefore: historyBefore }));
@@ -12970,15 +13146,17 @@ var PreviewDrawingController = class {
     return natural;
   }
   applyMarkdownBlockHeightPresentation(block, element) {
-    const requested = block?.floating && block.floatBox
-      ? block.floatBox.height * Math.max(1, this.canvasHeight())
-      : block?.minHeight;
-    const height = normalizeMarkdownBlockMinHeight(requested);
+    const height = markdownBlockPresentationMinHeight(block);
+    const previousHeight = element.style.getPropertyValue("--notedraw-md-min-height");
+    const wasResized = element.hasAttribute("data-note-draw-resized-height");
     element.toggleAttribute("data-note-draw-resized-height", height > 0);
     if (height > 0) {
       element.style.setProperty("--notedraw-md-min-height", `${height}px`);
     } else {
       element.style.removeProperty("--notedraw-md-min-height");
+    }
+    if (wasResized !== (height > 0) || previousHeight !== (height > 0 ? `${height}px` : "")) {
+      this.readingLogicalSizerHeight = 0;
     }
   }
   refreshMarkdownBlockPresentation(blockIds = this.selectedMarkdownBlockIds) {
@@ -13329,7 +13507,7 @@ var PreviewDrawingController = class {
     }
     return true;
   }
-  async copySelectedElementLink(options = {}) {
+  selectedElementLinkPayload() {
     const indexes = this.getSelectedStrokeIndexes();
     const blockIds = this.getSelectedMarkdownBlocks().map((block) => block.id);
     const ids = [
@@ -13338,11 +13516,19 @@ var PreviewDrawingController = class {
     ];
     const file = normalizeVaultPath(this.file?.path || "");
     if (!ids.length || !file) {
-      return { ok: false, reason: "selection-not-found" };
+      return null;
     }
     const params = new URLSearchParams({ file, ids: Array.from(new Set(ids)).join(",") });
     const uri = `notedraw://element?${params.toString()}`;
     const markdown = `[${this.plugin.t("elementLinkLabel")}](${uri})`;
+    return { uri, markdown, ids: Array.from(new Set(ids)), file };
+  }
+  async copySelectedElementLink(options = {}) {
+    const payload = this.selectedElementLinkPayload();
+    if (!payload) {
+      return { ok: false, reason: "selection-not-found" };
+    }
+    const { uri, markdown, ids, file } = payload;
     const copied = await writeTextToClipboard(markdown);
     if (!copied) {
       return { ok: false, reason: "clipboard-unavailable", uri, markdown };
@@ -13351,7 +13537,7 @@ var PreviewDrawingController = class {
     if (!options.quiet) {
       new Notice(this.plugin.t("copiedElementLink"));
     }
-    return { ok: true, uri, markdown, ids: Array.from(new Set(ids)), file };
+    return { ok: true, uri, markdown, ids, file };
   }
   copySelectedElements(options = {}) {
     const indexes = this.getSelectedStrokeIndexes();
@@ -13376,6 +13562,12 @@ var PreviewDrawingController = class {
       strokes,
       copiedAt: Date.now()
     };
+    const link = this.selectedElementLinkPayload();
+    if (link) {
+      // Keep the internal element copy for NoteDraw canvas paste and expose the
+      // same selection as a Markdown link to Obsidian's note editor.
+      void writeTextToClipboard(link.markdown);
+    }
     this.hideSelectionMenu();
     if (!options.quiet) {
       new Notice(this.plugin.t("copiedElements", { count: strokes.length }));
@@ -13465,7 +13657,7 @@ var PreviewDrawingController = class {
     this.setSelectedStrokes(indexes);
     this.redoStack = [];
     this.invalidateStaticCache();
-    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
     this.recordDrawingHistory(historyBefore);
     this.scheduleNoteFlowLayout({
       operation: pasted.some((stroke) => stroke?.noteFlow?.enabled)
@@ -13761,7 +13953,7 @@ var PreviewDrawingController = class {
     this.captureResponsiveAnchorsForIndexes(indexes);
     this.hideSelectionMenu();
     this.redoStack = [];
-    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
     this.recordDrawingHistory(historyBefore);
     this.scheduleNoteFlowLayout({ operation: true });
     this.scheduleLayoutRefresh({ settle: false });
@@ -14353,7 +14545,7 @@ var PreviewDrawingController = class {
         layout: normalizeElementLayout(stroke.layout),
         contentWidth: contentFrame.width,
         viewportHeight,
-        preferCurrent: this.draggingStroke || this.resizingSelection || this.currentStroke === stroke
+        preferCurrent: Boolean(normalizeNoteFlow(stroke.noteFlow)?.positionBasis)
       });
       return { stroke, index, ...stabilized };
     }).filter(Boolean).sort((a, b) => a.bounds.minY - b.bounds.minY);
@@ -14363,8 +14555,8 @@ var PreviewDrawingController = class {
       const changed = Boolean(this.noteFlowLayoutSignature) || frozenLayoutChanged;
       this.clearNoteFlowLayout();
       this.noteFlowLayoutSignature = "";
-      if (frozenLayoutChanged && this.file && this.drawingData) {
-        this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+      if (frozenLayoutChanged && this.noteFlowPersistencePending && this.file && this.drawingData) {
+        this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: this.noteFlowPersistencePending });
       }
       return changed;
     }
@@ -14603,10 +14795,7 @@ var PreviewDrawingController = class {
         }
       }
     }
-    const frozenLayout = missingStableAnchor
-      ? mergeFrozenNoteFlowLayout(this.drawingData?.noteFlowLayout, { version: 1, offsets: frozenOffsets })
-      : { version: 1, offsets: frozenOffsets };
-    const frozenLayoutChanged = this.updateFrozenNoteFlowLayout(frozenLayout.offsets);
+    const frozenLayoutChanged = !missingStableAnchor && this.updateFrozenNoteFlowLayout(frozenOffsets);
     this.captureReadingLogicalSizerHeight(undefined, { allowGrowth: true });
     this.noteFlowLayoutIncomplete = missingStableAnchor;
     if (canRepairStoredAnchors) {
@@ -14615,8 +14804,8 @@ var PreviewDrawingController = class {
         this.noteFlowAnchorRepairComplete = false;
       }
     }
-    if ((migratedAnchor || updatedNoteFlowMetadata || frozenLayoutChanged) && this.file && this.drawingData) {
-      this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    if (this.noteFlowPersistencePending && (migratedAnchor || updatedNoteFlowMetadata || frozenLayoutChanged) && this.file && this.drawingData) {
+      this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: this.noteFlowPersistencePending });
     }
     const changed = migratedAnchor || updatedNoteFlowMetadata || frozenLayoutChanged || layoutStyleChanged || signature !== this.noteFlowLayoutSignature;
     this.noteFlowLayoutSignature = signature;
@@ -14809,6 +14998,7 @@ var PreviewDrawingController = class {
     if (options.operation === true && this.active) {
       this.cancelFrozenNoteFlowLayoutRestore();
       this.noteFlowOperationPending = true;
+      this.noteFlowPersistencePending = true;
     }
     const editingNoteFlow = this.active && (
       this.noteFlowOperationPending
@@ -14819,11 +15009,21 @@ var PreviewDrawingController = class {
     if (!editingNoteFlow) {
       return;
     }
-    if (this.noteFlowFrameId !== null) {
+    if (this.noteFlowFrameId !== null || this.noteFlowFallbackTimer !== null) {
       return;
     }
-    this.noteFlowFrameId = window.requestAnimationFrame(() => {
-      this.noteFlowFrameId = null;
+    const run = () => {
+      if (this.noteFlowFrameId !== null) {
+        window.cancelAnimationFrame(this.noteFlowFrameId);
+        this.noteFlowFrameId = null;
+      }
+      if (this.noteFlowFallbackTimer !== null) {
+        window.clearTimeout(this.noteFlowFallbackTimer);
+        this.noteFlowFallbackTimer = null;
+      }
+      if (this.destroyed) {
+        return;
+      }
       const refreshedDraggedFlow = this.refreshDraggedNoteFlowAnchors();
       const layoutChanged = this.applyNoteFlowLayout() || refreshedDraggedFlow;
       if (!this.draggingStroke && !this.resizingSelection) {
@@ -14831,19 +15031,27 @@ var PreviewDrawingController = class {
           this.scheduleNoteFlowAnchorRepair();
         } else {
           this.noteFlowOperationPending = false;
+          this.noteFlowPersistencePending = false;
         }
       }
       if (layoutChanged && !this.draggingStroke) {
         this.scheduleNoteFlowSettleResize();
       }
-    });
+    };
+    this.noteFlowFrameId = window.requestAnimationFrame(run);
+    this.noteFlowFallbackTimer = window.setTimeout(run, 120);
   }
   cancelNoteFlowLayout() {
     this.noteFlowOperationPending = false;
+    this.noteFlowPersistencePending = false;
     this.noteFlowLayoutIncomplete = false;
     if (this.noteFlowFrameId !== null) {
       window.cancelAnimationFrame(this.noteFlowFrameId);
       this.noteFlowFrameId = null;
+    }
+    if (this.noteFlowFallbackTimer !== null) {
+      window.clearTimeout(this.noteFlowFallbackTimer);
+      this.noteFlowFallbackTimer = null;
     }
     if (this.noteFlowResizeTimer !== null) {
       window.clearTimeout(this.noteFlowResizeTimer);
@@ -15064,7 +15272,7 @@ var PreviewDrawingController = class {
     this.hideSelectionMenu();
     this.redoStack = [];
     this.invalidateStaticCache();
-    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
     this.recordDrawingHistory(historyBefore);
     this.scheduleNoteFlowLayout();
     this.render();
@@ -15106,7 +15314,7 @@ var PreviewDrawingController = class {
     this.hideSelectionMenu();
     this.redoStack = [];
     this.invalidateStaticCache();
-    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
     this.recordDrawingHistory(historyBefore);
     this.render();
   }
@@ -15153,7 +15361,7 @@ var PreviewDrawingController = class {
     this.pruneElementGroups();
     this.redoStack = [];
     this.invalidateStaticCache();
-    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
     this.recordDrawingHistory(historyBefore);
     this.syncSelectionMenuButtons();
     this.render();
@@ -15185,7 +15393,7 @@ var PreviewDrawingController = class {
       block.span = 12;
     }
     this.redoStack = [];
-    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
     this.recordDrawingHistory(historyBefore);
     this.syncSelectionMenuButtons();
     this.render();
@@ -15406,7 +15614,7 @@ var PreviewDrawingController = class {
     this.currentEditorFile = null;
     this.currentEditorEmbedded = false;
     if (markdownMetadataChanged && this.surfaceType === "preview") {
-      this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+      this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
     }
     return commit;
   }
@@ -15482,7 +15690,7 @@ var PreviewDrawingController = class {
     this.drawingData.webEdits = edits;
     this.redoStack = [];
     this.recordDrawingHistory(historyBefore);
-    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
     this.render();
     return true;
   }
@@ -15581,7 +15789,7 @@ var PreviewDrawingController = class {
     this.clearSelectedStrokes();
     this.redoStack = [];
     this.rebuildElementRelations();
-    this.plugin.scheduleDrawingSave(this.file, this.drawingData);
+    this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true, replace: true });
     this.recordDrawingHistory(historyBefore);
     this.scheduleNoteFlowLayout({ operation: removedNoteFlow });
     this.render();

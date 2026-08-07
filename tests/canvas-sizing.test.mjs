@@ -6,7 +6,8 @@ import {
   calculateCanvasWindow,
   calculateQualityWindowLimit,
   calculateZoomAwareWindowFloor,
-  measureCanvasExtent
+  measureCanvasExtent,
+  shouldClearStaleReadingVirtualMinHeight
 } from "../src/canvas-sizing.mjs";
 
 function createStyleState() {
@@ -49,6 +50,24 @@ test("floating Markdown overflow cannot expand the logical canvas width", () => 
 
   assert.equal(measureCanvasExtent(previewEl, measureEl).width, 516);
   assert.equal(floatingStyle.getPropertyValue("display"), "");
+});
+
+test("stale virtual min-height is removed only when it dwarfs real sections", () => {
+  assert.equal(shouldClearStaleReadingVirtualMinHeight({
+    inlineMinHeight: 5302,
+    sectionHeight: 871,
+    viewportHeight: 622
+  }), true);
+  assert.equal(shouldClearStaleReadingVirtualMinHeight({
+    inlineMinHeight: 1600,
+    sectionHeight: 1200,
+    viewportHeight: 700
+  }), false);
+  assert.equal(shouldClearStaleReadingVirtualMinHeight({
+    inlineMinHeight: 50_000,
+    sectionHeight: 48_000,
+    viewportHeight: 900
+  }), false);
 });
 
 test("small documents use a single full-height canvas window", () => {
