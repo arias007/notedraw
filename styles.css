@@ -646,6 +646,10 @@
   transition: outline-color 100ms ease;
 }
 
+.notedraw-md-block[data-note-draw-resized-height="true"] {
+  min-height: var(--notedraw-md-min-height);
+}
+
 .notedraw-md-block::before {
   position: absolute;
   z-index: -1;

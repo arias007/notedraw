@@ -2,6 +2,26 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
+export function normalizeMarkdownBlockMinHeight(value, maxHeight = 2400) {
+  const height = Number(value);
+  if (!Number.isFinite(height) || height <= 0) {
+    return 0;
+  }
+  return Math.round(clamp(height, 0, Math.max(0, Number(maxHeight) || 2400)));
+}
+
+export function resizeMarkdownBlockMinHeight({
+  currentHeight,
+  naturalHeight,
+  scaleY,
+  maxHeight = 2400
+} = {}) {
+  const natural = Math.max(1, Number(naturalHeight) || 1);
+  const current = Math.max(natural, Number(currentHeight) || natural);
+  const desired = normalizeMarkdownBlockMinHeight(current * Math.max(0.12, Math.abs(Number(scaleY) || 1)), maxHeight);
+  return desired > natural + 0.5 ? desired : 0;
+}
+
 export function normalizeMarkdownFloatBox(value) {
   if (!value || !Number.isFinite(Number(value.x)) || !Number.isFinite(Number(value.y))) {
     return null;

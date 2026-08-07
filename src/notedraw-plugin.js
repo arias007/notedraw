@@ -46,7 +46,11 @@ import {
   stabilizeProjectedElementBox
 } from "./element-layout.mjs";
 import { matchRenderedTextToMarkdown } from "./markdown-anchors.mjs";
-import { normalizeMarkdownFloatBox } from "./markdown-block-layout.mjs";
+import {
+  normalizeMarkdownBlockMinHeight,
+  normalizeMarkdownFloatBox,
+  resizeMarkdownBlockMinHeight
+} from "./markdown-block-layout.mjs";
 import { buildVirtualMarkdownSectionAnchors } from "./markdown-section-anchors.mjs";
 import {
   SELECTED_DRAW_GESTURE_DRAW_OR_DESELECT,
@@ -96,6 +100,7 @@ import {
   preserveAbsoluteNoteFlowPoints,
   projectNoteFlowDocumentPoint,
   reflowNoteFlowIntervals,
+  selectOwnedBlankSpaceCandidate,
   selectNoteFlowAvoidanceCandidate,
   selectNoteFlowDropPlacement,
   selectNoteFlowInsertionPlacement,
@@ -2302,7 +2307,7 @@ var NoteDrawPlugin = class extends Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.4.15",
+      version: "3.4.16",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -8387,10 +8392,14 @@ var PreviewDrawingController = class {
     if (!this.active || event.button !== 0) {
       return;
     }
+    let ownedBlankSpaceStrokeIndex = -1;
     if (!routed) {
       this.plugin.setInteractionController(this);
       const ownPoint = this.eventToPoint(event);
-      if (this.findStrokeAt(ownPoint) < 0) {
+      if (this.toolMode === TOOL_SELECT) {
+        ownedBlankSpaceStrokeIndex = this.findOwnedBlankSpaceStrokeAtClientPoint(event.clientX, event.clientY);
+      }
+      if (this.findStrokeAt(ownPoint) < 0 && ownedBlankSpaceStrokeIndex < 0) {
         const embeddedController = this.plugin.findEmbeddedStrokeControllerAtPoint(this, event);
         if (embeddedController) {
           this.routedPointerController = embeddedController;
@@ -8432,8 +8441,13 @@ var PreviewDrawingController = class {
     if (noteFlowPenActive && this.hasHybridSelection()) {
       this.clearSelectedStrokes();
     }
-    const hitStrokeIndex = noteFlowPenActive ? -1 : this.findStrokeAt(point);
+    let hitStrokeIndex = noteFlowPenActive ? -1 : this.findStrokeAt(point);
     const resizeHandle = noteFlowPenActive ? null : this.findSelectionHandleAt(point);
+    if (this.toolMode === TOOL_SELECT && hitStrokeIndex < 0 && !resizeHandle) {
+      hitStrokeIndex = ownedBlankSpaceStrokeIndex >= 0
+        ? ownedBlankSpaceStrokeIndex
+        : this.findOwnedBlankSpaceStrokeAtClientPoint(event.clientX, event.clientY);
+    }
     const hadSelection = this.hasHybridSelection();
     const selectedDrawGesture = resolveSelectedDrawGesture({
       toolMode: this.toolMode,
@@ -11381,12 +11395,25 @@ var PreviewDrawingController = class {
         points: this.drawingData.strokes[index].points.map((strokePoint) => ({ ...strokePoint }))
       }
     ]));
-    this.resizeSelectionOriginalMarkdownBlocks = new Map(resizableMarkdownBlocks.map((block) => [block.id, {
-      block,
-      span: block.span,
-      floating: block.floating,
-      floatBox: block.floatBox ? { ...block.floatBox } : null
-    }]));
+    this.resizeSelectionOriginalMarkdownBlocks = new Map(resizableMarkdownBlocks.map((block) => {
+      const element = this.markdownBlockElement(block);
+      const naturalHeight = this.markdownBlockNaturalHeight(element);
+      const currentHeight = Math.max(
+        naturalHeight,
+        Number(element?.offsetHeight) || 0,
+        normalizeMarkdownBlockMinHeight(block.minHeight),
+        block.floating && block.floatBox ? block.floatBox.height * Math.max(1, this.canvasHeight()) : 0
+      );
+      return [block.id, {
+        block,
+        span: block.span,
+        minHeight: block.minHeight,
+        naturalHeight,
+        currentHeight,
+        floating: block.floating,
+        floatBox: block.floatBox ? { ...block.floatBox } : null
+      }];
+    }));
     this.resizeDrawingHistoryBefore = this.captureDrawingHistorySnapshot();
     this.resizeSelectionMoved = false;
     this.pointerStartClient = { x: event.clientX, y: event.clientY };
@@ -11481,14 +11508,20 @@ var PreviewDrawingController = class {
       const block = state.block;
       if (state.floating && state.floatBox) {
         block.floating = true;
+        const minimumNormalizedHeight = state.naturalHeight / Math.max(1, this.canvasHeight());
         block.floatBox = normalizeMarkdownFloatBox({
           x: anchor.x + (state.floatBox.x - anchor.x) * scaleX,
           y: anchor.y + (state.floatBox.y - anchor.y) * scaleY,
           width: state.floatBox.width * Math.abs(scaleX),
-          height: state.floatBox.height * Math.abs(scaleY)
+          height: Math.max(minimumNormalizedHeight, state.floatBox.height * Math.abs(scaleY))
         });
       } else {
         block.span = clamp(Math.round(state.span * Math.abs(scaleX)), 2, 12);
+        block.minHeight = resizeMarkdownBlockMinHeight({
+          currentHeight: state.currentHeight,
+          naturalHeight: state.naturalHeight,
+          scaleY
+        });
       }
     }
     const resizedGroupIds = new Set([
@@ -11550,6 +11583,7 @@ var PreviewDrawingController = class {
     if (restoreOriginal && this.resizeSelectionOriginalMarkdownBlocks?.size) {
       for (const state of this.resizeSelectionOriginalMarkdownBlocks.values()) {
         state.block.span = state.span;
+        state.block.minHeight = state.minHeight;
         state.block.floating = state.floating;
         state.block.floatBox = state.floatBox ? { ...state.floatBox } : null;
       }
@@ -12591,6 +12625,95 @@ var PreviewDrawingController = class {
     }
     return boxHit;
   }
+  findNoteFlowOwnerStrokeIndex(record = {}) {
+    const strokes = this.drawingData?.strokes || [];
+    if (record.ownerId) {
+      const exact = strokes.findIndex((stroke) => strokeElementId(stroke) === record.ownerId && this.isStrokeVisibleOnSurface(stroke));
+      if (exact >= 0) {
+        return exact;
+      }
+    }
+    const path = normalizeVaultPath(record.path || this.file?.path || "");
+    const line = Number(record.line);
+    const side = record.side === "after" || record.property === "padding-bottom" ? "after" : "before";
+    const matches = [];
+    const fallbacks = [];
+    for (const [index, stroke] of strokes.entries()) {
+      const flow = normalizeNoteFlow(stroke?.noteFlow);
+      if (!flow || !this.isStrokeVisibleOnSurface(stroke)) {
+        continue;
+      }
+      const bounds = getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight());
+      const candidate = { index, bottom: bounds?.maxY || 0 };
+      fallbacks.push(candidate);
+      const avoidance = noteFlowAvoidanceReference(flow, this.file?.path || "");
+      const anchorPath = normalizeVaultPath(flow.path || this.file?.path || "");
+      const anchorLine = Number(flow.line);
+      if (avoidance?.path === path && avoidance.line === line
+        || anchorPath === path && anchorLine === line && (flow.side || "before") === side) {
+        matches.push(candidate);
+      }
+    }
+    const ranked = matches.length ? matches : fallbacks;
+    ranked.sort((a, b) => b.bottom - a.bottom || b.index - a.index);
+    return ranked[0]?.index ?? -1;
+  }
+  readingBottomOwnerStrokeIndex() {
+    const ranked = (this.drawingData?.strokes || []).map((stroke, index) => ({ stroke, index })).filter(({ stroke }) => {
+      return this.isStrokeVisibleOnSurface(stroke);
+    }).map(({ stroke, index }) => ({
+      index,
+      bottom: getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight())?.maxY || 0
+    })).sort((a, b) => b.bottom - a.bottom || b.index - a.index);
+    return ranked[0]?.index ?? -1;
+  }
+  findOwnedBlankSpaceStrokeAtClientPoint(clientX, clientY) {
+    if (!this.drawingsVisible || !this.drawingData) {
+      return -1;
+    }
+    const candidates = [];
+    for (const [element, states] of this.noteFlowStyledElements || []) {
+      const rect = element?.getBoundingClientRect?.();
+      if (!element?.isConnected || !rect || rect.width <= 0 || rect.height <= 0) {
+        continue;
+      }
+      const localHeight = Number(element.offsetHeight) || 0;
+      const scale = localHeight > 0 ? rect.height / localHeight : this.readingZoomScale();
+      for (const state of states.values()) {
+        const ownerIndex = Number.isInteger(state.ownerStrokeIndex) && state.ownerStrokeIndex >= 0
+          ? state.ownerStrokeIndex
+          : this.findNoteFlowOwnerStrokeIndex(state.ownerRecord);
+        const owner = this.drawingData.strokes[ownerIndex];
+        if (ownerIndex < 0 || !owner || !this.isStrokeVisibleOnSurface(owner)) {
+          continue;
+        }
+        candidates.push({
+          ownerIndex,
+          rect,
+          property: state.property,
+          styleProperty: state.styleProperty,
+          applied: state.applied,
+          scale
+        });
+      }
+    }
+    if (this.readingBottomSpacer?.isConnected && this.readingBottomSpacerHeight > 0) {
+      const rect = this.readingBottomSpacer.getBoundingClientRect?.();
+      const ownerIndex = this.readingBottomOwnerStrokeIndex();
+      if (rect?.width > 0 && rect?.height > 0 && ownerIndex >= 0) {
+        const localHeight = Number(this.readingBottomSpacer.offsetHeight) || this.readingBottomSpacerHeight;
+        candidates.push({
+          ownerIndex,
+          rect,
+          property: "height",
+          styleProperty: "height",
+          applied: this.readingBottomSpacerHeight,
+          scale: localHeight > 0 ? rect.height / localHeight : 1
+        });
+      }
+    }
+    return selectOwnedBlankSpaceCandidate(candidates, { clientX, clientY })?.ownerIndex ?? -1;
+  }
   findStrokesInSelection(startPoint, endPoint) {
     const start = this.pointToCanvas(startPoint);
     const end = this.pointToCanvas(endPoint);
@@ -12816,9 +12939,40 @@ var PreviewDrawingController = class {
     if (element.dataset) {
       delete element.dataset.noteDrawMarkdownBlockId;
       delete element.dataset.noteDrawSortDragging;
+      delete element.dataset.noteDrawResizedHeight;
     }
-    for (const property of ["grid-column", "--notedraw-md-border", "--notedraw-md-background", "--notedraw-md-drag-x", "--notedraw-md-drag-y", "--notedraw-md-float-x", "--notedraw-md-float-y", "--notedraw-md-float-width"]) {
+    for (const property of ["grid-column", "--notedraw-md-border", "--notedraw-md-background", "--notedraw-md-min-height", "--notedraw-md-drag-x", "--notedraw-md-drag-y", "--notedraw-md-float-x", "--notedraw-md-float-y", "--notedraw-md-float-width"]) {
       element.style?.removeProperty(property);
+    }
+  }
+  markdownBlockNaturalHeight(element) {
+    if (!element?.isConnected) {
+      return 1;
+    }
+    const resized = element.hasAttribute("data-note-draw-resized-height");
+    const value = element.style.getPropertyValue("--notedraw-md-min-height");
+    const priority = element.style.getPropertyPriority("--notedraw-md-min-height");
+    element.removeAttribute("data-note-draw-resized-height");
+    element.style.removeProperty("--notedraw-md-min-height");
+    const natural = Math.max(1, Number(element.offsetHeight) || 1);
+    if (value) {
+      element.style.setProperty("--notedraw-md-min-height", value, priority);
+    }
+    if (resized) {
+      element.setAttribute("data-note-draw-resized-height", "true");
+    }
+    return natural;
+  }
+  applyMarkdownBlockHeightPresentation(block, element) {
+    const requested = block?.floating && block.floatBox
+      ? block.floatBox.height * Math.max(1, this.canvasHeight())
+      : block?.minHeight;
+    const height = normalizeMarkdownBlockMinHeight(requested);
+    element.toggleAttribute("data-note-draw-resized-height", height > 0);
+    if (height > 0) {
+      element.style.setProperty("--notedraw-md-min-height", `${height}px`);
+    } else {
+      element.style.removeProperty("--notedraw-md-min-height");
     }
   }
   refreshMarkdownBlockPresentation(blockIds = this.selectedMarkdownBlockIds) {
@@ -12846,6 +13000,7 @@ var PreviewDrawingController = class {
         "--notedraw-md-border": block.borderColor || "transparent",
         "--notedraw-md-background": block.backgroundColor || "transparent"
       });
+      this.applyMarkdownBlockHeightPresentation(block, element);
       if (block.floating && block.floatBox) {
         const canvasRect = this.canvas?.getBoundingClientRect?.();
         if (canvasRect?.width > 0 && canvasRect?.height > 0) {
@@ -12953,6 +13108,7 @@ var PreviewDrawingController = class {
         "--notedraw-md-border": block.borderColor || "transparent",
         "--notedraw-md-background": block.backgroundColor || "transparent"
       });
+      this.applyMarkdownBlockHeightPresentation(block, element);
       if (block.floating && block.floatBox) {
         const canvasRect = this.canvas?.getBoundingClientRect?.();
         if (canvasRect?.width > 0 && canvasRect?.height > 0) {
@@ -13997,6 +14153,7 @@ var PreviewDrawingController = class {
     }
     const candidates = this.noteFlowCandidates();
     const wanted = /* @__PURE__ */ new Map();
+    const wantedOwners = /* @__PURE__ */ new Map();
     let missingAnchor = false;
     for (const record of frozen.offsets) {
       const anchor = this.noteFlowAnchorElement({
@@ -14014,7 +14171,19 @@ var PreviewDrawingController = class {
         offsets = /* @__PURE__ */ new Map();
         wanted.set(element, offsets);
       }
-      offsets.set(record.property, Math.max(offsets.get(record.property) || 0, record.offset));
+      const previousOffset = offsets.get(record.property) || 0;
+      if (record.offset >= previousOffset) {
+        offsets.set(record.property, record.offset);
+        let owners = wantedOwners.get(element);
+        if (!owners) {
+          owners = /* @__PURE__ */ new Map();
+          wantedOwners.set(element, owners);
+        }
+        owners.set(record.property, {
+          ownerStrokeIndex: this.findNoteFlowOwnerStrokeIndex(record),
+          ownerRecord: record
+        });
+      }
     }
     let changed = false;
     for (const [element, states] of Array.from(this.noteFlowStyledElements.entries())) {
@@ -14054,7 +14223,9 @@ var PreviewDrawingController = class {
             value,
             priority,
             base: Number.parseFloat(window.getComputedStyle(element).getPropertyValue(styleProperty)) || 0,
-            applied: 0
+            applied: 0,
+            ownerStrokeIndex: -1,
+            ownerRecord: null
           });
         }
         const state = states.get(property);
@@ -14066,6 +14237,9 @@ var PreviewDrawingController = class {
           changed = true;
         }
         state.applied = Math.max(0, appliedValue - state.base);
+        const owner = wantedOwners.get(element)?.get(property);
+        state.ownerStrokeIndex = owner?.ownerStrokeIndex ?? -1;
+        state.ownerRecord = owner?.ownerRecord || null;
       }
       element.classList.add("notedraw-note-flow-anchor");
     }
@@ -14320,7 +14494,9 @@ var PreviewDrawingController = class {
           value,
           priority,
           base: Number.parseFloat(window.getComputedStyle(element).getPropertyValue(styleProperty)) || 0,
-          applied: 0
+          applied: 0,
+          ownerStrokeIndex: -1,
+          ownerRecord: null
         });
       }
       const state = states.get(property);
@@ -14360,7 +14536,9 @@ var PreviewDrawingController = class {
           path: normalizeVaultPath(selectedAnchor?.path || currentNoteFlow?.path || this.file?.path || ""),
           line: side === "after" ? selectedAnchor?.end : selectedAnchor?.start,
           side,
-          property
+          property,
+          ownerId: strokeElementId(item.stroke),
+          ownerStrokeIndex: item.index
         });
       }
     }
@@ -14400,6 +14578,9 @@ var PreviewDrawingController = class {
           layoutStyleChanged = true;
         }
         state.applied = Math.max(0, appliedValue - state.base);
+        const descriptor = offsetDescriptors.get(element)?.get(property);
+        state.ownerStrokeIndex = descriptor?.ownerStrokeIndex ?? -1;
+        state.ownerRecord = descriptor || null;
       }
       element.classList.add("notedraw-note-flow-anchor");
     }
@@ -17990,6 +18171,7 @@ function normalizeMarkdownBlocks(value, file) {
       lineEnd: Number.isFinite(Number(block?.lineEnd)) ? Math.max(lineStart ?? 0, Math.round(Number(block.lineEnd))) : lineStart,
       textHint,
       span: clamp(Math.round(Number(block?.span) || 12), 2, 12),
+      minHeight: normalizeMarkdownBlockMinHeight(block?.minHeight),
       borderColor: isCssColor(block?.borderColor) ? block.borderColor : "",
       backgroundColor: isCssColor(block?.backgroundColor) ? block.backgroundColor : "",
       floating: Boolean(block?.floating && floatBox),

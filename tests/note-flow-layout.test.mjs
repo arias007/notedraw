@@ -13,6 +13,7 @@ import {
   preserveAbsoluteNoteFlowPoints,
   projectNoteFlowDocumentPoint,
   reflowNoteFlowIntervals,
+  selectOwnedBlankSpaceCandidate,
   selectNoteFlowAnchorPlacement,
   selectNoteFlowAvoidanceCandidate,
   selectNoteFlowDropPlacement,
@@ -24,6 +25,40 @@ import {
   stabilizeNoteFlowPointProjection,
   stabilizeNoteFlowBounds
 } from "../src/note-flow-layout.mjs";
+
+test("owned NoteFlow blank bands select the element that created the whitespace", () => {
+  const candidates = [
+    {
+      ownerIndex: 2,
+      rect: { left: 10, right: 210, top: 20, bottom: 220 },
+      property: "padding-top",
+      styleProperty: "padding-top",
+      applied: 80,
+      scale: 1
+    },
+    {
+      ownerIndex: 4,
+      rect: { left: 10, right: 210, top: 20, bottom: 220 },
+      property: "padding-bottom",
+      styleProperty: "padding-bottom",
+      applied: 50,
+      scale: 1
+    },
+    {
+      ownerIndex: 7,
+      rect: { left: 10, right: 210, top: 20, bottom: 220 },
+      property: "height",
+      styleProperty: "height",
+      applied: 30,
+      scale: 1
+    }
+  ];
+
+  assert.equal(selectOwnedBlankSpaceCandidate(candidates, { clientX: 60, clientY: 60 })?.ownerIndex, 2);
+  assert.equal(selectOwnedBlankSpaceCandidate(candidates, { clientX: 60, clientY: 200 })?.ownerIndex, 4);
+  assert.equal(selectOwnedBlankSpaceCandidate([candidates[2]], { clientX: 60, clientY: 130 })?.ownerIndex, 7);
+  assert.equal(selectOwnedBlankSpaceCandidate(candidates.slice(0, 2), { clientX: 60, clientY: 130 }), null);
+});
 
 test("partial NoteFlow repair preserves unresolved offsets and replaces resolved ones", () => {
   assert.deepEqual(mergeFrozenNoteFlowLayout({
@@ -90,6 +125,20 @@ test("frozen note-flow spacing is deterministic and keeps the largest offset per
     frozenNoteFlowLayoutSignature(normalized),
     "Folder/Note.md:8:padding-top:56|Folder/Note.md:12:padding-bottom:20"
   );
+});
+
+test("frozen NoteFlow spacing keeps a stable owner for blank-space selection", () => {
+  const normalized = normalizeFrozenNoteFlowLayout({
+    offsets: [{
+      path: "Folder/Note.md",
+      line: 8,
+      side: "before",
+      offset: 56,
+      ownerId: "element-42"
+    }]
+  });
+  assert.equal(normalized.offsets[0].ownerId, "element-42");
+  assert.equal(frozenNoteFlowLayoutSignature(normalized), "Folder/Note.md:8:padding-top:56:element-42");
 });
 
 test("saved note-flow anchors remain stable while their Markdown block is virtualized", () => {

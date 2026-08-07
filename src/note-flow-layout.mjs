@@ -438,6 +438,38 @@ export function noteFlowRequiredOffset({
   return Math.max(0, logicalDesiredBottom - edge);
 }
 
+export function selectOwnedBlankSpaceCandidate(candidates, { clientX, clientY } = {}) {
+  const x = finite(clientX, Number.NaN);
+  const y = finite(clientY, Number.NaN);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return null;
+  }
+  return (Array.isArray(candidates) ? candidates : []).map((candidate, order) => {
+    const rect = candidate?.rect;
+    const left = finite(rect?.left, Number.NaN);
+    const right = finite(rect?.right, Number.NaN);
+    const top = finite(rect?.top, Number.NaN);
+    const bottom = finite(rect?.bottom, Number.NaN);
+    const applied = Math.max(0, finite(candidate?.applied));
+    const scale = Math.max(0.01, finite(candidate?.scale, 1));
+    if (![left, right, top, bottom].every(Number.isFinite) || right <= left || bottom <= top || applied <= 0) {
+      return null;
+    }
+    const visualApplied = Math.min(bottom - top, applied * scale);
+    const heightOwned = candidate?.styleProperty === "height" || candidate?.property === "height";
+    const ownedTop = heightOwned || candidate?.property === "padding-top" ? top : bottom - visualApplied;
+    const ownedBottom = heightOwned || candidate?.property === "padding-bottom" ? bottom : top + visualApplied;
+    if (x < left || x > right || y < ownedTop || y > ownedBottom) {
+      return null;
+    }
+    return { ...candidate, ownedTop, ownedBottom, visualApplied, order };
+  }).filter(Boolean).sort((a, b) => (
+    b.visualApplied - a.visualApplied
+    || b.ownedBottom - a.ownedBottom
+    || b.order - a.order
+  ))[0] || null;
+}
+
 export function normalizeFrozenNoteFlowLayout(value) {
   const records = new Map();
   for (const item of Array.isArray(value?.offsets) ? value.offsets : []) {
@@ -458,6 +490,9 @@ export function normalizeFrozenNoteFlowLayout(value) {
       property,
       offset: Math.round(offset * 1000) / 1000
     };
+    if (typeof item?.ownerId === "string" && item.ownerId) {
+      normalized.ownerId = item.ownerId.slice(0, 160);
+    }
     const key = `${normalized.path}\0${normalized.line}\0${normalized.property}`;
     const previous = records.get(key);
     if (!previous || normalized.offset > previous.offset) {
@@ -499,7 +534,7 @@ export function mergeFrozenNoteFlowLayout(previousValue, resolvedValue) {
 
 export function frozenNoteFlowLayoutSignature(value) {
   return normalizeFrozenNoteFlowLayout(value).offsets.map((item) => (
-    `${item.path}:${item.line}:${item.property}:${item.offset}`
+    `${item.path}:${item.line}:${item.property}:${item.offset}${item.ownerId ? `:${item.ownerId}` : ""}`
   )).join("|");
 }
 

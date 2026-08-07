@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { normalizeMarkdownFloatBox } from "../src/markdown-block-layout.mjs";
+import {
+  normalizeMarkdownBlockMinHeight,
+  normalizeMarkdownFloatBox,
+  resizeMarkdownBlockMinHeight
+} from "../src/markdown-block-layout.mjs";
 
 const sourceUrl = new URL("../src/notedraw-plugin.js", import.meta.url);
 const stylesUrl = new URL("../styles.css", import.meta.url);
@@ -19,6 +23,22 @@ test("floating Markdown boxes stay fully inside the normalized note surface", ()
     width: 0.855297191,
     height: 0.08
   });
+});
+
+test("Markdown block height creates owned whitespace without shrinking below its content", () => {
+  assert.equal(normalizeMarkdownBlockMinHeight(-20), 0);
+  assert.equal(normalizeMarkdownBlockMinHeight(288.4), 288);
+  assert.equal(normalizeMarkdownBlockMinHeight(9000), 2400);
+  assert.equal(resizeMarkdownBlockMinHeight({
+    currentHeight: 120,
+    naturalHeight: 64,
+    scaleY: 2
+  }), 240);
+  assert.equal(resizeMarkdownBlockMinHeight({
+    currentHeight: 120,
+    naturalHeight: 64,
+    scaleY: 0.4
+  }), 0);
 });
 
 test("Markdown blocks persist layout, floating state, and hybrid group membership", async () => {
@@ -64,11 +84,19 @@ test("selecting Markdown blocks does not trigger a whole-note responsive reflow"
 });
 
 test("Markdown selection resize hits both the outer frame and the content corner", async () => {
-  const source = await readFile(sourceUrl, "utf8");
+  const [source, styles] = await Promise.all([
+    readFile(sourceUrl, "utf8"),
+    readFile(stylesUrl, "utf8")
+  ]);
 
   assert.match(source, /const rects = \[frame\];/);
   assert.match(source, /const contentBounds = this\.getSelectedStrokeBounds\(\);/);
   assert.match(source, /const hitRadius = Math\.max\(SELECT_RESIZE_HANDLE_HIT_RADIUS, this\.selectionHitPaddingPx\(\) \+ 6\);/);
+  assert.match(source, /block\.minHeight = resizeMarkdownBlockMinHeight\(\{/);
+  assert.match(source, /state\.block\.minHeight = state\.minHeight/);
+  assert.match(source, /minHeight: normalizeMarkdownBlockMinHeight\(block\?\.minHeight\)/);
+  assert.match(source, /this\.applyMarkdownBlockHeightPresentation\(block, element\)/);
+  assert.match(styles, /data-note-draw-resized-height="true"[\s\S]*min-height: var\(--notedraw-md-min-height\)/);
 });
 
 test("selection resize freezes pointer geometry and defers canvas measurement until release", async () => {
@@ -78,6 +106,19 @@ test("selection resize freezes pointer geometry and defers canvas measurement un
   assert.match(source, /this\.eventToPoint\(event, this\.resizeSelectionPointerGeometry\)/);
   assert.match(source, /const wantsMeasure = options\.measure !== false\s+&& !this\.resizingSelection/);
   assert.match(source, /this\.scheduleResize\(\{ layout: false, measure: true \}\);/);
+});
+
+test("blank-space selection resolves its NoteDraw owner before the pushed Markdown block", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const pointerSource = source.slice(source.indexOf("  onPointerDown(event"), source.indexOf("  onPointerMove(event", source.indexOf("  onPointerDown(event")));
+  const blankHit = pointerSource.indexOf("findOwnedBlankSpaceStrokeAtClientPoint");
+  const markdownHit = pointerSource.indexOf("hitStrokeIndex < 0 && markdownSelectionCandidate");
+
+  assert.ok(blankHit >= 0 && markdownHit > blankHit);
+  assert.match(source, /findOwnedBlankSpaceStrokeAtClientPoint\(clientX, clientY\)[\s\S]*selectOwnedBlankSpaceCandidate/);
+  assert.match(source, /readingBottomOwnerStrokeIndex\(\)/);
+  assert.match(source, /ownerStrokeIndex: this\.findNoteFlowOwnerStrokeIndex\(record\)/);
+  assert.match(source, /ownerId: strokeElementId\(item\.stroke\)/);
 });
 
 test("Markdown selection and NoteFlow layout use concrete blocks instead of embed parents or visual lines", async () => {
