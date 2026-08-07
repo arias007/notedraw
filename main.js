@@ -5351,7 +5351,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.4.14",
+      version: "3.4.15",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -8143,6 +8143,7 @@ var PreviewDrawingController = class {
     this.responsiveLayoutContext = null;
     this.renderFrameId = null;
     this.pendingDomRender = false;
+    this.pendingInteractionRender = false;
     this.resizeFrameId = null;
     this.resizeNeedsLayout = false;
     this.resizeNeedsMeasure = false;
@@ -9844,7 +9845,6 @@ var PreviewDrawingController = class {
     this.invalidateStaticCache();
     this.syncPaletteInputs();
     this.updateToolButtons();
-    this.syncMarkdownBlockPresentation();
     this.syncSelectionMenuButtons();
     this.render();
     return true;
@@ -14020,7 +14020,7 @@ var PreviewDrawingController = class {
     } else {
       this.queueDraggedNoteFlowRefresh(this.dragStrokeOriginalPoints.keys());
     }
-    this.requestRender(this.selectionHasDomStrokes());
+    this.requestRender(this.selectionHasDomStrokes() ? "interaction" : false);
     event.preventDefault();
     event.stopPropagation();
   }
@@ -14080,9 +14080,9 @@ var PreviewDrawingController = class {
       if (!markdownDrop) {
         this.recordDrawingHistory(drawingHistoryBefore);
       }
-      this.scheduleNoteFlowLayout({
-        operation: affectedIndexes.some((index) => this.drawingData.strokes[index]?.noteFlow?.enabled)
-      });
+      if (affectedIndexes.some((index) => this.drawingData.strokes[index]?.noteFlow?.enabled)) {
+        this.scheduleNoteFlowLayout({ operation: true });
+      }
     } else if (!this.dragStrokePreserveSelection && this.getSelectedStrokeIndexes().length > 1 && this.dragStrokeHitIndex >= 0) {
       this.setSelectedStrokes(this.dragStrokeHitIndex);
     }
@@ -14340,7 +14340,7 @@ var PreviewDrawingController = class {
       this.resizeSelectionMoved = true;
     }
     this.applySelectedStrokeResize(point);
-    this.requestRender(this.selectionHasDomStrokes());
+    this.requestRender(this.selectionHasDomStrokes() ? "interaction" : false);
     event.preventDefault();
     event.stopPropagation();
   }
@@ -14425,9 +14425,9 @@ var PreviewDrawingController = class {
     if (this.syncBoundConnectors({ elementIds: resizedElementIds })) {
       this.invalidateStaticCache();
     }
-    this.scheduleNoteFlowLayout({
-      operation: Array.from(this.resizeSelectionOriginalStrokes.keys()).some((index) => this.drawingData.strokes[index]?.noteFlow?.enabled)
-    });
+    if (Array.from(this.resizeSelectionOriginalStrokes.keys()).some((index) => this.drawingData.strokes[index]?.noteFlow?.enabled)) {
+      this.scheduleNoteFlowLayout({ operation: true });
+    }
   }
   finishSelectedStrokeResize(event) {
     if (this.resizeSelectionMoved) {
@@ -14437,9 +14437,9 @@ var PreviewDrawingController = class {
       this.redoStack = [];
       this.plugin.scheduleDrawingSave(this.file, this.drawingData);
       this.recordDrawingHistory(this.resizeDrawingHistoryBefore);
-      this.scheduleNoteFlowLayout({
-        operation: resizedIndexes.some((index) => this.drawingData.strokes[index]?.noteFlow?.enabled)
-      });
+      if (resizedIndexes.some((index) => this.drawingData.strokes[index]?.noteFlow?.enabled)) {
+        this.scheduleNoteFlowLayout({ operation: true });
+      }
     } else {
       this.cancelSelectedStrokeResize(false);
     }
@@ -14690,16 +14690,21 @@ var PreviewDrawingController = class {
     return Math.max(1, this.canvasCssHeight || this.canvas?.clientHeight || 1);
   }
   requestRender(refreshDom = false) {
-    this.pendingDomRender = this.pendingDomRender || refreshDom;
+    this.pendingDomRender = this.pendingDomRender || refreshDom === true;
+    this.pendingInteractionRender = this.pendingInteractionRender || refreshDom === "interaction";
     if (this.renderFrameId !== null) {
       return;
     }
     this.renderFrameId = window.requestAnimationFrame(() => {
       this.renderFrameId = null;
       const shouldRefreshDom = this.pendingDomRender;
+      const shouldRefreshInteraction = this.pendingInteractionRender;
       this.pendingDomRender = false;
+      this.pendingInteractionRender = false;
       if (shouldRefreshDom) {
         this.render();
+      } else if (shouldRefreshInteraction) {
+        this.renderInteractionFrame();
       } else {
         this.renderCanvas();
       }
@@ -14711,6 +14716,7 @@ var PreviewDrawingController = class {
       this.renderFrameId = null;
     }
     this.pendingDomRender = false;
+    this.pendingInteractionRender = false;
   }
   render() {
     if (!this.ctx) {
@@ -14722,6 +14728,20 @@ var PreviewDrawingController = class {
     this.applyWebEdits();
     this.syncMarkdownBlockPresentation();
     this.updateEmbedLayer();
+    this.renderCanvas();
+  }
+  renderInteractionFrame() {
+    if (!this.ctx) {
+      return;
+    }
+    this.refreshMarkdownBlockPresentation();
+    const embedIndexes = this.getSelectedStrokeIndexes().filter((index) => {
+      const stroke = this.drawingData.strokes[index];
+      return isEmbedStroke(stroke) || isRichTextStroke(stroke);
+    });
+    if (embedIndexes.length) {
+      this.updateEmbedLayer({ indexes: embedIndexes });
+    }
     this.renderCanvas();
   }
   renderCanvas() {
@@ -14805,14 +14825,16 @@ var PreviewDrawingController = class {
   drawStroke(stroke, alpha = 1) {
     this.drawStrokeOn(this.ctx, stroke, alpha);
   }
-  updateEmbedLayer() {
+  updateEmbedLayer(options = {}) {
     if (!this.embedLayer || !this.drawingData?.strokes) {
       return;
     }
+    const scopedIndexes = Array.isArray(options.indexes) ? Array.from(new Set(options.indexes)).filter((index) => Number.isInteger(index) && index >= 0 && index < this.drawingData.strokes.length) : null;
+    const entries = scopedIndexes ? scopedIndexes.map((index) => [index, this.drawingData.strokes[index]]) : this.drawingData.strokes.entries();
     const liveKeys = /* @__PURE__ */ new Set();
     const width = this.canvasWidth();
     const height = this.canvasHeight();
-    for (const [index, stroke] of this.drawingData.strokes.entries()) {
+    for (const [index, stroke] of entries) {
       if (!this.isStrokeVisibleOnSurface(stroke)) {
         continue;
       }
@@ -14862,12 +14884,14 @@ var PreviewDrawingController = class {
       }
       this.renderEmbedNode(node, stroke, index);
     }
-    for (const [key, node] of this.embedNodes.entries()) {
-      if (!liveKeys.has(key)) {
-        node.remove();
-        this.embedNodes.delete(key);
-        this.embedRenderTokens.delete(key);
-        this.embedGeometryTokens.delete(key);
+    if (!scopedIndexes) {
+      for (const [key, node] of this.embedNodes.entries()) {
+        if (!liveKeys.has(key)) {
+          node.remove();
+          this.embedNodes.delete(key);
+          this.embedRenderTokens.delete(key);
+          this.embedGeometryTokens.delete(key);
+        }
       }
     }
   }
@@ -15704,6 +15728,72 @@ var PreviewDrawingController = class {
     }
     for (const property of ["grid-column", "--notedraw-md-border", "--notedraw-md-background", "--notedraw-md-drag-x", "--notedraw-md-drag-y", "--notedraw-md-float-x", "--notedraw-md-float-y", "--notedraw-md-float-width"]) {
       element.style?.removeProperty(property);
+    }
+  }
+  refreshMarkdownBlockPresentation(blockIds = this.selectedMarkdownBlockIds) {
+    if (this.surfaceType !== "preview" || !this.previewEl?.isConnected || !this.drawingData) {
+      return;
+    }
+    const wanted = new Set(blockIds || []);
+    if (!wanted.size) {
+      return;
+    }
+    const records = new Map(this.markdownBlockRecords().map((block) => [block.id, block]));
+    const touchedParents = /* @__PURE__ */ new Set();
+    for (const id of wanted) {
+      const block = records.get(id);
+      const element = this.markdownBlockElements.get(id);
+      if (!block || !element?.isConnected) {
+        continue;
+      }
+      touchedParents.add(element.parentElement);
+      element.toggleClass("is-selected", this.selectedMarkdownBlockIds.has(block.id));
+      element.toggleClass("is-locked", Boolean(block.locked));
+      element.toggleClass("is-floating", Boolean(block.floating && block.floatBox));
+      element.style.gridColumn = block.floating ? "span 12" : `span ${clamp10(Math.round(Number(block.span) || 12), 2, 12)}`;
+      setNoteDrawCssProps(element, {
+        "--notedraw-md-border": block.borderColor || "transparent",
+        "--notedraw-md-background": block.backgroundColor || "transparent"
+      });
+      if (block.floating && block.floatBox) {
+        const canvasRect = this.canvas?.getBoundingClientRect?.();
+        if (canvasRect?.width > 0 && canvasRect?.height > 0) {
+          const horizontalSurface = this.layoutMeasureEl?.isConnected ? this.layoutMeasureEl : findLayoutMeasureElement(this.previewEl);
+          const horizontalRect = horizontalSurface?.getBoundingClientRect?.();
+          const logicalWidth = Math.max(1, Number(horizontalSurface?.offsetWidth) || Number(horizontalSurface?.clientWidth) || this.previewEl.clientWidth || this.canvasWidth());
+          const logicalHeight = Math.max(1, this.canvasHeight());
+          const scaleX = horizontalRect?.width > 0 ? horizontalRect.width / logicalWidth : canvasRect.width / Math.max(1, this.canvasWidth());
+          const scaleY = canvasRect.height / Math.max(1, this.canvasRenderHeight);
+          const localWidth = Math.max(80, block.floatBox.width * logicalWidth);
+          const dragging = element.hasClass?.("is-notedraw-md-dragging") || element.classList?.contains("is-notedraw-md-dragging");
+          const hasStableOffset = element.style.getPropertyValue("--notedraw-md-float-x") && element.style.getPropertyValue("--notedraw-md-float-y");
+          setNoteDrawCssProps(element, { "--notedraw-md-float-width": `${localWidth}px` });
+          if (!dragging || !hasStableOffset) {
+            setNoteDrawCssProps(element, {
+              "--notedraw-md-float-x": "0px",
+              "--notedraw-md-float-y": "0px"
+            });
+            const naturalRect = element.getBoundingClientRect();
+            const targetLeft = (horizontalRect?.left ?? canvasRect.left) + block.floatBox.x * logicalWidth * scaleX;
+            const targetTop = canvasRect.top + (block.floatBox.y * logicalHeight - this.canvasWindowTop) * scaleY;
+            setNoteDrawCssProps(element, {
+              "--notedraw-md-float-x": `${Math.round((targetLeft - naturalRect.left) / Math.max(1e-4, scaleX))}px`,
+              "--notedraw-md-float-y": `${Math.round((targetTop - naturalRect.top) / Math.max(1e-4, scaleY))}px`
+            });
+          }
+        }
+      } else {
+        for (const property of ["--notedraw-md-float-x", "--notedraw-md-float-y", "--notedraw-md-float-width"]) {
+          element.style.removeProperty(property);
+        }
+      }
+    }
+    for (const parent of touchedParents) {
+      const hasGridBlock = Array.from(this.markdownBlockElements.entries()).some(([id, element]) => {
+        const block = records.get(id);
+        return element?.parentElement === parent && !block?.floating && (block?.span || 12) < 12;
+      });
+      parent?.toggleClass?.("notedraw-md-grid", hasGridBlock);
     }
   }
   syncMarkdownBlockPresentation() {
@@ -17327,13 +17417,17 @@ var PreviewDrawingController = class {
     return changed;
   }
   queueDraggedNoteFlowRefresh(indexes) {
+    let queued = false;
     for (const index of indexes || []) {
       const stroke = this.drawingData?.strokes?.[index];
       if (stroke?.noteFlow?.enabled && !isConnectorStroke(stroke)) {
         this.pendingDraggedNoteFlowIndexes.add(index);
+        queued = true;
       }
     }
-    this.scheduleNoteFlowLayout();
+    if (queued) {
+      this.scheduleNoteFlowLayout();
+    }
   }
   refreshDraggedNoteFlowAnchors() {
     if (!this.draggingStroke || !this.pendingDraggedNoteFlowIndexes.size) {
