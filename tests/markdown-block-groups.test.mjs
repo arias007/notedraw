@@ -23,8 +23,17 @@ test("horizontal drag intent reserves the left edge for magnetic line insertion"
 
   assert.equal(resolveDragDropHorizontalIntent({ ...target, clientX: 320 }), "line-start");
   assert.equal(resolveDragDropHorizontalIntent({ ...target, clientX: 500 }), "vertical");
+  assert.equal(resolveDragDropHorizontalIntent({ ...target, clientX: 620 }), "vertical");
   assert.equal(resolveDragDropHorizontalIntent({ ...target, clientX: 640 }), "inline-right");
   assert.equal(resolveDragDropHorizontalIntent({ ...target, clientX: 640, horizontalRoom: false }), "vertical");
+});
+
+test("Markdown drag uses a left magnetic row drop and one move event chain", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+
+  assert.match(source, /else if \(horizontalRoom && intent === "line-start"\) \{\s*side = "left";/);
+  assert.match(source, /const row = this\.markdownDropRowMetrics\(nearest\.element, movingElements\);/);
+  assert.doesNotMatch(source, /const onMove = \(moveEvent\) => \{/);
 });
 
 test("floating Markdown positions stay independent from their saved size", () => {

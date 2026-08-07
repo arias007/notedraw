@@ -1457,7 +1457,7 @@ function resolveDragDropHorizontalIntent({
     return "line-start";
   }
   const rightThreshold = Math.min(
-    left + targetWidth * 0.74,
+    left + targetWidth * 0.82,
     surfaceRight - clamp4(laneWidth * 0.08, 32, 64)
   );
   return horizontalRoom && x >= rightThreshold ? "inline-right" : "vertical";
@@ -8248,8 +8248,12 @@ var PreviewDrawingController = class {
     this.dragSnapOtherXValues = null;
     this.dragSnapOtherYValues = null;
     this.dragMovedElementIds = null;
+    this.dragPendingConnectorIds = null;
+    this.dragConnectorCandidates = null;
+    this.dragConnectorById = null;
     this.dragHasBoxBackground = false;
     this.dragLastPointerEvent = null;
+    this.dragLastPointerKey = "";
     this.dragNoteFlowDropFrameId = null;
     this.dragNoteFlowDropClientX = null;
     this.dragNoteFlowDropClientY = null;
@@ -13822,7 +13826,14 @@ var PreviewDrawingController = class {
     this.dragStrokeIndexes = movableIndexes;
     this.dragShouldSnap = this.shouldSnapStrokeIndexes(movableIndexes);
     this.dragMovedElementIds = this.connectorTargetIdsForStrokeIndexes(movableIndexes);
+    this.dragPendingConnectorIds = null;
+    this.dragConnectorById = new Map((this.drawingData?.strokes || []).map((stroke) => [strokeElementId(stroke), stroke]).filter(([id]) => id));
+    this.dragConnectorCandidates = this.dragMovedElementIds.size ? (this.drawingData?.strokes || []).filter((stroke) => {
+      const connector = normalizeConnector(stroke?.connector);
+      return connector && (this.dragMovedElementIds.has(connector.fromId) || this.dragMovedElementIds.has(connector.toId));
+    }) : [];
     this.dragLastPointerEvent = null;
+    this.dragLastPointerKey = "";
     this.dragStrokeOriginalPoints = new Map(movableIndexes.map((index) => [
       index,
       this.drawingData.strokes[index].points.map((strokePoint) => ({ ...strokePoint }))
@@ -14028,13 +14039,15 @@ var PreviewDrawingController = class {
     }
     const maxDistance = Math.max(80, nearest.rect.height * 1.5);
     const verticalDistance = clientY < nearest.rect.top ? nearest.rect.top - clientY : clientY > nearest.rect.bottom ? clientY - nearest.rect.bottom : 0;
+    const row = this.markdownDropRowMetrics(nearest.element, movingElements);
+    const horizontalRoom = row.canFit && Number(nearest.element.parentElement?.clientWidth || nearest.rect.width) >= Math.max(300, row.totalCount * 120);
     const intent = resolveDragDropHorizontalIntent({
       clientX,
       targetLeft: nearest.rect.left,
       targetRight: nearest.rect.right,
       laneLeft: laneRect.left,
       laneRight: laneRect.right,
-      horizontalRoom: true
+      horizontalRoom
     });
     return verticalDistance <= maxDistance && intent !== "vertical" ? { element: nearest.element, intent } : null;
   }
@@ -14094,6 +14107,8 @@ var PreviewDrawingController = class {
     let side = clientY >= rect.top + rect.height / 2 ? "after" : "before";
     if (horizontalRoom && intent === "inline-right") {
       side = "right";
+    } else if (horizontalRoom && intent === "line-start") {
+      side = "left";
     }
     if (target !== this.dragMarkdownDropTarget || side !== this.dragMarkdownDropSide) {
       this.clearMarkdownBlockDropTarget();
@@ -14421,7 +14436,17 @@ var PreviewDrawingController = class {
     if (this.dragLastPointerEvent === event) {
       return;
     }
+    const pointerKey = [
+      event.pointerId,
+      event.clientX,
+      event.clientY,
+      event.timeStamp
+    ].join(":");
+    if (this.dragLastPointerKey === pointerKey) {
+      return;
+    }
     this.dragLastPointerEvent = event;
+    this.dragLastPointerKey = pointerKey;
     const point = this.dragEventToPoint(event);
     const originalPointBounds = this.dragStrokeOriginalPointBounds;
     const minX = originalPointBounds?.minX ?? 0;
@@ -14487,15 +14512,20 @@ var PreviewDrawingController = class {
     if (this.dragMarkdownOriginalElements?.size) {
       this.queueMarkdownBlockDropTarget(event.clientX, event.clientY);
     }
-    if (this.dragMovedElementIds?.size && this.syncBoundConnectors({ elementIds: this.dragMovedElementIds })) {
-      this.invalidateStaticCache();
+    if (this.dragMovedElementIds?.size) {
+      this.dragPendingConnectorIds || (this.dragPendingConnectorIds = /* @__PURE__ */ new Set());
+      for (const id of this.dragMovedElementIds) {
+        this.dragPendingConnectorIds.add(id);
+      }
     }
     if (this.usesDraggedNoteFlowPlacement()) {
       this.queueDraggedNoteFlowPlacement(event.clientX, event.clientY);
     } else {
       this.queueDraggedNoteFlowRefresh(strokeIndexes);
     }
-    this.requestRender(this.selectionHasDomStrokes() ? "interaction" : false);
+    if (strokeIndexes.length || this.dragConnectorCandidates?.length || this.dragHasBoxBackground) {
+      this.requestRender(this.selectionHasDomStrokes() ? "interaction" : false);
+    }
     event.preventDefault();
     event.stopPropagation();
   }
@@ -14636,8 +14666,12 @@ var PreviewDrawingController = class {
     this.dragSnapOtherXValues = null;
     this.dragSnapOtherYValues = null;
     this.dragMovedElementIds = null;
+    this.dragPendingConnectorIds = null;
+    this.dragConnectorCandidates = null;
+    this.dragConnectorById = null;
     this.dragHasBoxBackground = false;
     this.dragLastPointerEvent = null;
+    this.dragLastPointerKey = "";
     this.dragMarkdownLastValidDrop = null;
     this.clearMarkdownBlockDropTarget();
     this.dragDrawingHistoryBefore = null;
@@ -15255,9 +15289,19 @@ var PreviewDrawingController = class {
     }
     this.renderCanvas();
   }
+  syncPendingDraggedConnectors() {
+    if (!this.dragPendingConnectorIds?.size || !this.dragMovedElementIds?.size) {
+      return false;
+    }
+    this.dragPendingConnectorIds = null;
+    return this.syncBoundConnectors({ elementIds: this.dragMovedElementIds });
+  }
   renderCanvas() {
     if (!this.ctx) {
       return;
+    }
+    if (this.draggingStroke && this.syncPendingDraggedConnectors()) {
+      this.invalidateStaticCache();
     }
     if (!this.drawingsVisible) {
       clearCanvasContext(this.ctx, this.canvas);
@@ -15570,10 +15614,12 @@ var PreviewDrawingController = class {
     const strokes = this.drawingData?.strokes || [];
     const recover = options.recover === true;
     const targetIds = options.elementIds instanceof Set ? options.elementIds : null;
+    const useDragCache = this.draggingStroke && targetIds === this.dragMovedElementIds;
     let changed = recover ? this.ensureSnapElementIds() : false;
-    const byId = new Map(strokes.map((stroke) => [strokeElementId(stroke), stroke]).filter(([id]) => id));
+    const byId = options.byId instanceof Map ? options.byId : useDragCache && this.dragConnectorById instanceof Map ? this.dragConnectorById : new Map(strokes.map((stroke) => [strokeElementId(stroke), stroke]).filter(([id]) => id));
     const snapTargets = recover ? this.collectSnapTargets() : null;
-    for (const stroke of strokes) {
+    const connectorStrokes = Array.isArray(options.strokes) ? options.strokes : useDragCache && Array.isArray(this.dragConnectorCandidates) ? this.dragConnectorCandidates : strokes;
+    for (const stroke of connectorStrokes) {
       let connector = normalizeConnector(stroke.connector);
       if (!connector) {
         continue;
@@ -18819,16 +18865,10 @@ var PreviewDrawingController = class {
       this.selectMarkdownBlock(element);
       this.startSelectedStrokeDrag(event, this.eventToPoint(event));
       const pointerId = event.pointerId;
-      const onMove = (moveEvent) => {
-        if (moveEvent.pointerId === pointerId && this.draggingStroke) {
-          this.moveSelectedStroke(moveEvent);
-        }
-      };
       const finish = (finishEvent) => {
         if (finishEvent.pointerId !== pointerId) {
           return;
         }
-        activeDocument.removeEventListener("pointermove", onMove, true);
         activeDocument.removeEventListener("pointerup", finish, true);
         activeDocument.removeEventListener("pointercancel", finish, true);
         delete element.dataset.noteDrawSortDragging;
@@ -18836,7 +18876,6 @@ var PreviewDrawingController = class {
           this.finishSelectedStrokeDrag(finishEvent);
         }
       };
-      activeDocument.addEventListener("pointermove", onMove, true);
       activeDocument.addEventListener("pointerup", finish, true);
       activeDocument.addEventListener("pointercancel", finish, true);
       event.preventDefault();
