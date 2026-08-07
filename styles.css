@@ -962,6 +962,15 @@
   pointer-events: none;
 }
 
+.notedraw-note-flow-block-spacer {
+  display: block;
+  height: 0;
+  margin: 0;
+  padding: 0;
+  pointer-events: none;
+  overflow-anchor: none;
+}
+
 .notedraw-selection-menu-button svg,
 .notedraw-selection-menu-button .svg-icon {
   width: 17px;

@@ -202,7 +202,7 @@ test("reading-only note pen and selected elements can reserve Markdown flow spac
   assert.match(source, /noteFlowVisualLineCandidates\(sourceElement, path, start, end\)[\s\S]*const layoutElement = this\.noteFlowLayoutElement\(sourceElement\)/);
   assert.match(source, /cls: "notedraw-note-flow-line-spacer"/);
   assert.match(source, /NOTEDRAW_OWNED_MUTATION_SELECTOR = \[[\s\S]*"\.notedraw-note-flow-line-spacer"/);
-  assert.match(flowLayout, /const element = this\.noteFlowTargetElement\(avoidanceAnchor \|\| anchor\)/);
+  assert.match(flowLayout, /const selectedAnchor = avoidanceAnchor \|\| anchor;[\s\S]*const element = this\.noteFlowTargetElement\(selectedAnchor, side\)/);
   assert.match(source, /for \(const spacer of this\.noteFlowLineSpacers\?\.values\?\.\(\) \|\| \[\]\)/);
   assert.match(source, /scheduleNoteFlowAnchorRepair\(\)[\s\S]*this\.noteFlowAnchorRepairReady = true[\s\S]*this\.scheduleNoteFlowLayout\(\)[\s\S]*}, 700\)/);
   assert.match(source, /window\.clearTimeout\(this\.noteFlowAnchorRepairTimer\)/);
@@ -222,6 +222,40 @@ test("reading-only note pen and selected elements can reserve Markdown flow spac
   assert.match(source, /const layer = belowMarkdown \? this\.underlayEmbedLayer : this\.embedLayer/);
   assert.match(source, /belowMarkdown: Boolean\(stroke\?\.belowMarkdown \|\| noteFlow\?\.enabled\)/);
   assert.match(styles, /\.notedraw-underlay-embed-layer \{\s*z-index: 0;/);
+});
+
+test("heading NoteFlow spacing moves the complete heading and restores after reading-view rebuilds", async () => {
+  const [source, styles] = await Promise.all([
+    readFile(sourceUrl, "utf8"),
+    readFile(stylesUrl, "utf8")
+  ]);
+  const targetSource = source.slice(source.indexOf("  noteFlowTargetElement("), source.indexOf("  noteFlowAnchorElement("));
+  const prepareSource = source.slice(source.indexOf("  frozenNoteFlowAnchorsReady("), source.indexOf("  updateFrozenNoteFlowLayout("));
+  const flowLayout = source.slice(source.indexOf("  applyNoteFlowLayout()"), source.indexOf("  scheduleNoteFlowLayout(options"));
+
+  assert.match(targetSource, /matches\?\.\("h1,h2,h3,h4,h5,h6"\)/);
+  assert.match(targetSource, /heading\.closest\?\.\(`\.el-\$\{headingTag\}`\) \|\| heading/);
+  assert.match(targetSource, /parent\.insertBefore\(spacer, side === "after" \? wrapper\.nextSibling : wrapper\)/);
+  assert.match(targetSource, /headingTopBefore[\s\S]*headingTopAfter[\s\S]*baseHeight = clamp\([\s\S]*spacer\.style\.height/);
+  assert.match(targetSource, /className = "notedraw-note-flow-block-spacer"/);
+  assert.match(targetSource, /wrapper\.nextSibling === existing[\s\S]*existing\?\.nextSibling === wrapper/);
+  assert.doesNotMatch(targetSource, /heading\.style\.(?:setProperty|removeProperty)/);
+  assert.match(flowLayout, /blockMeasureElement[\s\S]*rect\.top - state\.applied \* scaleY[\s\S]*rect\.bottom \+ state\.applied \* scaleY/);
+  assert.match(source, /noteFlowStyleProperty\(element, property\) \{\s*return element\?\.classList\?\.contains\("notedraw-note-flow-block-spacer"\) \? "height" : property;/);
+  assert.match(flowLayout, /const styleProperty = this\.noteFlowStyleProperty\(element, property\)[\s\S]*element\.style\.setProperty\(state\.styleProperty, nextValue, "important"\)/);
+  assert.match(source, /element\.classList\?\.contains\("notedraw-note-flow-block-spacer"\)[\s\S]*properties\.push\("height"\)/);
+  assert.match(prepareSource, /annotateVisibleMarkdownElements\(this\.plugin\.app, this\.previewEl/);
+  assert.match(prepareSource, /annotateRenderedMarkdownLines\(this\.plugin\.app, this\.previewEl, filePath\)/);
+  assert.match(prepareSource, /this\.restoreFrozenNoteFlowLayout\(\)/);
+  assert.match(prepareSource, /window\.requestAnimationFrame\([\s\S]*prepareFrozenNoteFlowLayout\(\{ retry: false \}\)/);
+  assert.doesNotMatch(prepareSource, /vault\.(?:create|modify|process|delete|rename)|writeDrawings|scheduleDrawingSave/);
+  assert.match(source, /matchRenderedTextToMarkdown\(source, element\.innerText \|\| element\.textContent \|\| element\._noteDrawSourceText \|\| ""\)/);
+  assert.match(source, /this\.prepareFrozenNoteFlowLayout\(\)\.catch[\s\S]*this\.resizeCanvas\(\{ layout: false, measure: true \}\)/);
+  assert.match(source, /noteFlowTargetElement\(anchor, record\.side\)/);
+  assert.match(source, /for \(const spacer of this\.noteFlowBlockSpacers\?\.values\?\.\(\) \|\| \[\]\)/);
+  assert.match(source, /cleanupOrphanedNoteFlowLayout\(preview\)[\s\S]*\.notedraw-note-flow-block-spacer/);
+  assert.match(source, /NOTEDRAW_OWNED_MUTATION_SELECTOR = \[[\s\S]*"\.notedraw-note-flow-block-spacer"/);
+  assert.match(styles, /\.notedraw-note-flow-block-spacer \{[\s\S]*display: block;[\s\S]*height: 0;[\s\S]*overflow-anchor: none;/);
 });
 
 test("dragged inserted note elements use stable drop placement or frame-batched avoidance refresh", async () => {
