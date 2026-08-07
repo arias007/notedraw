@@ -73,15 +73,15 @@ test("registered surfaces expose stable handles and structured actions without c
   assert.match(source, /registeredSurfaceSource/);
 });
 
-test("3.4.18 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
+test("3.4.19 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
   const [source, manifestText] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(manifestUrl, "utf8")
   ]);
   const manifest = JSON.parse(manifestText);
 
-  assert.equal(manifest.version, "3.4.18");
-  assert.match(source, /version: "3\.4\.18"/);
+  assert.equal(manifest.version, "3.4.19");
+  assert.match(source, /version: "3\.4\.19"/);
   assert.match(source, /this\.readingVirtualStyleState = \/\* @__PURE__ \*\/ new Map\(\)/);
   assert.match(source, /shouldClearStaleReadingVirtualMinHeight\(\{/);
   assert.match(source, /this\.rememberReadingVirtualStyle\(sizer, "min-height"\)/);
@@ -160,7 +160,8 @@ test("reading text edits avoid placeholder breaks and support undo, redo, and bl
   assert.match(source, /installTextSortHandle\(element\)/);
   assert.match(source, /async reorderTextBlock\(file, movingElement, targetElement, placeAfter = false, sourceState = \{\}\)/);
   assert.match(source, /element\.dataset\.noteDrawSortDragging === "true"/);
-  assert.match(source, /this\.updateMarkdownBlockDropTarget\(event\.clientX, event\.clientY\)/);
+  assert.match(source, /this\.updateMarkdownBlockDropTarget\(pendingX, pendingY\)/);
+  assert.match(source, /this\.flushMarkdownBlockDropTarget\(event\.clientX, event\.clientY\)/);
   assert.match(source, /this\.dragMarkdownTextCommit = this\.endTextEdit\(\)/);
   assert.match(source, /const textCommitted = await Promise\.resolve\(drop\?\.textCommit\)\.catch\(\(\) => false\)/);
   assert.match(source, /if \(textCommitted === false\)/);
@@ -397,9 +398,9 @@ test("selection tool previews and commits exact NoteFlow Markdown insertion targ
   assert.match(dropSource, /this\.toolMode === TOOL_SELECT[\s\S]*queueDraggedNoteFlowPlacement\(clientX, clientY\)[\s\S]*window\.requestAnimationFrame/);
   assert.match(dropSource, /notedraw-text-sort-target-before[\s\S]*notedraw-text-sort-target-after[\s\S]*notedraw-text-sort-target-left[\s\S]*notedraw-text-sort-target-right/);
   assert.match(dropSource, /noteDrawDropSide[\s\S]*noteDrawDropLine/);
-  assert.match(dropSource, /const horizontalSide = nearFarLeft[\s\S]*\? "left"[\s\S]*\? "right"[\s\S]*horizontalSide,[\s\S]*candidate: placement\.candidate/);
+  assert.match(dropSource, /const intent = resolveDragDropHorizontalIntent\([\s\S]*horizontalRoom: true[\s\S]*\);[\s\S]*const horizontalSide = intent === "inline-right" \? "right" : null[\s\S]*const leftSnap = intent === "line-start"/);
   assert.match(dropSource, /applyElementStyles\(indicator, horizontalSide \? \{[\s\S]*width: "4px"[\s\S]*height: `\$\{Math\.max\(16, Math\.round\(targetRect\.height\)\)\}px`/);
-  assert.match(dropSource, /snapDraggedSelectionToNoteFlowPlacement[\s\S]*if \(horizontalSide\)[\s\S]*targetBounds\.minX - gap - allBounds\.maxX[\s\S]*targetBounds\.maxX \+ gap - allBounds\.minX/);
+  assert.match(dropSource, /snapDraggedSelectionToNoteFlowPlacement[\s\S]*if \(horizontalSide \|\| leftSnap\)[\s\S]*leftSnap[\s\S]*targetBounds\.minX - allBounds\.minX[\s\S]*targetBounds\.maxX \+ gap - allBounds\.minX/);
   assert.match(dragSource, /this\.usesDraggedNoteFlowPlacement\(\)[\s\S]*this\.queueDraggedNoteFlowPlacement\(event\.clientX, event\.clientY\)[\s\S]*this\.queueDraggedNoteFlowRefresh/);
   assert.match(finishSource, /requestedDropPlacement[\s\S]*this\.clearNoteFlowLayout\(\)[\s\S]*this\.resolveDraggedNoteFlowPlacement[\s\S]*this\.snapDraggedSelectionToNoteFlowPlacement/);
   assert.match(finishSource, /placement: droppedNoteFlowIndexes\.has\(index\) \? resolvedDropPlacement : null/);

@@ -114,11 +114,7 @@ export function selectNoteFlowInsertionPlacement(candidates, {
   return { candidate: last, side: "after", line: last.end };
 }
 
-export function selectNoteFlowDropPlacement(candidates, { dropY } = {}) {
-  const y = finite(dropY, Number.NaN);
-  if (!Number.isFinite(y)) {
-    return null;
-  }
+export function createNoteFlowDropIndex(candidates) {
   const ordered = (Array.isArray(candidates) ? candidates : []).filter((candidate) => {
     return candidate
       && Number.isFinite(Number(candidate.top))
@@ -132,7 +128,7 @@ export function selectNoteFlowDropPlacement(candidates, { dropY } = {}) {
     end: Math.max(finite(candidate.start), finite(candidate.end, candidate.start)),
     order: Number.isFinite(Number(candidate.order)) ? Number(candidate.order) : index
   }));
-  const boundaries = ordered.flatMap((candidate) => {
+  return ordered.flatMap((candidate) => {
     const height = candidate.bottom - candidate.top;
     const precise = candidate.lineSpacer || candidate.start === candidate.end ? 0 : 1;
     return [
@@ -141,7 +137,6 @@ export function selectNoteFlowDropPlacement(candidates, { dropY } = {}) {
         side: "before",
         line: candidate.start,
         boundary: candidate.top,
-        distance: Math.abs(y - candidate.top),
         precise,
         height
       },
@@ -150,25 +145,45 @@ export function selectNoteFlowDropPlacement(candidates, { dropY } = {}) {
         side: "after",
         line: candidate.end,
         boundary: candidate.bottom,
-        distance: Math.abs(y - candidate.bottom),
         precise,
         height
       }
     ];
-  }).sort((a, b) => {
-    return a.distance - b.distance
-      || a.precise - b.precise
-      || a.height - b.height
-      || a.candidate.order - b.candidate.order
-      || (a.side === "before" ? -1 : 1);
   });
-  const placement = boundaries[0];
+}
+
+export function selectNoteFlowDropPlacementFromIndex(index, { dropY } = {}) {
+  const y = finite(dropY, Number.NaN);
+  if (!Number.isFinite(y)) {
+    return null;
+  }
+  let placement = null;
+  let placementDistance = Number.POSITIVE_INFINITY;
+  for (const boundary of Array.isArray(index) ? index : []) {
+    const distance = Math.abs(y - boundary.boundary);
+    const better = distance < placementDistance
+      || distance === placementDistance && (
+        !placement
+        || boundary.precise < placement.precise
+        || boundary.precise === placement.precise && boundary.height < placement.height
+        || boundary.precise === placement.precise && boundary.height === placement.height && boundary.candidate.order < placement.candidate.order
+        || boundary.precise === placement.precise && boundary.height === placement.height && boundary.candidate.order === placement.candidate.order && boundary.side === "before" && placement.side !== "before"
+      );
+    if (better) {
+      placement = boundary;
+      placementDistance = distance;
+    }
+  }
   return placement ? {
     candidate: placement.candidate,
     side: placement.side,
     line: placement.line,
     boundary: placement.boundary
   } : null;
+}
+
+export function selectNoteFlowDropPlacement(candidates, options = {}) {
+  return selectNoteFlowDropPlacementFromIndex(createNoteFlowDropIndex(candidates), options);
 }
 
 export function selectNoteFlowAnchorPlacement(candidates, options = {}) {

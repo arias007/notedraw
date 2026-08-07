@@ -24,6 +24,7 @@ test("high-frequency interaction frames avoid a full Markdown remap", async () =
   assert.doesNotMatch(interactionSource, /syncMarkdownBlockPresentation|querySelectorAll/);
   assert.match(fullRenderSource, /this\.syncMarkdownBlockPresentation\(\)/);
   assert.match(dragSource, /requestRender\(this\.selectionHasDomStrokes\(\) \? "interaction" : false\)/);
+  assert.match(dragSource, /if \(this\.dragLastPointerEvent === event\) \{\s*return;/);
   assert.match(resizeSource, /requestRender\(this\.selectionHasDomStrokes\(\) \? "interaction" : false\)/);
 });
 
@@ -46,7 +47,7 @@ test("ordinary drags and resizes do not schedule NoteFlow layout work", async ()
 
   assert.match(queueSource, /let queued = false/);
   assert.match(queueSource, /stroke\?\.noteFlow\?\.enabled[\s\S]*queued = true/);
-  assert.match(queueSource, /if \(queued\) \{\s*this\.scheduleNoteFlowLayout\(\)/);
+  assert.match(queueSource, /if \(queued && !this\.draggingStroke\) \{\s*this\.scheduleNoteFlowLayout\(\)/);
   assert.match(resizeSource, /if \(Array\.from\(this\.resizeSelectionOriginalStrokes\.keys\(\)\)\.some\([\s\S]*noteFlow\?\.enabled\)\) \{\s*this\.scheduleNoteFlowLayout\(\{ operation: true \}\)/);
 });
 

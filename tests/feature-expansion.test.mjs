@@ -332,7 +332,7 @@ test("dragged inserted note elements use stable drop placement or frame-batched 
   const moveSource = dragSource.slice(dragSource.indexOf("  moveSelectedStroke("), dragSource.indexOf("  finishSelectedStrokeDrag("));
 
   assert.match(dragSource, /this\.dragStrokeOriginalNoteFlows = new Map/);
-  assert.match(moveSource, /if \(this\.usesDraggedNoteFlowPlacement\(\)\) \{\s*this\.queueDraggedNoteFlowPlacement\(event\.clientX, event\.clientY\);\s*} else \{\s*this\.queueDraggedNoteFlowRefresh\(this\.dragStrokeOriginalPoints\.keys\(\)\)/);
+  assert.match(moveSource, /if \(this\.usesDraggedNoteFlowPlacement\(\)\) \{\s*this\.queueDraggedNoteFlowPlacement\(event\.clientX, event\.clientY\);\s*} else \{\s*this\.queueDraggedNoteFlowRefresh\(strokeIndexes\)/);
   assert.doesNotMatch(moveSource, /captureNoteFlowAnchor|scheduleDrawingSave/);
   assert.match(refreshSource, /this\.pendingDraggedNoteFlowIndexes\.add\(index\)/);
   assert.match(refreshSource, /refreshDraggedNoteFlowAnchors\(\)/);
@@ -415,7 +415,7 @@ test("connector dragging caches snap geometry and ordinary renders skip legacy r
   assert.match(sync, /if \(recover && !fromBounds/);
   assert.match(sync, /if \(targetIds && !targetIds\.has\(connector\.fromId\)/);
   assert.doesNotMatch(render, /recover: true/);
-  assert.match(source, /syncBoundConnectors\(\{ elementIds: movedElementIds \}\)/);
+  assert.match(source, /syncBoundConnectors\(\{ elementIds: this\.dragMovedElementIds \}\)/);
 });
 
 test("selected text elements enter their editor before selection drag starts", async () => {

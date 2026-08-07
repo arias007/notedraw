@@ -6,11 +6,26 @@ import {
   markdownBlockPresentationMinHeight,
   normalizeMarkdownBlockMinHeight,
   normalizeMarkdownFloatBox,
-  resizeMarkdownBlockMinHeight
+  resizeMarkdownBlockMinHeight,
+  resolveDragDropHorizontalIntent
 } from "../src/markdown-block-layout.mjs";
 
 const sourceUrl = new URL("../src/notedraw-plugin.js", import.meta.url);
 const stylesUrl = new URL("../styles.css", import.meta.url);
+
+test("horizontal drag intent reserves the left edge for magnetic line insertion", () => {
+  const target = {
+    targetLeft: 300,
+    targetRight: 700,
+    laneLeft: 0,
+    laneRight: 1000
+  };
+
+  assert.equal(resolveDragDropHorizontalIntent({ ...target, clientX: 320 }), "line-start");
+  assert.equal(resolveDragDropHorizontalIntent({ ...target, clientX: 500 }), "vertical");
+  assert.equal(resolveDragDropHorizontalIntent({ ...target, clientX: 640 }), "inline-right");
+  assert.equal(resolveDragDropHorizontalIntent({ ...target, clientX: 640, horizontalRoom: false }), "vertical");
+});
 
 test("floating Markdown positions stay independent from their saved size", () => {
   assert.deepEqual(normalizeMarkdownFloatBox({
@@ -95,7 +110,7 @@ test("Markdown blocks use pointer sorting, logical-coordinate floating, and rema
   assert.match(source, /const horizontalSurface = this\.layoutMeasureEl\?\.isConnected/);
   assert.match(source, /const targetLeft = \(horizontalRect\?\.left \?\? canvasRect\.left\) \+ block\.floatBox\.x \* logicalWidth \* scaleX/);
   assert.match(source, /const targetTop = canvasRect\.top \+ \(block\.floatBox\.y \* logicalHeight - this\.canvasWindowTop\) \* scaleY/);
-  assert.match(source, /this\.updateMarkdownBlockDropTarget\(event\.clientX, event\.clientY\)/);
+  assert.match(source, /this\.queueMarkdownBlockDropTarget\(event\.clientX, event\.clientY\)/);
   assert.match(source, /element\.addEventListener\("pointerdown"/);
   assert.match(styles, /grid-template-columns: repeat\(12, minmax\(0, 1fr\)\)/);
   assert.match(styles, /\.notedraw-md-block::before/);
@@ -172,8 +187,8 @@ test("Markdown selection and NoteFlow layout use concrete blocks instead of embe
   assert.match(candidateSource, /!isConcreteMarkdownBlockElement\(sourceElement\)/);
   assert.match(candidateSource, /grouped\.get\(element\)[\s\S]*existing\.start = Math\.min[\s\S]*existing\.end = Math\.max/);
   assert.doesNotMatch(candidateSource, /noteFlowInlineLineCandidates|noteFlowVisualLineCandidates|visualLine/);
-  assert.match(edgeSource, /markdownEdgeDropTarget\(clientX, clientY[\s\S]*\? "left"[\s\S]*\? "right"/);
-  assert.match(edgeSource, /forcedSide === "left"[\s\S]*forcedSide === "right"/);
+  assert.match(edgeSource, /markdownEdgeDropTarget\(clientX, clientY[\s\S]*const intent = resolveDragDropHorizontalIntent/);
+  assert.match(edgeSource, /forcedIntent = edgeTarget\?\.intent \|\| null/);
   assert.match(styles, /\.notedraw-text-sort-target-left \{[\s\S]*inset 4px 0 0/);
   assert.match(styles, /\.notedraw-text-sort-target-right \{[\s\S]*inset -4px 0 0/);
 });

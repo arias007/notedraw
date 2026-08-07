@@ -27,6 +27,38 @@ export function markdownBlockPresentationMinHeight(block) {
   return block?.floating ? 0 : normalizeMarkdownBlockMinHeight(block?.minHeight);
 }
 
+export function resolveDragDropHorizontalIntent({
+  clientX,
+  targetLeft,
+  targetRight,
+  laneLeft = targetLeft,
+  laneRight = targetRight,
+  horizontalRoom = true
+} = {}) {
+  const x = Number(clientX);
+  const left = Number(targetLeft);
+  const right = Number(targetRight);
+  const surfaceLeft = Number(laneLeft);
+  const surfaceRight = Number(laneRight);
+  if (![x, left, right, surfaceLeft, surfaceRight].every(Number.isFinite) || right <= left || surfaceRight <= surfaceLeft) {
+    return "vertical";
+  }
+  const targetWidth = right - left;
+  const laneWidth = surfaceRight - surfaceLeft;
+  const leftThreshold = Math.max(
+    surfaceLeft + clamp(laneWidth * 0.1, 36, 72),
+    left + clamp(targetWidth * 0.18, 36, 72)
+  );
+  if (x <= leftThreshold) {
+    return "line-start";
+  }
+  const rightThreshold = Math.min(
+    left + targetWidth * 0.74,
+    surfaceRight - clamp(laneWidth * 0.08, 32, 64)
+  );
+  return horizontalRoom && x >= rightThreshold ? "inline-right" : "vertical";
+}
+
 export function normalizeMarkdownFloatBox(value) {
   if (!value || !Number.isFinite(Number(value.x)) || !Number.isFinite(Number(value.y))) {
     return null;

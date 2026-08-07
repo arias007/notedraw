@@ -1431,6 +1431,37 @@ function resizeMarkdownBlockMinHeight({
 function markdownBlockPresentationMinHeight(block) {
   return block?.floating ? 0 : normalizeMarkdownBlockMinHeight(block?.minHeight);
 }
+function resolveDragDropHorizontalIntent({
+  clientX,
+  targetLeft,
+  targetRight,
+  laneLeft = targetLeft,
+  laneRight = targetRight,
+  horizontalRoom = true
+} = {}) {
+  const x = Number(clientX);
+  const left = Number(targetLeft);
+  const right = Number(targetRight);
+  const surfaceLeft = Number(laneLeft);
+  const surfaceRight = Number(laneRight);
+  if (![x, left, right, surfaceLeft, surfaceRight].every(Number.isFinite) || right <= left || surfaceRight <= surfaceLeft) {
+    return "vertical";
+  }
+  const targetWidth = right - left;
+  const laneWidth = surfaceRight - surfaceLeft;
+  const leftThreshold = Math.max(
+    surfaceLeft + clamp4(laneWidth * 0.1, 36, 72),
+    left + clamp4(targetWidth * 0.18, 36, 72)
+  );
+  if (x <= leftThreshold) {
+    return "line-start";
+  }
+  const rightThreshold = Math.min(
+    left + targetWidth * 0.74,
+    surfaceRight - clamp4(laneWidth * 0.08, 32, 64)
+  );
+  return horizontalRoom && x >= rightThreshold ? "inline-right" : "vertical";
+}
 function normalizeMarkdownFloatBox(value) {
   if (!value || !Number.isFinite(Number(value.x)) || !Number.isFinite(Number(value.y))) {
     return null;
@@ -1615,11 +1646,7 @@ function selectNoteFlowInsertionPlacement(candidates, {
   const last = ordered[ordered.length - 1];
   return { candidate: last, side: "after", line: last.end };
 }
-function selectNoteFlowDropPlacement(candidates, { dropY } = {}) {
-  const y = finite4(dropY, Number.NaN);
-  if (!Number.isFinite(y)) {
-    return null;
-  }
+function createNoteFlowDropIndex(candidates) {
   const ordered = (Array.isArray(candidates) ? candidates : []).filter((candidate) => {
     return candidate && Number.isFinite(Number(candidate.top)) && Number.isFinite(Number(candidate.bottom)) && Number.isFinite(Number(candidate.start));
   }).map((candidate, index) => ({
@@ -1630,7 +1657,7 @@ function selectNoteFlowDropPlacement(candidates, { dropY } = {}) {
     end: Math.max(finite4(candidate.start), finite4(candidate.end, candidate.start)),
     order: Number.isFinite(Number(candidate.order)) ? Number(candidate.order) : index
   }));
-  const boundaries = ordered.flatMap((candidate) => {
+  return ordered.flatMap((candidate) => {
     const height = candidate.bottom - candidate.top;
     const precise = candidate.lineSpacer || candidate.start === candidate.end ? 0 : 1;
     return [
@@ -1639,7 +1666,6 @@ function selectNoteFlowDropPlacement(candidates, { dropY } = {}) {
         side: "before",
         line: candidate.start,
         boundary: candidate.top,
-        distance: Math.abs(y - candidate.top),
         precise,
         height
       },
@@ -1648,15 +1674,27 @@ function selectNoteFlowDropPlacement(candidates, { dropY } = {}) {
         side: "after",
         line: candidate.end,
         boundary: candidate.bottom,
-        distance: Math.abs(y - candidate.bottom),
         precise,
         height
       }
     ];
-  }).sort((a, b) => {
-    return a.distance - b.distance || a.precise - b.precise || a.height - b.height || a.candidate.order - b.candidate.order || (a.side === "before" ? -1 : 1);
   });
-  const placement = boundaries[0];
+}
+function selectNoteFlowDropPlacementFromIndex(index, { dropY } = {}) {
+  const y = finite4(dropY, Number.NaN);
+  if (!Number.isFinite(y)) {
+    return null;
+  }
+  let placement = null;
+  let placementDistance = Number.POSITIVE_INFINITY;
+  for (const boundary of Array.isArray(index) ? index : []) {
+    const distance = Math.abs(y - boundary.boundary);
+    const better = distance < placementDistance || distance === placementDistance && (!placement || boundary.precise < placement.precise || boundary.precise === placement.precise && boundary.height < placement.height || boundary.precise === placement.precise && boundary.height === placement.height && boundary.candidate.order < placement.candidate.order || boundary.precise === placement.precise && boundary.height === placement.height && boundary.candidate.order === placement.candidate.order && boundary.side === "before" && placement.side !== "before");
+    if (better) {
+      placement = boundary;
+      placementDistance = distance;
+    }
+  }
   return placement ? {
     candidate: placement.candidate,
     side: placement.side,
@@ -5462,7 +5500,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.4.18",
+      version: "3.4.19",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -8184,7 +8222,11 @@ var PreviewDrawingController = class {
     this.suppressTouchDrawing = false;
     this.draggingStroke = false;
     this.dragStrokeStartPoint = null;
+    this.dragStrokePointerGeometry = null;
     this.dragStrokeOriginalPoints = null;
+    this.dragStrokeOriginalPointBounds = null;
+    this.dragStrokeIndexes = [];
+    this.dragShouldSnap = false;
     this.dragStrokeOriginalNoteFlows = null;
     this.pendingDraggedNoteFlowIndexes = /* @__PURE__ */ new Set();
     this.dragStrokeOriginalBounds = null;
@@ -8196,8 +8238,18 @@ var PreviewDrawingController = class {
     this.dragMarkdownDropTarget = null;
     this.dragMarkdownDropSide = null;
     this.dragMarkdownLastValidDrop = null;
+    this.dragMarkdownDropFrameId = null;
+    this.dragMarkdownDropClientX = null;
+    this.dragMarkdownDropClientY = null;
     this.dragMarkdownTextCommit = null;
     this.dragElementGroupBounds = null;
+    this.dragDropGeometry = null;
+    this.dragSnapOtherBounds = null;
+    this.dragSnapOtherXValues = null;
+    this.dragSnapOtherYValues = null;
+    this.dragMovedElementIds = null;
+    this.dragHasBoxBackground = false;
+    this.dragLastPointerEvent = null;
     this.dragNoteFlowDropFrameId = null;
     this.dragNoteFlowDropClientX = null;
     this.dragNoteFlowDropClientY = null;
@@ -13754,6 +13806,9 @@ var PreviewDrawingController = class {
     const movableMarkdownBlocks = markdownBlocks.filter((block) => (!block.locked || block.groupId) && this.markdownBlockElement(block));
     this.dragMarkdownTextCommit = this.endTextEdit();
     this.clearDraggedNoteFlowPlacement();
+    this.cancelMarkdownBlockDropFrame();
+    this.resetDragDropGeometry();
+    this.dragSnapOtherBounds = null;
     this.pointerDown = false;
     this.currentStroke = null;
     if (!movableIndexes.length && !movableMarkdownBlocks.length) {
@@ -13764,10 +13819,27 @@ var PreviewDrawingController = class {
     }
     this.draggingStroke = true;
     this.dragStrokeStartPoint = point;
+    this.dragStrokeIndexes = movableIndexes;
+    this.dragShouldSnap = this.shouldSnapStrokeIndexes(movableIndexes);
+    this.dragMovedElementIds = this.connectorTargetIdsForStrokeIndexes(movableIndexes);
+    this.dragLastPointerEvent = null;
     this.dragStrokeOriginalPoints = new Map(movableIndexes.map((index) => [
       index,
       this.drawingData.strokes[index].points.map((strokePoint) => ({ ...strokePoint }))
     ]));
+    let pointMinX = 1;
+    let pointMinY = 1;
+    let pointMaxX = 0;
+    let pointMaxY = 0;
+    for (const points of this.dragStrokeOriginalPoints.values()) {
+      for (const strokePoint of points) {
+        pointMinX = Math.min(pointMinX, Number(strokePoint.x) || 0);
+        pointMinY = Math.min(pointMinY, Number(strokePoint.y) || 0);
+        pointMaxX = Math.max(pointMaxX, Number(strokePoint.x) || 0);
+        pointMaxY = Math.max(pointMaxY, Number(strokePoint.y) || 0);
+      }
+    }
+    this.dragStrokeOriginalPointBounds = this.dragStrokeOriginalPoints.size ? { minX: pointMinX, minY: pointMinY, maxX: pointMaxX, maxY: pointMaxY } : null;
     this.dragMarkdownOriginalElements = new Map(movableMarkdownBlocks.map((block) => {
       const element = this.markdownBlockElement(block);
       return [block.id, {
@@ -13788,11 +13860,13 @@ var PreviewDrawingController = class {
     this.dragDrawingHistoryBefore = this.captureDrawingHistorySnapshot();
     this.dragStrokeOriginalBounds = this.getStrokeIndexesNormalizedBounds(movableIndexes);
     this.dragElementGroupBounds = new Map(this.elementGroupRecords().filter((group) => group.boxed).map((group) => [group.id, this.getElementGroupBounds(group.id)]));
+    this.dragHasBoxBackground = Array.from(this.dragElementGroupBounds.keys()).some((id) => Boolean(this.elementGroup(id)?.backgroundColor));
     this.dragMarkdownLastValidDrop = null;
     this.dragStrokeMoved = false;
     this.dragStrokeHitIndex = hitIndex;
     this.dragStrokePreserveSelection = Boolean(options.preserveSelection);
     this.pointerStartClient = { x: event.clientX, y: event.clientY };
+    this.dragStrokePointerGeometry = this.captureCanvasPointerGeometry();
     this.activePointerId = event.pointerId;
     this.previewEl.addClass("is-moving-selection");
     for (const state of this.dragMarkdownOriginalElements.values()) {
@@ -13835,18 +13909,65 @@ var PreviewDrawingController = class {
     this.dragMarkdownDropTarget = null;
     this.dragMarkdownDropSide = null;
   }
-  markdownEdgeDropTarget(clientX, clientY, movingElements = /* @__PURE__ */ new Set()) {
+  cancelMarkdownBlockDropFrame() {
+    if (this.dragMarkdownDropFrameId !== null) {
+      window.cancelAnimationFrame(this.dragMarkdownDropFrameId);
+      this.dragMarkdownDropFrameId = null;
+    }
+    this.dragMarkdownDropClientX = null;
+    this.dragMarkdownDropClientY = null;
+  }
+  queueMarkdownBlockDropTarget(clientX, clientY) {
+    if (!this.dragMarkdownOriginalElements?.size || !Number.isFinite(Number(clientX)) || !Number.isFinite(Number(clientY))) {
+      return;
+    }
+    this.dragMarkdownDropClientX = Number(clientX);
+    this.dragMarkdownDropClientY = Number(clientY);
+    if (this.dragMarkdownDropFrameId !== null) {
+      return;
+    }
+    this.dragMarkdownDropFrameId = window.requestAnimationFrame(() => {
+      this.dragMarkdownDropFrameId = null;
+      const pendingX = this.dragMarkdownDropClientX;
+      const pendingY = this.dragMarkdownDropClientY;
+      this.dragMarkdownDropClientX = null;
+      this.dragMarkdownDropClientY = null;
+      this.updateMarkdownBlockDropTarget(pendingX, pendingY);
+    });
+  }
+  flushMarkdownBlockDropTarget(clientX, clientY) {
+    this.cancelMarkdownBlockDropFrame();
+    if (this.dragMarkdownOriginalElements?.size && Number.isFinite(Number(clientX)) && Number.isFinite(Number(clientY))) {
+      return this.updateMarkdownBlockDropTarget(clientX, clientY);
+    }
+    return null;
+  }
+  dragDropScrollKey() {
+    const scroller = this.scrollContainer;
+    const viewport = window.visualViewport;
+    return [
+      Number(scroller?.scrollLeft) || 0,
+      Number(scroller?.scrollTop) || 0,
+      Number(window.scrollX) || 0,
+      Number(window.scrollY) || 0,
+      Number(viewport?.offsetLeft) || 0,
+      Number(viewport?.offsetTop) || 0
+    ].join(":");
+  }
+  resetDragDropGeometry() {
+    this.dragDropGeometry = null;
+  }
+  dragDropGeometrySnapshot() {
+    const scrollKey = this.dragDropScrollKey();
+    const current = this.dragDropGeometry;
+    if (current && current.scrollKey === scrollKey && current.layoutGeneration === this.layoutRefreshGeneration) {
+      return current;
+    }
     const lane = this.layoutMeasureEl?.isConnected ? this.layoutMeasureEl : findLayoutMeasureElement(this.previewEl) || this.previewEl;
-    const laneRect = lane?.getBoundingClientRect?.();
-    if (!laneRect || laneRect.width <= 1) {
-      return null;
-    }
-    const threshold = clamp10(laneRect.width * 0.14, 44, 96);
-    const side = clientX <= laneRect.left + threshold ? "left" : clientX >= laneRect.right - threshold ? "right" : null;
-    if (!side) {
-      return null;
-    }
-    const candidates = Array.from(/* @__PURE__ */ new Set([
+    const laneBounds = lane?.getBoundingClientRect?.();
+    const laneRect = laneBounds && laneBounds.width > 1 && laneBounds.height > 0 ? { left: laneBounds.left, right: laneBounds.right, top: laneBounds.top, bottom: laneBounds.bottom, width: laneBounds.width, height: laneBounds.height } : null;
+    const movingElements = new Set(Array.from(this.dragMarkdownOriginalElements?.values?.() || []).map((state) => state.element));
+    const markdownCandidates = Array.from(/* @__PURE__ */ new Set([
       ...this.markdownBlockElements.values(),
       ...Array.from(this.previewEl.querySelectorAll?.(EDITABLE_SELECTOR) || [])
     ])).filter((element) => {
@@ -13858,52 +13979,120 @@ var PreviewDrawingController = class {
       }
       const file2 = this.plugin.resolveEditableFile(element, this.file);
       return normalizeVaultPath(file2?.path) === normalizeVaultPath(this.file?.path);
-    }).map((element) => ({ element, rect: element.getBoundingClientRect() })).filter(({ rect }) => {
-      return rect.width > 1 && rect.height > 1;
-    }).sort((a, b) => {
-      const distance = (rect) => clientY < rect.top ? rect.top - clientY : clientY > rect.bottom ? clientY - rect.bottom : 0;
-      return distance(a.rect) - distance(b.rect) || Math.abs(clientY - (a.rect.top + a.rect.bottom) / 2) - Math.abs(clientY - (b.rect.top + b.rect.bottom) / 2);
-    });
-    const nearest = candidates[0];
+    }).map((element) => {
+      const bounds = element.getBoundingClientRect?.();
+      return bounds && bounds.width > 1 && bounds.height > 1 ? { element, rect: { left: bounds.left, right: bounds.right, top: bounds.top, bottom: bounds.bottom, width: bounds.width, height: bounds.height } } : null;
+    }).filter(Boolean);
+    const noteFlowCandidates = this.noteFlowCandidates();
+    const markdownCandidateByElement = new Map(markdownCandidates.map((entry) => [entry.element, entry]));
+    const markdownBlockRecords = new Map(this.markdownBlockRecords().map((item) => [item.id, item]));
+    const snapshot = {
+      scrollKey,
+      layoutGeneration: this.layoutRefreshGeneration,
+      laneRect,
+      movingElements,
+      markdownCandidates,
+      markdownCandidateByElement,
+      markdownBlockRecords,
+      noteFlowCandidates,
+      noteFlowDropIndex: createNoteFlowDropIndex(noteFlowCandidates),
+      rowMetrics: /* @__PURE__ */ new Map()
+    };
+    this.dragDropGeometry = snapshot;
+    return snapshot;
+  }
+  markdownEdgeDropTarget(clientX, clientY, movingElements = /* @__PURE__ */ new Set()) {
+    const geometry = this.dragDropGeometrySnapshot();
+    const laneRect = geometry?.laneRect;
+    if (!laneRect || laneRect.width <= 1) {
+      return null;
+    }
+    let nearest = null;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    let nearestCenterDistance = Number.POSITIVE_INFINITY;
+    for (const candidate of geometry.markdownCandidates) {
+      if (movingElements.has(candidate.element)) {
+        continue;
+      }
+      const rect = candidate.rect;
+      const distance = clientY < rect.top ? rect.top - clientY : clientY > rect.bottom ? clientY - rect.bottom : 0;
+      const centerDistance = Math.abs(clientY - (rect.top + rect.bottom) / 2);
+      if (distance < nearestDistance || distance === nearestDistance && centerDistance < nearestCenterDistance) {
+        nearest = candidate;
+        nearestDistance = distance;
+        nearestCenterDistance = centerDistance;
+      }
+    }
     if (!nearest) {
       return null;
     }
     const maxDistance = Math.max(80, nearest.rect.height * 1.5);
     const verticalDistance = clientY < nearest.rect.top ? nearest.rect.top - clientY : clientY > nearest.rect.bottom ? clientY - nearest.rect.bottom : 0;
-    return verticalDistance <= maxDistance ? { element: nearest.element, side } : null;
+    const intent = resolveDragDropHorizontalIntent({
+      clientX,
+      targetLeft: nearest.rect.left,
+      targetRight: nearest.rect.right,
+      laneLeft: laneRect.left,
+      laneRight: laneRect.right,
+      horizontalRoom: true
+    });
+    return verticalDistance <= maxDistance && intent !== "vertical" ? { element: nearest.element, intent } : null;
   }
   updateMarkdownBlockDropTarget(clientX, clientY) {
-    const movingElements = new Set(Array.from(this.dragMarkdownOriginalElements?.values?.() || []).map((state) => state.element));
-    const stack = activeDocument.elementsFromPoint?.(clientX, clientY) || [activeDocument.elementFromPoint?.(clientX, clientY)];
-    let target = null;
-    let forcedSide = null;
-    for (const candidate of stack) {
-      const editable = findEditableTarget(candidate, this.previewEl);
-      if (!editable || movingElements.has(editable) || Array.from(movingElements).some((element) => element.contains?.(editable) || editable.contains?.(element))) {
+    const geometry = this.dragDropGeometrySnapshot();
+    const movingElements = geometry?.movingElements || new Set(Array.from(this.dragMarkdownOriginalElements?.values?.() || []).map((state) => state.element));
+    let targetEntry = null;
+    let targetArea = Number.POSITIVE_INFINITY;
+    for (const candidate of geometry?.markdownCandidates || []) {
+      const rect2 = candidate.rect;
+      if (movingElements.has(candidate.element) || clientX < rect2.left || clientX > rect2.right || clientY < rect2.top || clientY > rect2.bottom) {
         continue;
       }
-      const targetFile = this.plugin.resolveEditableFile(editable, this.file);
-      if (normalizeVaultPath(targetFile?.path) === normalizeVaultPath(this.file?.path)) {
-        target = editable;
-        break;
+      const area = rect2.width * rect2.height;
+      if (area < targetArea) {
+        targetEntry = candidate;
+        targetArea = area;
       }
     }
+    let target = targetEntry?.element || null;
+    let forcedIntent = null;
     if (!target) {
       const edgeTarget = this.markdownEdgeDropTarget(clientX, clientY, movingElements);
       target = edgeTarget?.element || null;
-      forcedSide = edgeTarget?.side || null;
+      forcedIntent = edgeTarget?.intent || null;
+      targetEntry = geometry?.markdownCandidateByElement?.get(target) || null;
+    }
+    if (!target) {
+      const movingList = Array.from(movingElements);
+      const stack = activeDocument.elementsFromPoint?.(clientX, clientY) || [activeDocument.elementFromPoint?.(clientX, clientY)];
+      for (const candidate of stack) {
+        const editable = findEditableTarget(candidate, this.previewEl);
+        if (!editable || movingElements.has(editable) || movingList.some((element) => element.contains?.(editable) || editable.contains?.(element))) {
+          continue;
+        }
+        const targetFile = this.plugin.resolveEditableFile(editable, this.file);
+        if (normalizeVaultPath(targetFile?.path) === normalizeVaultPath(this.file?.path)) {
+          target = editable;
+          break;
+        }
+      }
     }
     if (!target) {
       return this.dragMarkdownLastValidDrop ? { ...this.dragMarkdownLastValidDrop } : null;
     }
-    const rect = target.getBoundingClientRect();
+    const rect = targetEntry?.rect || target.getBoundingClientRect();
     const row = this.markdownDropRowMetrics(target, movingElements);
     const horizontalRoom = row.canFit && Number(target.parentElement?.clientWidth || rect.width) >= Math.max(300, row.totalCount * 120);
-    const ratioX = rect.width > 0 ? (clientX - rect.left) / rect.width : 0.5;
+    const intent = forcedIntent || resolveDragDropHorizontalIntent({
+      clientX,
+      targetLeft: rect.left,
+      targetRight: rect.right,
+      laneLeft: geometry?.laneRect?.left ?? rect.left,
+      laneRight: geometry?.laneRect?.right ?? rect.right,
+      horizontalRoom
+    });
     let side = clientY >= rect.top + rect.height / 2 ? "after" : "before";
-    if (horizontalRoom && (forcedSide === "left" || ratioX <= 0.32)) {
-      side = "left";
-    } else if (horizontalRoom && (forcedSide === "right" || ratioX >= 0.68)) {
+    if (horizontalRoom && intent === "inline-right") {
       side = "right";
     }
     if (target !== this.dragMarkdownDropTarget || side !== this.dragMarkdownDropSide) {
@@ -13916,21 +14105,27 @@ var PreviewDrawingController = class {
     return { element: target, side };
   }
   markdownDropRowMetrics(target, movingElements = /* @__PURE__ */ new Set()) {
+    const geometry = this.draggingStroke ? this.dragDropGeometry : null;
+    const cached = geometry?.rowMetrics?.get(target);
+    if (cached) {
+      return cached;
+    }
     const movingCount = Math.max(1, movingElements.size || this.dragMarkdownOriginalElements?.size || 1);
-    const targetRect = target?.getBoundingClientRect?.();
+    const targetRect = geometry?.markdownCandidateByElement?.get(target)?.rect || target?.getBoundingClientRect?.();
     const parent = target?.parentElement;
     let baseUsed = 0;
     let existingCount = 0;
     if (parent && targetRect?.height > 0) {
+      const blockRecords = geometry?.markdownBlockRecords || new Map(this.markdownBlockRecords().map((item) => [item.id, item]));
       for (const [id, element] of this.markdownBlockElements.entries()) {
         if (!element?.isConnected || element === target || movingElements.has(element) || element.parentElement !== parent) {
           continue;
         }
-        const rect = element.getBoundingClientRect();
+        const rect = geometry?.markdownCandidateByElement?.get(element)?.rect || element.getBoundingClientRect();
         if (Math.abs(rect.top - targetRect.top) > Math.max(3, Math.min(rect.height, targetRect.height) * 0.2)) {
           continue;
         }
-        const block = this.markdownBlockRecords().find((item) => item.id === id);
+        const block = blockRecords.get(id);
         if (!block || block.floating) {
           continue;
         }
@@ -13942,11 +14137,13 @@ var PreviewDrawingController = class {
     const available = Math.max(0, 12 - baseUsed);
     const totalCount = existingCount + itemCount;
     const canFit = totalCount <= 4 && available >= itemCount * 2;
-    return {
+    const result = {
       canFit,
       span: canFit ? Math.max(2, Math.floor(available / itemCount)) : 12,
       totalCount
     };
+    geometry?.rowMetrics?.set(target, result);
+    return result;
   }
   async commitDraggedMarkdownBlocks(drop, drawingHistoryBefore) {
     const moving = Array.isArray(drop?.moving) ? drop.moving.filter((state) => state?.element && state?.block) : [];
@@ -14209,29 +14406,29 @@ var PreviewDrawingController = class {
     this.render();
     return true;
   }
+  dragEventToPoint(event) {
+    const geometry = this.dragStrokePointerGeometry || this.captureCanvasPointerGeometry();
+    const mapped = mapClientPointToCanvas(event, geometry);
+    return {
+      x: clamp10(mapped.canvasX / Math.max(1, mapped.canvasWidth), 0, 1),
+      y: clamp10(mapped.canvasY / Math.max(1, mapped.canvasHeight), 0, 1)
+    };
+  }
   moveSelectedStroke(event) {
     if (!this.dragStrokeStartPoint || !this.dragStrokeOriginalPoints?.size && !this.dragMarkdownOriginalElements?.size) {
       return;
     }
-    const point = this.eventToPoint(event);
-    let minX = 0;
-    let maxX = 1;
-    let minY = 0;
-    let maxY = 1;
-    if (this.dragStrokeOriginalPoints.size) {
-      minX = 1;
-      maxX = 0;
-      minY = 1;
-      maxY = 0;
+    if (this.dragLastPointerEvent === event) {
+      return;
     }
-    for (const points of this.dragStrokeOriginalPoints.values()) {
-      for (const strokePoint of points) {
-        minX = Math.min(minX, strokePoint.x);
-        maxX = Math.max(maxX, strokePoint.x);
-        minY = Math.min(minY, strokePoint.y);
-        maxY = Math.max(maxY, strokePoint.y);
-      }
-    }
+    this.dragLastPointerEvent = event;
+    const point = this.dragEventToPoint(event);
+    const originalPointBounds = this.dragStrokeOriginalPointBounds;
+    const minX = originalPointBounds?.minX ?? 0;
+    const maxX = originalPointBounds?.maxX ?? 1;
+    const minY = originalPointBounds?.minY ?? 0;
+    const maxY = originalPointBounds?.maxY ?? 1;
+    const strokeIndexes = this.dragStrokeIndexes;
     const dx = clamp10(point.x - this.dragStrokeStartPoint.x, -minX, 1 - maxX);
     const dy = clamp10(point.y - this.dragStrokeStartPoint.y, -minY, 1 - maxY);
     const movedDistance = pointDistanceOnCanvas(
@@ -14249,13 +14446,16 @@ var PreviewDrawingController = class {
       this.dragStrokeMoved = true;
       this.clearSelectionLongPress();
       this.cancelResizeFrame();
+      if (this.dragShouldSnap) {
+        this.prepareDragSnapBounds(strokeIndexes);
+      }
       this.prepareReadingBottomExtentForDrag();
     }
     this.extendReadingBottomExtentDuringDrag(event);
     let snappedDx = dx;
     let snappedDy = dy;
-    if (this.shouldSnapStrokeIndexes(Array.from(this.dragStrokeOriginalPoints.keys())) && this.dragStrokeOriginalBounds) {
-      const snap = this.computeSnapDeltaForNormalizedBounds(translateNormalizedBounds(this.dragStrokeOriginalBounds, dx, dy), Array.from(this.dragStrokeOriginalPoints.keys()));
+    if (this.dragShouldSnap && this.dragStrokeOriginalBounds) {
+      const snap = this.computeSnapDeltaForNormalizedBounds(translateNormalizedBounds(this.dragStrokeOriginalBounds, dx, dy), strokeIndexes);
       snappedDx = clamp10(dx + snap.dx, -minX, 1 - maxX);
       snappedDy = clamp10(dy + snap.dy, -minY, 1 - maxY);
     }
@@ -14270,7 +14470,7 @@ var PreviewDrawingController = class {
         y: clamp10(strokePoint.y + snappedDy, 0, 1)
       }));
     }
-    const canvasRect = this.canvas?.getBoundingClientRect?.();
+    const canvasRect = this.dragStrokePointerGeometry?.rect;
     const localScaleX = canvasRect?.width > 0 ? canvasRect.width / Math.max(1, this.canvasWidth()) : 1;
     const localScaleY = canvasRect?.height > 0 ? canvasRect.height / Math.max(1, this.canvasRenderHeight) : 1;
     const clientDx = (event.clientX - this.pointerStartClient.x) / Math.max(1e-4, localScaleX);
@@ -14281,27 +14481,19 @@ var PreviewDrawingController = class {
         "--notedraw-md-drag-y": `${Math.round(clientDy)}px`
       });
     }
-    const movingGroupIds = new Set([
-      ...Array.from(this.dragStrokeOriginalPoints.keys()).map((index) => this.drawingData.strokes[index]?.groupId),
-      ...Array.from(this.dragMarkdownOriginalElements?.values?.() || []).map((state) => state.block?.groupId)
-    ].filter(Boolean));
-    if (Array.from(movingGroupIds).some((id) => {
-      const group = this.elementGroup(id);
-      return group?.boxed && group.backgroundColor;
-    })) {
+    if (this.dragHasBoxBackground) {
       this.invalidateStaticCache();
     }
     if (this.dragMarkdownOriginalElements?.size) {
-      this.updateMarkdownBlockDropTarget(event.clientX, event.clientY);
+      this.queueMarkdownBlockDropTarget(event.clientX, event.clientY);
     }
-    const movedElementIds = this.connectorTargetIdsForStrokeIndexes(this.dragStrokeOriginalPoints.keys());
-    if (this.syncBoundConnectors({ elementIds: movedElementIds })) {
+    if (this.dragMovedElementIds?.size && this.syncBoundConnectors({ elementIds: this.dragMovedElementIds })) {
       this.invalidateStaticCache();
     }
     if (this.usesDraggedNoteFlowPlacement()) {
       this.queueDraggedNoteFlowPlacement(event.clientX, event.clientY);
     } else {
-      this.queueDraggedNoteFlowRefresh(this.dragStrokeOriginalPoints.keys());
+      this.queueDraggedNoteFlowRefresh(strokeIndexes);
     }
     this.requestRender(this.selectionHasDomStrokes() ? "interaction" : false);
     event.preventDefault();
@@ -14317,10 +14509,14 @@ var PreviewDrawingController = class {
         path: this.dragNoteFlowPlacement.path,
         line: this.dragNoteFlowPlacement.line,
         side: this.dragNoteFlowPlacement.side,
-        horizontalSide: this.dragNoteFlowPlacement.horizontalSide
+        horizontalSide: this.dragNoteFlowPlacement.horizontalSide,
+        leftSnap: this.dragNoteFlowPlacement.leftSnap
       } : null;
     }
     this.clearDraggedNoteFlowPlacement();
+    if (didMove && this.dragMarkdownOriginalElements?.size) {
+      this.flushMarkdownBlockDropTarget(event.clientX, event.clientY);
+    }
     const lastDrop = this.dragMarkdownLastValidDrop?.element?.isConnected ? this.dragMarkdownLastValidDrop : this.dragMarkdownDropTarget?.isConnected ? { element: this.dragMarkdownDropTarget, side: this.dragMarkdownDropSide } : null;
     const markdownDrop = lastDrop ? {
       element: lastDrop.element,
@@ -14340,6 +14536,7 @@ var PreviewDrawingController = class {
       this.resetNoteFlowSettle();
       this.clearNoteFlowLayout();
       this.noteFlowAvoidanceAnchors.clear();
+      this.resetDragDropGeometry();
       const resolvedDropPlacement = this.resolveDraggedNoteFlowPlacement(requestedDropPlacement, movedIndexes);
       if (resolvedDropPlacement) {
         this.snapDraggedSelectionToNoteFlowPlacement(resolvedDropPlacement, movedIndexes);
@@ -14412,9 +14609,15 @@ var PreviewDrawingController = class {
   }
   clearSelectedStrokeDragState() {
     this.clearDraggedNoteFlowPlacement();
+    this.cancelMarkdownBlockDropFrame();
+    this.resetDragDropGeometry();
     this.draggingStroke = false;
     this.dragStrokeStartPoint = null;
+    this.dragStrokePointerGeometry = null;
     this.dragStrokeOriginalPoints = null;
+    this.dragStrokeOriginalPointBounds = null;
+    this.dragStrokeIndexes = [];
+    this.dragShouldSnap = false;
     this.dragStrokeOriginalNoteFlows = null;
     this.pendingDraggedNoteFlowIndexes.clear();
     this.dragStrokeOriginalBounds = null;
@@ -14429,6 +14632,12 @@ var PreviewDrawingController = class {
     this.dragMarkdownOriginalElements = null;
     this.dragMarkdownTextCommit = null;
     this.dragElementGroupBounds = null;
+    this.dragSnapOtherBounds = null;
+    this.dragSnapOtherXValues = null;
+    this.dragSnapOtherYValues = null;
+    this.dragMovedElementIds = null;
+    this.dragHasBoxBackground = false;
+    this.dragLastPointerEvent = null;
     this.dragMarkdownLastValidDrop = null;
     this.clearMarkdownBlockDropTarget();
     this.dragDrawingHistoryBefore = null;
@@ -16704,6 +16913,7 @@ var PreviewDrawingController = class {
     if (this.noteFlowDropIndicator) {
       delete this.noteFlowDropIndicator.dataset.noteDrawDropSide;
       delete this.noteFlowDropIndicator.dataset.noteDrawDropLine;
+      delete this.noteFlowDropIndicator.dataset.noteDrawDropMagnet;
     }
   }
   clearDraggedNoteFlowPlacement() {
@@ -16740,51 +16950,69 @@ var PreviewDrawingController = class {
       this.clearDraggedNoteFlowPlacement();
       return null;
     }
-    const placement = selectNoteFlowDropPlacement(this.noteFlowCandidates(), { dropY: Number(clientY) });
+    const geometry = this.dragDropGeometrySnapshot();
+    const placement = selectNoteFlowDropPlacementFromIndex(geometry?.noteFlowDropIndex, { dropY: Number(clientY) });
     const target = placement?.candidate?.sourceElement || placement?.candidate?.element || null;
-    const targetRect = target?.getBoundingClientRect?.();
-    if (!placement || !target || !targetRect || targetRect.width <= 1) {
+    const targetRect = placement?.candidate && {
+      left: Number(placement.candidate.left),
+      right: Number(placement.candidate.right),
+      top: Number(placement.candidate.top),
+      bottom: Number(placement.candidate.bottom),
+      width: Number(placement.candidate.right) - Number(placement.candidate.left),
+      height: Number(placement.candidate.bottom) - Number(placement.candidate.top)
+    };
+    if (!placement || !target || !targetRect || targetRect.width <= 1 || targetRect.height <= 1) {
       this.clearDraggedNoteFlowPlacement();
       return null;
     }
-    const lane = this.layoutMeasureEl?.isConnected ? this.layoutMeasureEl : findLayoutMeasureElement(this.previewEl) || this.previewEl;
-    const laneRect = lane?.getBoundingClientRect?.();
-    const edgeThreshold = clamp10(Math.min(targetRect.width, laneRect?.width || targetRect.width) * 0.14, 44, 96);
-    const nearFarLeft = laneRect && Number(clientX) <= laneRect.left + edgeThreshold;
-    const nearFarRight = laneRect && Number(clientX) >= laneRect.right - edgeThreshold;
-    const horizontalSide = nearFarLeft || Number(clientX) <= targetRect.left + edgeThreshold ? "left" : nearFarRight || Number(clientX) >= targetRect.right - edgeThreshold ? "right" : null;
+    const laneRect = geometry?.laneRect || targetRect;
+    const intent = resolveDragDropHorizontalIntent({
+      clientX,
+      targetLeft: targetRect.left,
+      targetRight: targetRect.right,
+      laneLeft: laneRect.left,
+      laneRight: laneRect.right,
+      horizontalRoom: true
+    });
+    const horizontalSide = intent === "inline-right" ? "right" : null;
+    const leftSnap = intent === "line-start";
     const flowSide = horizontalSide ? "after" : placement.side;
     const flowLine = horizontalSide ? placement.candidate.end : placement.line;
-    this.removeDraggedNoteFlowPlacementVisual();
-    this.dragNoteFlowTargetElement = target;
-    target.classList.add(`notedraw-text-sort-target-${horizontalSide || placement.side}`);
     const indicator = this.ensureNoteFlowDropIndicator();
-    const viewport = window.visualViewport;
-    const viewportLeft = Number(viewport?.offsetLeft) || 0;
-    const viewportWidth = Math.max(1, Number(viewport?.width) || window.innerWidth || targetRect.width);
-    const minLeft = viewportLeft + 8;
-    const maxRight = viewportLeft + viewportWidth - 8;
-    const left = clamp10(targetRect.left, minLeft, Math.max(minLeft, maxRight - 16));
-    const right = clamp10(targetRect.right, left + 16, maxRight);
-    applyElementStyles(indicator, horizontalSide ? {
-      left: `${Math.round(horizontalSide === "left" ? targetRect.left : targetRect.right)}px`,
-      top: `${Math.round(targetRect.top)}px`,
-      width: "4px",
-      height: `${Math.max(16, Math.round(targetRect.height))}px`
-    } : {
-      left: `${Math.round(left)}px`,
-      top: `${Math.round(placement.boundary)}px`,
-      width: `${Math.max(16, Math.round(right - left))}px`,
-      height: "4px"
-    });
-    indicator.dataset.noteDrawDropSide = horizontalSide || placement.side;
-    indicator.dataset.noteDrawDropLine = String(flowLine);
-    indicator.classList.add("is-notedraw-controls-visible", "is-visible");
+    const previous = this.dragNoteFlowPlacement;
+    const presentationChanged = previous?.candidate?.sourceElement !== target || previous?.candidate?.element !== placement.candidate.element || previous?.side !== flowSide || previous?.line !== Number(flowLine) || previous?.horizontalSide !== horizontalSide || previous?.leftSnap !== leftSnap;
+    if (presentationChanged || !indicator.classList.contains("is-visible")) {
+      this.removeDraggedNoteFlowPlacementVisual();
+      this.dragNoteFlowTargetElement = target;
+      target.classList.add(`notedraw-text-sort-target-${horizontalSide || placement.side}`);
+      const left = leftSnap ? laneRect.left : targetRect.left;
+      const right = leftSnap ? laneRect.right : targetRect.right;
+      applyElementStyles(indicator, horizontalSide ? {
+        left: `${Math.round(targetRect.right)}px`,
+        top: `${Math.round(targetRect.top)}px`,
+        width: "4px",
+        height: `${Math.max(16, Math.round(targetRect.height))}px`
+      } : {
+        left: `${Math.round(left)}px`,
+        top: `${Math.round(placement.boundary)}px`,
+        width: `${Math.max(16, Math.round(right - left))}px`,
+        height: "4px"
+      });
+      indicator.dataset.noteDrawDropSide = horizontalSide || placement.side;
+      indicator.dataset.noteDrawDropLine = String(flowLine);
+      if (leftSnap) {
+        indicator.dataset.noteDrawDropMagnet = "left";
+      } else {
+        delete indicator.dataset.noteDrawDropMagnet;
+      }
+      indicator.classList.add("is-notedraw-controls-visible", "is-visible");
+    }
     this.dragNoteFlowPlacement = {
       path: normalizeVaultPath(placement.candidate.path || this.file?.path || ""),
       line: Number(flowLine),
       side: flowSide,
       horizontalSide,
+      leftSnap,
       candidate: placement.candidate
     };
     return this.dragNoteFlowPlacement;
@@ -16796,7 +17024,7 @@ var PreviewDrawingController = class {
     if (!Number.isFinite(line) || !["before", "after"].includes(side)) {
       return null;
     }
-    const candidates = this.noteFlowCandidates();
+    const candidates = this.dragDropGeometrySnapshot()?.noteFlowCandidates || this.noteFlowCandidates();
     const matching = candidates.filter((candidate2) => {
       return candidate2.path === path && line >= candidate2.start && line <= candidate2.end;
     });
@@ -16805,7 +17033,14 @@ var PreviewDrawingController = class {
     const scaleY = canvasRect?.height > 0 ? canvasRect.height / Math.max(1, this.canvasRenderHeight) : 1;
     const strokeTop = bounds && canvasRect ? canvasRect.top + (bounds.minY - this.canvasWindowTop) * scaleY : Number.NaN;
     const candidate = selectStoredNoteFlowAnchorCandidate(matching, { side, strokeTop });
-    return candidate ? { candidate, path, line, side, horizontalSide: placement?.horizontalSide || null } : null;
+    return candidate ? {
+      candidate,
+      path,
+      line,
+      side,
+      horizontalSide: placement?.horizontalSide || null,
+      leftSnap: placement?.leftSnap === true
+    } : null;
   }
   snapDraggedSelectionToNoteFlowPlacement(placement, indexes) {
     const movedIndexes = Array.from(indexes || []);
@@ -16817,16 +17052,17 @@ var PreviewDrawingController = class {
     }
     const scaleY = canvasRect.height / Math.max(1, this.canvasRenderHeight);
     const horizontalSide = placement.horizontalSide;
+    const leftSnap = placement.leftSnap === true;
     const boundary = horizontalSide ? placement.candidate.top : placement.side === "after" ? placement.candidate.bottom : placement.candidate.top;
     const targetCanvasY = this.canvasWindowTop + (boundary - canvasRect.top) / Math.max(1e-4, scaleY);
     const deltaY = clamp10(targetCanvasY - flowBounds.minY, -allBounds.minY, this.canvasHeight() - allBounds.maxY);
     let deltaX = 0;
-    if (horizontalSide) {
+    if (horizontalSide || leftSnap) {
       const target = placement.candidate.sourceElement || placement.candidate.element;
       const targetBounds = this.markdownElementCanvasBounds(target);
       if (targetBounds) {
         const gap = 10;
-        deltaX = horizontalSide === "left" ? targetBounds.minX - gap - allBounds.maxX : targetBounds.maxX + gap - allBounds.minX;
+        deltaX = leftSnap ? targetBounds.minX - allBounds.minX : targetBounds.maxX + gap - allBounds.minX;
         deltaX = clamp10(deltaX, -allBounds.minX, this.canvasWidth() - allBounds.maxX);
       }
     }
@@ -17890,7 +18126,7 @@ var PreviewDrawingController = class {
         queued = true;
       }
     }
-    if (queued) {
+    if (queued && !this.draggingStroke) {
       this.scheduleNoteFlowLayout();
     }
   }
@@ -18115,30 +18351,56 @@ var PreviewDrawingController = class {
   shouldSnapStrokeIndexes(indexes) {
     return indexes.some((index) => isSnapStroke(this.drawingData.strokes[index]));
   }
-  computeSnapDeltaForNormalizedBounds(bounds, excludeIndexes = []) {
-    if (!bounds) {
-      return { dx: 0, dy: 0 };
+  prepareDragSnapBounds(excludeIndexes = []) {
+    if (this.dragSnapOtherBounds) {
+      return this.dragSnapOtherBounds;
     }
+    const exclude = new Set(excludeIndexes);
     const width = this.canvasWidth();
     const height = this.canvasHeight();
-    const exclude = new Set(excludeIndexes);
-    const otherBounds = [];
+    this.dragSnapOtherBounds = [];
     for (let index = 0; index < this.drawingData.strokes.length; index += 1) {
       if (exclude.has(index)) {
         continue;
       }
       const itemBounds = getStrokeBounds(this.drawingData.strokes[index], width, height);
       if (itemBounds) {
-        otherBounds.push(itemBounds);
+        this.dragSnapOtherBounds.push(itemBounds);
       }
+    }
+    this.dragSnapOtherXValues = this.dragSnapOtherBounds.flatMap((item) => [item.minX, (item.minX + item.maxX) / 2, item.maxX]);
+    this.dragSnapOtherYValues = this.dragSnapOtherBounds.flatMap((item) => [item.minY, (item.minY + item.maxY) / 2, item.maxY]);
+    return this.dragSnapOtherBounds;
+  }
+  computeSnapDeltaForNormalizedBounds(bounds, excludeIndexes = []) {
+    if (!bounds) {
+      return { dx: 0, dy: 0 };
+    }
+    const width = this.canvasWidth();
+    const height = this.canvasHeight();
+    const otherBounds = this.draggingStroke && this.dragSnapOtherBounds ? this.dragSnapOtherBounds : [];
+    let xCandidates = this.draggingStroke && this.dragSnapOtherXValues;
+    let yCandidates = this.draggingStroke && this.dragSnapOtherYValues;
+    if (!otherBounds.length && !(this.draggingStroke && this.dragSnapOtherBounds)) {
+      const exclude = new Set(excludeIndexes);
+      const fallbackBounds = [];
+      for (let index = 0; index < this.drawingData.strokes.length; index += 1) {
+        if (exclude.has(index)) {
+          continue;
+        }
+        const itemBounds = getStrokeBounds(this.drawingData.strokes[index], width, height);
+        if (itemBounds) {
+          fallbackBounds.push(itemBounds);
+        }
+      }
+      xCandidates = fallbackBounds.flatMap((item) => [item.minX, (item.minX + item.maxX) / 2, item.maxX]);
+      yCandidates = fallbackBounds.flatMap((item) => [item.minY, (item.minY + item.maxY) / 2, item.maxY]);
     }
     const xValues = [bounds.minX * width, (bounds.minX + bounds.maxX) * width / 2, bounds.maxX * width];
     const yValues = [bounds.minY * height, (bounds.minY + bounds.maxY) * height / 2, bounds.maxY * height];
-    const xCandidates = otherBounds.flatMap((item) => [item.minX, (item.minX + item.maxX) / 2, item.maxX]);
-    const yCandidates = otherBounds.flatMap((item) => [item.minY, (item.minY + item.maxY) / 2, item.maxY]);
     return {
-      dx: nearestSnapDelta(xValues, xCandidates, SNAP_GRID_PX, SNAP_THRESHOLD_PX) / width,
-      dy: nearestSnapDelta(yValues, yCandidates, SNAP_GRID_PX, SNAP_THRESHOLD_PX) / height
+      dx: nearestSnapDelta(xValues, xCandidates || [], SNAP_GRID_PX, SNAP_THRESHOLD_PX) / width,
+      dy: nearestSnapDelta(yValues, yCandidates || [], SNAP_GRID_PX, SNAP_THRESHOLD_PX) / height
     };
   }
   snapPointForPreset(point, preset) {
