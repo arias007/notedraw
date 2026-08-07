@@ -109,7 +109,10 @@ test("selection resize freezes pointer geometry and defers canvas measurement un
 });
 
 test("blank-space selection resolves its NoteDraw owner before the pushed Markdown block", async () => {
-  const source = await readFile(sourceUrl, "utf8");
+  const [source, styles] = await Promise.all([
+    readFile(sourceUrl, "utf8"),
+    readFile(stylesUrl, "utf8")
+  ]);
   const pointerSource = source.slice(source.indexOf("  onPointerDown(event"), source.indexOf("  onPointerMove(event", source.indexOf("  onPointerDown(event")));
   const blankHit = pointerSource.indexOf("findOwnedBlankSpaceStrokeAtClientPoint");
   const markdownHit = pointerSource.indexOf("hitStrokeIndex < 0 && markdownSelectionCandidate");
@@ -117,8 +120,10 @@ test("blank-space selection resolves its NoteDraw owner before the pushed Markdo
   assert.ok(blankHit >= 0 && markdownHit > blankHit);
   assert.match(source, /findOwnedBlankSpaceStrokeAtClientPoint\(clientX, clientY\)[\s\S]*selectOwnedBlankSpaceCandidate/);
   assert.match(source, /readingBottomOwnerStrokeIndex\(\)/);
+  assert.match(source, /const surfaceRect = \(this\.layoutMeasureEl\?\.isConnected \? this\.layoutMeasureEl : this\.previewEl\)/);
   assert.match(source, /ownerStrokeIndex: this\.findNoteFlowOwnerStrokeIndex\(record\)/);
   assert.match(source, /ownerId: strokeElementId\(item\.stroke\)/);
+  assert.match(styles, /\.notedraw-reading-bottom-spacer \{[\s\S]*width: 100%;[\s\S]*max-width: 100%;/);
 });
 
 test("Markdown selection and NoteFlow layout use concrete blocks instead of embed parents or visual lines", async () => {

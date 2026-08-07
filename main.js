@@ -5399,7 +5399,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.4.16",
+      version: "3.4.17",
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -15650,12 +15650,18 @@ var PreviewDrawingController = class {
     }
     if (this.readingBottomSpacer?.isConnected && this.readingBottomSpacerHeight > 0) {
       const rect = this.readingBottomSpacer.getBoundingClientRect?.();
+      const surfaceRect = (this.layoutMeasureEl?.isConnected ? this.layoutMeasureEl : this.previewEl)?.getBoundingClientRect?.();
       const ownerIndex = this.readingBottomOwnerStrokeIndex();
-      if (rect?.width > 0 && rect?.height > 0 && ownerIndex >= 0) {
+      if (rect?.height > 0 && ownerIndex >= 0) {
         const localHeight = Number(this.readingBottomSpacer.offsetHeight) || this.readingBottomSpacerHeight;
         candidates.push({
           ownerIndex,
-          rect,
+          rect: {
+            left: surfaceRect?.left ?? rect.left,
+            right: surfaceRect?.right ?? rect.right,
+            top: rect.top,
+            bottom: rect.bottom
+          },
           property: "height",
           styleProperty: "height",
           applied: this.readingBottomSpacerHeight,
