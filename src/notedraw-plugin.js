@@ -5347,12 +5347,6 @@ var PreviewDrawingController = class {
     });
     setIcon(this.selectButton, "mouse-pointer-2");
     this.selectButton.addEventListener("click", () => this.toggleSelectMode());
-    this.editMarkdownButton = this.toolbar.createEl("button", {
-      attr: { type: "button", title: this.plugin.t("editMarkdownTool") }
-    });
-    setIcon(this.editMarkdownButton, "file-pen-line");
-    this.editMarkdownButton.toggleAttribute("hidden", this.workspaceSurface);
-    this.editMarkdownButton.addEventListener("click", () => this.setEditMarkdownMode());
     this.penButton = this.toolbar.createEl("button", {
       attr: { type: "button", title: this.plugin.t("pen") }
     });
@@ -5647,7 +5641,6 @@ var PreviewDrawingController = class {
   refreshLocalizedLabels() {
     this.plugin.setAccessibleLabel(this.button, this.surfaceType === "webview" ? "editWebviewDraw" : this.drawingsVisible ? "editTextDraw" : "editTextDrawHidden");
     this.plugin.setAccessibleLabel(this.selectButton, "selectDrawings");
-    this.plugin.setAccessibleLabel(this.editMarkdownButton, "editMarkdownTool");
     this.plugin.setAccessibleLabel(this.penButton, "pen");
     this.plugin.setAccessibleLabel(this.watercolorButton, "watercolorBrush");
     this.plugin.setAccessibleLabel(this.textButton, "floatingText");
@@ -6787,7 +6780,6 @@ var PreviewDrawingController = class {
     const watercolorActive = this.toolMode === TOOL_DRAW && this.brushMode === BRUSH_WATERCOLOR;
     this.applyBrushButtonState(this.penButton, this.brushSettings?.[BRUSH_PEN], penActive);
     this.applyBrushButtonState(this.watercolorButton, this.brushSettings?.[BRUSH_WATERCOLOR], watercolorActive);
-    this.editMarkdownButton?.classList.toggle("is-active", this.toolMode === TOOL_EDIT_MD);
     this.textButton?.classList.toggle("is-active", this.toolMode === TOOL_TEXT || this.textPanelOpen);
     this.textButton?.toggleAttribute("hidden", false);
     this.selectButton?.classList.toggle("is-active", this.toolMode === TOOL_SELECT);
@@ -8571,6 +8563,9 @@ var PreviewDrawingController = class {
     const canEditMarkdownText = this.toolMode === TOOL_EDIT_MD;
     const editableCandidate = canEditMarkdownText ? findEditableTarget(target, this.previewEl) : null;
     const markdownSelectionCandidate = this.toolMode === TOOL_SELECT ? this.markdownBlockElementForTarget(target) : null;
+    const selectedMarkdownEditableCandidate = markdownSelectionCandidate
+      ? findEditableTarget(markdownSelectionCandidate, this.previewEl)
+      : null;
     const editableFile = editableCandidate ? this.plugin.resolveEditableFile(editableCandidate, this.file) : null;
     const editsEmbeddedFile = Boolean(editableFile?.path && editableFile.path !== this.file?.path);
     const editable = editableCandidate && (this.allowTextEdit || editsEmbeddedFile) ? editableCandidate : null;
@@ -8664,6 +8659,14 @@ var PreviewDrawingController = class {
         return;
       }
       const preserveGroupSelection = Boolean(hitGroupId && this.isElementGroupFullySelected(hitGroupId));
+      if (!additiveSelect && isTextLikeStroke(this.drawingData.strokes[hitStrokeIndex])) {
+        this.startPendingSelectionTap(event, {
+          type: "edit-stroke-or-drag",
+          index: hitStrokeIndex,
+          preserveSelection: preserveGroupSelection
+        });
+        return;
+      }
       this.startSelectedStrokeDrag(event, point, hitStrokeIndex, { preserveSelection: preserveGroupSelection });
       return;
     }
@@ -8690,6 +8693,15 @@ var PreviewDrawingController = class {
         this.startPendingSelectionTap(event, {
           type: "select-markdown",
           element: markdownSelectionCandidate
+        });
+        return;
+      }
+      if (!additiveSelect && selectedMarkdownEditableCandidate) {
+        this.startPendingSelectionTap(event, {
+          type: "edit-markdown-or-drag",
+          element: markdownSelectionCandidate,
+          editable: selectedMarkdownEditableCandidate,
+          preserveSelection: Boolean(hitGroupId && this.isElementGroupFullySelected(hitGroupId))
         });
         return;
       }
@@ -10710,6 +10722,13 @@ var PreviewDrawingController = class {
     }
     if (pointerDistance(pending.startClient, { x: event.clientX, y: event.clientY }) > this.tapDistancePx()) {
       pending.moved = true;
+      if (pending.type === "edit-markdown-or-drag" || pending.type === "edit-stroke-or-drag") {
+        this.pendingSelectionTap = null;
+        this.startSelectedStrokeDrag(event, this.eventToPoint(event), pending.index ?? -1, {
+          preserveSelection: pending.preserveSelection
+        });
+        return;
+      }
     }
     event.preventDefault();
     event.stopPropagation();
@@ -10738,6 +10757,10 @@ var PreviewDrawingController = class {
     } else if (pending.type === "select-group") {
       this.enteredElementGroupIds.delete(pending.groupId);
       this.selectElementGroup(pending.groupId);
+    } else if (pending.type === "edit-markdown-or-drag") {
+      this.startTextEdit(pending.editable || pending.element, pending.clientPoint || null);
+    } else if (pending.type === "edit-stroke-or-drag") {
+      this.editFloatingTextStroke(pending.index);
     }
   }
   finishPendingSelectionTap(event) {
@@ -10750,6 +10773,7 @@ var PreviewDrawingController = class {
     this.activePointerId = null;
     this.releasePointerCapture(event.pointerId);
     if (pending && !pending.moved && movedDistance <= this.tapDistancePx()) {
+      pending.clientPoint = { x: event.clientX, y: event.clientY };
       this.applyPendingSelectionTap(pending);
       this.render();
     }
@@ -10887,6 +10911,7 @@ var PreviewDrawingController = class {
         sourceInfo: getSourceInfo(element),
         sourceText: element.innerText,
         span: block.span,
+        widthScale: normalizeMarkdownBlockWidthScale(block.widthScale),
         floatBox: block.floatBox ? { ...block.floatBox } : null,
         canvasBounds: this.markdownElementCanvasBounds(element, { forSelection: true })
       }];
@@ -11256,6 +11281,7 @@ var PreviewDrawingController = class {
     };
     const targetBlock = this.ensureMarkdownBlockRecord(target);
     const originalTargetSpan = targetBlock?.span || 12;
+    const originalTargetWidthScale = normalizeMarkdownBlockWidthScale(targetBlock?.widthScale);
     const row = this.markdownDropRowMetrics(target, new Set(moving.map((state) => state.element)));
     const requestedHorizontal = drop.side === "left" || drop.side === "right";
     const horizontal = requestedHorizontal && row.canFit;
@@ -11263,14 +11289,17 @@ var PreviewDrawingController = class {
     if (horizontal && targetBlock) {
       const span = row.span;
       targetBlock.span = span;
+      targetBlock.widthScale = 1;
       for (const state of moving) {
         state.block.span = span;
+        state.block.widthScale = 1;
         state.block.floating = false;
         state.block.floatBox = null;
       }
     } else {
       for (const state of moving) {
         state.block.span = 12;
+        state.block.widthScale = 1;
         state.block.floating = false;
         state.block.floatBox = null;
       }
@@ -11285,9 +11314,11 @@ var PreviewDrawingController = class {
     if (!result) {
       if (targetBlock) {
         targetBlock.span = originalTargetSpan;
+        targetBlock.widthScale = originalTargetWidthScale;
       }
       for (const state of moving) {
         state.block.span = state.span;
+        state.block.widthScale = state.widthScale;
         state.block.floating = Boolean(state.floatBox);
         state.block.floatBox = state.floatBox ? { ...state.floatBox } : null;
       }
@@ -11941,6 +11972,7 @@ var PreviewDrawingController = class {
       return [block.id, {
         block,
         span: block.span,
+        widthScale: normalizeMarkdownBlockWidthScale(block.widthScale),
         minHeight: block.minHeight,
         naturalHeight,
         currentHeight,
@@ -12050,7 +12082,12 @@ var PreviewDrawingController = class {
           height: clamp(state.naturalHeight / Math.max(1, this.canvasHeight()), 0.02, 1)
         });
       } else {
-        block.span = clamp(Math.round(state.span * Math.abs(scaleX)), 2, 12);
+        const originalWidthUnits = Math.max(2, Number(state.span) || 12)
+          * normalizeMarkdownBlockWidthScale(state.widthScale);
+        const desiredWidthUnits = clamp(originalWidthUnits * Math.abs(scaleX), 2, 12);
+        const nextSpan = clamp(Math.ceil(desiredWidthUnits), 2, 12);
+        block.span = nextSpan;
+        block.widthScale = normalizeMarkdownBlockWidthScale(desiredWidthUnits / nextSpan);
         block.minHeight = resizeMarkdownBlockMinHeight({
           currentHeight: state.currentHeight,
           naturalHeight: state.naturalHeight,
@@ -12117,6 +12154,7 @@ var PreviewDrawingController = class {
     if (restoreOriginal && this.resizeSelectionOriginalMarkdownBlocks?.size) {
       for (const state of this.resizeSelectionOriginalMarkdownBlocks.values()) {
         state.block.span = state.span;
+        state.block.widthScale = state.widthScale;
         state.block.minHeight = state.minHeight;
         state.block.floating = state.floating;
         state.block.floatBox = state.floatBox ? { ...state.floatBox } : null;
@@ -13512,7 +13550,7 @@ var PreviewDrawingController = class {
       delete element.dataset.noteDrawSortDragging;
       delete element.dataset.noteDrawResizedHeight;
     }
-    for (const property of ["grid-column", "--notedraw-md-border", "--notedraw-md-background", "--notedraw-md-min-height", "--notedraw-md-drag-x", "--notedraw-md-drag-y", "--notedraw-md-float-x", "--notedraw-md-float-y", "--notedraw-md-float-width"]) {
+    for (const property of ["grid-column", "width", "--notedraw-md-border", "--notedraw-md-background", "--notedraw-md-min-height", "--notedraw-md-drag-x", "--notedraw-md-drag-y", "--notedraw-md-float-x", "--notedraw-md-float-y", "--notedraw-md-float-width"]) {
       element.style?.removeProperty(property);
     }
   }
@@ -13549,6 +13587,21 @@ var PreviewDrawingController = class {
       this.readingLogicalSizerHeight = 0;
     }
   }
+  applyMarkdownBlockWidthPresentation(block, element) {
+    if (!element) {
+      return;
+    }
+    if (block?.floating) {
+      element.style.removeProperty("width");
+      return;
+    }
+    const widthScale = normalizeMarkdownBlockWidthScale(block?.widthScale);
+    if (widthScale >= 0.999) {
+      element.style.removeProperty("width");
+      return;
+    }
+    element.style.width = `${Math.round(widthScale * 1000) / 10}%`;
+  }
   refreshMarkdownBlockPresentation(blockIds = this.selectedMarkdownBlockIds) {
     if (this.surfaceType !== "preview" || !this.previewEl?.isConnected || !this.drawingData) {
       return;
@@ -13570,6 +13623,7 @@ var PreviewDrawingController = class {
       element.toggleClass("is-locked", Boolean(block.locked));
       element.toggleClass("is-floating", Boolean(block.floating && block.floatBox));
       element.style.gridColumn = block.floating ? "span 12" : `span ${clamp(Math.round(Number(block.span) || 12), 2, 12)}`;
+      this.applyMarkdownBlockWidthPresentation(block, element);
       setNoteDrawCssProps(element, {
         "--notedraw-md-border": block.borderColor || "transparent",
         "--notedraw-md-background": block.backgroundColor || "transparent"
@@ -13679,6 +13733,7 @@ var PreviewDrawingController = class {
       element.toggleClass("is-locked", Boolean(block.locked));
       element.toggleClass("is-floating", Boolean(block.floating && block.floatBox));
       element.style.gridColumn = block.floating ? "span 12" : `span ${clamp(Math.round(Number(block.span) || 12), 2, 12)}`;
+      this.applyMarkdownBlockWidthPresentation(block, element);
       setNoteDrawCssProps(element, {
         "--notedraw-md-border": block.borderColor || "transparent",
         "--notedraw-md-background": block.backgroundColor || "transparent"
@@ -15928,6 +15983,7 @@ var PreviewDrawingController = class {
       if (dock) {
         block.floating = false;
         block.floatBox = null;
+        block.widthScale = 1;
         continue;
       }
       const bounds = this.markdownElementCanvasBounds(this.markdownBlockElement(block));
@@ -15942,6 +15998,7 @@ var PreviewDrawingController = class {
         height: (bounds.maxY - bounds.minY) / this.canvasHeight()
       });
       block.span = 12;
+      block.widthScale = 1;
     }
     this.redoStack = [];
     this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
@@ -18949,6 +19006,7 @@ function normalizeMarkdownBlocks(value, file) {
       lineEnd: Number.isFinite(Number(block?.lineEnd)) ? Math.max(lineStart ?? 0, Math.round(Number(block.lineEnd))) : lineStart,
       textHint,
       span: clamp(Math.round(Number(block?.span) || 12), 2, 12),
+      widthScale: normalizeMarkdownBlockWidthScale(block?.widthScale),
       minHeight: normalizeMarkdownBlockMinHeight(block?.minHeight),
       borderColor: isCssColor(block?.borderColor) ? block.borderColor : "",
       backgroundColor: isCssColor(block?.backgroundColor) ? block.backgroundColor : "",
@@ -18958,6 +19016,10 @@ function normalizeMarkdownBlocks(value, file) {
       groupId: typeof block?.groupId === "string" ? block.groupId : ""
     };
   }).filter((block) => block.path && block.id && !seen.has(block.id) && seen.add(block.id));
+}
+function normalizeMarkdownBlockWidthScale(value) {
+  const widthScale = Number(value);
+  return Number.isFinite(widthScale) ? clamp(widthScale, 0.2, 1) : 1;
 }
 function normalizeElementGroups(value) {
   if (!Array.isArray(value)) {

@@ -208,6 +208,27 @@ test("selection resize applies the two-dimensional scale returned by the layout 
   assert.doesNotMatch(source, /resizeSelectionAxis|resolvedAxis|resizeDeltaX|resizeDeltaY/);
 });
 
+test("selected Markdown text edits on a second tap while a moved tap still drags", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const pointerSource = source.slice(source.indexOf("  onPointerDown(event"), source.indexOf("  startConnectorGesture", source.indexOf("  onPointerDown(event")));
+
+  assert.doesNotMatch(source, /this\.editMarkdownButton\s*=/);
+  assert.match(pointerSource, /const selectedMarkdownEditableCandidate = markdownSelectionCandidate/);
+  assert.match(pointerSource, /type: "edit-markdown-or-drag"/);
+  assert.match(source, /pending\.type === "edit-markdown-or-drag"[\s\S]*this\.startSelectedStrokeDrag\(event, this\.eventToPoint\(event\), pending\.index \?\? -1/);
+  assert.match(source, /startTextEdit\(pending\.editable \|\| pending\.element, pending\.clientPoint \|\| null\)/);
+});
+
+test("Markdown resize keeps continuous horizontal width inside its grid span", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+
+  assert.match(source, /widthScale: normalizeMarkdownBlockWidthScale\(block\?\.widthScale\)/);
+  assert.match(source, /const originalWidthUnits = Math\.max\(2, Number\(state\.span\) \|\| 12\)[\s\S]*desiredWidthUnits[\s\S]*block\.widthScale/);
+  assert.match(source, /applyMarkdownBlockWidthPresentation\(block, element\)/);
+  assert.match(source, /element\.style\.width = `\$\{Math\.round\(widthScale \* 1000\) \/ 10\}%`/);
+  assert.match(source, /state\.block\.widthScale = state\.widthScale/);
+});
+
 test("inserted element dragging previews the raw pointer position without collision shifts", async () => {
   const source = await readFile(sourceUrl, "utf8");
   const dragSource = source.slice(source.indexOf("  startSelectedStrokeDrag("), source.indexOf("  startSelectedStrokeResize("));

@@ -424,6 +424,8 @@ test("selected text elements enter their editor before selection drag starts", a
 
   assert.ok(pointerSource.indexOf("this.editFloatingTextStroke(hitStrokeIndex)") < pointerSource.indexOf("if (this.toolMode === TOOL_SELECT && hitStrokeIndex >= 0)"));
   assert.match(pointerSource, /const repeatedSelectionTap = this\.toolMode === TOOL_SELECT && this\.isRepeatTextTap/);
+  assert.match(pointerSource, /type: "edit-stroke-or-drag"/);
+  assert.match(source, /pending\.type === "edit-stroke-or-drag"[\s\S]*this\.editFloatingTextStroke\(pending\.index\)/);
 });
 
 test("controller startup and tool choices remain stable across reloads", async () => {
