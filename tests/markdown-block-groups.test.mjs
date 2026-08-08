@@ -8,7 +8,8 @@ import {
   normalizeMarkdownFloatBox,
   resizeMarkdownBlockMinHeight,
   resolveDragDropHorizontalIntent,
-  resolveSelectionResizeScales
+  resolveSelectionResizeScales,
+  resolveVerticalMarkdownDropTarget
 } from "../src/markdown-block-layout.mjs";
 
 const sourceUrl = new URL("../src/notedraw-plugin.js", import.meta.url);
@@ -35,6 +36,22 @@ test("Markdown drag uses a left magnetic row drop and one move event chain", asy
   assert.match(source, /else if \(horizontalRoom && intent === "line-start"\) \{\s*side = "left";/);
   assert.match(source, /const row = this\.markdownDropRowMetrics\(nearest\.element, movingElements\);/);
   assert.doesNotMatch(source, /const onMove = \(moveEvent\) => \{/);
+});
+
+test("vertical Markdown drag inserts before, between, and after document blocks", () => {
+  const first = { element: "first", rect: { left: 120, right: 680, top: 100, bottom: 150, width: 560, height: 50 } };
+  const second = { element: "second", rect: { left: 120, right: 680, top: 210, bottom: 270, width: 560, height: 60 } };
+  const input = {
+    clientX: 400,
+    laneRect: { left: 100, right: 700 },
+    candidates: [second, first]
+  };
+
+  assert.deepEqual(resolveVerticalMarkdownDropTarget({ ...input, clientY: 70 }), { element: "first", side: "before" });
+  assert.deepEqual(resolveVerticalMarkdownDropTarget({ ...input, clientY: 165 }), { element: "first", side: "after" });
+  assert.deepEqual(resolveVerticalMarkdownDropTarget({ ...input, clientY: 195 }), { element: "second", side: "before" });
+  assert.deepEqual(resolveVerticalMarkdownDropTarget({ ...input, clientY: 320 }), { element: "second", side: "after" });
+  assert.equal(resolveVerticalMarkdownDropTarget({ ...input, clientX: 800, clientY: 320 }), null);
 });
 
 test("floating Markdown positions stay independent from their saved size", () => {
@@ -144,7 +161,8 @@ test("Markdown selection resize hits both the outer frame and the content corner
 
   assert.match(source, /const rects = \[frame\];/);
   assert.match(source, /const contentBounds = this\.getSelectedStrokeBounds\(\);/);
-  assert.match(source, /const hitRadius = Math\.max\(SELECT_RESIZE_HANDLE_HIT_RADIUS, this\.selectionHitPaddingPx\(\) \+ 6\);/);
+  assert.match(source, /const hitRadius = Math\.max\(SELECT_RESIZE_HANDLE_HIT_RADIUS, this\.selectionHitPaddingPx\(\) \+ 6, 28\);/);
+  assert.match(source, /distance < best\.distance/);
   assert.match(source, /block\.minHeight = resizeMarkdownBlockMinHeight\(\{/);
   assert.match(source, /state\.block\.minHeight = state\.minHeight/);
   assert.match(source, /minHeight: normalizeMarkdownBlockMinHeight\(block\?\.minHeight\)/);
@@ -170,12 +188,22 @@ test("selection resize locks the dominant axis for one-dimensional corner drags"
   });
 });
 
+test("selection resize determines its axis from canvas pixels and can correct the initial lock", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+
+  assert.match(source, /const resizeDeltaX = \(point\.x - this\.resizeSelectionStartPoint\.x\) \* this\.canvasWidth\(\)/);
+  assert.match(source, /const resizeDeltaY = \(point\.y - this\.resizeSelectionStartPoint\.y\) \* this\.canvasHeight\(\)/);
+  assert.match(source, /if \(resolvedAxis\) \{\s*this\.resizeSelectionAxis = resolvedAxis;/);
+});
+
 test("Markdown selection bounds exclude NoteFlow padding and include task checkboxes", async () => {
   const source = await readFile(sourceUrl, "utf8");
 
   assert.match(source, /markdownElementCanvasBounds\(this\.markdownBlockElement\(block\), \{ forSelection: true \}\)/);
   assert.match(source, /noteFlowAppliedVerticalInsets\(element\)/);
   assert.match(source, /input\.task-list-item-checkbox, input\[type='checkbox'\]/);
+  assert.match(source, /listItem\.matches\?\.\("\.task-list-item, \[data-task\], \[data-task-status\]"\)/);
+  assert.match(source, /this\.markdownTaskCheckboxRect\(element, elementRect\)/);
   assert.match(source, /top \+= flowInsets\.top \* visualScale/);
   assert.match(source, /bottom -= flowInsets\.bottom \* visualScale/);
 });
@@ -187,7 +215,13 @@ test("Markdown drag reserves NoteFlow rectangles without doing layout work per p
 
   assert.match(collisionSource, /stroke\?\.noteFlow\?\.enabled/);
   assert.match(collisionSource, /getStrokeBounds\(stroke, this\.canvasWidth\(\), this\.canvasHeight\(\)\)/);
+  assert.match(source, /this\.dragMarkdownObstacleBounds = new Map\(\)/);
+  assert.match(collisionSource, /this\.dragMarkdownObstacleBounds\?\.values/);
+  assert.match(source, /this\.dragMarkdownObstacleBounds = null/);
+  assert.match(collisionSource, /for \(let pass = 0; pass <= obstacles\.length; pass \+= 1\)/);
+  assert.match(collisionSource, /verticalDirection < 0/);
   assert.match(collisionSource, /resolvedY \+= deltaY/);
+  assert.match(collisionSource, /return \{ x: Number\(localDx\) \|\| 0, y: Number\(localDy\) \|\| 0 \}/);
   assert.doesNotMatch(collisionSource, /getBoundingClientRect/);
   assert.match(moveSource, /const markdownDrag = this\.markdownNoteFlowCollisionShift\(clientDx, clientDy\)/);
   assert.doesNotMatch(collisionSource, /scheduleNoteFlowLayout|clearNoteFlowLayout|syncMarkdownBlockPresentation/);

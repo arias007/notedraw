@@ -83,6 +83,57 @@ export function resolveDragDropHorizontalIntent({
   return horizontalRoom && x >= rightThreshold ? "inline-right" : "vertical";
 }
 
+export function resolveVerticalMarkdownDropTarget({
+  clientX,
+  clientY,
+  laneRect,
+  candidates = [],
+  laneMargin = 48,
+  minimumEdgeDistance = 96
+} = {}) {
+  const x = Number(clientX);
+  const y = Number(clientY);
+  const laneLeft = Number(laneRect?.left);
+  const laneRight = Number(laneRect?.right);
+  if (![x, y, laneLeft, laneRight].every(Number.isFinite) || laneRight <= laneLeft) {
+    return null;
+  }
+  const entries = candidates.filter((candidate) => {
+    const rect = candidate?.rect;
+    return candidate?.element
+      && [rect?.left, rect?.right, rect?.top, rect?.bottom].every((value) => Number.isFinite(Number(value)))
+      && Number(rect.right) > Number(rect.left)
+      && Number(rect.bottom) > Number(rect.top);
+  }).sort((a, b) => a.rect.top - b.rect.top || a.rect.left - b.rect.left);
+  if (!entries.length || x < laneLeft - laneMargin || x > laneRight + laneMargin) {
+    return null;
+  }
+  const first = entries[0];
+  const last = entries[entries.length - 1];
+  const firstHeight = first.rect.height || first.rect.bottom - first.rect.top;
+  const lastHeight = last.rect.height || last.rect.bottom - last.rect.top;
+  const topDistance = Math.max(minimumEdgeDistance, firstHeight * 1.5);
+  const bottomDistance = Math.max(minimumEdgeDistance, lastHeight * 1.5);
+  if (y <= first.rect.top && first.rect.top - y <= topDistance) {
+    return { element: first.element, side: "before" };
+  }
+  if (y >= last.rect.bottom && y - last.rect.bottom <= bottomDistance) {
+    return { element: last.element, side: "after" };
+  }
+  for (let index = 1; index < entries.length; index += 1) {
+    const previous = entries[index - 1];
+    const next = entries[index];
+    if (y < previous.rect.bottom || y > next.rect.top) {
+      continue;
+    }
+    const boundary = (previous.rect.bottom + next.rect.top) / 2;
+    return y <= boundary
+      ? { element: previous.element, side: "after" }
+      : { element: next.element, side: "before" };
+  }
+  return null;
+}
+
 export function normalizeMarkdownFloatBox(value) {
   if (!value || !Number.isFinite(Number(value.x)) || !Number.isFinite(Number(value.y))) {
     return null;

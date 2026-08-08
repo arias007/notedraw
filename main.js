@@ -1485,6 +1485,51 @@ function resolveDragDropHorizontalIntent({
   );
   return horizontalRoom && x >= rightThreshold ? "inline-right" : "vertical";
 }
+function resolveVerticalMarkdownDropTarget({
+  clientX,
+  clientY,
+  laneRect,
+  candidates = [],
+  laneMargin = 48,
+  minimumEdgeDistance = 96
+} = {}) {
+  const x = Number(clientX);
+  const y = Number(clientY);
+  const laneLeft = Number(laneRect?.left);
+  const laneRight = Number(laneRect?.right);
+  if (![x, y, laneLeft, laneRight].every(Number.isFinite) || laneRight <= laneLeft) {
+    return null;
+  }
+  const entries = candidates.filter((candidate) => {
+    const rect = candidate?.rect;
+    return candidate?.element && [rect?.left, rect?.right, rect?.top, rect?.bottom].every((value) => Number.isFinite(Number(value))) && Number(rect.right) > Number(rect.left) && Number(rect.bottom) > Number(rect.top);
+  }).sort((a, b) => a.rect.top - b.rect.top || a.rect.left - b.rect.left);
+  if (!entries.length || x < laneLeft - laneMargin || x > laneRight + laneMargin) {
+    return null;
+  }
+  const first = entries[0];
+  const last = entries[entries.length - 1];
+  const firstHeight = first.rect.height || first.rect.bottom - first.rect.top;
+  const lastHeight = last.rect.height || last.rect.bottom - last.rect.top;
+  const topDistance = Math.max(minimumEdgeDistance, firstHeight * 1.5);
+  const bottomDistance = Math.max(minimumEdgeDistance, lastHeight * 1.5);
+  if (y <= first.rect.top && first.rect.top - y <= topDistance) {
+    return { element: first.element, side: "before" };
+  }
+  if (y >= last.rect.bottom && y - last.rect.bottom <= bottomDistance) {
+    return { element: last.element, side: "after" };
+  }
+  for (let index = 1; index < entries.length; index += 1) {
+    const previous = entries[index - 1];
+    const next = entries[index];
+    if (y < previous.rect.bottom || y > next.rect.top) {
+      continue;
+    }
+    const boundary = (previous.rect.bottom + next.rect.top) / 2;
+    return y <= boundary ? { element: previous.element, side: "after" } : { element: next.element, side: "before" };
+  }
+  return null;
+}
 function normalizeMarkdownFloatBox(value) {
   if (!value || !Number.isFinite(Number(value.x)) || !Number.isFinite(Number(value.y))) {
     return null;
@@ -8258,6 +8303,7 @@ var PreviewDrawingController = class {
     this.dragStrokeHitIndex = -1;
     this.dragStrokePreserveSelection = false;
     this.dragMarkdownOriginalElements = null;
+    this.dragMarkdownObstacleBounds = null;
     this.dragMarkdownDropTarget = null;
     this.dragMarkdownDropSide = null;
     this.dragMarkdownLastValidDrop = null;
@@ -13886,6 +13932,22 @@ var PreviewDrawingController = class {
         canvasBounds: this.markdownElementCanvasBounds(element, { forSelection: true })
       }];
     }));
+    const movingMarkdownElements = new Set(Array.from(this.dragMarkdownOriginalElements.values()).map((state) => state.element));
+    this.dragMarkdownObstacleBounds = /* @__PURE__ */ new Map();
+    for (const block of this.markdownBlockRecords()) {
+      const element = this.markdownBlockElement(block);
+      if (!element || movingMarkdownElements.has(element) || Array.from(movingMarkdownElements).some((moving) => moving.contains?.(element) || element.contains?.(moving))) {
+        continue;
+      }
+      const blockPath = normalizeVaultPath(block.path || this.file?.path || "");
+      if (blockPath !== normalizeVaultPath(this.file?.path || "")) {
+        continue;
+      }
+      const bounds = this.markdownElementCanvasBounds(element, { forSelection: true });
+      if (bounds) {
+        this.dragMarkdownObstacleBounds.set(block.id, { block, element, bounds });
+      }
+    }
     this.dragMarkdownCollisionShift = { x: 0, y: 0 };
     this.dragStrokeOriginalNoteFlows = new Map(movableIndexes.map((index) => {
       const noteFlow = normalizeNoteFlow(this.drawingData.strokes[index]?.noteFlow);
@@ -14075,6 +14137,16 @@ var PreviewDrawingController = class {
     });
     return verticalDistance <= maxDistance && intent !== "vertical" ? { element: nearest.element, intent } : null;
   }
+  markdownVerticalDropTarget(clientX, clientY, movingElements = /* @__PURE__ */ new Set()) {
+    const geometry = this.dragDropGeometrySnapshot();
+    const candidates = (geometry?.markdownCandidates || []).filter((candidate) => !movingElements.has(candidate.element));
+    return resolveVerticalMarkdownDropTarget({
+      clientX,
+      clientY,
+      laneRect: geometry?.laneRect,
+      candidates
+    });
+  }
   updateMarkdownBlockDropTarget(clientX, clientY) {
     const geometry = this.dragDropGeometrySnapshot();
     const movingElements = geometry?.movingElements || new Set(Array.from(this.dragMarkdownOriginalElements?.values?.() || []).map((state) => state.element));
@@ -14097,6 +14169,13 @@ var PreviewDrawingController = class {
       const edgeTarget = this.markdownEdgeDropTarget(clientX, clientY, movingElements);
       target = edgeTarget?.element || null;
       forcedIntent = edgeTarget?.intent || null;
+      targetEntry = geometry?.markdownCandidateByElement?.get(target) || null;
+    }
+    let verticalSide = null;
+    if (!target) {
+      const verticalTarget = this.markdownVerticalDropTarget(clientX, clientY, movingElements);
+      target = verticalTarget?.element || null;
+      verticalSide = verticalTarget?.side || null;
       targetEntry = geometry?.markdownCandidateByElement?.get(target) || null;
     }
     if (!target) {
@@ -14128,7 +14207,7 @@ var PreviewDrawingController = class {
       laneRight: geometry?.laneRect?.right ?? rect.right,
       horizontalRoom
     });
-    let side = clientY >= rect.top + rect.height / 2 ? "after" : "before";
+    let side = verticalSide || (clientY >= rect.top + rect.height / 2 ? "after" : "before");
     if (horizontalRoom && intent === "inline-right") {
       side = "right";
     } else if (horizontalRoom && intent === "line-start") {
@@ -14463,13 +14542,17 @@ var PreviewDrawingController = class {
         return null;
       }
       return getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight());
-    }).filter(Boolean);
+    }).filter(Boolean).concat(
+      Array.from(this.dragMarkdownObstacleBounds?.values?.() || []).map((entry) => entry?.bounds).filter(Boolean)
+    ).sort((a, b) => a.minY - b.minY || a.minX - b.minX);
     if (!obstacles.length) {
-      return { x: clientDx, y: clientDy };
+      this.dragMarkdownCollisionShift = { x: 0, y: 0 };
+      return { x: Number(localDx) || 0, y: Number(localDy) || 0 };
     }
     const gap = 10;
     let resolvedX = Number(localDx) || 0;
     let resolvedY = Number(localDy) || 0;
+    let verticalDirection = Math.sign(resolvedY);
     for (const state of this.dragMarkdownOriginalElements.values()) {
       const original = state.canvasBounds;
       if (!original) {
@@ -14481,18 +14564,29 @@ var PreviewDrawingController = class {
         minY: original.minY + resolvedY,
         maxY: original.maxY + resolvedY
       };
-      for (const obstacle of obstacles) {
-        const overlapsX = proposed.minX < obstacle.maxX && proposed.maxX > obstacle.minX;
-        const overlapsY = proposed.minY < obstacle.maxY && proposed.maxY > obstacle.minY;
-        if (!overlapsX || !overlapsY) {
-          continue;
+      for (let pass = 0; pass <= obstacles.length; pass += 1) {
+        let shifted = false;
+        for (const obstacle of obstacles) {
+          const overlapsX = proposed.minX < obstacle.maxX && proposed.maxX > obstacle.minX;
+          const overlapsY = proposed.minY < obstacle.maxY && proposed.maxY > obstacle.minY;
+          if (!overlapsX || !overlapsY) {
+            continue;
+          }
+          if (verticalDirection === 0) {
+            const proposedCenter = (proposed.minY + proposed.maxY) / 2;
+            const obstacleCenter = (obstacle.minY + obstacle.maxY) / 2;
+            verticalDirection = proposedCenter <= obstacleCenter ? -1 : 1;
+          }
+          const deltaY = verticalDirection < 0 ? obstacle.minY - proposed.maxY - gap : obstacle.maxY - proposed.minY + gap;
+          resolvedY += deltaY;
+          proposed.minY += deltaY;
+          proposed.maxY += deltaY;
+          shifted = true;
+          break;
         }
-        const proposedCenter = (proposed.minY + proposed.maxY) / 2;
-        const obstacleCenter = (obstacle.minY + obstacle.maxY) / 2;
-        const deltaY = proposedCenter <= obstacleCenter ? obstacle.minY - proposed.maxY - gap : obstacle.maxY - proposed.minY + gap;
-        resolvedY += deltaY;
-        proposed.minY += deltaY;
-        proposed.maxY += deltaY;
+        if (!shifted) {
+          break;
+        }
       }
     }
     this.dragMarkdownCollisionShift = { x: resolvedX - (Number(localDx) || 0), y: resolvedY - (Number(localDy) || 0) };
@@ -14567,9 +14661,9 @@ var PreviewDrawingController = class {
     const canvasRect = this.dragStrokePointerGeometry?.rect;
     const localScaleX = canvasRect?.width > 0 ? canvasRect.width / Math.max(1, this.canvasWidth()) : 1;
     const localScaleY = canvasRect?.height > 0 ? canvasRect.height / Math.max(1, this.canvasRenderHeight) : 1;
-    const clientDx2 = (event.clientX - this.pointerStartClient.x) / Math.max(1e-4, localScaleX);
-    const clientDy2 = (event.clientY - this.pointerStartClient.y) / Math.max(1e-4, localScaleY);
-    const markdownDrag = this.markdownNoteFlowCollisionShift(clientDx2, clientDy2);
+    const clientDx = (event.clientX - this.pointerStartClient.x) / Math.max(1e-4, localScaleX);
+    const clientDy = (event.clientY - this.pointerStartClient.y) / Math.max(1e-4, localScaleY);
+    const markdownDrag = this.markdownNoteFlowCollisionShift(clientDx, clientDy);
     for (const state of this.dragMarkdownOriginalElements?.values?.() || []) {
       setNoteDrawCssProps(state.element, {
         "--notedraw-md-drag-x": `${Math.round(markdownDrag.x)}px`,
@@ -14730,6 +14824,7 @@ var PreviewDrawingController = class {
       state.element?.style?.removeProperty("--notedraw-md-drag-y");
     }
     this.dragMarkdownOriginalElements = null;
+    this.dragMarkdownObstacleBounds = null;
     this.dragMarkdownCollisionShift = null;
     this.dragMarkdownTextCommit = null;
     this.dragElementGroupBounds = null;
@@ -14969,17 +15064,21 @@ var PreviewDrawingController = class {
     const originalDy = corner.y - anchor.y;
     let scaleX = originalDx === 0 ? 1 : (point.x - anchor.x) / originalDx;
     let scaleY = originalDy === 0 ? 1 : (point.y - anchor.y) / originalDy;
-    const axis = this.resizeSelectionAxis || resolveSelectionResizeScales({
+    const resizeDeltaX = (point.x - this.resizeSelectionStartPoint.x) * this.canvasWidth();
+    const resizeDeltaY = (point.y - this.resizeSelectionStartPoint.y) * this.canvasHeight();
+    const resolvedAxis = resolveSelectionResizeScales({
       scaleX,
       scaleY,
-      deltaX: point.x - this.resizeSelectionStartPoint.x,
-      deltaY: point.y - this.resizeSelectionStartPoint.y
+      deltaX: resizeDeltaX,
+      deltaY: resizeDeltaY
     }).axis;
-    if (axis) {
-      this.resizeSelectionAxis = axis;
-      if (axis === "x") {
+    if (resolvedAxis) {
+      this.resizeSelectionAxis = resolvedAxis;
+    }
+    if (this.resizeSelectionAxis) {
+      if (this.resizeSelectionAxis === "x") {
         scaleY = 1;
-      } else if (axis === "y") {
+      } else if (this.resizeSelectionAxis === "y") {
         scaleX = 1;
       }
     }
@@ -18438,21 +18537,43 @@ var PreviewDrawingController = class {
     }
     return insets;
   }
-  markdownTaskCheckboxRect(element) {
+  markdownTaskCheckboxRect(element, elementRect = null) {
     const listItem = element?.closest?.("li");
     if (!listItem) {
       return null;
     }
+    let hasTaskCheckbox = false;
     for (const checkbox of listItem.querySelectorAll?.("input.task-list-item-checkbox, input[type='checkbox']") || []) {
       if (checkbox.closest?.("li") !== listItem) {
         continue;
       }
+      hasTaskCheckbox = true;
       const rect = checkbox.getBoundingClientRect?.();
       if (rect?.width > 0 && rect?.height > 0) {
         return rect;
       }
     }
-    return null;
+    const taskLike = hasTaskCheckbox || listItem.matches?.(".task-list-item, [data-task], [data-task-status]") || element?.matches?.(".task-list-item, [data-task], [data-task-status]");
+    if (!taskLike) {
+      return null;
+    }
+    const base = elementRect || element?.getBoundingClientRect?.();
+    const listRect = listItem.getBoundingClientRect?.();
+    const left = Number.isFinite(listRect?.left) ? listRect.left : base?.left;
+    const top = Number.isFinite(base?.top) ? base.top : listRect?.top;
+    const bottom = Number.isFinite(base?.bottom) ? base.bottom : listRect?.bottom;
+    if (![left, top, bottom].every(Number.isFinite) || bottom <= top) {
+      return null;
+    }
+    const markerWidth = Math.max(14, Math.min(24, bottom - top));
+    return {
+      left,
+      right: left + markerWidth,
+      top,
+      bottom,
+      width: markerWidth,
+      height: bottom - top
+    };
   }
   markdownElementCanvasBounds(element, { forSelection = false } = {}) {
     if (!element?.isConnected || !this.canvas) {
@@ -18473,7 +18594,7 @@ var PreviewDrawingController = class {
       const flowInsets = this.noteFlowAppliedVerticalInsets(element);
       top += flowInsets.top * visualScale;
       bottom -= flowInsets.bottom * visualScale;
-      const checkboxRect = this.markdownTaskCheckboxRect(element);
+      const checkboxRect = this.markdownTaskCheckboxRect(element, elementRect);
       if (checkboxRect) {
         left = Math.min(left, checkboxRect.left);
         right = Math.max(right, checkboxRect.right);
@@ -18818,15 +18939,22 @@ var PreviewDrawingController = class {
         });
       }
     }
-    const hitRadius = Math.max(SELECT_RESIZE_HANDLE_HIT_RADIUS, this.selectionHitPaddingPx() + 6);
-    for (const rect of rects) {
+    const hitRadius = Math.max(SELECT_RESIZE_HANDLE_HIT_RADIUS, this.selectionHitPaddingPx() + 6, 28);
+    let best = null;
+    for (const [rectIndex, rect] of rects.entries()) {
       for (const handle of getSelectionHandlePointsFromRect(rect)) {
-        if (Math.abs(hitPoint.x - handle.x) <= hitRadius && Math.abs(hitPoint.y - handle.y) <= hitRadius) {
-          return handle.handle;
+        const dx = hitPoint.x - handle.x;
+        const dy = hitPoint.y - handle.y;
+        if (Math.abs(dx) > hitRadius || Math.abs(dy) > hitRadius) {
+          continue;
+        }
+        const distance = dx * dx + dy * dy;
+        if (!best || distance < best.distance || distance === best.distance && rectIndex < best.rectIndex) {
+          best = { handle: handle.handle, distance, rectIndex };
         }
       }
     }
-    return null;
+    return best?.handle || null;
   }
   selectedStrokeFrameContains(point) {
     const rect = this.getSelectedFrameCanvasRect();
