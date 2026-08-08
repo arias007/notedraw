@@ -5084,6 +5084,7 @@ var PreviewDrawingController = class {
     this.dragStrokePreserveSelection = false;
     this.dragMarkdownOriginalElements = null;
     this.dragMarkdownObstacleBounds = null;
+    this.dragNoteFlowOriginalBounds = null;
     this.dragMarkdownDropTarget = null;
     this.dragMarkdownDropSide = null;
     this.dragMarkdownLastValidDrop = null;
@@ -5770,6 +5771,7 @@ var PreviewDrawingController = class {
     this.dragStrokeStartPoint = null;
     this.dragStrokeOriginalPoints = null;
     this.dragStrokeOriginalNoteFlows = null;
+    this.dragNoteFlowOriginalBounds = null;
     this.pendingDraggedNoteFlowIndexes.clear();
     this.dragStrokeMoved = false;
     this.dragStrokeHitIndex = -1;
@@ -10824,6 +10826,14 @@ var PreviewDrawingController = class {
         this.dragMarkdownObstacleBounds.set(block.id, { block, element, bounds });
       }
     }
+    this.dragNoteFlowOriginalBounds = new Map(movableIndexes.flatMap((index) => {
+      const stroke = this.drawingData.strokes[index];
+      if (!normalizeNoteFlow(stroke?.noteFlow) || isConnectorStroke(stroke)) {
+        return [];
+      }
+      const bounds = getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight());
+      return bounds ? [[index, bounds]] : [];
+    }));
     this.dragMarkdownCollisionShift = { x: 0, y: 0 };
     this.dragStrokeOriginalNoteFlows = new Map(movableIndexes.map((index) => {
       const noteFlow = normalizeNoteFlow(this.drawingData.strokes[index]?.noteFlow);
@@ -11430,8 +11440,8 @@ var PreviewDrawingController = class {
     };
   }
   markdownNoteFlowCollisionShift(localDx, localDy) {
-    if (!this.dragMarkdownOriginalElements?.size) {
-      return { x: localDx, y: localDy };
+    if (!this.dragMarkdownOriginalElements?.size && !this.dragNoteFlowOriginalBounds?.size) {
+      return { x: Number(localDx) || 0, y: Number(localDy) || 0 };
     }
     const movedIndexes = new Set(this.dragStrokeIndexes || []);
     const obstacles = (this.drawingData?.strokes || []).map((stroke, index) => {
@@ -11452,8 +11462,11 @@ var PreviewDrawingController = class {
     let resolvedX = Number(localDx) || 0;
     let resolvedY = Number(localDy) || 0;
     let verticalDirection = Math.sign(resolvedY);
-    for (const state of this.dragMarkdownOriginalElements.values()) {
-      const original = state.canvasBounds;
+    const movingBounds = [
+      ...Array.from(this.dragMarkdownOriginalElements?.values?.() || []).map((state) => state.canvasBounds),
+      ...Array.from(this.dragNoteFlowOriginalBounds?.values?.() || [])
+    ].filter(Boolean);
+    for (const original of movingBounds) {
       if (!original) {
         continue;
       }
@@ -11564,7 +11577,26 @@ var PreviewDrawingController = class {
     const localScaleY = canvasRect?.height > 0 ? canvasRect.height / Math.max(1, this.canvasRenderHeight) : 1;
     const clientDx = (event.clientX - this.pointerStartClient.x) / Math.max(0.0001, localScaleX);
     const clientDy = (event.clientY - this.pointerStartClient.y) / Math.max(0.0001, localScaleY);
-    const markdownDrag = this.markdownNoteFlowCollisionShift(clientDx, clientDy);
+    const hasDraggedNoteFlow = Boolean(this.dragNoteFlowOriginalBounds?.size);
+    const collisionDx = hasDraggedNoteFlow ? snappedDx * this.canvasWidth() : clientDx;
+    const collisionDy = hasDraggedNoteFlow ? snappedDy * this.canvasHeight() : clientDy;
+    const markdownDrag = this.markdownNoteFlowCollisionShift(collisionDx, collisionDy);
+    if (hasDraggedNoteFlow) {
+      const resolvedDx = markdownDrag.x / this.canvasWidth();
+      const resolvedDy = markdownDrag.y / this.canvasHeight();
+      for (const index of this.dragNoteFlowOriginalBounds.keys()) {
+        const stroke = this.drawingData.strokes[index];
+        const originalPoints = this.dragStrokeOriginalPoints.get(index);
+        if (!stroke || !originalPoints) {
+          continue;
+        }
+        stroke.points = originalPoints.map((strokePoint) => ({
+          ...strokePoint,
+          x: clamp(strokePoint.x + resolvedDx, 0, 1),
+          y: clamp(strokePoint.y + resolvedDy, 0, 1)
+        }));
+      }
+    }
     for (const state of this.dragMarkdownOriginalElements?.values?.() || []) {
       setNoteDrawCssProps(state.element, {
         "--notedraw-md-drag-x": `${Math.round(markdownDrag.x)}px`,
@@ -11730,6 +11762,7 @@ var PreviewDrawingController = class {
     }
     this.dragMarkdownOriginalElements = null;
     this.dragMarkdownObstacleBounds = null;
+    this.dragNoteFlowOriginalBounds = null;
     this.dragMarkdownCollisionShift = null;
     this.dragMarkdownTextCommit = null;
     this.dragElementGroupBounds = null;
@@ -15948,16 +15981,40 @@ var PreviewDrawingController = class {
         });
       }
     }
-    const hitRadius = Math.max(SELECT_RESIZE_HANDLE_HIT_RADIUS, this.selectionHitPaddingPx() + 6, 28);
+    const canvasRect = this.canvas?.getBoundingClientRect?.();
+    const scaleX = canvasRect?.width > 0 ? canvasRect.width / Math.max(1, this.canvasWidth()) : 1;
+    const scaleY = canvasRect?.height > 0 ? canvasRect.height / Math.max(1, this.canvasRenderHeight) : 1;
+    const screenHitRadius = Math.max(SELECT_RESIZE_HANDLE_HIT_RADIUS, this.selectionHitPaddingPx() + 6, 28);
+    const hitRadiusX = screenHitRadius / Math.max(0.01, Math.abs(scaleX));
+    const hitRadiusY = screenHitRadius / Math.max(0.01, Math.abs(scaleY));
     let best = null;
     for (const [rectIndex, rect] of rects.entries()) {
+      if (rect.width <= hitRadiusX * 2
+        && hitPoint.x >= rect.x - hitRadiusX
+        && hitPoint.x <= rect.x + rect.width + hitRadiusX) {
+        const topDistance = Math.abs(hitPoint.y - rect.y);
+        const bottomDistance = Math.abs(hitPoint.y - (rect.y + rect.height));
+        if (Math.min(topDistance, bottomDistance) <= hitRadiusY) {
+          const top = topDistance <= bottomDistance;
+          const right = hitPoint.x >= rect.x + rect.width / 2;
+          const handle = top ? right ? "ne" : "nw" : right ? "se" : "sw";
+          const handleX = right ? rect.x + rect.width : rect.x;
+          const handleY = top ? rect.y : rect.y + rect.height;
+          const distance = ((hitPoint.x - handleX) / hitRadiusX) ** 2
+            + ((hitPoint.y - handleY) / hitRadiusY) ** 2;
+          if (!best || distance < best.distance || distance === best.distance && rectIndex < best.rectIndex) {
+            best = { handle, distance, rectIndex };
+          }
+          continue;
+        }
+      }
       for (const handle of getSelectionHandlePointsFromRect(rect)) {
         const dx = hitPoint.x - handle.x;
         const dy = hitPoint.y - handle.y;
-        if (Math.abs(dx) > hitRadius || Math.abs(dy) > hitRadius) {
+        if (Math.abs(dx) > hitRadiusX || Math.abs(dy) > hitRadiusY) {
           continue;
         }
-        const distance = dx * dx + dy * dy;
+        const distance = (dx / hitRadiusX) ** 2 + (dy / hitRadiusY) ** 2;
         if (!best || distance < best.distance || distance === best.distance && rectIndex < best.rectIndex) {
           best = { handle: handle.handle, distance, rectIndex };
         }

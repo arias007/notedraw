@@ -161,7 +161,7 @@ test("Markdown selection resize hits both the outer frame and the content corner
 
   assert.match(source, /const rects = \[frame\];/);
   assert.match(source, /const contentBounds = this\.getSelectedStrokeBounds\(\);/);
-  assert.match(source, /const hitRadius = Math\.max\(SELECT_RESIZE_HANDLE_HIT_RADIUS, this\.selectionHitPaddingPx\(\) \+ 6, 28\);/);
+  assert.match(source, /const screenHitRadius = Math\.max\(SELECT_RESIZE_HANDLE_HIT_RADIUS, this\.selectionHitPaddingPx\(\) \+ 6, 28\);/);
   assert.match(source, /distance < best\.distance/);
   assert.match(source, /block\.minHeight = resizeMarkdownBlockMinHeight\(\{/);
   assert.match(source, /state\.block\.minHeight = state\.minHeight/);
@@ -196,6 +196,31 @@ test("selection resize determines its axis from canvas pixels and can correct th
   assert.match(source, /if \(resolvedAxis\) \{\s*this\.resizeSelectionAxis = resolvedAxis;/);
 });
 
+test("inserted element dragging resolves cached Markdown collisions without moving ordinary strokes", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const dragSource = source.slice(source.indexOf("  startSelectedStrokeDrag("), source.indexOf("  startSelectedStrokeResize("));
+  const collisionSource = dragSource.slice(dragSource.indexOf("  markdownNoteFlowCollisionShift("), dragSource.indexOf("  moveSelectedStroke("));
+  const moveSource = dragSource.slice(dragSource.indexOf("  moveSelectedStroke("), dragSource.indexOf("  finishSelectedStrokeDrag("));
+
+  assert.match(dragSource, /this\.dragNoteFlowOriginalBounds = new Map\(movableIndexes\.flatMap/);
+  assert.match(collisionSource, /!this\.dragMarkdownOriginalElements\?\.size && !this\.dragNoteFlowOriginalBounds\?\.size/);
+  assert.match(collisionSource, /this\.dragMarkdownObstacleBounds[\s\S]*this\.dragNoteFlowOriginalBounds/);
+  assert.match(moveSource, /const hasDraggedNoteFlow = Boolean\(this\.dragNoteFlowOriginalBounds\?\.size\)/);
+  assert.match(moveSource, /for \(const index of this\.dragNoteFlowOriginalBounds\.keys\(\)\)[\s\S]*const originalPoints = this\.dragStrokeOriginalPoints\.get\(index\)[\s\S]*stroke\.points = originalPoints\.map/);
+  assert.doesNotMatch(moveSource, /for \(const \[index, points\] of this\.dragStrokeOriginalPoints\.entries\(\)\)[\s\S]*markdownDrag[\s\S]*stroke\.points = points\.map/);
+});
+
+test("selection handle hit testing stays usable for narrow elements at visual zoom", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const handleSource = source.slice(source.indexOf("  findSelectionHandleAt("), source.indexOf("  selectedStrokeFrameContains("));
+
+  assert.match(handleSource, /const scaleX = canvasRect\?\.width > 0[\s\S]*const scaleY = canvasRect\?\.height > 0/);
+  assert.match(handleSource, /const hitRadiusX = screenHitRadius \/ Math\.max\(0\.01, Math\.abs\(scaleX\)\)/);
+  assert.match(handleSource, /const hitRadiusY = screenHitRadius \/ Math\.max\(0\.01, Math\.abs\(scaleY\)\)/);
+  assert.match(handleSource, /rect\.width <= hitRadiusX \* 2[\s\S]*topDistance[\s\S]*bottomDistance[\s\S]*const handle = top/);
+  assert.match(handleSource, /\(dx \/ hitRadiusX\) \*\* 2 \+ \(dy \/ hitRadiusY\) \*\* 2/);
+});
+
 test("Markdown selection bounds exclude NoteFlow padding and include task checkboxes", async () => {
   const source = await readFile(sourceUrl, "utf8");
 
@@ -223,7 +248,9 @@ test("Markdown drag reserves NoteFlow rectangles without doing layout work per p
   assert.match(collisionSource, /resolvedY \+= deltaY/);
   assert.match(collisionSource, /return \{ x: Number\(localDx\) \|\| 0, y: Number\(localDy\) \|\| 0 \}/);
   assert.doesNotMatch(collisionSource, /getBoundingClientRect/);
-  assert.match(moveSource, /const markdownDrag = this\.markdownNoteFlowCollisionShift\(clientDx, clientDy\)/);
+  assert.match(moveSource, /const collisionDx = hasDraggedNoteFlow \? snappedDx \* this\.canvasWidth\(\) : clientDx/);
+  assert.match(moveSource, /const collisionDy = hasDraggedNoteFlow \? snappedDy \* this\.canvasHeight\(\) : clientDy/);
+  assert.match(moveSource, /const markdownDrag = this\.markdownNoteFlowCollisionShift\(collisionDx, collisionDy\)/);
   assert.doesNotMatch(collisionSource, /scheduleNoteFlowLayout|clearNoteFlowLayout|syncMarkdownBlockPresentation/);
 });
 
