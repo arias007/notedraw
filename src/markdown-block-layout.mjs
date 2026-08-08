@@ -2,6 +2,30 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
+export function resolveSelectionResizeScales({
+  scaleX = 1,
+  scaleY = 1,
+  deltaX = 0,
+  deltaY = 0,
+  dominance = 1.35
+} = {}) {
+  const x = Number(scaleX);
+  const y = Number(scaleY);
+  const dx = Math.abs(Number(deltaX) || 0);
+  const dy = Math.abs(Number(deltaY) || 0);
+  const ratio = Math.max(1, Number(dominance) || 1.35);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return { scaleX: 1, scaleY: 1, axis: null };
+  }
+  if (dx > dy * ratio) {
+    return { scaleX: x, scaleY: 1, axis: "x" };
+  }
+  if (dy > dx * ratio) {
+    return { scaleX: 1, scaleY: y, axis: "y" };
+  }
+  return { scaleX: x, scaleY: y, axis: null };
+}
+
 export function normalizeMarkdownBlockMinHeight(value, maxHeight = 2400) {
   const height = Number(value);
   if (!Number.isFinite(height) || height <= 0) {

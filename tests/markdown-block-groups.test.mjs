@@ -7,7 +7,8 @@ import {
   normalizeMarkdownBlockMinHeight,
   normalizeMarkdownFloatBox,
   resizeMarkdownBlockMinHeight,
-  resolveDragDropHorizontalIntent
+  resolveDragDropHorizontalIntent,
+  resolveSelectionResizeScales
 } from "../src/markdown-block-layout.mjs";
 
 const sourceUrl = new URL("../src/notedraw-plugin.js", import.meta.url);
@@ -149,6 +150,47 @@ test("Markdown selection resize hits both the outer frame and the content corner
   assert.match(source, /minHeight: normalizeMarkdownBlockMinHeight\(block\?\.minHeight\)/);
   assert.match(source, /this\.applyMarkdownBlockHeightPresentation\(block, element\)/);
   assert.match(styles, /data-note-draw-resized-height="true"[\s\S]*min-height: var\(--notedraw-md-min-height\)/);
+});
+
+test("selection resize locks the dominant axis for one-dimensional corner drags", () => {
+  assert.deepEqual(resolveSelectionResizeScales({ scaleX: 0.72, scaleY: 1.08, deltaX: -80, deltaY: 12 }), {
+    scaleX: 0.72,
+    scaleY: 1,
+    axis: "x"
+  });
+  assert.deepEqual(resolveSelectionResizeScales({ scaleX: 1.08, scaleY: 0.72, deltaX: 12, deltaY: -80 }), {
+    scaleX: 1,
+    scaleY: 0.72,
+    axis: "y"
+  });
+  assert.deepEqual(resolveSelectionResizeScales({ scaleX: 0.8, scaleY: 0.8, deltaX: -40, deltaY: -40 }), {
+    scaleX: 0.8,
+    scaleY: 0.8,
+    axis: null
+  });
+});
+
+test("Markdown selection bounds exclude NoteFlow padding and include task checkboxes", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+
+  assert.match(source, /markdownElementCanvasBounds\(this\.markdownBlockElement\(block\), \{ forSelection: true \}\)/);
+  assert.match(source, /noteFlowAppliedVerticalInsets\(element\)/);
+  assert.match(source, /input\.task-list-item-checkbox, input\[type='checkbox'\]/);
+  assert.match(source, /top \+= flowInsets\.top \* visualScale/);
+  assert.match(source, /bottom -= flowInsets\.bottom \* visualScale/);
+});
+
+test("Markdown drag reserves NoteFlow rectangles without doing layout work per pointer frame", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const collisionSource = source.slice(source.indexOf("  markdownNoteFlowCollisionShift("), source.indexOf("  moveSelectedStroke(", source.indexOf("  markdownNoteFlowCollisionShift(")));
+  const moveSource = source.slice(source.indexOf("  moveSelectedStroke("), source.indexOf("  finishSelectedStrokeDrag(", source.indexOf("  moveSelectedStroke(")));
+
+  assert.match(collisionSource, /stroke\?\.noteFlow\?\.enabled/);
+  assert.match(collisionSource, /getStrokeBounds\(stroke, this\.canvasWidth\(\), this\.canvasHeight\(\)\)/);
+  assert.match(collisionSource, /resolvedY \+= deltaY/);
+  assert.doesNotMatch(collisionSource, /getBoundingClientRect/);
+  assert.match(moveSource, /const markdownDrag = this\.markdownNoteFlowCollisionShift\(clientDx, clientDy\)/);
+  assert.doesNotMatch(collisionSource, /scheduleNoteFlowLayout|clearNoteFlowLayout|syncMarkdownBlockPresentation/);
 });
 
 test("selection resize freezes pointer geometry and defers canvas measurement until release", async () => {

@@ -73,14 +73,14 @@ test("registered surfaces expose stable handles and structured actions without c
   assert.match(source, /registeredSurfaceSource/);
 });
 
-test("3.4.20 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
+test("3.4.21 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
   const [source, manifestText] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(manifestUrl, "utf8")
   ]);
   const manifest = JSON.parse(manifestText);
 
-  assert.equal(manifest.version, "3.4.20");
+  assert.equal(manifest.version, "3.4.21");
   assert.match(source, /version: "3\.4\.19"/);
   assert.match(source, /this\.readingVirtualStyleState = \/\* @__PURE__ \*\/ new Map\(\)/);
   assert.match(source, /shouldClearStaleReadingVirtualMinHeight\(\{/);

@@ -1409,6 +1409,29 @@ function matchRenderedTextToMarkdown(source, renderedText) {
 function clamp4(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
+function resolveSelectionResizeScales({
+  scaleX = 1,
+  scaleY = 1,
+  deltaX = 0,
+  deltaY = 0,
+  dominance = 1.35
+} = {}) {
+  const x = Number(scaleX);
+  const y = Number(scaleY);
+  const dx = Math.abs(Number(deltaX) || 0);
+  const dy = Math.abs(Number(deltaY) || 0);
+  const ratio = Math.max(1, Number(dominance) || 1.35);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return { scaleX: 1, scaleY: 1, axis: null };
+  }
+  if (dx > dy * ratio) {
+    return { scaleX: x, scaleY: 1, axis: "x" };
+  }
+  if (dy > dx * ratio) {
+    return { scaleX: 1, scaleY: y, axis: "y" };
+  }
+  return { scaleX: x, scaleY: y, axis: null };
+}
 function normalizeMarkdownBlockMinHeight(value, maxHeight = 2400) {
   const height = Number(value);
   if (!Number.isFinite(height) || height <= 0) {
@@ -3357,8 +3380,8 @@ var LONG_PRESS_MS = 550;
 var SELECT_TAP_DISTANCE = 6;
 var SELECT_STROKE_PADDING = 8;
 var SELECTED_STROKE_ALPHA = 0.38;
-var SELECT_RESIZE_HANDLE_SIZE = 10;
-var SELECT_RESIZE_HANDLE_HIT_RADIUS = 15;
+var SELECT_RESIZE_HANDLE_SIZE = 11;
+var SELECT_RESIZE_HANDLE_HIT_RADIUS = 22;
 var SNAP_GRID_PX = 8;
 var SNAP_THRESHOLD_PX = 7;
 var DRAWING_INTERPOLATION_STEP_PX = 3;
@@ -13860,9 +13883,10 @@ var PreviewDrawingController = class {
         sourceText: element.innerText,
         span: block.span,
         floatBox: block.floatBox ? { ...block.floatBox } : null,
-        canvasBounds: this.markdownElementCanvasBounds(element)
+        canvasBounds: this.markdownElementCanvasBounds(element, { forSelection: true })
       }];
     }));
+    this.dragMarkdownCollisionShift = { x: 0, y: 0 };
     this.dragStrokeOriginalNoteFlows = new Map(movableIndexes.map((index) => {
       const noteFlow = normalizeNoteFlow(this.drawingData.strokes[index]?.noteFlow);
       return [index, noteFlow ? { ...noteFlow } : null];
@@ -14429,6 +14453,51 @@ var PreviewDrawingController = class {
       y: clamp10(mapped.canvasY / Math.max(1, mapped.canvasHeight), 0, 1)
     };
   }
+  markdownNoteFlowCollisionShift(localDx, localDy) {
+    if (!this.dragMarkdownOriginalElements?.size) {
+      return { x: localDx, y: localDy };
+    }
+    const movedIndexes = new Set(this.dragStrokeIndexes || []);
+    const obstacles = (this.drawingData?.strokes || []).map((stroke, index) => {
+      if (movedIndexes.has(index) || !stroke?.noteFlow?.enabled || isConnectorStroke(stroke)) {
+        return null;
+      }
+      return getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight());
+    }).filter(Boolean);
+    if (!obstacles.length) {
+      return { x: clientDx, y: clientDy };
+    }
+    const gap = 10;
+    let resolvedX = Number(localDx) || 0;
+    let resolvedY = Number(localDy) || 0;
+    for (const state of this.dragMarkdownOriginalElements.values()) {
+      const original = state.canvasBounds;
+      if (!original) {
+        continue;
+      }
+      const proposed = {
+        minX: original.minX + resolvedX,
+        maxX: original.maxX + resolvedX,
+        minY: original.minY + resolvedY,
+        maxY: original.maxY + resolvedY
+      };
+      for (const obstacle of obstacles) {
+        const overlapsX = proposed.minX < obstacle.maxX && proposed.maxX > obstacle.minX;
+        const overlapsY = proposed.minY < obstacle.maxY && proposed.maxY > obstacle.minY;
+        if (!overlapsX || !overlapsY) {
+          continue;
+        }
+        const proposedCenter = (proposed.minY + proposed.maxY) / 2;
+        const obstacleCenter = (obstacle.minY + obstacle.maxY) / 2;
+        const deltaY = proposedCenter <= obstacleCenter ? obstacle.minY - proposed.maxY - gap : obstacle.maxY - proposed.minY + gap;
+        resolvedY += deltaY;
+        proposed.minY += deltaY;
+        proposed.maxY += deltaY;
+      }
+    }
+    this.dragMarkdownCollisionShift = { x: resolvedX - (Number(localDx) || 0), y: resolvedY - (Number(localDy) || 0) };
+    return { x: resolvedX, y: resolvedY };
+  }
   moveSelectedStroke(event) {
     if (!this.dragStrokeStartPoint || !this.dragStrokeOriginalPoints?.size && !this.dragMarkdownOriginalElements?.size) {
       return;
@@ -14498,12 +14567,13 @@ var PreviewDrawingController = class {
     const canvasRect = this.dragStrokePointerGeometry?.rect;
     const localScaleX = canvasRect?.width > 0 ? canvasRect.width / Math.max(1, this.canvasWidth()) : 1;
     const localScaleY = canvasRect?.height > 0 ? canvasRect.height / Math.max(1, this.canvasRenderHeight) : 1;
-    const clientDx = (event.clientX - this.pointerStartClient.x) / Math.max(1e-4, localScaleX);
-    const clientDy = (event.clientY - this.pointerStartClient.y) / Math.max(1e-4, localScaleY);
+    const clientDx2 = (event.clientX - this.pointerStartClient.x) / Math.max(1e-4, localScaleX);
+    const clientDy2 = (event.clientY - this.pointerStartClient.y) / Math.max(1e-4, localScaleY);
+    const markdownDrag = this.markdownNoteFlowCollisionShift(clientDx2, clientDy2);
     for (const state of this.dragMarkdownOriginalElements?.values?.() || []) {
       setNoteDrawCssProps(state.element, {
-        "--notedraw-md-drag-x": `${Math.round(clientDx)}px`,
-        "--notedraw-md-drag-y": `${Math.round(clientDy)}px`
+        "--notedraw-md-drag-x": `${Math.round(markdownDrag.x)}px`,
+        "--notedraw-md-drag-y": `${Math.round(markdownDrag.y)}px`
       });
     }
     if (this.dragHasBoxBackground) {
@@ -14660,6 +14730,7 @@ var PreviewDrawingController = class {
       state.element?.style?.removeProperty("--notedraw-md-drag-y");
     }
     this.dragMarkdownOriginalElements = null;
+    this.dragMarkdownCollisionShift = null;
     this.dragMarkdownTextCommit = null;
     this.dragElementGroupBounds = null;
     this.dragSnapOtherBounds = null;
@@ -14816,6 +14887,7 @@ var PreviewDrawingController = class {
     this.resizeSelectionHandle = handle;
     this.resizeSelectionPointerGeometry = this.captureCanvasPointerGeometry();
     this.resizeSelectionStartPoint = this.eventToPoint(event, this.resizeSelectionPointerGeometry);
+    this.resizeSelectionAxis = null;
     this.resizeSelectionOriginalBounds = bounds;
     this.resizeSelectionOriginalStrokes = new Map(resizableIndexes.map((index) => [
       index,
@@ -14897,6 +14969,20 @@ var PreviewDrawingController = class {
     const originalDy = corner.y - anchor.y;
     let scaleX = originalDx === 0 ? 1 : (point.x - anchor.x) / originalDx;
     let scaleY = originalDy === 0 ? 1 : (point.y - anchor.y) / originalDy;
+    const axis = this.resizeSelectionAxis || resolveSelectionResizeScales({
+      scaleX,
+      scaleY,
+      deltaX: point.x - this.resizeSelectionStartPoint.x,
+      deltaY: point.y - this.resizeSelectionStartPoint.y
+    }).axis;
+    if (axis) {
+      this.resizeSelectionAxis = axis;
+      if (axis === "x") {
+        scaleY = 1;
+      } else if (axis === "y") {
+        scaleX = 1;
+      }
+    }
     scaleX = Math.max(0.12, scaleX);
     scaleY = Math.max(0.12, scaleY);
     const strokeScale = clamp10((Math.abs(scaleX) + Math.abs(scaleY)) / 2, 0.2, 8);
@@ -15029,6 +15115,7 @@ var PreviewDrawingController = class {
     const needsGeometrySettle = this.resizingSelection;
     this.resizingSelection = false;
     this.resizeSelectionHandle = null;
+    this.resizeSelectionAxis = null;
     this.resizeSelectionStartPoint = null;
     this.resizeSelectionOriginalBounds = null;
     this.resizeSelectionOriginalStrokes = null;
@@ -16389,7 +16476,8 @@ var PreviewDrawingController = class {
     const priority = element.style.getPropertyPriority("--notedraw-md-min-height");
     element.removeAttribute("data-note-draw-resized-height");
     element.style.removeProperty("--notedraw-md-min-height");
-    const natural = Math.max(1, Number(element.offsetHeight) || 1);
+    const flowInsets = this.noteFlowAppliedVerticalInsets(element);
+    const natural = Math.max(1, (Number(element.offsetHeight) || 1) - flowInsets.top - flowInsets.bottom);
     if (value) {
       element.style.setProperty("--notedraw-md-min-height", value, priority);
     }
@@ -18289,7 +18377,7 @@ var PreviewDrawingController = class {
     const indexes = this.getSelectedStrokeIndexes();
     let result = this.getStrokeIndexesBounds(indexes);
     for (const block of this.getSelectedMarkdownBlocks()) {
-      const bounds = this.markdownElementCanvasBounds(this.markdownBlockElement(block));
+      const bounds = this.markdownElementCanvasBounds(this.markdownBlockElement(block), { forSelection: true });
       if (!bounds) {
         continue;
       }
@@ -18334,7 +18422,39 @@ var PreviewDrawingController = class {
     this.selectionFrameSnapshot = { key, rect };
     return rect;
   }
-  markdownElementCanvasBounds(element) {
+  noteFlowAppliedVerticalInsets(element) {
+    const insets = { top: 0, bottom: 0 };
+    const states = this.noteFlowStyledElements?.get(element);
+    if (!states) {
+      return insets;
+    }
+    for (const state of states.values()) {
+      const applied = Math.max(0, Number(state.applied) || 0);
+      if (state.styleProperty === "padding-top") {
+        insets.top += applied;
+      } else if (state.styleProperty === "padding-bottom") {
+        insets.bottom += applied;
+      }
+    }
+    return insets;
+  }
+  markdownTaskCheckboxRect(element) {
+    const listItem = element?.closest?.("li");
+    if (!listItem) {
+      return null;
+    }
+    for (const checkbox of listItem.querySelectorAll?.("input.task-list-item-checkbox, input[type='checkbox']") || []) {
+      if (checkbox.closest?.("li") !== listItem) {
+        continue;
+      }
+      const rect = checkbox.getBoundingClientRect?.();
+      if (rect?.width > 0 && rect?.height > 0) {
+        return rect;
+      }
+    }
+    return null;
+  }
+  markdownElementCanvasBounds(element, { forSelection = false } = {}) {
     if (!element?.isConnected || !this.canvas) {
       return null;
     }
@@ -18343,13 +18463,34 @@ var PreviewDrawingController = class {
     if (elementRect.width <= 0 || elementRect.height <= 0 || canvasRect.width <= 0 || canvasRect.height <= 0) {
       return null;
     }
+    let left = elementRect.left;
+    let right = elementRect.right;
+    let top = elementRect.top;
+    let bottom = elementRect.bottom;
+    if (forSelection) {
+      const localHeight = Number(element.offsetHeight) || 0;
+      const visualScale = localHeight > 0 ? elementRect.height / localHeight : this.readingZoomScale();
+      const flowInsets = this.noteFlowAppliedVerticalInsets(element);
+      top += flowInsets.top * visualScale;
+      bottom -= flowInsets.bottom * visualScale;
+      const checkboxRect = this.markdownTaskCheckboxRect(element);
+      if (checkboxRect) {
+        left = Math.min(left, checkboxRect.left);
+        right = Math.max(right, checkboxRect.right);
+        top = Math.min(top, checkboxRect.top);
+        bottom = Math.max(bottom, checkboxRect.bottom);
+      }
+    }
+    if (right <= left || bottom <= top) {
+      return null;
+    }
     const scaleX = this.canvasWidth() / canvasRect.width;
     const scaleY = this.canvasRenderHeight / canvasRect.height;
     return {
-      minX: (elementRect.left - canvasRect.left) * scaleX,
-      maxX: (elementRect.right - canvasRect.left) * scaleX,
-      minY: this.canvasWindowTop + (elementRect.top - canvasRect.top) * scaleY,
-      maxY: this.canvasWindowTop + (elementRect.bottom - canvasRect.top) * scaleY
+      minX: (left - canvasRect.left) * scaleX,
+      maxX: (right - canvasRect.left) * scaleX,
+      minY: this.canvasWindowTop + (top - canvasRect.top) * scaleY,
+      maxY: this.canvasWindowTop + (bottom - canvasRect.top) * scaleY
     };
   }
   getStrokeIndexesBounds(indexes) {
