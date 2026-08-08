@@ -153,6 +153,18 @@ test("selecting Markdown blocks does not trigger a whole-note responsive reflow"
   assert.doesNotMatch(source, /this\.toolMode === TOOL_SELECT && this\.markdownBlockRecords\(\)\.length > 0/);
 });
 
+test("visible Markdown and task checkboxes select their own block before lower NoteFlow ink", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const pointerSource = source.slice(source.indexOf("  onPointerDown(event"), source.indexOf("  onPointerMove(event", source.indexOf("  onPointerDown(event")));
+  const targetSource = source.slice(source.indexOf("  markdownBlockElementForTarget("), source.indexOf("  ensureMarkdownBlockRecord(", source.indexOf("  markdownBlockElementForTarget(")));
+
+  assert.match(pointerSource, /markdownSelectionCandidate && hitStrokeIndex >= 0 && shouldPlaceStrokeBelowMarkdown/);
+  assert.match(pointerSource, /hitStrokeIndex < 0 && !resizeHandle && !markdownSelectionCandidate/);
+  assert.match(targetSource, /input\.task-list-item-checkbox, input\[type='checkbox'\]/);
+  assert.match(targetSource, /taskCheckbox\?\.closest\?\.\("li"\)/);
+  assert.match(targetSource, /element\?\.closest\?\.\("li"\) === taskItem && isConcreteMarkdownBlockElement\(element\)/);
+});
+
 test("Markdown selection resize hits both the outer frame and the content corner", async () => {
   const [source, styles] = await Promise.all([
     readFile(sourceUrl, "utf8"),
@@ -231,6 +243,32 @@ test("Markdown selection bounds exclude NoteFlow padding and include task checkb
   assert.match(source, /this\.markdownTaskCheckboxRect\(element, elementRect\)/);
   assert.match(source, /top \+= flowInsets\.top \* visualScale/);
   assert.match(source, /bottom -= flowInsets\.bottom \* visualScale/);
+});
+
+test("Markdown DOM replacement and async drops rebuild the selection frame", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const presentationSource = source.slice(source.indexOf("  syncMarkdownBlockPresentation()"), source.indexOf("  selectMarkdownBlock(", source.indexOf("  syncMarkdownBlockPresentation()")));
+  const dragFinishSource = source.slice(source.indexOf("  finishSelectedStrokeDrag("), source.indexOf("  cancelSelectedStrokeDrag(", source.indexOf("  finishSelectedStrokeDrag(")));
+  const snapshotSource = source.slice(source.indexOf("  captureSelectionFrameSnapshot("), source.indexOf("  noteFlowAppliedVerticalInsets(", source.indexOf("  captureSelectionFrameSnapshot(")));
+
+  assert.match(presentationSource, /selectedElementChanged[\s\S]*previousMarkdownBlockElements\.get\(id\) !== next\.get\(id\)/);
+  assert.match(presentationSource, /selectionFrameAwaitingMarkdownSync\?\.committed[\s\S]*captureSelectionFrameSnapshot\(\{ force: true \}\)/);
+  assert.match(dragFinishSource, /selectionFrameAwaitingMarkdownSync = \{ committed: false \}/);
+  assert.match(dragFinishSource, /commitDraggedMarkdownBlocks\([\s\S]*if \(!committed && this\.selectionFrameAwaitingMarkdownSync\)/);
+  assert.match(snapshotSource, /selectionFrameAwaitingMarkdownSync && !this\.draggingStroke/);
+});
+
+test("NoteFlow release commits the exact candidate and boundary shown by the blue indicator", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const dragFinishSource = source.slice(source.indexOf("  finishSelectedStrokeDrag("), source.indexOf("  cancelSelectedStrokeDrag(", source.indexOf("  finishSelectedStrokeDrag(")));
+  const placementSource = source.slice(source.indexOf("  updateDraggedNoteFlowPlacement("), source.indexOf("  captureNoteFlowAnchor(", source.indexOf("  updateDraggedNoteFlowPlacement(")));
+
+  assert.match(dragFinishSource, /boundary: this\.dragNoteFlowPlacement\.boundary/);
+  assert.match(dragFinishSource, /candidate: this\.dragNoteFlowPlacement\.candidate/);
+  assert.match(placementSource, /const exactCandidate = placement\?\.candidate/);
+  assert.match(placementSource, /\? exactCandidate\s+: null/);
+  assert.match(placementSource, /Number\.isFinite\(Number\(placement\?\.boundary\)\)/);
+  assert.match(placementSource, /const boundary = horizontalSide[\s\S]*Number\.isFinite\(Number\(placement\.boundary\)\)/);
 });
 
 test("Markdown drag reserves NoteFlow rectangles without doing layout work per pointer frame", async () => {

@@ -73,14 +73,14 @@ test("registered surfaces expose stable handles and structured actions without c
   assert.match(source, /registeredSurfaceSource/);
 });
 
-test("3.4.23 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
+test("3.4.24 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
   const [source, manifestText] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(manifestUrl, "utf8")
   ]);
   const manifest = JSON.parse(manifestText);
 
-  assert.equal(manifest.version, "3.4.23");
+  assert.equal(manifest.version, "3.4.24");
   assert.match(source, /version: "3\.4\.19"/);
   assert.match(source, /this\.readingVirtualStyleState = \/\* @__PURE__ \*\/ new Map\(\)/);
   assert.match(source, /shouldClearStaleReadingVirtualMinHeight\(\{/);
@@ -375,7 +375,7 @@ test("note pen ignores element selection and selection-only gestures preserve Ma
   const selectionStateSource = source.slice(selectionStateStart, source.indexOf("  copySelectedElements(", selectionStateStart));
 
   assert.match(source, /isNoteFlowPenActive\(\) \{[\s\S]*this\.toolMode === TOOL_DRAW[\s\S]*this\.brushMode === BRUSH_PEN[\s\S]*this\.currentBrushVariant\(\) === PEN_VARIANT_NOTE/);
-  assert.match(pointerSource, /const noteFlowPenActive = this\.isNoteFlowPenActive\(\)[\s\S]*this\.clearSelectedStrokes\(\)[\s\S]*let hitStrokeIndex = noteFlowPenActive \? -1 : this\.findStrokeAt\(point\)[\s\S]*const resizeHandle = noteFlowPenActive \? null/);
+  assert.match(pointerSource, /const noteFlowPenActive = this\.isNoteFlowPenActive\(\)[\s\S]*this\.clearSelectedStrokes\(\)[\s\S]*let hitStrokeIndex = noteFlowPenActive \? -1 : this\.findStrokeAt\(point\)[\s\S]*let resizeHandle = noteFlowPenActive \? null/);
   assert.doesNotMatch(pointerSource, /noteFlowOperationPending|scheduleMarkdownAnnotationRefresh/);
   assert.match(drawingMoveSource, /if \(this\.didMove && !wasDrawing\) \{[\s\S]*this\.currentStroke\.noteFlow\?\.enabled[\s\S]*this\.noteFlowOperationPending = true[\s\S]*this\.scheduleMarkdownAnnotationRefresh\(\{ layout: false \}\)/);
   assert.doesNotMatch(startSource, /prepareReadingBottomExtentForDrag|clearNoteFlowLayout|scheduleNoteFlowLayout/);
@@ -416,7 +416,7 @@ test("selection requires a completed tap before moving an element and reserves r
   const markdownSelection = pointerSource.slice(pointerSource.indexOf("if (this.toolMode === TOOL_SELECT && hitStrokeIndex < 0 && markdownSelectionCandidate)"), pointerSource.indexOf("if (this.toolMode === TOOL_SELECT && hitStrokeIndex < 0 && !markdownSelectionCandidate)"));
   const boxedSelection = pointerSource.slice(pointerSource.indexOf("if (this.toolMode === TOOL_SELECT && hitStrokeIndex < 0 && !markdownSelectionCandidate)"), pointerSource.indexOf("if (selectedDrawGesture ==="));
 
-  assert.match(pointerSource, /const resizeHandle = noteFlowPenActive \? null : this\.findSelectionHandleAt\(point\);/);
+  assert.match(pointerSource, /let resizeHandle = noteFlowPenActive \? null : this\.findSelectionHandleAt\(point\);/);
   assert.match(pointerSource, /if \(resizeHandle\) \{\s*this\.startSelectedStrokeResize\(event, resizeHandle\);/);
   assert.match(strokeSelection, /const wasSelected = this\.isStrokeSelected\(hitStrokeIndex\);/);
   assert.match(strokeSelection, /if \(!wasSelected\) \{/);
