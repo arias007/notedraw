@@ -5169,6 +5169,9 @@ var PreviewDrawingController = class {
     this.dragMarkdownDropFrameId = null;
     this.dragMarkdownDropClientX = null;
     this.dragMarkdownDropClientY = null;
+    this.dragMarkdownOriginalClientBounds = null;
+    this.dragMarkdownClientDeltaX = 0;
+    this.dragContentLaneRect = null;
     this.dragMarkdownTextCommit = null;
     this.dragElementGroupBounds = null;
     this.dragDropGeometry = null;
@@ -5197,6 +5200,7 @@ var PreviewDrawingController = class {
     this.resizeSelectionOriginalStrokes = null;
     this.resizeSelectionOriginalMarkdownBlocks = null;
     this.resizeSelectionPointerGeometry = null;
+    this.resizeSelectionClientBounds = null;
     this.resizeSelectionMoved = false;
     this.selectingStrokes = false;
     this.selectionStartPoint = null;
@@ -5857,6 +5861,7 @@ var PreviewDrawingController = class {
     this.resizeSelectionOriginalStrokes = null;
     this.resizeSelectionOriginalMarkdownBlocks = null;
     this.resizeSelectionPointerGeometry = null;
+    this.resizeSelectionClientBounds = null;
     this.resizeSelectionMoved = false;
     this.selectingStrokes = false;
     this.selectionStartPoint = null;
@@ -10979,6 +10984,7 @@ var PreviewDrawingController = class {
       : null;
     this.dragMarkdownOriginalElements = new Map(movableMarkdownBlocks.map((block) => {
       const element = this.markdownBlockElement(block);
+      const clientRect = element.getBoundingClientRect();
       return [block.id, {
         block,
         element,
@@ -10987,9 +10993,33 @@ var PreviewDrawingController = class {
         span: block.span,
         widthScale: normalizeMarkdownBlockWidthScale(block.widthScale),
         floatBox: block.floatBox ? { ...block.floatBox } : null,
-        canvasBounds: this.markdownElementCanvasBounds(element, { forSelection: true })
+        canvasBounds: this.markdownElementCanvasBounds(element, { forSelection: true }),
+        clientRect: {
+          left: clientRect.left,
+          right: clientRect.right,
+          top: clientRect.top,
+          bottom: clientRect.bottom
+        }
       }];
     }));
+    const markdownClientRects = Array.from(this.dragMarkdownOriginalElements.values()).map((state) => state.clientRect);
+    this.dragMarkdownOriginalClientBounds = markdownClientRects.length ? {
+      left: Math.min(...markdownClientRects.map((rect) => rect.left)),
+      right: Math.max(...markdownClientRects.map((rect) => rect.right)),
+      top: Math.min(...markdownClientRects.map((rect) => rect.top)),
+      bottom: Math.max(...markdownClientRects.map((rect) => rect.bottom))
+    } : null;
+    this.dragMarkdownClientDeltaX = 0;
+    const lane = this.layoutMeasureEl?.isConnected
+      ? this.layoutMeasureEl
+      : findLayoutMeasureElement(this.previewEl) || this.previewEl;
+    const laneRect = lane?.getBoundingClientRect?.();
+    this.dragContentLaneRect = laneRect?.width > 1 ? {
+      left: laneRect.left,
+      right: laneRect.right,
+      top: laneRect.top,
+      bottom: laneRect.bottom
+    } : null;
     this.dragNoteFlowOriginalBounds = new Map(movableIndexes.flatMap((index) => {
       const stroke = this.drawingData.strokes[index];
       if (!normalizeNoteFlow(stroke?.noteFlow) || isConnectorStroke(stroke)) {
@@ -11103,6 +11133,20 @@ var PreviewDrawingController = class {
   resetDragDropGeometry() {
     this.dragDropGeometry = null;
   }
+  draggedSelectionClientLeft() {
+    const values = [];
+    if (this.dragMarkdownOriginalClientBounds) {
+      values.push(this.dragMarkdownOriginalClientBounds.left + (Number(this.dragMarkdownClientDeltaX) || 0));
+    }
+    const indexes = this.draggedNoteFlowIndexes(this.dragStrokeIndexes || []);
+    const bounds = this.getStrokeIndexesBounds(indexes);
+    const canvasRect = this.dragStrokePointerGeometry?.rect;
+    if (bounds && canvasRect?.width > 0) {
+      const scaleX = canvasRect.width / Math.max(1, this.canvasWidth());
+      values.push(canvasRect.left + bounds.minX * scaleX);
+    }
+    return values.length ? Math.min(...values) : null;
+  }
   dragDropGeometrySnapshot() {
     const scrollKey = this.dragDropScrollKey();
     const current = this.dragDropGeometry;
@@ -11193,6 +11237,7 @@ var PreviewDrawingController = class {
       targetRight: nearest.rect.right,
       laneLeft: laneRect.left,
       laneRight: laneRect.right,
+      draggedLeft: this.draggedSelectionClientLeft(),
       horizontalRoom
     });
     return verticalDistance <= maxDistance && intent !== "vertical"
@@ -11273,6 +11318,7 @@ var PreviewDrawingController = class {
       targetRight: rect.right,
       laneLeft: geometry?.laneRect?.left ?? rect.left,
       laneRight: geometry?.laneRect?.right ?? rect.right,
+      draggedLeft: this.draggedSelectionClientLeft(),
       horizontalRoom
     });
     let side = verticalSide || (clientY >= rect.top + rect.height / 2 ? "after" : "before");
@@ -11642,7 +11688,14 @@ var PreviewDrawingController = class {
     const minY = originalPointBounds?.minY ?? 0;
     const maxY = originalPointBounds?.maxY ?? 1;
     const strokeIndexes = this.dragStrokeIndexes;
-    const dx = clamp(point.x - this.dragStrokeStartPoint.x, -minX, 1 - maxX);
+    let minimumDx = -minX;
+    const laneRect = this.dragContentLaneRect;
+    const canvasRect = this.dragStrokePointerGeometry?.rect;
+    if (this.dragStrokeOriginalBounds && laneRect && canvasRect?.width > 0) {
+      const laneLeft = (laneRect.left - canvasRect.left) / canvasRect.width;
+      minimumDx = Math.max(minimumDx, laneLeft - this.dragStrokeOriginalBounds.minX);
+    }
+    const dx = clamp(point.x - this.dragStrokeStartPoint.x, Math.min(minimumDx, 1 - maxX), 1 - maxX);
     const dy = clamp(point.y - this.dragStrokeStartPoint.y, -minY, 1 - maxY);
     const movedDistance = pointDistanceOnCanvas(
       this.dragStrokeStartPoint,
@@ -11686,10 +11739,15 @@ var PreviewDrawingController = class {
         y: clamp(strokePoint.y + previewDy, 0, 1)
       }));
     }
-    const canvasRect = this.dragStrokePointerGeometry?.rect;
     const localScaleX = canvasRect?.width > 0 ? canvasRect.width / Math.max(1, this.canvasWidth()) : 1;
     const localScaleY = canvasRect?.height > 0 ? canvasRect.height / Math.max(1, this.canvasRenderHeight) : 1;
-    const clientDx = (event.clientX - this.pointerStartClient.x) / Math.max(0.0001, localScaleX);
+    const rawClientDx = event.clientX - this.pointerStartClient.x;
+    const minimumClientDx = this.dragMarkdownOriginalClientBounds && laneRect
+      ? laneRect.left - this.dragMarkdownOriginalClientBounds.left
+      : Number.NEGATIVE_INFINITY;
+    const boundedClientDx = Math.max(rawClientDx, minimumClientDx);
+    this.dragMarkdownClientDeltaX = Number.isFinite(boundedClientDx) ? boundedClientDx : rawClientDx;
+    const clientDx = this.dragMarkdownClientDeltaX / Math.max(0.0001, localScaleX);
     const clientDy = (event.clientY - this.pointerStartClient.y) / Math.max(0.0001, localScaleY);
     for (const state of this.dragMarkdownOriginalElements?.values?.() || []) {
       setNoteDrawCssProps(state.element, {
@@ -11725,7 +11783,15 @@ var PreviewDrawingController = class {
     const didMove = this.dragStrokeMoved;
     let requestedDropPlacement = null;
     if (didMove && this.usesDraggedNoteFlowPlacement()) {
-      this.updateDraggedNoteFlowPlacement(event.clientX, event.clientY);
+      if (this.dragNoteFlowDropFrameId !== null) {
+        window.cancelAnimationFrame(this.dragNoteFlowDropFrameId);
+        this.dragNoteFlowDropFrameId = null;
+      }
+      this.dragNoteFlowDropClientX = null;
+      this.dragNoteFlowDropClientY = null;
+      if (!this.dragNoteFlowPlacement) {
+        this.updateDraggedNoteFlowPlacement(event.clientX, event.clientY);
+      }
       requestedDropPlacement = this.dragNoteFlowPlacement ? {
         path: this.dragNoteFlowPlacement.path,
         line: this.dragNoteFlowPlacement.line,
@@ -11738,7 +11804,15 @@ var PreviewDrawingController = class {
     }
     this.clearDraggedNoteFlowPlacement();
     if (didMove && this.dragMarkdownOriginalElements?.size) {
-      this.flushMarkdownBlockDropTarget(event.clientX, event.clientY);
+      const visibleDrop = this.dragMarkdownDropTarget?.isConnected
+        ? { element: this.dragMarkdownDropTarget, side: this.dragMarkdownDropSide }
+        : null;
+      if (visibleDrop) {
+        this.dragMarkdownLastValidDrop = visibleDrop;
+        this.cancelMarkdownBlockDropFrame();
+      } else if (!this.dragMarkdownLastValidDrop?.element?.isConnected) {
+        this.flushMarkdownBlockDropTarget(event.clientX, event.clientY);
+      }
     }
     const lastDrop = this.dragMarkdownLastValidDrop?.element?.isConnected
       ? this.dragMarkdownLastValidDrop
@@ -11879,6 +11953,9 @@ var PreviewDrawingController = class {
     }
     this.dragMarkdownOriginalElements = null;
     this.dragNoteFlowOriginalBounds = null;
+    this.dragMarkdownOriginalClientBounds = null;
+    this.dragMarkdownClientDeltaX = 0;
+    this.dragContentLaneRect = null;
     this.dragMarkdownTextCommit = null;
     this.dragElementGroupBounds = null;
     this.dragSnapOtherBounds = null;
@@ -12035,6 +12112,23 @@ var PreviewDrawingController = class {
     this.resizeSelectionHandle = handle;
     this.resizeSelectionPointerGeometry = this.captureCanvasPointerGeometry();
     this.resizeSelectionStartClient = { x: event.clientX, y: event.clientY };
+    const canvasRect = this.resizeSelectionPointerGeometry.rect;
+    const scrollRect = this.scrollContainer?.getBoundingClientRect?.();
+    const viewport = window.visualViewport;
+    const viewportLeft = Number(viewport?.offsetLeft) || 0;
+    const viewportTop = Number(viewport?.offsetTop) || 0;
+    const viewportRight = viewportLeft + (Number(viewport?.width) || window.innerWidth || canvasRect.width);
+    const viewportBottom = viewportTop + (Number(viewport?.height) || window.innerHeight || canvasRect.height);
+    const visibleLeft = Math.max(canvasRect.left, Number(scrollRect?.left) || canvasRect.left, viewportLeft);
+    const visibleRight = Math.min(canvasRect.left + canvasRect.width, Number(scrollRect?.right) || canvasRect.left + canvasRect.width, viewportRight);
+    const visibleTop = Math.max(canvasRect.top, Number(scrollRect?.top) || canvasRect.top, viewportTop);
+    const visibleBottom = Math.min(canvasRect.top + canvasRect.height, Number(scrollRect?.bottom) || canvasRect.top + canvasRect.height, viewportBottom);
+    this.resizeSelectionClientBounds = {
+      left: Math.min(event.clientX, visibleLeft),
+      right: Math.max(event.clientX, visibleRight),
+      top: Math.min(event.clientY, visibleTop),
+      bottom: Math.max(event.clientY, visibleBottom)
+    };
     this.resizeSelectionStartPoint = getSelectionResizeCorner(bounds, handle);
     this.resizeSelectionOriginalBounds = bounds;
     this.resizeSelectionPreviewBounds = { ...bounds };
@@ -12056,6 +12150,16 @@ var PreviewDrawingController = class {
         naturalHeight,
         normalizeMarkdownBlockMinHeight(block.minHeight)
       );
+      const elementRect = element?.getBoundingClientRect?.();
+      const visualScaleY = canvasRect.height > 0
+        ? canvasRect.height / Math.max(1, this.resizeSelectionPointerGeometry.canvasRenderHeight)
+        : 1;
+      const resizesFromBottom = handle === "se" || handle === "sw";
+      const availableHeight = elementRect
+        ? resizesFromBottom
+          ? (this.resizeSelectionClientBounds.bottom - elementRect.top) / Math.max(0.0001, visualScaleY)
+          : (elementRect.bottom - this.resizeSelectionClientBounds.top) / Math.max(0.0001, visualScaleY)
+        : 2400;
       return [block.id, {
         block,
         span: block.span,
@@ -12063,6 +12167,7 @@ var PreviewDrawingController = class {
         minHeight: block.minHeight,
         naturalHeight,
         currentHeight,
+        maxHeight: Math.max(naturalHeight, availableHeight),
         floating: block.floating,
         floatBox: block.floatBox ? { ...block.floatBox } : null
       }];
@@ -12105,7 +12210,12 @@ var PreviewDrawingController = class {
     const geometry = this.resizeSelectionPointerGeometry;
     const startClient = this.resizeSelectionStartClient;
     const corner = this.resizeSelectionStartPoint;
-    const point = mapResizeClientDeltaToPoint(event, { startClient, corner, geometry });
+    const point = mapResizeClientDeltaToPoint(event, {
+      startClient,
+      corner,
+      geometry,
+      clientBounds: this.resizeSelectionClientBounds
+    });
     if (!point) {
       return this.eventToPoint(event, geometry);
     }
@@ -12129,6 +12239,12 @@ var PreviewDrawingController = class {
     let scaleX = originalDx === 0 ? 1 : (point.x - anchor.x) / originalDx;
     let scaleY = originalDy === 0 ? 1 : (point.y - anchor.y) / originalDy;
     ({ scaleX, scaleY } = resolveSelectionResizeScales({ scaleX, scaleY }));
+    const markdownScaleLimits = Array.from(originalMarkdownBlocks?.values?.() || [])
+      .filter((state) => !state.floating && Number(state.maxHeight) > 0)
+      .map((state) => Number(state.maxHeight) / Math.max(1, Number(state.currentHeight) || 1));
+    if (markdownScaleLimits.length) {
+      scaleY = Math.min(scaleY, ...markdownScaleLimits);
+    }
     scaleX = limitSelectionResizeScaleToCanvas(scaleX, bounds, anchor, "x");
     scaleY = limitSelectionResizeScaleToCanvas(scaleY, bounds, anchor, "y");
     this.resizeSelectionPreviewBounds = scaleNormalizedBoundsFromAnchor(bounds, anchor, scaleX, scaleY);
@@ -12188,7 +12304,8 @@ var PreviewDrawingController = class {
         block.minHeight = resizeMarkdownBlockMinHeight({
           currentHeight: state.currentHeight,
           naturalHeight: state.naturalHeight,
-          scaleY
+          scaleY,
+          maxHeight: state.maxHeight
         });
       }
     }
@@ -12274,6 +12391,7 @@ var PreviewDrawingController = class {
     this.resizeSelectionOriginalStrokes = null;
     this.resizeSelectionOriginalMarkdownBlocks = null;
     this.resizeSelectionPointerGeometry = null;
+    this.resizeSelectionClientBounds = null;
     this.resizeSelectionMoved = false;
     this.resizeDrawingHistoryBefore = null;
     this.pointerStartClient = null;
@@ -14337,6 +14455,7 @@ var PreviewDrawingController = class {
       targetRight: targetRect.right,
       laneLeft: laneRect.left,
       laneRight: laneRect.right,
+      draggedLeft: this.draggedSelectionClientLeft(),
       horizontalRoom: true
     });
     const horizontalSide = intent === "inline-right" ? "right" : null;
@@ -14443,15 +14562,22 @@ var PreviewDrawingController = class {
           ? placement.candidate.bottom
           : placement.candidate.top;
     const targetCanvasY = this.canvasWindowTop + (boundary - canvasRect.top) / Math.max(0.0001, scaleY);
-    const deltaY = clamp(targetCanvasY - flowBounds.minY, -allBounds.minY, this.canvasHeight() - allBounds.maxY);
+    const sourceCanvasY = !horizontalSide && placement.side === "before"
+      ? flowBounds.maxY
+      : flowBounds.minY;
+    const deltaY = clamp(targetCanvasY - sourceCanvasY, -allBounds.minY, this.canvasHeight() - allBounds.maxY);
     let deltaX = 0;
     if (horizontalSide || leftSnap) {
       const target = placement.candidate.sourceElement || placement.candidate.element;
       const targetBounds = this.markdownElementCanvasBounds(target);
       if (targetBounds) {
         const gap = 10;
+        const scaleX = canvasRect.width / Math.max(1, this.canvasWidth());
+        const laneCanvasX = this.dragContentLaneRect
+          ? (this.dragContentLaneRect.left - canvasRect.left) / Math.max(0.0001, scaleX)
+          : targetBounds.minX;
         deltaX = leftSnap
-          ? targetBounds.minX - allBounds.minX
+          ? laneCanvasX - allBounds.minX
           : targetBounds.maxX + gap - allBounds.minX;
         deltaX = clamp(deltaX, -allBounds.minX, this.canvasWidth() - allBounds.maxX);
       }

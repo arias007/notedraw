@@ -73,7 +73,8 @@ export function mapClientPointToCanvas({ clientX, clientY } = {}, geometry = {})
 export function mapResizeClientDeltaToPoint({ clientX, clientY } = {}, {
   startClient,
   corner,
-  geometry = {}
+  geometry = {},
+  clientBounds
 } = {}) {
   const rect = geometry.rect || geometry;
   const rectLeft = finite(rect?.left, 0);
@@ -87,8 +88,12 @@ export function mapResizeClientDeltaToPoint({ clientX, clientY } = {}, {
   if (rectWidth <= 0 || rectHeight <= 0 || ![startX, startY, cornerX, cornerY].every(Number.isFinite)) {
     return null;
   }
-  const boundedClientX = clamp(finite(clientX, startX), rectLeft, rectLeft + rectWidth);
-  const boundedClientY = clamp(finite(clientY, startY), rectTop, rectTop + rectHeight);
+  const clientLeft = Math.max(rectLeft, finite(clientBounds?.left, rectLeft));
+  const clientRight = Math.min(rectLeft + rectWidth, finite(clientBounds?.right, rectLeft + rectWidth));
+  const clientTop = Math.max(rectTop, finite(clientBounds?.top, rectTop));
+  const clientBottom = Math.min(rectTop + rectHeight, finite(clientBounds?.bottom, rectTop + rectHeight));
+  const boundedClientX = clamp(finite(clientX, startX), Math.min(clientLeft, startX), Math.max(clientRight, startX));
+  const boundedClientY = clamp(finite(clientY, startY), Math.min(clientTop, startY), Math.max(clientBottom, startY));
   const canvasHeight = Math.max(1, finite(geometry.canvasHeight, rectHeight));
   const canvasRenderHeight = Math.max(1, finite(geometry.canvasRenderHeight, rectHeight));
   return {

@@ -68,6 +68,24 @@ test("a frozen pointer geometry prevents resize feedback when the live canvas gr
   assert.deepEqual(remappedWithFrozenGeometry, initial);
 });
 
+test("selection resize stays inside the frozen visible client bounds", () => {
+  const options = {
+    startClient: { x: 500, y: 500 },
+    corner: { x: 0.5, y: 0.5 },
+    geometry: {
+      rect: { left: 0, top: 0, width: 1000, height: 2000 },
+      canvasHeight: 4000,
+      canvasRenderHeight: 2000
+    },
+    clientBounds: { left: 100, right: 900, top: 100, bottom: 700 }
+  };
+
+  assert.deepEqual(mapResizeClientDeltaToPoint({ clientX: 980, clientY: 1600 }, options), {
+    x: 0.9,
+    y: 0.55
+  });
+});
+
 test("wide desktop surfaces keep a left-aligned Markdown lane instead of stretching into blank space", () => {
   assert.deepEqual(constrainWideContentFrame({
     surfaceWidth: 1440,

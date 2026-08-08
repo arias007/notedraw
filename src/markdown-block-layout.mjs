@@ -31,8 +31,7 @@ export function resizeMarkdownBlockMinHeight({
   const natural = Math.max(1, Number(naturalHeight) || 1);
   const current = Math.max(natural, Number(currentHeight) || natural);
   const desired = normalizeMarkdownBlockMinHeight(current * Math.max(0.12, Math.abs(Number(scaleY) || 1)), maxHeight);
-  const intentionalGrowth = Math.max(8, natural * 0.08);
-  return desired >= natural + intentionalGrowth ? desired : 0;
+  return desired >= natural + 1 ? desired : 0;
 }
 
 export function markdownBlockPresentationMinHeight(block) {
@@ -45,6 +44,8 @@ export function resolveDragDropHorizontalIntent({
   targetRight,
   laneLeft = targetLeft,
   laneRight = targetRight,
+  draggedLeft,
+  leftContactTolerance = 8,
   horizontalRoom = true
 } = {}) {
   const x = Number(clientX);
@@ -52,16 +53,16 @@ export function resolveDragDropHorizontalIntent({
   const right = Number(targetRight);
   const surfaceLeft = Number(laneLeft);
   const surfaceRight = Number(laneRight);
+  const movingLeft = draggedLeft === null || draggedLeft === undefined || draggedLeft === ""
+    ? Number.NaN
+    : Number(draggedLeft);
   if (![x, left, right, surfaceLeft, surfaceRight].every(Number.isFinite) || right <= left || surfaceRight <= surfaceLeft) {
     return "vertical";
   }
   const targetWidth = right - left;
   const laneWidth = surfaceRight - surfaceLeft;
-  const leftThreshold = Math.max(
-    surfaceLeft + clamp(laneWidth * 0.1, 36, 72),
-    left + clamp(targetWidth * 0.18, 36, 72)
-  );
-  if (x <= leftThreshold) {
+  const contactTolerance = clamp(Number(leftContactTolerance) || 0, 0, 24);
+  if (Number.isFinite(movingLeft) && movingLeft <= surfaceLeft + contactTolerance) {
     return "line-start";
   }
   const rightThreshold = Math.min(

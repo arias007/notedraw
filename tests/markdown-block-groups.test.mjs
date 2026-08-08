@@ -23,7 +23,9 @@ test("horizontal drag intent reserves the left edge for magnetic line insertion"
     laneRight: 1000
   };
 
-  assert.equal(resolveDragDropHorizontalIntent({ ...target, clientX: 320 }), "line-start");
+  assert.equal(resolveDragDropHorizontalIntent({ ...target, clientX: 320, draggedLeft: 120 }), "vertical");
+  assert.equal(resolveDragDropHorizontalIntent({ ...target, clientX: 500, draggedLeft: 7 }), "line-start");
+  assert.equal(resolveDragDropHorizontalIntent({ ...target, clientX: 320, draggedLeft: null }), "vertical");
   assert.equal(resolveDragDropHorizontalIntent({ ...target, clientX: 500 }), "vertical");
   assert.equal(resolveDragDropHorizontalIntent({ ...target, clientX: 620 }), "vertical");
   assert.equal(resolveDragDropHorizontalIntent({ ...target, clientX: 640 }), "inline-right");
@@ -35,6 +37,8 @@ test("Markdown drag uses a left magnetic row drop and one move event chain", asy
 
   assert.match(source, /else if \(horizontalRoom && intent === "line-start"\) \{\s*side = "left";/);
   assert.match(source, /const row = this\.markdownDropRowMetrics\(nearest\.element, movingElements\);/);
+  assert.match(source, /const minimumClientDx = this\.dragMarkdownOriginalClientBounds && laneRect[\s\S]*laneRect\.left - this\.dragMarkdownOriginalClientBounds\.left/);
+  assert.match(source, /draggedLeft: this\.draggedSelectionClientLeft\(\)/);
   assert.doesNotMatch(source, /const onMove = \(moveEvent\) => \{/);
 });
 
@@ -97,7 +101,13 @@ test("Markdown block height creates owned whitespace without shrinking below its
     currentHeight: 64,
     naturalHeight: 64,
     scaleY: 1.05
-  }), 0);
+  }), 67);
+  assert.equal(resizeMarkdownBlockMinHeight({
+    currentHeight: 120,
+    naturalHeight: 64,
+    scaleY: 2,
+    maxHeight: 180
+  }), 180);
   assert.equal(markdownBlockPresentationMinHeight({ floating: true, minHeight: 120 }), 0);
   assert.equal(markdownBlockPresentationMinHeight({ floating: false, minHeight: 120 }), 120);
 });
@@ -233,6 +243,7 @@ test("Markdown resize keeps continuous horizontal width inside its grid span", a
   assert.match(source, /applyMarkdownBlockWidthPresentation\(block, element\)/);
   assert.match(source, /element\.style\.width = `\$\{Math\.round\(widthScale \* 1000\) \/ 10\}%`/);
   assert.match(source, /state\.block\.widthScale = state\.widthScale/);
+  assert.match(source, /const markdownScaleLimits =[\s\S]*state\.maxHeight[\s\S]*scaleY = Math\.min\(scaleY, \.\.\.markdownScaleLimits\)/);
 });
 
 test("inserted element dragging previews the raw pointer position without collision shifts", async () => {
@@ -303,6 +314,9 @@ test("NoteFlow release commits the exact candidate and boundary shown by the blu
 
   assert.match(dragFinishSource, /boundary: this\.dragNoteFlowPlacement\.boundary/);
   assert.match(dragFinishSource, /candidate: this\.dragNoteFlowPlacement\.candidate/);
+  assert.match(dragFinishSource, /if \(!this\.dragNoteFlowPlacement\) \{\s*this\.updateDraggedNoteFlowPlacement/);
+  assert.match(dragFinishSource, /const visibleDrop = this\.dragMarkdownDropTarget\?\.isConnected[\s\S]*this\.dragMarkdownLastValidDrop = visibleDrop/);
+  assert.match(placementSource, /placement\.side === "before"[\s\S]*flowBounds\.maxY[\s\S]*flowBounds\.minY/);
   assert.match(placementSource, /const exactCandidate = placement\?\.candidate/);
   assert.match(placementSource, /\? exactCandidate\s+: null/);
   assert.match(placementSource, /Number\.isFinite\(Number\(placement\?\.boundary\)\)/);
@@ -331,7 +345,7 @@ test("selection resize freezes pointer geometry and defers canvas measurement un
   assert.match(source, /this\.resizeSelectionStartClient = \{ x: event\.clientX, y: event\.clientY \};/);
   assert.match(source, /this\.resizeSelectionStartPoint = getSelectionResizeCorner\(bounds, handle\);/);
   assert.match(source, /const point = this\.resizeEventToPoint\(event\);/);
-  assert.match(source, /resizeEventToPoint\(event\)[\s\S]*mapResizeClientDeltaToPoint\(event, \{ startClient, corner, geometry \}\)/);
+  assert.match(source, /resizeEventToPoint\(event\)[\s\S]*mapResizeClientDeltaToPoint\(event, \{[\s\S]*startClient,[\s\S]*corner,[\s\S]*geometry,[\s\S]*clientBounds: this\.resizeSelectionClientBounds/);
   assert.match(source, /this\.resizeSelectionPreviewBounds = scaleNormalizedBoundsFromAnchor\(bounds, anchor, scaleX, scaleY\);/);
   assert.match(source, /this\.resizingSelection && this\.resizeSelectionPreviewBounds/);
   assert.match(source, /const wantsMeasure = options\.measure !== false\s+&& !this\.resizingSelection/);
