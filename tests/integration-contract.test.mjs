@@ -73,14 +73,14 @@ test("registered surfaces expose stable handles and structured actions without c
   assert.match(source, /registeredSurfaceSource/);
 });
 
-test("3.4.24 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
+test("3.4.25 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
   const [source, manifestText] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(manifestUrl, "utf8")
   ]);
   const manifest = JSON.parse(manifestText);
 
-  assert.equal(manifest.version, "3.4.24");
+  assert.equal(manifest.version, "3.4.25");
   assert.match(source, /version: "3\.4\.19"/);
   assert.match(source, /this\.readingVirtualStyleState = \/\* @__PURE__ \*\/ new Map\(\)/);
   assert.match(source, /shouldClearStaleReadingVirtualMinHeight\(\{/);
@@ -420,21 +420,24 @@ test("selection requires a completed tap before moving an element and reserves r
   assert.match(pointerSource, /if \(resizeHandle\) \{\s*this\.startSelectedStrokeResize\(event, resizeHandle\);/);
   assert.match(strokeSelection, /const wasSelected = this\.isStrokeSelected\(hitStrokeIndex\);/);
   assert.match(strokeSelection, /if \(!wasSelected\) \{/);
-  assert.match(strokeSelection, /this\.setSelectedStrokes\(hitStrokeIndex\);/);
-  assert.match(strokeSelection, /this\.toggleStrokeSelection\(hitStrokeIndex\);/);
-  const strokeSelectIndex = strokeSelection.indexOf("this.setSelectedStrokes(hitStrokeIndex);");
+  assert.match(strokeSelection, /this\.startPendingSelectionTap\(event, \{ type: "select-stroke", index: hitStrokeIndex \}\)/);
+  assert.match(strokeSelection, /this\.startPendingSelectionTap\(event, \{ type: "toggle-stroke", index: hitStrokeIndex \}\)/);
+  const strokeSelectIndex = strokeSelection.indexOf('type: "select-stroke"');
   const strokeDragIndex = strokeSelection.indexOf("this.startSelectedStrokeDrag(event, point, hitStrokeIndex", strokeSelectIndex);
   assert.ok(strokeSelectIndex >= 0 && strokeDragIndex > strokeSelectIndex);
   assert.match(strokeSelection.slice(strokeSelectIndex, strokeDragIndex), /return;/);
-  assert.match(markdownSelection, /this\.toggleMarkdownBlockSelection\(markdownSelectionCandidate\);/);
-  assert.match(markdownSelection, /this\.selectMarkdownBlock\(markdownSelectionCandidate\);/);
-  const markdownSelectIndex = markdownSelection.indexOf("this.selectMarkdownBlock(markdownSelectionCandidate);");
+  assert.match(markdownSelection, /this\.startPendingSelectionTap\(event, \{[\s\S]*type: "toggle-markdown"/);
+  assert.match(markdownSelection, /this\.startPendingSelectionTap\(event, \{[\s\S]*type: "select-markdown"/);
+  const markdownSelectIndex = markdownSelection.indexOf('type: "select-markdown"');
   const markdownDragIndex = markdownSelection.indexOf("this.startSelectedStrokeDrag(event, point, -1", markdownSelectIndex);
   assert.ok(markdownSelectIndex >= 0 && markdownDragIndex > markdownSelectIndex);
   assert.match(markdownSelection.slice(markdownSelectIndex, markdownDragIndex), /return;/);
-  assert.match(boxedSelection, /this\.selectElementGroup\(boxedGroup\.id\);/);
-  const groupSelectIndex = boxedSelection.indexOf("this.selectElementGroup(boxedGroup.id);");
+  assert.match(boxedSelection, /this\.startPendingSelectionTap\(event, \{[\s\S]*type: "select-group"/);
+  const groupSelectIndex = boxedSelection.indexOf('type: "select-group"');
   const groupDragIndex = boxedSelection.indexOf("this.startSelectedStrokeDrag(event, point);", groupSelectIndex);
   assert.ok(groupSelectIndex >= 0 && groupDragIndex > groupSelectIndex);
   assert.match(boxedSelection.slice(groupSelectIndex, groupDragIndex), /return;/);
+  assert.match(source, /startPendingSelectionTap\(event, action\)/);
+  assert.match(source, /pointerDistance\(pending\.startClient, \{ x: event\.clientX, y: event\.clientY \}\)/);
+  assert.match(source, /if \(pending && !pending\.moved && movedDistance <= this\.tapDistancePx\(\)\)/);
 });

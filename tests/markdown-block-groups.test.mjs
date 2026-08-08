@@ -165,14 +165,15 @@ test("visible Markdown and task checkboxes select their own block before lower N
   assert.match(targetSource, /element\?\.closest\?\.\("li"\) === taskItem && isConcreteMarkdownBlockElement\(element\)/);
 });
 
-test("Markdown selection resize hits both the outer frame and the content corner", async () => {
+test("Markdown selection resize hits only the visible outer frame corners", async () => {
   const [source, styles] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(stylesUrl, "utf8")
   ]);
 
   assert.match(source, /const rects = \[frame\];/);
-  assert.match(source, /const contentBounds = this\.getSelectedStrokeBounds\(\);/);
+  const handleSource = source.slice(source.indexOf("  findSelectionHandleAt("), source.indexOf("  selectedStrokeFrameContains("));
+  assert.doesNotMatch(handleSource, /contentBounds|rects\.push/);
   assert.match(source, /const screenHitRadius = Math\.max\(SELECT_RESIZE_HANDLE_HIT_RADIUS, this\.selectionHitPaddingPx\(\) \+ 6, 28\);/);
   assert.match(source, /distance < best\.distance/);
   assert.match(source, /block\.minHeight = resizeMarkdownBlockMinHeight\(\{/);
@@ -182,16 +183,16 @@ test("Markdown selection resize hits both the outer frame and the content corner
   assert.match(styles, /data-note-draw-resized-height="true"[\s\S]*min-height: var\(--notedraw-md-min-height\)/);
 });
 
-test("selection resize locks the dominant axis for one-dimensional corner drags", () => {
+test("selection resize keeps both axes for free corner drags", () => {
   assert.deepEqual(resolveSelectionResizeScales({ scaleX: 0.72, scaleY: 1.08, deltaX: -80, deltaY: 12 }), {
     scaleX: 0.72,
-    scaleY: 1,
-    axis: "x"
+    scaleY: 1.08,
+    axis: null
   });
   assert.deepEqual(resolveSelectionResizeScales({ scaleX: 1.08, scaleY: 0.72, deltaX: 12, deltaY: -80 }), {
-    scaleX: 1,
+    scaleX: 1.08,
     scaleY: 0.72,
-    axis: "y"
+    axis: null
   });
   assert.deepEqual(resolveSelectionResizeScales({ scaleX: 0.8, scaleY: 0.8, deltaX: -40, deltaY: -40 }), {
     scaleX: 0.8,
@@ -200,26 +201,25 @@ test("selection resize locks the dominant axis for one-dimensional corner drags"
   });
 });
 
-test("selection resize determines its axis from canvas pixels and can correct the initial lock", async () => {
+test("selection resize applies the two-dimensional scale returned by the layout helper", async () => {
   const source = await readFile(sourceUrl, "utf8");
 
-  assert.match(source, /const resizeDeltaX = \(point\.x - this\.resizeSelectionStartPoint\.x\) \* this\.canvasWidth\(\)/);
-  assert.match(source, /const resizeDeltaY = \(point\.y - this\.resizeSelectionStartPoint\.y\) \* this\.canvasHeight\(\)/);
-  assert.match(source, /if \(resolvedAxis\) \{\s*this\.resizeSelectionAxis = resolvedAxis;/);
+  assert.match(source, /\(\{ scaleX, scaleY \} = resolveSelectionResizeScales\(\{ scaleX, scaleY \}\)\)/);
+  assert.doesNotMatch(source, /resizeSelectionAxis|resolvedAxis|resizeDeltaX|resizeDeltaY/);
 });
 
-test("inserted element dragging resolves cached Markdown collisions without moving ordinary strokes", async () => {
+test("inserted element dragging previews the raw pointer position without collision shifts", async () => {
   const source = await readFile(sourceUrl, "utf8");
   const dragSource = source.slice(source.indexOf("  startSelectedStrokeDrag("), source.indexOf("  startSelectedStrokeResize("));
-  const collisionSource = dragSource.slice(dragSource.indexOf("  markdownNoteFlowCollisionShift("), dragSource.indexOf("  moveSelectedStroke("));
   const moveSource = dragSource.slice(dragSource.indexOf("  moveSelectedStroke("), dragSource.indexOf("  finishSelectedStrokeDrag("));
 
   assert.match(dragSource, /this\.dragNoteFlowOriginalBounds = new Map\(movableIndexes\.flatMap/);
-  assert.match(collisionSource, /!this\.dragMarkdownOriginalElements\?\.size && !this\.dragNoteFlowOriginalBounds\?\.size/);
-  assert.match(collisionSource, /this\.dragMarkdownObstacleBounds[\s\S]*this\.dragNoteFlowOriginalBounds/);
   assert.match(moveSource, /const hasDraggedNoteFlow = Boolean\(this\.dragNoteFlowOriginalBounds\?\.size\)/);
-  assert.match(moveSource, /for \(const index of this\.dragNoteFlowOriginalBounds\.keys\(\)\)[\s\S]*const originalPoints = this\.dragStrokeOriginalPoints\.get\(index\)[\s\S]*stroke\.points = originalPoints\.map/);
-  assert.doesNotMatch(moveSource, /for \(const \[index, points\] of this\.dragStrokeOriginalPoints\.entries\(\)\)[\s\S]*markdownDrag[\s\S]*stroke\.points = points\.map/);
+  assert.match(moveSource, /const previewDx = hasDraggedNoteFlow \? dx : snappedDx/);
+  assert.match(moveSource, /const previewDy = hasDraggedNoteFlow \? dy : snappedDy/);
+  assert.match(moveSource, /--notedraw-md-drag-x[\s\S]*Math\.round\(clientDx\)/);
+  assert.match(moveSource, /--notedraw-md-drag-y[\s\S]*Math\.round\(clientDy\)/);
+  assert.doesNotMatch(moveSource, /markdownNoteFlowCollisionShift|collisionDx|collisionDy|markdownDrag/);
 });
 
 test("selection handle hit testing stays usable for narrow elements at visual zoom", async () => {
@@ -231,6 +231,17 @@ test("selection handle hit testing stays usable for narrow elements at visual zo
   assert.match(handleSource, /const hitRadiusY = screenHitRadius \/ Math\.max\(0\.01, Math\.abs\(scaleY\)\)/);
   assert.match(handleSource, /rect\.width <= hitRadiusX \* 2[\s\S]*topDistance[\s\S]*bottomDistance[\s\S]*const handle = top/);
   assert.match(handleSource, /\(dx \/ hitRadiusX\) \*\* 2 \+ \(dy \/ hitRadiusY\) \*\* 2/);
+});
+
+test("Markdown selection uses only the visible Canvas frame and its four corners", async () => {
+  const [source, styles] = await Promise.all([readFile(sourceUrl, "utf8"), readFile(stylesUrl, "utf8")]);
+  const handleSource = source.slice(source.indexOf("  findSelectionHandleAt("), source.indexOf("  selectedStrokeFrameContains("));
+  const drawSource = source.slice(source.indexOf("  drawSelection()"), source.indexOf("  drawElementGroups()"));
+
+  assert.doesNotMatch(styles, /\.notedraw-md-block\.is-selected\s*\{/);
+  assert.match(handleSource, /const rects = \[frame\]/);
+  assert.doesNotMatch(handleSource, /contentBounds|rects\.push/);
+  assert.match(drawSource, /getSelectionHandlePointsFromRect/);
 });
 
 test("Markdown selection bounds exclude NoteFlow padding and include task checkboxes", async () => {
@@ -271,25 +282,14 @@ test("NoteFlow release commits the exact candidate and boundary shown by the blu
   assert.match(placementSource, /const boundary = horizontalSide[\s\S]*Number\.isFinite\(Number\(placement\.boundary\)\)/);
 });
 
-test("Markdown drag reserves NoteFlow rectangles without doing layout work per pointer frame", async () => {
+test("Markdown drag keeps preview geometry stable and defers layout work until drop", async () => {
   const source = await readFile(sourceUrl, "utf8");
-  const collisionSource = source.slice(source.indexOf("  markdownNoteFlowCollisionShift("), source.indexOf("  moveSelectedStroke(", source.indexOf("  markdownNoteFlowCollisionShift(")));
   const moveSource = source.slice(source.indexOf("  moveSelectedStroke("), source.indexOf("  finishSelectedStrokeDrag(", source.indexOf("  moveSelectedStroke(")));
 
-  assert.match(collisionSource, /stroke\?\.noteFlow\?\.enabled/);
-  assert.match(collisionSource, /getStrokeBounds\(stroke, this\.canvasWidth\(\), this\.canvasHeight\(\)\)/);
-  assert.match(source, /this\.dragMarkdownObstacleBounds = new Map\(\)/);
-  assert.match(collisionSource, /this\.dragMarkdownObstacleBounds\?\.values/);
-  assert.match(source, /this\.dragMarkdownObstacleBounds = null/);
-  assert.match(collisionSource, /for \(let pass = 0; pass <= obstacles\.length; pass \+= 1\)/);
-  assert.match(collisionSource, /verticalDirection < 0/);
-  assert.match(collisionSource, /resolvedY \+= deltaY/);
-  assert.match(collisionSource, /return \{ x: Number\(localDx\) \|\| 0, y: Number\(localDy\) \|\| 0 \}/);
-  assert.doesNotMatch(collisionSource, /getBoundingClientRect/);
-  assert.match(moveSource, /const collisionDx = hasDraggedNoteFlow \? snappedDx \* this\.canvasWidth\(\) : clientDx/);
-  assert.match(moveSource, /const collisionDy = hasDraggedNoteFlow \? snappedDy \* this\.canvasHeight\(\) : clientDy/);
-  assert.match(moveSource, /const markdownDrag = this\.markdownNoteFlowCollisionShift\(collisionDx, collisionDy\)/);
-  assert.doesNotMatch(collisionSource, /scheduleNoteFlowLayout|clearNoteFlowLayout|syncMarkdownBlockPresentation/);
+  assert.match(moveSource, /const previewDx = hasDraggedNoteFlow \? dx : snappedDx/);
+  assert.match(moveSource, /const previewDy = hasDraggedNoteFlow \? dy : snappedDy/);
+  assert.match(moveSource, /queueMarkdownBlockDropTarget\(event\.clientX, event\.clientY\)/);
+  assert.doesNotMatch(moveSource, /markdownNoteFlowCollisionShift|collisionDx|collisionDy|markdownDrag/);
 });
 
 test("selection resize freezes pointer geometry and defers canvas measurement until release", async () => {
@@ -350,8 +350,9 @@ test("boxed groups have two-level selection, drag membership, and a non-obscurin
   ]);
 
   assert.match(source, /findBoxedElementGroupAtPoint\(point\)/);
-  assert.match(source, /this\.enteredElementGroupIds\.add\(hitGroupId\)/);
-  assert.match(source, /selectElementGroup\(boxedGroup\.id\)/);
+  assert.match(source, /type: "enter-stroke-group"[\s\S]*groupId: hitGroupId/);
+  assert.match(source, /type: "select-group"[\s\S]*groupId: boxedGroup\.id/);
+  assert.match(source, /applyPendingSelectionTap\(pending\)[\s\S]*this\.enteredElementGroupIds\.add\(pending\.groupId\)[\s\S]*this\.selectElementGroup\(pending\.groupId\)/);
   assert.match(source, /updateDraggedElementGroupMembership\(event, movedIndexes/);
   assert.match(source, /item\.groupId = destination\.id/);
   assert.match(source, /item\.groupId = ""/);

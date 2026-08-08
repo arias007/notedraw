@@ -662,11 +662,6 @@
   pointer-events: none;
 }
 
-.notedraw-md-block.is-selected {
-  outline: 2px dashed rgba(255, 193, 7, 0.96);
-  outline-offset: 3px;
-}
-
 .notedraw-md-block.is-floating {
   z-index: 8;
   width: var(--notedraw-md-float-width, auto);

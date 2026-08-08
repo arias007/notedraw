@@ -5055,6 +5055,7 @@ var PreviewDrawingController = class {
     this.pointerStartEditable = null;
     this.pointerStartSourceText = false;
     this.activePointerId = null;
+    this.pendingSelectionTap = null;
     this.textHighlightLineRects = [];
     this.textHighlightTarget = null;
     this.connectorGesture = null;
@@ -5084,7 +5085,6 @@ var PreviewDrawingController = class {
     this.dragStrokeHitIndex = -1;
     this.dragStrokePreserveSelection = false;
     this.dragMarkdownOriginalElements = null;
-    this.dragMarkdownObstacleBounds = null;
     this.dragNoteFlowOriginalBounds = null;
     this.dragMarkdownDropTarget = null;
     this.dragMarkdownDropSide = null;
@@ -8647,34 +8647,20 @@ var PreviewDrawingController = class {
       const additiveSelect = event.shiftKey || event.ctrlKey || event.metaKey;
       const hitGroupId = this.drawingData.strokes[hitStrokeIndex]?.groupId || "";
       if (!additiveSelect && hitGroupId && this.isElementGroupFullySelected(hitGroupId) && !this.enteredElementGroupIds.has(hitGroupId)) {
-        this.enteredElementGroupIds.add(hitGroupId);
-        this.selectedMarkdownBlockIds.clear();
-        this.setSelectedStrokes(hitStrokeIndex, { skipGroupExpansion: true });
-        this.render();
-        event.preventDefault();
-        event.stopPropagation();
+        this.startPendingSelectionTap(event, {
+          type: "enter-stroke-group",
+          index: hitStrokeIndex,
+          groupId: hitGroupId
+        });
         return;
       }
       if (additiveSelect) {
-        const wasSelected = this.isStrokeSelected(hitStrokeIndex);
-        this.toggleStrokeSelection(hitStrokeIndex);
-        if (wasSelected) {
-          this.render();
-          event.preventDefault();
-          event.stopPropagation();
-          return;
-        }
-        this.render();
-        event.preventDefault();
-        event.stopPropagation();
+        this.startPendingSelectionTap(event, { type: "toggle-stroke", index: hitStrokeIndex });
         return;
       }
       const wasSelected = this.isStrokeSelected(hitStrokeIndex);
       if (!wasSelected) {
-        this.setSelectedStrokes(hitStrokeIndex);
-        this.render();
-        event.preventDefault();
-        event.stopPropagation();
+        this.startPendingSelectionTap(event, { type: "select-stroke", index: hitStrokeIndex });
         return;
       }
       const preserveGroupSelection = Boolean(hitGroupId && this.isElementGroupFullySelected(hitGroupId));
@@ -8687,32 +8673,24 @@ var PreviewDrawingController = class {
       const wasSelected = Boolean(existing && this.selectedMarkdownBlockIds.has(existing.id));
       const hitGroupId = existing?.groupId || "";
       if (!additiveSelect && hitGroupId && this.isElementGroupFullySelected(hitGroupId) && !this.enteredElementGroupIds.has(hitGroupId)) {
-        this.enteredElementGroupIds.add(hitGroupId);
-        this.selectedStrokeIndexes.clear();
-        this.selectedStrokeIndex = -1;
-        this.selectMarkdownBlock(markdownSelectionCandidate, { skipGroupExpansion: true });
-        this.render();
-        event.preventDefault();
-        event.stopPropagation();
+        this.startPendingSelectionTap(event, {
+          type: "enter-markdown-group",
+          element: markdownSelectionCandidate,
+          groupId: hitGroupId
+        });
         return;
       }
       if (additiveSelect) {
-        const block = this.toggleMarkdownBlockSelection(markdownSelectionCandidate);
-        if (wasSelected || !block) {
-          this.render();
-          event.preventDefault();
-          event.stopPropagation();
-          return;
-        }
-        this.render();
-        event.preventDefault();
-        event.stopPropagation();
+        this.startPendingSelectionTap(event, {
+          type: "toggle-markdown",
+          element: markdownSelectionCandidate
+        });
         return;
       } else if (!wasSelected) {
-        this.selectMarkdownBlock(markdownSelectionCandidate);
-        this.render();
-        event.preventDefault();
-        event.stopPropagation();
+        this.startPendingSelectionTap(event, {
+          type: "select-markdown",
+          element: markdownSelectionCandidate
+        });
         return;
       }
       this.startSelectedStrokeDrag(event, point, -1, { preserveSelection: additiveSelect });
@@ -8722,11 +8700,10 @@ var PreviewDrawingController = class {
       const boxedGroup = this.findBoxedElementGroupAtPoint(point);
       if (boxedGroup) {
         if (!this.isElementGroupFullySelected(boxedGroup.id)) {
-          this.enteredElementGroupIds.delete(boxedGroup.id);
-          this.selectElementGroup(boxedGroup.id);
-          this.render();
-          event.preventDefault();
-          event.stopPropagation();
+          this.startPendingSelectionTap(event, {
+            type: "select-group",
+            groupId: boxedGroup.id
+          });
           return;
         }
         this.startSelectedStrokeDrag(event, point);
@@ -9062,6 +9039,10 @@ var PreviewDrawingController = class {
       this.moveSelectedStroke(event);
       return;
     }
+    if (this.pendingSelectionTap && event.pointerId === this.activePointerId) {
+      this.updatePendingSelectionTap(event);
+      return;
+    }
     if (this.resizingSelection && event.pointerId === this.activePointerId) {
       this.moveSelectedStrokeResize(event);
       return;
@@ -9136,6 +9117,14 @@ var PreviewDrawingController = class {
     }
     if (this.draggingStroke && event.pointerId === this.activePointerId) {
       this.finishSelectedStrokeDrag(event);
+      return;
+    }
+    if (this.pendingSelectionTap && event.pointerId === this.activePointerId) {
+      if (event.type !== "pointerup") {
+        this.cancelPendingSelectionTap();
+      } else {
+        this.finishPendingSelectionTap(event);
+      }
       return;
     }
     if (this.resizingSelection && event.pointerId === this.activePointerId) {
@@ -10690,9 +10679,91 @@ var PreviewDrawingController = class {
     this.pointerStartEditable = null;
     this.pointerStartSourceText = false;
     this.activePointerId = null;
+    this.pendingSelectionTap = null;
     this.didMove = false;
     this.resetTextHighlightGesture();
     this.render();
+  }
+  startPendingSelectionTap(event, action) {
+    this.endTextEdit();
+    this.cancelCurrentStroke();
+    this.pendingSelectionTap = {
+      ...action,
+      pointerId: event.pointerId,
+      startClient: { x: event.clientX, y: event.clientY },
+      moved: false
+    };
+    this.pointerStartClient = { x: event.clientX, y: event.clientY };
+    this.activePointerId = event.pointerId;
+    try {
+      this.canvas.setPointerCapture(event.pointerId);
+    } catch (error) {
+      void error;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+  }
+  updatePendingSelectionTap(event) {
+    const pending = this.pendingSelectionTap;
+    if (!pending || event.pointerId !== pending.pointerId) {
+      return;
+    }
+    if (pointerDistance(pending.startClient, { x: event.clientX, y: event.clientY }) > this.tapDistancePx()) {
+      pending.moved = true;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+  }
+  applyPendingSelectionTap(pending) {
+    if (!pending) {
+      return;
+    }
+    if (pending.type === "select-stroke") {
+      this.setSelectedStrokes(pending.index);
+    } else if (pending.type === "toggle-stroke") {
+      this.toggleStrokeSelection(pending.index);
+    } else if (pending.type === "enter-stroke-group") {
+      this.enteredElementGroupIds.add(pending.groupId);
+      this.selectedMarkdownBlockIds.clear();
+      this.setSelectedStrokes(pending.index, { skipGroupExpansion: true });
+    } else if (pending.type === "select-markdown") {
+      this.selectMarkdownBlock(pending.element);
+    } else if (pending.type === "toggle-markdown") {
+      this.toggleMarkdownBlockSelection(pending.element);
+    } else if (pending.type === "enter-markdown-group") {
+      this.enteredElementGroupIds.add(pending.groupId);
+      this.selectedStrokeIndexes.clear();
+      this.selectedStrokeIndex = -1;
+      this.selectMarkdownBlock(pending.element, { skipGroupExpansion: true });
+    } else if (pending.type === "select-group") {
+      this.enteredElementGroupIds.delete(pending.groupId);
+      this.selectElementGroup(pending.groupId);
+    }
+  }
+  finishPendingSelectionTap(event) {
+    const pending = this.pendingSelectionTap;
+    const movedDistance = pending
+      ? pointerDistance(pending.startClient, { x: event.clientX, y: event.clientY })
+      : Number.POSITIVE_INFINITY;
+    this.pendingSelectionTap = null;
+    this.pointerStartClient = null;
+    this.activePointerId = null;
+    this.releasePointerCapture(event.pointerId);
+    if (pending && !pending.moved && movedDistance <= this.tapDistancePx()) {
+      this.applyPendingSelectionTap(pending);
+      this.render();
+    }
+    event.preventDefault();
+    event.stopPropagation();
+  }
+  cancelPendingSelectionTap() {
+    const pointerId = this.activePointerId;
+    this.pendingSelectionTap = null;
+    this.pointerStartClient = null;
+    this.activePointerId = null;
+    if (pointerId !== null) {
+      this.releasePointerCapture(pointerId);
+    }
   }
   startSelectionDrag(event, point) {
     this.endTextEdit();
@@ -10820,23 +10891,6 @@ var PreviewDrawingController = class {
         canvasBounds: this.markdownElementCanvasBounds(element, { forSelection: true })
       }];
     }));
-    const movingMarkdownElements = new Set(Array.from(this.dragMarkdownOriginalElements.values()).map((state) => state.element));
-    this.dragMarkdownObstacleBounds = new Map();
-    for (const block of this.markdownBlockRecords()) {
-      const element = this.markdownBlockElement(block);
-      if (!element || movingMarkdownElements.has(element)
-        || Array.from(movingMarkdownElements).some((moving) => moving.contains?.(element) || element.contains?.(moving))) {
-        continue;
-      }
-      const blockPath = normalizeVaultPath(block.path || this.file?.path || "");
-      if (blockPath !== normalizeVaultPath(this.file?.path || "")) {
-        continue;
-      }
-      const bounds = this.markdownElementCanvasBounds(element, { forSelection: true });
-      if (bounds) {
-        this.dragMarkdownObstacleBounds.set(block.id, { block, element, bounds });
-      }
-    }
     this.dragNoteFlowOriginalBounds = new Map(movableIndexes.flatMap((index) => {
       const stroke = this.drawingData.strokes[index];
       if (!normalizeNoteFlow(stroke?.noteFlow) || isConnectorStroke(stroke)) {
@@ -10845,7 +10899,6 @@ var PreviewDrawingController = class {
       const bounds = getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight());
       return bounds ? [[index, bounds]] : [];
     }));
-    this.dragMarkdownCollisionShift = { x: 0, y: 0 };
     this.dragStrokeOriginalNoteFlows = new Map(movableIndexes.map((index) => {
       const noteFlow = normalizeNoteFlow(this.drawingData.strokes[index]?.noteFlow);
       return [index, noteFlow ? { ...noteFlow } : null];
@@ -11453,73 +11506,6 @@ var PreviewDrawingController = class {
       y: clamp(mapped.canvasY / Math.max(1, mapped.canvasHeight), 0, 1)
     };
   }
-  markdownNoteFlowCollisionShift(localDx, localDy) {
-    if (!this.dragMarkdownOriginalElements?.size && !this.dragNoteFlowOriginalBounds?.size) {
-      return { x: Number(localDx) || 0, y: Number(localDy) || 0 };
-    }
-    const movedIndexes = new Set(this.dragStrokeIndexes || []);
-    const obstacles = (this.drawingData?.strokes || []).map((stroke, index) => {
-      if (movedIndexes.has(index) || !stroke?.noteFlow?.enabled || isConnectorStroke(stroke)) {
-        return null;
-      }
-      return getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight());
-    }).filter(Boolean).concat(
-      Array.from(this.dragMarkdownObstacleBounds?.values?.() || [])
-        .map((entry) => entry?.bounds)
-        .filter(Boolean)
-    ).sort((a, b) => a.minY - b.minY || a.minX - b.minX);
-    if (!obstacles.length) {
-      this.dragMarkdownCollisionShift = { x: 0, y: 0 };
-      return { x: Number(localDx) || 0, y: Number(localDy) || 0 };
-    }
-    const gap = 10;
-    let resolvedX = Number(localDx) || 0;
-    let resolvedY = Number(localDy) || 0;
-    let verticalDirection = Math.sign(resolvedY);
-    const movingBounds = [
-      ...Array.from(this.dragMarkdownOriginalElements?.values?.() || []).map((state) => state.canvasBounds),
-      ...Array.from(this.dragNoteFlowOriginalBounds?.values?.() || [])
-    ].filter(Boolean);
-    for (const original of movingBounds) {
-      if (!original) {
-        continue;
-      }
-      const proposed = {
-        minX: original.minX + resolvedX,
-        maxX: original.maxX + resolvedX,
-        minY: original.minY + resolvedY,
-        maxY: original.maxY + resolvedY
-      };
-      for (let pass = 0; pass <= obstacles.length; pass += 1) {
-        let shifted = false;
-        for (const obstacle of obstacles) {
-          const overlapsX = proposed.minX < obstacle.maxX && proposed.maxX > obstacle.minX;
-          const overlapsY = proposed.minY < obstacle.maxY && proposed.maxY > obstacle.minY;
-          if (!overlapsX || !overlapsY) {
-            continue;
-          }
-          if (verticalDirection === 0) {
-            const proposedCenter = (proposed.minY + proposed.maxY) / 2;
-            const obstacleCenter = (obstacle.minY + obstacle.maxY) / 2;
-            verticalDirection = proposedCenter <= obstacleCenter ? -1 : 1;
-          }
-          const deltaY = verticalDirection < 0
-            ? obstacle.minY - proposed.maxY - gap
-            : obstacle.maxY - proposed.minY + gap;
-          resolvedY += deltaY;
-          proposed.minY += deltaY;
-          proposed.maxY += deltaY;
-          shifted = true;
-          break;
-        }
-        if (!shifted) {
-          break;
-        }
-      }
-    }
-    this.dragMarkdownCollisionShift = { x: resolvedX - (Number(localDx) || 0), y: resolvedY - (Number(localDy) || 0) };
-    return { x: resolvedX, y: resolvedY };
-  }
   moveSelectedStroke(event) {
     if (!this.dragStrokeStartPoint || !this.dragStrokeOriginalPoints?.size && !this.dragMarkdownOriginalElements?.size) {
       return;
@@ -11562,19 +11548,22 @@ var PreviewDrawingController = class {
       this.dragStrokeMoved = true;
       this.clearSelectionLongPress();
       this.cancelResizeFrame();
-      if (this.dragShouldSnap) {
+      if (this.dragShouldSnap && !this.dragNoteFlowOriginalBounds?.size) {
         this.prepareDragSnapBounds(strokeIndexes);
       }
       this.prepareReadingBottomExtentForDrag();
     }
     this.extendReadingBottomExtentDuringDrag(event);
+    const hasDraggedNoteFlow = Boolean(this.dragNoteFlowOriginalBounds?.size);
     let snappedDx = dx;
     let snappedDy = dy;
-    if (this.dragShouldSnap && this.dragStrokeOriginalBounds) {
+    if (!hasDraggedNoteFlow && this.dragShouldSnap && this.dragStrokeOriginalBounds) {
       const snap = this.computeSnapDeltaForNormalizedBounds(translateNormalizedBounds(this.dragStrokeOriginalBounds, dx, dy), strokeIndexes);
       snappedDx = clamp(dx + snap.dx, -minX, 1 - maxX);
       snappedDy = clamp(dy + snap.dy, -minY, 1 - maxY);
     }
+    const previewDx = hasDraggedNoteFlow ? dx : snappedDx;
+    const previewDy = hasDraggedNoteFlow ? dy : snappedDy;
     for (const [index, points] of this.dragStrokeOriginalPoints.entries()) {
       const stroke = this.drawingData.strokes[index];
       if (!stroke) {
@@ -11582,8 +11571,8 @@ var PreviewDrawingController = class {
       }
       stroke.points = points.map((strokePoint) => ({
         ...strokePoint,
-        x: clamp(strokePoint.x + snappedDx, 0, 1),
-        y: clamp(strokePoint.y + snappedDy, 0, 1)
+        x: clamp(strokePoint.x + previewDx, 0, 1),
+        y: clamp(strokePoint.y + previewDy, 0, 1)
       }));
     }
     const canvasRect = this.dragStrokePointerGeometry?.rect;
@@ -11591,30 +11580,10 @@ var PreviewDrawingController = class {
     const localScaleY = canvasRect?.height > 0 ? canvasRect.height / Math.max(1, this.canvasRenderHeight) : 1;
     const clientDx = (event.clientX - this.pointerStartClient.x) / Math.max(0.0001, localScaleX);
     const clientDy = (event.clientY - this.pointerStartClient.y) / Math.max(0.0001, localScaleY);
-    const hasDraggedNoteFlow = Boolean(this.dragNoteFlowOriginalBounds?.size);
-    const collisionDx = hasDraggedNoteFlow ? snappedDx * this.canvasWidth() : clientDx;
-    const collisionDy = hasDraggedNoteFlow ? snappedDy * this.canvasHeight() : clientDy;
-    const markdownDrag = this.markdownNoteFlowCollisionShift(collisionDx, collisionDy);
-    if (hasDraggedNoteFlow) {
-      const resolvedDx = markdownDrag.x / this.canvasWidth();
-      const resolvedDy = markdownDrag.y / this.canvasHeight();
-      for (const index of this.dragNoteFlowOriginalBounds.keys()) {
-        const stroke = this.drawingData.strokes[index];
-        const originalPoints = this.dragStrokeOriginalPoints.get(index);
-        if (!stroke || !originalPoints) {
-          continue;
-        }
-        stroke.points = originalPoints.map((strokePoint) => ({
-          ...strokePoint,
-          x: clamp(strokePoint.x + resolvedDx, 0, 1),
-          y: clamp(strokePoint.y + resolvedDy, 0, 1)
-        }));
-      }
-    }
     for (const state of this.dragMarkdownOriginalElements?.values?.() || []) {
       setNoteDrawCssProps(state.element, {
-        "--notedraw-md-drag-x": `${Math.round(markdownDrag.x)}px`,
-        "--notedraw-md-drag-y": `${Math.round(markdownDrag.y)}px`
+        "--notedraw-md-drag-x": `${Math.round(clientDx)}px`,
+        "--notedraw-md-drag-y": `${Math.round(clientDy)}px`
       });
     }
     if (this.dragHasBoxBackground) {
@@ -11792,9 +11761,7 @@ var PreviewDrawingController = class {
       state.element?.style?.removeProperty("--notedraw-md-drag-y");
     }
     this.dragMarkdownOriginalElements = null;
-    this.dragMarkdownObstacleBounds = null;
     this.dragNoteFlowOriginalBounds = null;
-    this.dragMarkdownCollisionShift = null;
     this.dragMarkdownTextCommit = null;
     this.dragElementGroupBounds = null;
     this.dragSnapOtherBounds = null;
@@ -11951,7 +11918,6 @@ var PreviewDrawingController = class {
     this.resizeSelectionHandle = handle;
     this.resizeSelectionPointerGeometry = this.captureCanvasPointerGeometry();
     this.resizeSelectionStartPoint = this.eventToPoint(event, this.resizeSelectionPointerGeometry);
-    this.resizeSelectionAxis = null;
     this.resizeSelectionOriginalBounds = bounds;
     this.resizeSelectionOriginalStrokes = new Map(resizableIndexes.map((index) => [
       index,
@@ -12033,24 +11999,7 @@ var PreviewDrawingController = class {
     const originalDy = corner.y - anchor.y;
     let scaleX = originalDx === 0 ? 1 : (point.x - anchor.x) / originalDx;
     let scaleY = originalDy === 0 ? 1 : (point.y - anchor.y) / originalDy;
-    const resizeDeltaX = (point.x - this.resizeSelectionStartPoint.x) * this.canvasWidth();
-    const resizeDeltaY = (point.y - this.resizeSelectionStartPoint.y) * this.canvasHeight();
-    const resolvedAxis = resolveSelectionResizeScales({
-      scaleX,
-      scaleY,
-      deltaX: resizeDeltaX,
-      deltaY: resizeDeltaY
-    }).axis;
-    if (resolvedAxis) {
-      this.resizeSelectionAxis = resolvedAxis;
-    }
-    if (this.resizeSelectionAxis) {
-      if (this.resizeSelectionAxis === "x") {
-        scaleY = 1;
-      } else if (this.resizeSelectionAxis === "y") {
-        scaleX = 1;
-      }
-    }
+    ({ scaleX, scaleY } = resolveSelectionResizeScales({ scaleX, scaleY }));
     scaleX = Math.max(0.12, scaleX);
     scaleY = Math.max(0.12, scaleY);
     const strokeScale = clamp((Math.abs(scaleX) + Math.abs(scaleY)) / 2, 0.2, 8);
@@ -12183,7 +12132,6 @@ var PreviewDrawingController = class {
     const needsGeometrySettle = this.resizingSelection;
     this.resizingSelection = false;
     this.resizeSelectionHandle = null;
-    this.resizeSelectionAxis = null;
     this.resizeSelectionStartPoint = null;
     this.resizeSelectionOriginalBounds = null;
     this.resizeSelectionOriginalStrokes = null;
@@ -16039,17 +15987,6 @@ var PreviewDrawingController = class {
     }
     const hitPoint = this.pointToCanvas(point);
     const rects = [frame];
-    if (this.getSelectedMarkdownBlocks().length) {
-      const contentBounds = this.getSelectedStrokeBounds();
-      if (contentBounds) {
-        rects.push({
-          x: contentBounds.minX,
-          y: contentBounds.minY,
-          width: contentBounds.maxX - contentBounds.minX,
-          height: contentBounds.maxY - contentBounds.minY
-        });
-      }
-    }
     const canvasRect = this.canvas?.getBoundingClientRect?.();
     const scaleX = canvasRect?.width > 0 ? canvasRect.width / Math.max(1, this.canvasWidth()) : 1;
     const scaleY = canvasRect?.height > 0 ? canvasRect.height / Math.max(1, this.canvasRenderHeight) : 1;
