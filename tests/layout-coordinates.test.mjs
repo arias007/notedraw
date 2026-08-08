@@ -6,9 +6,35 @@ import {
   constrainWideContentFrame,
   createResponsivePoint,
   mapClientPointToCanvas,
+  mapResizeClientDeltaToPoint,
   normalizeResponsiveAnchor,
   projectResponsivePoint
 } from "../src/layout-coordinates.mjs";
+
+test("selection resize starts at the real corner and follows bounded client movement", () => {
+  const options = {
+    startClient: { x: 875, y: 625 },
+    corner: { x: 0.8, y: 0.5 },
+    geometry: {
+      rect: { left: 100, top: 50, width: 800, height: 600 },
+      canvasHeight: 2400,
+      canvasRenderHeight: 600
+    }
+  };
+
+  assert.deepEqual(mapResizeClientDeltaToPoint({ clientX: 875, clientY: 625 }, options), {
+    x: 0.8,
+    y: 0.5
+  });
+  assert.deepEqual(mapResizeClientDeltaToPoint({ clientX: 795, clientY: 565 }, options), {
+    x: 0.7000000000000001,
+    y: 0.475
+  });
+  assert.deepEqual(mapResizeClientDeltaToPoint({ clientX: 795, clientY: 900 }, options), {
+    x: 0.7000000000000001,
+    y: 0.5104166666666666
+  });
+});
 
 test("a frozen pointer geometry prevents resize feedback when the live canvas grows", () => {
   const pointer = { clientX: 500, clientY: 650 };

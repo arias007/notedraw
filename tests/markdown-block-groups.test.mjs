@@ -318,8 +318,11 @@ test("selection resize freezes pointer geometry and defers canvas measurement un
 
   assert.match(source, /this\.resizeSelectionPointerGeometry = this\.captureCanvasPointerGeometry\(\);/);
   assert.match(source, /this\.resizeSelectionStartClient = \{ x: event\.clientX, y: event\.clientY \};/);
+  assert.match(source, /this\.resizeSelectionStartPoint = getSelectionResizeCorner\(bounds, handle\);/);
   assert.match(source, /const point = this\.resizeEventToPoint\(event\);/);
-  assert.match(source, /resizeEventToPoint\(event\)[\s\S]*this\.resizeSelectionStartClient/);
+  assert.match(source, /resizeEventToPoint\(event\)[\s\S]*mapResizeClientDeltaToPoint\(event, \{ startClient, corner, geometry \}\)/);
+  assert.match(source, /this\.resizeSelectionPreviewBounds = scaleNormalizedBoundsFromAnchor\(bounds, anchor, scaleX, scaleY\);/);
+  assert.match(source, /this\.resizingSelection && this\.resizeSelectionPreviewBounds/);
   assert.match(source, /const wantsMeasure = options\.measure !== false\s+&& !this\.resizingSelection/);
   assert.match(source, /this\.scheduleResize\(\{ layout: false, measure: true \}\);/);
 });

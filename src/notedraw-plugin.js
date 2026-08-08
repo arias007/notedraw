@@ -28,6 +28,7 @@ import {
   constrainWideContentFrame,
   createResponsivePoint,
   mapClientPointToCanvas,
+  mapResizeClientDeltaToPoint,
   normalizeContentFrame,
   normalizeResponsiveAnchor,
   projectResponsivePoint
@@ -5192,6 +5193,7 @@ var PreviewDrawingController = class {
     this.resizeSelectionStartPoint = null;
     this.resizeSelectionStartClient = null;
     this.resizeSelectionOriginalBounds = null;
+    this.resizeSelectionPreviewBounds = null;
     this.resizeSelectionOriginalStrokes = null;
     this.resizeSelectionOriginalMarkdownBlocks = null;
     this.resizeSelectionPointerGeometry = null;
@@ -5851,6 +5853,7 @@ var PreviewDrawingController = class {
     this.resizeSelectionStartPoint = null;
     this.resizeSelectionStartClient = null;
     this.resizeSelectionOriginalBounds = null;
+    this.resizeSelectionPreviewBounds = null;
     this.resizeSelectionOriginalStrokes = null;
     this.resizeSelectionOriginalMarkdownBlocks = null;
     this.resizeSelectionPointerGeometry = null;
@@ -12024,8 +12027,9 @@ var PreviewDrawingController = class {
     this.resizeSelectionHandle = handle;
     this.resizeSelectionPointerGeometry = this.captureCanvasPointerGeometry();
     this.resizeSelectionStartClient = { x: event.clientX, y: event.clientY };
-    this.resizeSelectionStartPoint = this.eventToPoint(event, this.resizeSelectionPointerGeometry);
+    this.resizeSelectionStartPoint = getSelectionResizeCorner(bounds, handle);
     this.resizeSelectionOriginalBounds = bounds;
+    this.resizeSelectionPreviewBounds = { ...bounds };
     this.resizeSelectionOriginalStrokes = new Map(resizableIndexes.map((index) => [
       index,
       {
@@ -12092,19 +12096,14 @@ var PreviewDrawingController = class {
   resizeEventToPoint(event) {
     const geometry = this.resizeSelectionPointerGeometry;
     const startClient = this.resizeSelectionStartClient;
-    const startPoint = this.resizeSelectionStartPoint;
-    if (!geometry?.rect?.width || !geometry?.rect?.height || !startClient || !startPoint) {
+    const corner = this.resizeSelectionStartPoint;
+    const point = mapResizeClientDeltaToPoint(event, { startClient, corner, geometry });
+    if (!point) {
       return this.eventToPoint(event, geometry);
     }
-    const deltaX = (Number(event?.clientX) - startClient.x) / geometry.rect.width;
-    const deltaY = (Number(event?.clientY) - startClient.y)
-      * Math.max(1, Number(geometry.canvasRenderHeight) || 1)
-      / geometry.rect.height
-      / Math.max(1, Number(geometry.canvasHeight) || 1);
     return {
-      ...startPoint,
-      x: startPoint.x + deltaX,
-      y: startPoint.y + deltaY
+      ...corner,
+      ...point
     };
   }
   applySelectedStrokeResize(point) {
@@ -12124,6 +12123,7 @@ var PreviewDrawingController = class {
     ({ scaleX, scaleY } = resolveSelectionResizeScales({ scaleX, scaleY }));
     scaleX = limitSelectionResizeScaleToCanvas(scaleX, bounds, anchor, "x");
     scaleY = limitSelectionResizeScaleToCanvas(scaleY, bounds, anchor, "y");
+    this.resizeSelectionPreviewBounds = scaleNormalizedBoundsFromAnchor(bounds, anchor, scaleX, scaleY);
     const strokeScale = clamp((Math.abs(scaleX) + Math.abs(scaleY)) / 2, 0.2, 8);
     const nextByIndex = /* @__PURE__ */ new Map();
     for (const [index, original] of originalStrokes.entries()) {
@@ -12262,6 +12262,7 @@ var PreviewDrawingController = class {
     this.resizeSelectionStartPoint = null;
     this.resizeSelectionStartClient = null;
     this.resizeSelectionOriginalBounds = null;
+    this.resizeSelectionPreviewBounds = null;
     this.resizeSelectionOriginalStrokes = null;
     this.resizeSelectionOriginalMarkdownBlocks = null;
     this.resizeSelectionPointerGeometry = null;
@@ -16106,6 +16107,18 @@ var PreviewDrawingController = class {
   getSelectedFrameCanvasRect() {
     if (!this.hasHybridSelection()) {
       return null;
+    }
+    if (this.resizingSelection && this.resizeSelectionPreviewBounds) {
+      const bounds = this.resizeSelectionPreviewBounds;
+      const width = Math.max(1, Number(this.resizeSelectionPointerGeometry?.canvasWidth) || this.canvasWidth());
+      const height = Math.max(1, Number(this.resizeSelectionPointerGeometry?.canvasHeight) || this.canvasHeight());
+      const padding = this.selectionFramePaddingPx();
+      return {
+        x: bounds.minX * width - padding,
+        y: bounds.minY * height - padding,
+        width: (bounds.maxX - bounds.minX) * width + padding * 2,
+        height: (bounds.maxY - bounds.minY) * height + padding * 2
+      };
     }
     if (this.draggingStroke || this.resizingSelection) {
       const bounds = this.getSelectedStrokeBounds();
@@ -20262,6 +20275,18 @@ function getSelectionResizeCorner(bounds, handle) {
     return { x: bounds.minX, y: bounds.maxY };
   }
   return { x: bounds.maxX, y: bounds.maxY };
+}
+function scaleNormalizedBoundsFromAnchor(bounds, anchor, scaleX, scaleY) {
+  const firstX = anchor.x + (bounds.minX - anchor.x) * scaleX;
+  const secondX = anchor.x + (bounds.maxX - anchor.x) * scaleX;
+  const firstY = anchor.y + (bounds.minY - anchor.y) * scaleY;
+  const secondY = anchor.y + (bounds.maxY - anchor.y) * scaleY;
+  return {
+    minX: Math.min(firstX, secondX),
+    minY: Math.min(firstY, secondY),
+    maxX: Math.max(firstX, secondX),
+    maxY: Math.max(firstY, secondY)
+  };
 }
 function limitSelectionResizeScaleToCanvas(scale, bounds, anchor, axis) {
   const minimum = 0.04;

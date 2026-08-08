@@ -70,6 +70,33 @@ export function mapClientPointToCanvas({ clientX, clientY } = {}, geometry = {})
   };
 }
 
+export function mapResizeClientDeltaToPoint({ clientX, clientY } = {}, {
+  startClient,
+  corner,
+  geometry = {}
+} = {}) {
+  const rect = geometry.rect || geometry;
+  const rectLeft = finite(rect?.left, 0);
+  const rectTop = finite(rect?.top, 0);
+  const rectWidth = finite(rect?.width, 0);
+  const rectHeight = finite(rect?.height, 0);
+  const startX = Number(startClient?.x);
+  const startY = Number(startClient?.y);
+  const cornerX = Number(corner?.x);
+  const cornerY = Number(corner?.y);
+  if (rectWidth <= 0 || rectHeight <= 0 || ![startX, startY, cornerX, cornerY].every(Number.isFinite)) {
+    return null;
+  }
+  const boundedClientX = clamp(finite(clientX, startX), rectLeft, rectLeft + rectWidth);
+  const boundedClientY = clamp(finite(clientY, startY), rectTop, rectTop + rectHeight);
+  const canvasHeight = Math.max(1, finite(geometry.canvasHeight, rectHeight));
+  const canvasRenderHeight = Math.max(1, finite(geometry.canvasRenderHeight, rectHeight));
+  return {
+    x: cornerX + (boundedClientX - startX) / rectWidth,
+    y: cornerY + (boundedClientY - startY) * canvasRenderHeight / rectHeight / canvasHeight
+  };
+}
+
 export function constrainWideContentFrame(frameInput, {
   isMobile = false,
   minSurfaceWidth = 900,
