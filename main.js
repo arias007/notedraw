@@ -1025,276 +1025,6 @@ function settleProjectedElementTransition(projectedItems, previousById, pendingI
     abrupt: true
   };
 }
-function rectGap(a, b) {
-  const dx = Math.max(0, a.x - (b.x + b.width), b.x - (a.x + a.width));
-  const dy = Math.max(0, a.y - (b.y + b.height), b.y - (a.y + a.height));
-  return Math.hypot(dx, dy);
-}
-function overlapArea(a, b) {
-  const width = Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x));
-  const height = Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y));
-  return width * height;
-}
-function overlapCenter(a, b) {
-  const left = Math.max(a.x, b.x);
-  const right = Math.min(a.x + a.width, b.x + b.width);
-  const top = Math.max(a.y, b.y);
-  const bottom = Math.min(a.y + a.height, b.y + b.height);
-  if (right <= left || bottom <= top) {
-    return null;
-  }
-  return {
-    x: (left + right) / 2,
-    y: (top + bottom) / 2
-  };
-}
-function boxCorner(box, name) {
-  return {
-    x: box.x + (name === "topRight" || name === "bottomRight" ? box.width : 0),
-    y: box.y + (name === "bottomLeft" || name === "bottomRight" ? box.height : 0)
-  };
-}
-function nearestCornerPair(source, target) {
-  let best = { sourceCorner: "topLeft", targetCorner: "topLeft", distance: Number.POSITIVE_INFINITY };
-  for (const sourceCorner of CORNER_NAMES) {
-    const sourcePoint = boxCorner(source, sourceCorner);
-    for (const targetCorner of CORNER_NAMES) {
-      const targetPoint = boxCorner(target, targetCorner);
-      const distance = Math.hypot(targetPoint.x - sourcePoint.x, targetPoint.y - sourcePoint.y);
-      if (distance < best.distance) {
-        best = { sourceCorner, targetCorner, distance };
-      }
-    }
-  }
-  return best;
-}
-function normalizeBoxAnchor(box, point) {
-  return {
-    u: clamp3((point.x - box.x) / Math.max(0.01, box.width), 0, 1),
-    v: clamp3((point.y - box.y) / Math.max(0.01, box.height), 0, 1)
-  };
-}
-function relationBoxPoint(box, relation, prefix) {
-  const u = finite2(relation?.[`${prefix}U`], NaN);
-  const v = finite2(relation?.[`${prefix}V`], NaN);
-  if (Number.isFinite(u) && Number.isFinite(v)) {
-    return {
-      x: box.x + clamp3(u, 0, 1) * box.width,
-      y: box.y + clamp3(v, 0, 1) * box.height
-    };
-  }
-  return boxCorner(box, relation?.[`${prefix}Corner`]);
-}
-function captureElementRelations(items, { nearDistance = 80, maxRelations = 3 } = {}) {
-  const normalized = (Array.isArray(items) ? items : []).map((item) => ({
-    id: typeof item?.id === "string" ? item.id : "",
-    scale: clamp3(finite2(item?.scale, 1), 0.05, 20),
-    xScale: clamp3(finite2(item?.xScale, item?.scale ?? 1), 0.05, 20),
-    yScale: clamp3(finite2(item?.yScale, item?.scale ?? 1), 0.05, 20),
-    bounds: normalizeBox({
-      x: item?.bounds?.minX ?? item?.bounds?.x,
-      y: item?.bounds?.minY ?? item?.bounds?.y,
-      width: item?.bounds?.width ?? finite2(item?.bounds?.maxX, 0) - finite2(item?.bounds?.minX, 0),
-      height: item?.bounds?.height ?? finite2(item?.bounds?.maxY, 0) - finite2(item?.bounds?.minY, 0)
-    })
-  })).filter((item) => item.id);
-  const cellSize = Math.max(16, finite2(nearDistance, 80));
-  const buckets = /* @__PURE__ */ new Map();
-  const cellRange = (bounds, padding = 0) => ({
-    minX: Math.floor((bounds.x - padding) / cellSize),
-    maxX: Math.floor((bounds.x + bounds.width + padding) / cellSize),
-    minY: Math.floor((bounds.y - padding) / cellSize),
-    maxY: Math.floor((bounds.y + bounds.height + padding) / cellSize)
-  });
-  for (const item of normalized) {
-    const range = cellRange(item.bounds);
-    for (let x = range.minX; x <= range.maxX; x += 1) {
-      for (let y = range.minY; y <= range.maxY; y += 1) {
-        const key = `${x}:${y}`;
-        const bucket = buckets.get(key) || [];
-        bucket.push(item);
-        buckets.set(key, bucket);
-      }
-    }
-  }
-  const relations = /* @__PURE__ */ new Map();
-  for (const source of normalized) {
-    const candidates = [];
-    const nearby = /* @__PURE__ */ new Set();
-    const range = cellRange(source.bounds, nearDistance);
-    for (let x = range.minX; x <= range.maxX; x += 1) {
-      for (let y = range.minY; y <= range.maxY; y += 1) {
-        for (const item of buckets.get(`${x}:${y}`) || []) {
-          nearby.add(item);
-        }
-      }
-    }
-    for (const target of nearby) {
-      if (target === source) {
-        continue;
-      }
-      const overlap = overlapArea(source.bounds, target.bounds);
-      const gap = rectGap(source.bounds, target.bounds);
-      if (overlap <= 0 && gap > nearDistance) {
-        continue;
-      }
-      const kind = overlap > 0 ? "intersection" : "near";
-      const relationScaleX = Math.max(0.05, (source.xScale + target.xScale) / 2);
-      const relationScaleY = Math.max(0.05, (source.yScale + target.yScale) / 2);
-      const cornerPair = nearestCornerPair(source.bounds, target.bounds);
-      const intersectionCenter = kind === "intersection" ? overlapCenter(source.bounds, target.bounds) : null;
-      const sourceAnchor = intersectionCenter ? normalizeBoxAnchor(source.bounds, intersectionCenter) : null;
-      const targetAnchor = intersectionCenter ? normalizeBoxAnchor(target.bounds, intersectionCenter) : null;
-      const sourceCornerPoint = intersectionCenter || boxCorner(source.bounds, cornerPair.sourceCorner);
-      const targetCornerPoint = intersectionCenter || boxCorner(target.bounds, cornerPair.targetCorner);
-      candidates.push({
-        targetId: target.id,
-        kind,
-        sourceCorner: cornerPair.sourceCorner,
-        targetCorner: cornerPair.targetCorner,
-        ...sourceAnchor ? { sourceU: sourceAnchor.u, sourceV: sourceAnchor.v } : {},
-        ...targetAnchor ? { targetU: targetAnchor.u, targetV: targetAnchor.v } : {},
-        dx: (targetCornerPoint.x - sourceCornerPoint.x) / relationScaleX,
-        dy: (targetCornerPoint.y - sourceCornerPoint.y) / relationScaleY,
-        weight: kind === "intersection" ? 0.32 : 0.14,
-        score: kind === "intersection" ? -overlap - 1 : gap
-      });
-    }
-    candidates.sort((a, b) => a.score - b.score || a.targetId.localeCompare(b.targetId));
-    relations.set(source.id, candidates.slice(0, maxRelations).map(({ score, ...relation }) => relation));
-  }
-  return relations;
-}
-function median(values) {
-  const sorted = values.filter(Number.isFinite).sort((a, b) => a - b);
-  if (!sorted.length) {
-    return NaN;
-  }
-  const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
-}
-function stabilizeMarkdownRelationAnchors(projected, layoutsById) {
-  const byId = new Map(projected.map((item) => [item.id, item]));
-  const neighbors = new Map(projected.map((item) => [item.id, /* @__PURE__ */ new Set()]));
-  for (const item of projected) {
-    const layout = normalizeElementLayout(layoutsById.get(item.id));
-    for (const relation of layout?.relations || []) {
-      if (!byId.has(relation.targetId)) {
-        continue;
-      }
-      neighbors.get(item.id)?.add(relation.targetId);
-      neighbors.get(relation.targetId)?.add(item.id);
-    }
-  }
-  return projected.map((item) => {
-    if (!item.primaryAnchoredToLine || !Number.isFinite(item.fallbackY)) {
-      return item;
-    }
-    const neighborDeltas = Array.from(neighbors.get(item.id) || []).map((id) => byId.get(id)).filter((neighbor) => neighbor?.primaryAnchoredToLine && Number.isFinite(neighbor.fallbackY)).map((neighbor) => neighbor.y - neighbor.fallbackY);
-    if (neighborDeltas.length < 2) {
-      return item;
-    }
-    const center = median(neighborDeltas);
-    const deviation = median(neighborDeltas.map((value) => Math.abs(value - center)));
-    const tolerance = clamp3(deviation * 3 + 32, 96, 240);
-    const inliers = neighborDeltas.filter((value) => Math.abs(value - center) <= tolerance);
-    if (inliers.length < 2) {
-      return item;
-    }
-    const consensus = inliers.reduce((sum, value) => sum + value, 0) / inliers.length;
-    const ownDelta = item.y - item.fallbackY;
-    const correctionThreshold = Math.max(144, item.height * 0.65);
-    if (Math.abs(ownDelta - consensus) <= correctionThreshold) {
-      return item;
-    }
-    const correctedY = item.fallbackY + consensus;
-    return {
-      ...item,
-      y: correctedY,
-      anchorY: correctedY,
-      anchorStrength: Math.min(0.92, finite2(item.anchorStrength, 0.92)),
-      relationCorrectedMarkdownAnchor: true
-    };
-  });
-}
-function stabilizeElementRelations(projectedItems, layouts) {
-  const layoutsById = layouts instanceof Map ? layouts : new Map((Array.isArray(layouts) ? layouts : []).map((layout) => [layout?.id, layout]));
-  const projected = stabilizeMarkdownRelationAnchors(
-    (Array.isArray(projectedItems) ? projectedItems : []).map((item) => ({ ...item })),
-    layoutsById
-  );
-  const byId = new Map(projected.map((item) => [item.id, item]));
-  const corrections = /* @__PURE__ */ new Map();
-  const visitedPairs = /* @__PURE__ */ new Set();
-  const anchorStrengthFor = (item) => {
-    const value = Number(item?.anchorStrength);
-    if (Number.isFinite(value)) {
-      return clamp3(value, 0, 1);
-    }
-    return item?.primaryAnchoredToLine ? 0.8 : 0.35;
-  };
-  const addCorrection = (id, x, y, strength) => {
-    const current = corrections.get(id) || { x: 0, y: 0, weight: 0 };
-    current.x += x * strength;
-    current.y += y * strength;
-    current.weight += strength;
-    corrections.set(id, current);
-  };
-  for (const source of projected) {
-    const layout = normalizeElementLayout(layoutsById.get(source.id));
-    if (!layout) {
-      continue;
-    }
-    for (const relation of layout.relations) {
-      const target = byId.get(relation.targetId);
-      if (!target) {
-        continue;
-      }
-      const pairKey = source.id < target.id ? `${source.id}\0${target.id}` : `${target.id}\0${source.id}`;
-      if (visitedPairs.has(pairKey)) {
-        continue;
-      }
-      visitedPairs.add(pairKey);
-      const relationScaleX = (finite2(source.xScale, source.scale) + finite2(target.xScale, target.scale)) / 2;
-      const relationScaleY = (finite2(source.yScale, source.scale) + finite2(target.yScale, target.scale)) / 2;
-      const sourcePoint = relationBoxPoint(source, relation, "source");
-      const targetPoint = relationBoxPoint(target, relation, "target");
-      const errorX = targetPoint.x - sourcePoint.x - relation.dx * relationScaleX;
-      const errorY = targetPoint.y - sourcePoint.y - relation.dy * relationScaleY;
-      const limitX = relation.kind === "near" ? Math.min(72, Math.max(24, Math.min(source.width, target.width) * 0.35)) : Math.min(96, Math.max(32, Math.min(source.width, target.width) * 0.5));
-      const limitY = relation.kind === "near" ? Math.min(72, Math.max(24, Math.min(source.height, target.height) * 0.35)) : Math.min(96, Math.max(32, Math.min(source.height, target.height) * 0.5));
-      const strength = relation.kind === "near" ? clamp3(relation.weight * 1.7, 0.16, 0.34) : clamp3(relation.weight * 1.7, 0.32, 0.62);
-      const sourceMobility = clamp3(1 - anchorStrengthFor(source) * 0.78, 0.18, 1);
-      const targetMobility = clamp3(1 - anchorStrengthFor(target) * 0.78, 0.18, 1);
-      const mobility = Math.max(0.01, sourceMobility + targetMobility);
-      const sourceShare = sourceMobility / mobility;
-      const targetShare = targetMobility / mobility;
-      const clampedErrorX = clamp3(errorX, -limitX, limitX);
-      const clampedErrorY = clamp3(errorY, -limitY, limitY);
-      addCorrection(source.id, clampedErrorX * sourceShare, clampedErrorY * sourceShare, strength);
-      addCorrection(target.id, -clampedErrorX * targetShare, -clampedErrorY * targetShare, strength);
-    }
-  }
-  return projected.map((item) => {
-    const correction = corrections.get(item.id);
-    if (!correction) {
-      return item;
-    }
-    const divisor = Math.max(1e-3, correction.weight);
-    const anchorStrength = anchorStrengthFor(item);
-    const blend = Math.min(0.82 - anchorStrength * 0.34, correction.weight);
-    const nextX = item.x + correction.x / divisor * blend;
-    const nextY = item.y + correction.y / divisor * blend;
-    const fenceRatio = 0.18 + (1 - anchorStrength) * 0.82;
-    const anchorFenceX = Math.max(12, Math.min(anchorStrength >= 0.9 ? 36 : anchorStrength >= 0.65 ? 72 : 120, item.width * fenceRatio));
-    const anchorFenceY = Math.max(12, Math.min(anchorStrength >= 0.9 ? 40 : anchorStrength >= 0.65 ? 84 : 140, item.height * fenceRatio));
-    return {
-      ...item,
-      x: Number.isFinite(item.anchorX) ? clamp3(nextX, item.anchorX - anchorFenceX, item.anchorX + anchorFenceX) : nextX,
-      y: Number.isFinite(item.anchorY) ? clamp3(nextY, item.anchorY - anchorFenceY, item.anchorY + anchorFenceY) : nextY
-    };
-  });
-}
 function projectElementPoints(points, layoutInput, projectedBox, { canvasWidth, canvasHeight } = {}) {
   const layout = normalizeElementLayout(layoutInput);
   if (!layout || !projectedBox) {
@@ -2785,7 +2515,7 @@ function normalizeRect(rect) {
 function intervalGap(startA, endA, startB, endB) {
   return Math.max(0, startA - endB, startB - endA);
 }
-function median2(values) {
+function median(values) {
   const sorted = [...values].sort((a, b) => a - b);
   const middle = Math.floor(sorted.length / 2);
   return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
@@ -2804,13 +2534,13 @@ function pickTextHighlightLine(rectInputs, pointInputs, {
   }
   const pointLeft = Math.min(...points.map((point) => point.x));
   const pointRight = Math.max(...points.map((point) => point.x));
-  const pointCenterY = median2(points.map((point) => point.y));
+  const pointCenterY = median(points.map((point) => point.y));
   let best = null;
   for (const rect of rects) {
     const verticalDistances = points.map((point) => intervalGap(point.y, point.y, rect.top, rect.bottom));
     const horizontalGap = intervalGap(pointLeft, pointRight, rect.left, rect.right);
     const nearestVertical = Math.min(...verticalDistances);
-    const medianVertical = median2(verticalDistances);
+    const medianVertical = median(verticalDistances);
     const verticalLimit = Math.max(finite11(maxVerticalDistance, 36), rect.height * 1.25);
     if (nearestVertical > verticalLimit || horizontalGap > Math.max(0, finite11(maxHorizontalDistance, 140))) {
       continue;
@@ -4694,6 +4424,11 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     this.registerEvent(this.app.workspace.on("layout-change", () => this.scheduleSurfaceSync(90)));
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.scheduleSurfaceSync(40)));
     this.registerEvent(this.app.workspace.on("file-open", () => this.scheduleSurfaceSync(60)));
+    this.registerEvent(this.app.vault.on("delete", (file2) => {
+      this.handleVaultFileDelete(file2).catch((error) => {
+        console.error(`[${PLUGIN_ID}] Failed to clear deleted file NoteDraw data`, error);
+      });
+    }));
     this.registerEvent(this.app.workspace.on("file-menu", (menu, file2) => {
       if (!file2 || String(file2.extension || "").toLowerCase() !== "md") {
         return;
@@ -6280,6 +6015,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
         continue;
       }
       controller.drawingData = normalizeDrawingData(data, file2);
+      controller.rebuildElementRelations();
       controller.drawingsLoaded = true;
       controller.applyDrawingsVisibility(controller.drawingData.visible !== false);
       controller.responsivePointsInitialized = false;
@@ -6294,6 +6030,76 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       refreshed += 1;
     }
     return refreshed;
+  }
+  async handleVaultFileDelete(deletedFile) {
+    const deletedFiles = collectDeletedVaultFiles(deletedFile);
+    const deletedPaths = new Set(deletedFiles.map((file2) => normalizeVaultPath(file2?.path)).filter(Boolean));
+    const rootPath = normalizeVaultPath(deletedFile?.path || "");
+    if (rootPath) {
+      deletedPaths.add(rootPath);
+    }
+    if (!deletedPaths.size) {
+      return;
+    }
+    const isDeletedPath = (path) => {
+      const normalized = normalizeVaultPath(path);
+      return Array.from(deletedPaths).some((deletedPath) => normalized === deletedPath || normalized.startsWith(`${deletedPath}/`));
+    };
+    for (const controller of this.getAllControllers()) {
+      if (isDeletedPath(controller.file?.path)) {
+        controller.destroy({ discardEdits: true });
+      }
+    }
+    const storageRecords = deletedFiles.filter((file2) => file2?.extension || String(file2?.path || "").toLowerCase().endsWith(".md"));
+    const storagePaths = /* @__PURE__ */ new Set();
+    const storageKeys = /* @__PURE__ */ new Set();
+    for (const file2 of storageRecords) {
+      const filePath = normalizeVaultPath(file2.path);
+      const encodedName = this.encodedDrawingNameForFile({ path: filePath });
+      const modes = [DRAWING_STORAGE_CONFIG];
+      if (String(file2.extension || "").toLowerCase() === "md") {
+        modes.push(DRAWING_STORAGE_NOTE_SUBFOLDER, DRAWING_STORAGE_NOTE_FOLDER, DRAWING_STORAGE_EMBEDDED);
+      }
+      for (const mode of modes) {
+        const storagePath = mode === DRAWING_STORAGE_EMBEDDED ? "" : resolveDrawingStoragePath({
+          filePath,
+          configDir: this.app.vault.configDir,
+          pluginId: PLUGIN_ID,
+          encodedName,
+          mode
+        });
+        const storageKey = `${mode}:${storagePath}`;
+        storageKeys.add(storageKey);
+        if (storagePath) {
+          storagePaths.add(storagePath);
+        }
+      }
+      this.portableBundles.delete(filePath);
+      this.portableBundleLoads.delete(filePath);
+    }
+    for (const [key, timer] of this.saveTimers.entries()) {
+      if (storageKeys.has(key)) {
+        window.clearTimeout(timer);
+        this.saveTimers.delete(key);
+      }
+    }
+    for (const key of storageKeys) {
+      this.pendingDrawingSaves.delete(key);
+    }
+    await Promise.all(Array.from(storageKeys).map((key) => this.drawingWritePromises.get(key)).filter(Boolean).map((write) => write.catch(() => void 0)));
+    for (const key of storageKeys) {
+      this.drawingStateCache.delete(key);
+      this.drawingWritePromises.delete(key);
+    }
+    for (const path of storagePaths) {
+      try {
+        if (await this.app.vault.adapter.exists(path)) {
+          await this.app.vault.adapter.remove(path);
+        }
+      } catch (error) {
+        console.error(`[${PLUGIN_ID}] Failed to remove deleted file NoteDraw storage`, path, error);
+      }
+    }
   }
   onApiEvent(eventName, listener) {
     if (typeof listener !== "function") {
@@ -8322,6 +8128,7 @@ var PreviewDrawingController = class {
     this.resizingSelection = false;
     this.resizeSelectionHandle = null;
     this.resizeSelectionStartPoint = null;
+    this.resizeSelectionStartClient = null;
     this.resizeSelectionOriginalBounds = null;
     this.resizeSelectionOriginalStrokes = null;
     this.resizeSelectionOriginalMarkdownBlocks = null;
@@ -8973,6 +8780,7 @@ var PreviewDrawingController = class {
     this.resizingSelection = false;
     this.resizeSelectionHandle = null;
     this.resizeSelectionStartPoint = null;
+    this.resizeSelectionStartClient = null;
     this.resizeSelectionOriginalBounds = null;
     this.resizeSelectionOriginalStrokes = null;
     this.resizeSelectionOriginalMarkdownBlocks = null;
@@ -9051,13 +8859,18 @@ var PreviewDrawingController = class {
     }
     this.canvasImageCache?.clear?.();
   }
-  destroy() {
+  destroy(options = {}) {
     if (this.destroyed) {
       return;
     }
     const surfaceBeforeDestroy = this.plugin.describeController(this);
-    this.endTextEdit();
-    this.endFloatingTextInput(true);
+    if (options.discardEdits === true) {
+      this.endTextEdit({ save: false });
+      this.endFloatingTextInput(false);
+    } else {
+      this.endTextEdit();
+      this.endFloatingTextInput(true);
+    }
     this.clearDraggedNoteFlowPlacement();
     this.destroyed = true;
     this.drawingLoadGeneration += 1;
@@ -9123,6 +8936,7 @@ var PreviewDrawingController = class {
     this.noteFlowDropIndicator?.remove();
     this.noteFlowDropIndicator = null;
     this.hiddenFileInput?.remove();
+    this.clearMarkdownBlockPresentation();
     this.embedNodes.forEach((node) => node.remove());
     this.underlayEmbedLayer?.remove();
     this.embedLayer?.remove();
@@ -9315,6 +9129,10 @@ var PreviewDrawingController = class {
         return;
       }
       this.drawingData = data;
+      const clearedUnboundRelations = this.rebuildElementRelations();
+      if (clearedUnboundRelations) {
+        this.plugin.scheduleDrawingSave(file2, this.drawingData, { userOperation: true, replace: true });
+      }
       this.drawingsLoaded = true;
       this.applyDrawingsVisibility(data.visible !== false);
       this.invalidateStaticCache();
@@ -11230,48 +11048,28 @@ var PreviewDrawingController = class {
         previewWidth: stroke.previewWidth,
         previewHeight: stroke.previewHeight
       },
-      relations: options.preserveRelations === false ? [] : previous?.relations || []
+      // Proximity is not a binding. Only explicit groups/connectors may move
+      // other elements together, so layout projection must stay independent.
+      relations: []
     });
     stroke.elementId = stroke.layout?.id || elementId;
     return stroke.layout;
   }
   rebuildElementRelations() {
-    const items = [];
-    const layoutsById = /* @__PURE__ */ new Map();
-    for (const stroke of this.drawingData?.strokes || []) {
-      if (isConnectorStroke(stroke) || normalizeNoteFlow(stroke?.noteFlow)) {
-        continue;
-      }
-      const layout = normalizeElementLayout(stroke.layout);
-      const bounds = getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight());
-      if (!layout?.id || !bounds) {
-        continue;
-      }
-      const widthScale = (bounds.maxX - bounds.minX) / Math.max(0.01, layout.box.width);
-      const heightScale = (bounds.maxY - bounds.minY) / Math.max(0.01, layout.box.height);
-      items.push({
-        id: layout.id,
-        bounds,
-        scale: Math.max(0.05, Math.sqrt(Math.max(1e-3, widthScale * heightScale))),
-        xScale: Math.max(0.05, widthScale),
-        yScale: Math.max(0.05, heightScale)
-      });
-      layoutsById.set(layout.id, layout);
-    }
-    const relations = captureElementRelations(items, {
-      nearDistance: Math.min(96, Math.max(48, this.getResponsiveContentFrame().width * 0.1)),
-      maxRelations: 3
-    });
+    let changed = false;
     for (const stroke of this.drawingData?.strokes || []) {
       if (isConnectorStroke(stroke)) {
         continue;
       }
       const layout = normalizeElementLayout(stroke.layout);
       if (layout?.id) {
-        layout.relations = normalizeNoteFlow(stroke?.noteFlow) ? [] : relations.get(layout.id) || [];
-        stroke.layout = layout;
+        if (layout.relations.length) {
+          stroke.layout = { ...layout, relations: [] };
+          changed = true;
+        }
       }
     }
+    return changed;
   }
   onDocumentPointerFinish(event) {
     if (event.pointerType === "touch" && this.touchPointers.has(event.pointerId)) {
@@ -11396,8 +11194,7 @@ var PreviewDrawingController = class {
         layoutsById.set(layout.id, layout);
       }
     }
-    const relationProjected = stabilizeElementRelations(projected, layoutsById);
-    const transitionProjected = [...relationProjected];
+    const transitionProjected = [...projected];
     for (const [index, stroke] of (this.drawingData?.strokes || []).entries()) {
       const noteFlow = normalizeNoteFlow(stroke?.noteFlow);
       if (!noteFlow || isConnectorStroke(stroke)) {
@@ -14760,21 +14557,25 @@ var PreviewDrawingController = class {
     const drawingHistoryBefore = this.dragDrawingHistoryBefore;
     if (didMove) {
       const movedIndexes = Array.from(this.dragStrokeOriginalPoints?.keys() || []);
+      const movedNoteFlowIndexes = this.draggedNoteFlowIndexes(movedIndexes);
+      const affectsNoteFlow = movedNoteFlowIndexes.length > 0;
       this.updateDraggedFloatingMarkdownBlocks(event, !markdownDrop);
       if (!markdownDrop || markdownDrop.side === "left" || markdownDrop.side === "right") {
         this.applyDraggedEdgeInsertion(event, movedIndexes);
       }
       this.updateDraggedElementGroupMembership(event, movedIndexes, Array.from(this.dragMarkdownOriginalElements?.values?.() || []).map((state) => state.block));
       this.invalidateStaticCache();
-      this.resetNoteFlowSettle();
-      this.clearNoteFlowLayout();
-      this.noteFlowAvoidanceAnchors.clear();
+      if (affectsNoteFlow) {
+        this.resetNoteFlowSettle();
+        this.clearNoteFlowLayout();
+        this.noteFlowAvoidanceAnchors.clear();
+      }
       this.resetDragDropGeometry();
-      const resolvedDropPlacement = this.resolveDraggedNoteFlowPlacement(requestedDropPlacement, movedIndexes);
+      const resolvedDropPlacement = affectsNoteFlow ? this.resolveDraggedNoteFlowPlacement(requestedDropPlacement, movedIndexes) : null;
       if (resolvedDropPlacement) {
         this.snapDraggedSelectionToNoteFlowPlacement(resolvedDropPlacement, movedIndexes);
       }
-      const flowedIndexes = this.reflowNoteFlowElementsAfterDrag(movedIndexes);
+      const flowedIndexes = affectsNoteFlow ? this.reflowNoteFlowElementsAfterDrag(movedIndexes) : [];
       const affectedIndexes = Array.from(/* @__PURE__ */ new Set([...movedIndexes, ...flowedIndexes]));
       const droppedNoteFlowIndexes = new Set(this.draggedNoteFlowIndexes(movedIndexes));
       for (const index of affectedIndexes) {
@@ -15030,6 +14831,7 @@ var PreviewDrawingController = class {
     this.resizingSelection = true;
     this.resizeSelectionHandle = handle;
     this.resizeSelectionPointerGeometry = this.captureCanvasPointerGeometry();
+    this.resizeSelectionStartClient = { x: event.clientX, y: event.clientY };
     this.resizeSelectionStartPoint = this.eventToPoint(event, this.resizeSelectionPointerGeometry);
     this.resizeSelectionOriginalBounds = bounds;
     this.resizeSelectionOriginalStrokes = new Map(resizableIndexes.map((index) => [
@@ -15048,7 +14850,6 @@ var PreviewDrawingController = class {
       const naturalHeight = this.markdownBlockNaturalHeight(element);
       const currentHeight = Math.max(
         naturalHeight,
-        Number(element?.offsetHeight) || 0,
         normalizeMarkdownBlockMinHeight(block.minHeight)
       );
       return [block.id, {
@@ -15079,13 +14880,8 @@ var PreviewDrawingController = class {
     if (!this.resizeSelectionOriginalBounds || !this.resizeSelectionOriginalStrokes?.size && !this.resizeSelectionOriginalMarkdownBlocks?.size || !this.resizeSelectionStartPoint) {
       return;
     }
-    const point = this.eventToPoint(event, this.resizeSelectionPointerGeometry);
-    const movedDistance = pointDistanceOnCanvas(
-      this.resizeSelectionStartPoint,
-      point,
-      this.canvasWidth(),
-      this.canvasHeight()
-    );
+    const point = this.resizeEventToPoint(event);
+    const movedDistance = this.resizeSelectionStartClient ? pointerDistance(this.resizeSelectionStartClient, { x: event.clientX, y: event.clientY }) : pointDistanceOnCanvas(this.resizeSelectionStartPoint, point, this.canvasWidth(), this.canvasHeight());
     if (!this.resizeSelectionMoved && movedDistance <= this.tapDistancePx()) {
       event.preventDefault();
       event.stopPropagation();
@@ -15098,6 +14894,21 @@ var PreviewDrawingController = class {
     this.requestRender(this.selectionHasDomStrokes() ? "interaction" : false);
     event.preventDefault();
     event.stopPropagation();
+  }
+  resizeEventToPoint(event) {
+    const geometry = this.resizeSelectionPointerGeometry;
+    const startClient = this.resizeSelectionStartClient;
+    const startPoint = this.resizeSelectionStartPoint;
+    if (!geometry?.rect?.width || !geometry?.rect?.height || !startClient || !startPoint) {
+      return this.eventToPoint(event, geometry);
+    }
+    const deltaX = (Number(event?.clientX) - startClient.x) / geometry.rect.width;
+    const deltaY = (Number(event?.clientY) - startClient.y) * Math.max(1, Number(geometry.canvasRenderHeight) || 1) / geometry.rect.height / Math.max(1, Number(geometry.canvasHeight) || 1);
+    return {
+      ...startPoint,
+      x: startPoint.x + deltaX,
+      y: startPoint.y + deltaY
+    };
   }
   applySelectedStrokeResize(point) {
     const bounds = this.resizeSelectionOriginalBounds;
@@ -15114,8 +14925,8 @@ var PreviewDrawingController = class {
     let scaleX = originalDx === 0 ? 1 : (point.x - anchor.x) / originalDx;
     let scaleY = originalDy === 0 ? 1 : (point.y - anchor.y) / originalDy;
     ({ scaleX, scaleY } = resolveSelectionResizeScales({ scaleX, scaleY }));
-    scaleX = Math.max(0.12, scaleX);
-    scaleY = Math.max(0.12, scaleY);
+    scaleX = limitSelectionResizeScaleToCanvas(scaleX, bounds, anchor, "x");
+    scaleY = limitSelectionResizeScaleToCanvas(scaleY, bounds, anchor, "y");
     const strokeScale = clamp10((Math.abs(scaleX) + Math.abs(scaleY)) / 2, 0.2, 8);
     const nextByIndex = /* @__PURE__ */ new Map();
     for (const [index, original] of originalStrokes.entries()) {
@@ -15132,7 +14943,6 @@ var PreviewDrawingController = class {
         }))
       });
     }
-    shiftNormalizedStrokesInsideCanvas(nextByIndex);
     for (const [index, next] of nextByIndex.entries()) {
       const stroke = this.drawingData.strokes[index];
       if (!stroke) {
@@ -15252,6 +15062,7 @@ var PreviewDrawingController = class {
     this.resizingSelection = false;
     this.resizeSelectionHandle = null;
     this.resizeSelectionStartPoint = null;
+    this.resizeSelectionStartClient = null;
     this.resizeSelectionOriginalBounds = null;
     this.resizeSelectionOriginalStrokes = null;
     this.resizeSelectionOriginalMarkdownBlocks = null;
@@ -19139,7 +18950,6 @@ var PreviewDrawingController = class {
     element.addEventListener("input", onInput);
     element.addEventListener("keydown", onKeyDown);
     element.addEventListener("blur", onBlur);
-    this.installTextSortHandle(element);
   }
   focusSourceEditorAt(clientPoint) {
     if (!clientPoint || !Number.isFinite(clientPoint.x) || !Number.isFinite(clientPoint.y)) {
@@ -19207,44 +19017,6 @@ var PreviewDrawingController = class {
       this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
     }
     return commit;
-  }
-  installTextSortHandle(element) {
-    if (this.surfaceType !== "preview" || !element || element.querySelector(":scope > .notedraw-text-sort-handle")) {
-      return;
-    }
-    const handle = element.createEl("button", {
-      cls: "notedraw-text-sort-handle",
-      attr: { type: "button", contenteditable: "false", title: this.plugin.t("moveMarkdownBlock"), "aria-label": this.plugin.t("moveMarkdownBlock") }
-    });
-    (0, import_obsidian.setIcon)(handle, "move");
-    const cleanup = element._noteDrawCleanup;
-    element._noteDrawCleanup = () => {
-      cleanup?.();
-    };
-    handle.addEventListener("pointerdown", (event) => {
-      if (event.button !== 0) {
-        return;
-      }
-      element.dataset.noteDrawSortDragging = "true";
-      this.selectMarkdownBlock(element);
-      this.startSelectedStrokeDrag(event, this.eventToPoint(event));
-      const pointerId = event.pointerId;
-      const finish = (finishEvent) => {
-        if (finishEvent.pointerId !== pointerId) {
-          return;
-        }
-        activeDocument.removeEventListener("pointerup", finish, true);
-        activeDocument.removeEventListener("pointercancel", finish, true);
-        delete element.dataset.noteDrawSortDragging;
-        if (this.draggingStroke) {
-          this.finishSelectedStrokeDrag(finishEvent);
-        }
-      };
-      activeDocument.addEventListener("pointerup", finish, true);
-      activeDocument.addEventListener("pointercancel", finish, true);
-      event.preventDefault();
-      event.stopPropagation();
-    });
   }
   commitWebviewTextEdit(element, originalText, editedText) {
     const normalizedOriginal = normalizeRenderedText2(originalText);
@@ -21971,6 +21743,19 @@ function normalizeMarkdownBlockWidthScale(value) {
   const widthScale = Number(value);
   return Number.isFinite(widthScale) ? clamp10(widthScale, 0.2, 1) : 1;
 }
+function collectDeletedVaultFiles(file2, output = []) {
+  if (!file2?.path) {
+    return output;
+  }
+  if (Array.isArray(file2.children)) {
+    for (const child of file2.children) {
+      collectDeletedVaultFiles(child, output);
+    }
+    return output;
+  }
+  output.push(file2);
+  return output;
+}
 function normalizeElementGroups(value) {
   if (!Array.isArray(value)) {
     return [];
@@ -23144,48 +22929,25 @@ function getSelectionResizeCorner(bounds, handle) {
   }
   return { x: bounds.maxX, y: bounds.maxY };
 }
-function shiftNormalizedStrokesInsideCanvas(strokesByIndex) {
-  let bounds = null;
-  for (const stroke of strokesByIndex.values()) {
-    for (const point of stroke.points) {
-      bounds = bounds ? {
-        minX: Math.min(bounds.minX, point.x),
-        minY: Math.min(bounds.minY, point.y),
-        maxX: Math.max(bounds.maxX, point.x),
-        maxY: Math.max(bounds.maxY, point.y)
-      } : {
-        minX: point.x,
-        minY: point.y,
-        maxX: point.x,
-        maxY: point.y
-      };
-    }
+function limitSelectionResizeScaleToCanvas(scale, bounds, anchor, axis) {
+  const minimum = 0.04;
+  const value = Math.max(minimum, Number(scale) || 1);
+  const min = axis === "x" ? Number(bounds?.minX) : Number(bounds?.minY);
+  const max = axis === "x" ? Number(bounds?.maxX) : Number(bounds?.maxY);
+  const origin = axis === "x" ? Number(anchor?.x) : Number(anchor?.y);
+  if (![min, max, origin].every(Number.isFinite)) {
+    return value;
   }
-  if (!bounds) {
-    return;
+  let maximum = Number.POSITIVE_INFINITY;
+  const negativeDistance = min - origin;
+  const positiveDistance = max - origin;
+  if (negativeDistance < 0) {
+    maximum = Math.min(maximum, origin / -negativeDistance);
   }
-  let dx = 0;
-  let dy = 0;
-  if (bounds.minX < 0) {
-    dx = -bounds.minX;
-  } else if (bounds.maxX > 1) {
-    dx = 1 - bounds.maxX;
+  if (positiveDistance > 0) {
+    maximum = Math.min(maximum, (1 - origin) / positiveDistance);
   }
-  if (bounds.minY < 0) {
-    dy = -bounds.minY;
-  } else if (bounds.maxY > 1) {
-    dy = 1 - bounds.maxY;
-  }
-  if (dx === 0 && dy === 0) {
-    return;
-  }
-  for (const stroke of strokesByIndex.values()) {
-    stroke.points = stroke.points.map((point) => ({
-      ...point,
-      x: point.x + dx,
-      y: point.y + dy
-    }));
-  }
+  return Math.min(value, Math.max(minimum, maximum));
 }
 function getPenOffsets(count, width) {
   if (count <= 1) {

@@ -23,7 +23,7 @@ test("canvas layers stay hidden until their backing stores are initialized", asy
 
 test("destroyed controllers release canvas backing stores and decoded images", async () => {
   const source = await readFile(sourceUrl, "utf8");
-  const destroySource = source.slice(source.indexOf("  destroy() {"), source.indexOf("  async toggle()", source.indexOf("  destroy() {")));
+  const destroySource = source.slice(source.indexOf("  destroy(options = {})"), source.indexOf("  async toggle()", source.indexOf("  destroy(options = {})")));
 
   assert.match(destroySource, /this\.releaseCanvasImageCache\(\);\s*this\.resetCanvasSurface\(\);\s*this\.underlayCanvas\?\.remove\(\)/);
   assert.match(destroySource, /this\.underlayCanvas = null;\s*this\.staticCanvas = null;\s*this\.canvas = null;/);

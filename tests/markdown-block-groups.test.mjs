@@ -317,9 +317,21 @@ test("selection resize freezes pointer geometry and defers canvas measurement un
   const source = await readFile(sourceUrl, "utf8");
 
   assert.match(source, /this\.resizeSelectionPointerGeometry = this\.captureCanvasPointerGeometry\(\);/);
-  assert.match(source, /this\.eventToPoint\(event, this\.resizeSelectionPointerGeometry\)/);
+  assert.match(source, /this\.resizeSelectionStartClient = \{ x: event\.clientX, y: event\.clientY \};/);
+  assert.match(source, /const point = this\.resizeEventToPoint\(event\);/);
+  assert.match(source, /resizeEventToPoint\(event\)[\s\S]*this\.resizeSelectionStartClient/);
   assert.match(source, /const wantsMeasure = options\.measure !== false\s+&& !this\.resizingSelection/);
   assert.match(source, /this\.scheduleResize\(\{ layout: false, measure: true \}\);/);
+});
+
+test("Markdown resize does not turn NoteFlow padding into persistent blank space", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const resizeStart = source.indexOf("  startSelectedStrokeResize(");
+  const resizeSource = source.slice(resizeStart, source.indexOf("  moveSelectedStrokeResize(", resizeStart));
+
+  assert.match(resizeSource, /const naturalHeight = this\.markdownBlockNaturalHeight\(element\);/);
+  assert.match(resizeSource, /const currentHeight = Math\.max\(\s*naturalHeight,\s*normalizeMarkdownBlockMinHeight\(block\.minHeight\)\s*\);/);
+  assert.doesNotMatch(resizeSource, /Number\(element\?\.offsetHeight\)/);
 });
 
 test("blank-space selection resolves its NoteDraw owner before the pushed Markdown block", async () => {

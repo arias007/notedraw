@@ -73,14 +73,27 @@ test("registered surfaces expose stable handles and structured actions without c
   assert.match(source, /registeredSurfaceSource/);
 });
 
-test("3.4.26 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
+test("deleting a vault file clears NoteDraw controllers, DOM presentation, cache, and storage", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const destroySource = source.slice(source.indexOf("  destroy(options = {})"), source.indexOf("  async toggle()", source.indexOf("  destroy(options = {})")));
+
+  assert.match(source, /this\.registerEvent\(this\.app\.vault\.on\("delete"/);
+  assert.match(source, /async handleVaultFileDelete\(deletedFile\)/);
+  assert.match(source, /controller\.destroy\(\{ discardEdits: true \}\)/);
+  assert.match(destroySource, /this\.clearMarkdownBlockPresentation\(\)/);
+  assert.match(source, /this\.drawingStateCache\.delete\(key\)/);
+  assert.match(source, /this\.app\.vault\.adapter\.remove\(path\)/);
+  assert.match(source, /collectDeletedVaultFiles\(deletedFile\)/);
+});
+
+test("3.4.27 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
   const [source, manifestText] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(manifestUrl, "utf8")
   ]);
   const manifest = JSON.parse(manifestText);
 
-  assert.equal(manifest.version, "3.4.26");
+  assert.equal(manifest.version, "3.4.27");
   assert.match(source, /version: "3\.4\.19"/);
   assert.match(source, /this\.readingVirtualStyleState = \/\* @__PURE__ \*\/ new Map\(\)/);
   assert.match(source, /shouldClearStaleReadingVirtualMinHeight\(\{/);
@@ -99,7 +112,9 @@ test("3.4.26 preserves reading content and cross-view frames without hidden-surf
   assert.match(source, /if \(!this\.responsivePointsInitialized \|\| signature !== this\.responsiveLayoutSignature\)/);
   assert.match(source, /captureElementLayoutForStroke/);
   assert.match(source, /projectElementPoints\(stroke\.points, layout, box/);
-  assert.match(source, /stabilizeElementRelations\(projected, layoutsById\)/);
+  assert.doesNotMatch(source, /stabilizeElementRelations\(projected, layoutsById\)/);
+  assert.match(source, /const transitionProjected = \[\.\.\.projected\];/);
+  assert.match(source, /controller\.drawingData = normalizeDrawingData\(data, file\);\s*controller\.rebuildElementRelations\(\);/);
   assert.match(source, /elementLayoutNeedsRepair\(existingLayout\)/);
   assert.match(source, /function normalizeDrawingDataForStorage\(data, file\)/);
   const responsiveMigration = source.slice(source.indexOf("  initializeAndProjectResponsivePoints("), source.indexOf("  resizeCanvas(options = {})"));
@@ -157,7 +172,7 @@ test("reading text edits avoid placeholder breaks and support undo, redo, and bl
   assert.match(source, /recordDrawingHistory\(before\)/);
   assert.match(source, /kind: "compound"/);
   assert.match(source, /recordCompoundHistory\(file, source, result\.source, options\.drawingBefore\)/);
-  assert.match(source, /installTextSortHandle\(element\)/);
+  assert.doesNotMatch(source, /installTextSortHandle\(element\)/);
   assert.match(source, /async reorderTextBlock\(file, movingElement, targetElement, placeAfter = false, sourceState = \{\}\)/);
   assert.match(source, /element\.dataset\.noteDrawSortDragging === "true"/);
   assert.match(source, /this\.updateMarkdownBlockDropTarget\(pendingX, pendingY\)/);
@@ -173,7 +188,7 @@ test("reading text edits avoid placeholder breaks and support undo, redo, and bl
   assert.match(source, /button\.addEventListener\("contextmenu", state\.contextMenuHandler\)/);
   assert.match(source, /onButtonContextMenu\(event\)[\s\S]*this\.toggleDrawingsVisible\(\)/);
   assert.match(source, /if \(!this\.drawingsVisible\) \{\s*this\.setDrawingsVisible\(true\)/);
-  assert.match(styles, /\.notedraw-text-sort-handle \{/);
+  assert.doesNotMatch(styles, /\.notedraw-text-sort-handle\b/);
   assert.match(styles, /\.notedraw-text-sort-target-before \{/);
   assert.match(styles, /\.notedraw-text-sort-target-after \{/);
 });
@@ -325,7 +340,7 @@ test("non-empty floating text commits before wand, view, file, or controller tea
   const source = await readFile(sourceUrl, "utf8");
 
   assert.match(source, /async setFile\(file\)[\s\S]*this\.endTextEdit\(\);\s*this\.endFloatingTextInput\(true\)/);
-  assert.match(source, /destroy\(\)[\s\S]*this\.endTextEdit\(\);\s*this\.endFloatingTextInput\(true\);\s*this\.clearDraggedNoteFlowPlacement\(\);\s*this\.destroyed = true/);
+  assert.match(source, /destroy\(options = \{\}\)[\s\S]*else \{\s*this\.endTextEdit\(\);\s*this\.endFloatingTextInput\(true\);\s*\}[\s\S]*this\.clearDraggedNoteFlowPlacement\(\);\s*this\.destroyed = true/);
   assert.match(source, /if \(!this\.active && wasActive\)[\s\S]*this\.endFloatingTextInput\(true\)/);
   assert.match(source, /setEditMarkdownMode\(\)[\s\S]*this\.endFloatingTextInput\(true\)/);
   assert.match(source, /openFloatingTextInput\(point, index = -1\) \{\s*this\.endFloatingTextInput\(true\)/);

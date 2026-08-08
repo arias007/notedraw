@@ -34,7 +34,6 @@ import {
 } from "./layout-coordinates.mjs";
 import {
   ELEMENT_LAYOUT_BASIS,
-  captureElementRelations,
   createElementLayout,
   elementLayoutExceedsTarget,
   elementLayoutNeedsRepair,
@@ -44,7 +43,6 @@ import {
   projectElementPoints,
   scaleElementMetrics,
   settleProjectedElementTransition,
-  stabilizeElementRelations,
   stabilizeProjectedElementBox
 } from "./element-layout.mjs";
 import { matchRenderedTextToMarkdown } from "./markdown-anchors.mjs";
@@ -1441,6 +1439,11 @@ var NoteDrawPlugin = class extends Plugin {
     this.registerEvent(this.app.workspace.on("layout-change", () => this.scheduleSurfaceSync(90)));
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.scheduleSurfaceSync(40)));
     this.registerEvent(this.app.workspace.on("file-open", () => this.scheduleSurfaceSync(60)));
+    this.registerEvent(this.app.vault.on("delete", (file) => {
+      this.handleVaultFileDelete(file).catch((error) => {
+        console.error(`[${PLUGIN_ID}] Failed to clear deleted file NoteDraw data`, error);
+      });
+    }));
     this.registerEvent(this.app.workspace.on("file-menu", (menu, file) => {
       if (!file || String(file.extension || "").toLowerCase() !== "md") {
         return;
@@ -3055,6 +3058,7 @@ var NoteDrawPlugin = class extends Plugin {
         continue;
       }
       controller.drawingData = normalizeDrawingData(data, file);
+      controller.rebuildElementRelations();
       controller.drawingsLoaded = true;
       controller.applyDrawingsVisibility(controller.drawingData.visible !== false);
       controller.responsivePointsInitialized = false;
@@ -3069,6 +3073,78 @@ var NoteDrawPlugin = class extends Plugin {
       refreshed += 1;
     }
     return refreshed;
+  }
+  async handleVaultFileDelete(deletedFile) {
+    const deletedFiles = collectDeletedVaultFiles(deletedFile);
+    const deletedPaths = new Set(deletedFiles.map((file) => normalizeVaultPath(file?.path)).filter(Boolean));
+    const rootPath = normalizeVaultPath(deletedFile?.path || "");
+    if (rootPath) {
+      deletedPaths.add(rootPath);
+    }
+    if (!deletedPaths.size) {
+      return;
+    }
+    const isDeletedPath = (path) => {
+      const normalized = normalizeVaultPath(path);
+      return Array.from(deletedPaths).some((deletedPath) => normalized === deletedPath || normalized.startsWith(`${deletedPath}/`));
+    };
+    for (const controller of this.getAllControllers()) {
+      if (isDeletedPath(controller.file?.path)) {
+        controller.destroy({ discardEdits: true });
+      }
+    }
+    const storageRecords = deletedFiles.filter((file) => file?.extension || String(file?.path || "").toLowerCase().endsWith(".md"));
+    const storagePaths = new Set();
+    const storageKeys = new Set();
+    for (const file of storageRecords) {
+      const filePath = normalizeVaultPath(file.path);
+      const encodedName = this.encodedDrawingNameForFile({ path: filePath });
+      const modes = [DRAWING_STORAGE_CONFIG];
+      if (String(file.extension || "").toLowerCase() === "md") {
+        modes.push(DRAWING_STORAGE_NOTE_SUBFOLDER, DRAWING_STORAGE_NOTE_FOLDER, DRAWING_STORAGE_EMBEDDED);
+      }
+      for (const mode of modes) {
+        const storagePath = mode === DRAWING_STORAGE_EMBEDDED
+          ? ""
+          : resolveDrawingStoragePath({
+            filePath,
+            configDir: this.app.vault.configDir,
+            pluginId: PLUGIN_ID,
+            encodedName,
+            mode
+          });
+        const storageKey = `${mode}:${storagePath}`;
+        storageKeys.add(storageKey);
+        if (storagePath) {
+          storagePaths.add(storagePath);
+        }
+      }
+      this.portableBundles.delete(filePath);
+      this.portableBundleLoads.delete(filePath);
+    }
+    for (const [key, timer] of this.saveTimers.entries()) {
+      if (storageKeys.has(key)) {
+        window.clearTimeout(timer);
+        this.saveTimers.delete(key);
+      }
+    }
+    for (const key of storageKeys) {
+      this.pendingDrawingSaves.delete(key);
+    }
+    await Promise.all(Array.from(storageKeys).map((key) => this.drawingWritePromises.get(key)).filter(Boolean).map((write) => write.catch(() => void 0)));
+    for (const key of storageKeys) {
+      this.drawingStateCache.delete(key);
+      this.drawingWritePromises.delete(key);
+    }
+    for (const path of storagePaths) {
+      try {
+        if (await this.app.vault.adapter.exists(path)) {
+          await this.app.vault.adapter.remove(path);
+        }
+      } catch (error) {
+        console.error(`[${PLUGIN_ID}] Failed to remove deleted file NoteDraw storage`, path, error);
+      }
+    }
   }
   onApiEvent(eventName, listener) {
     if (typeof listener !== "function") {
@@ -5114,6 +5190,7 @@ var PreviewDrawingController = class {
     this.resizingSelection = false;
     this.resizeSelectionHandle = null;
     this.resizeSelectionStartPoint = null;
+    this.resizeSelectionStartClient = null;
     this.resizeSelectionOriginalBounds = null;
     this.resizeSelectionOriginalStrokes = null;
     this.resizeSelectionOriginalMarkdownBlocks = null;
@@ -5772,6 +5849,7 @@ var PreviewDrawingController = class {
     this.resizingSelection = false;
     this.resizeSelectionHandle = null;
     this.resizeSelectionStartPoint = null;
+    this.resizeSelectionStartClient = null;
     this.resizeSelectionOriginalBounds = null;
     this.resizeSelectionOriginalStrokes = null;
     this.resizeSelectionOriginalMarkdownBlocks = null;
@@ -5850,13 +5928,18 @@ var PreviewDrawingController = class {
     }
     this.canvasImageCache?.clear?.();
   }
-  destroy() {
+  destroy(options = {}) {
     if (this.destroyed) {
       return;
     }
     const surfaceBeforeDestroy = this.plugin.describeController(this);
-    this.endTextEdit();
-    this.endFloatingTextInput(true);
+    if (options.discardEdits === true) {
+      this.endTextEdit({ save: false });
+      this.endFloatingTextInput(false);
+    } else {
+      this.endTextEdit();
+      this.endFloatingTextInput(true);
+    }
     this.clearDraggedNoteFlowPlacement();
     this.destroyed = true;
     this.drawingLoadGeneration += 1;
@@ -5922,6 +6005,7 @@ var PreviewDrawingController = class {
     this.noteFlowDropIndicator?.remove();
     this.noteFlowDropIndicator = null;
     this.hiddenFileInput?.remove();
+    this.clearMarkdownBlockPresentation();
     this.embedNodes.forEach((node) => node.remove());
     this.underlayEmbedLayer?.remove();
     this.embedLayer?.remove();
@@ -6114,6 +6198,10 @@ var PreviewDrawingController = class {
         return;
       }
       this.drawingData = data;
+      const clearedUnboundRelations = this.rebuildElementRelations();
+      if (clearedUnboundRelations) {
+        this.plugin.scheduleDrawingSave(file, this.drawingData, { userOperation: true, replace: true });
+      }
       this.drawingsLoaded = true;
       this.applyDrawingsVisibility(data.visible !== false);
       this.invalidateStaticCache();
@@ -8060,48 +8148,28 @@ var PreviewDrawingController = class {
         previewWidth: stroke.previewWidth,
         previewHeight: stroke.previewHeight
       },
-      relations: options.preserveRelations === false ? [] : previous?.relations || []
+      // Proximity is not a binding. Only explicit groups/connectors may move
+      // other elements together, so layout projection must stay independent.
+      relations: []
     });
     stroke.elementId = stroke.layout?.id || elementId;
     return stroke.layout;
   }
   rebuildElementRelations() {
-    const items = [];
-    const layoutsById = new Map();
-    for (const stroke of this.drawingData?.strokes || []) {
-      if (isConnectorStroke(stroke) || normalizeNoteFlow(stroke?.noteFlow)) {
-        continue;
-      }
-      const layout = normalizeElementLayout(stroke.layout);
-      const bounds = getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight());
-      if (!layout?.id || !bounds) {
-        continue;
-      }
-      const widthScale = (bounds.maxX - bounds.minX) / Math.max(0.01, layout.box.width);
-      const heightScale = (bounds.maxY - bounds.minY) / Math.max(0.01, layout.box.height);
-      items.push({
-        id: layout.id,
-        bounds,
-        scale: Math.max(0.05, Math.sqrt(Math.max(0.001, widthScale * heightScale))),
-        xScale: Math.max(0.05, widthScale),
-        yScale: Math.max(0.05, heightScale)
-      });
-      layoutsById.set(layout.id, layout);
-    }
-    const relations = captureElementRelations(items, {
-      nearDistance: Math.min(96, Math.max(48, this.getResponsiveContentFrame().width * 0.1)),
-      maxRelations: 3
-    });
+    let changed = false;
     for (const stroke of this.drawingData?.strokes || []) {
       if (isConnectorStroke(stroke)) {
         continue;
       }
       const layout = normalizeElementLayout(stroke.layout);
       if (layout?.id) {
-        layout.relations = normalizeNoteFlow(stroke?.noteFlow) ? [] : relations.get(layout.id) || [];
-        stroke.layout = layout;
+        if (layout.relations.length) {
+          stroke.layout = { ...layout, relations: [] };
+          changed = true;
+        }
       }
     }
+    return changed;
   }
   onDocumentPointerFinish(event) {
     if (event.pointerType === "touch" && this.touchPointers.has(event.pointerId)) {
@@ -8228,8 +8296,9 @@ var PreviewDrawingController = class {
         layoutsById.set(layout.id, layout);
       }
     }
-    const relationProjected = stabilizeElementRelations(projected, layoutsById);
-    const transitionProjected = [...relationProjected];
+    // Nearby elements are independent unless the user explicitly groups them
+    // or connects them. Never let legacy proximity relations move content.
+    const transitionProjected = [...projected];
     for (const [index, stroke] of (this.drawingData?.strokes || []).entries()) {
       const noteFlow = normalizeNoteFlow(stroke?.noteFlow);
       if (!noteFlow || isConnectorStroke(stroke)) {
@@ -11678,21 +11747,27 @@ var PreviewDrawingController = class {
     const drawingHistoryBefore = this.dragDrawingHistoryBefore;
     if (didMove) {
       const movedIndexes = Array.from(this.dragStrokeOriginalPoints?.keys() || []);
+      const movedNoteFlowIndexes = this.draggedNoteFlowIndexes(movedIndexes);
+      const affectsNoteFlow = movedNoteFlowIndexes.length > 0;
       this.updateDraggedFloatingMarkdownBlocks(event, !markdownDrop);
       if (!markdownDrop || markdownDrop.side === "left" || markdownDrop.side === "right") {
         this.applyDraggedEdgeInsertion(event, movedIndexes);
       }
       this.updateDraggedElementGroupMembership(event, movedIndexes, Array.from(this.dragMarkdownOriginalElements?.values?.() || []).map((state) => state.block));
       this.invalidateStaticCache();
-      this.resetNoteFlowSettle();
-      this.clearNoteFlowLayout();
-      this.noteFlowAvoidanceAnchors.clear();
+      if (affectsNoteFlow) {
+        this.resetNoteFlowSettle();
+        this.clearNoteFlowLayout();
+        this.noteFlowAvoidanceAnchors.clear();
+      }
       this.resetDragDropGeometry();
-      const resolvedDropPlacement = this.resolveDraggedNoteFlowPlacement(requestedDropPlacement, movedIndexes);
+      const resolvedDropPlacement = affectsNoteFlow
+        ? this.resolveDraggedNoteFlowPlacement(requestedDropPlacement, movedIndexes)
+        : null;
       if (resolvedDropPlacement) {
         this.snapDraggedSelectionToNoteFlowPlacement(resolvedDropPlacement, movedIndexes);
       }
-      const flowedIndexes = this.reflowNoteFlowElementsAfterDrag(movedIndexes);
+      const flowedIndexes = affectsNoteFlow ? this.reflowNoteFlowElementsAfterDrag(movedIndexes) : [];
       const affectedIndexes = Array.from(new Set([...movedIndexes, ...flowedIndexes]));
       const droppedNoteFlowIndexes = new Set(this.draggedNoteFlowIndexes(movedIndexes));
       for (const index of affectedIndexes) {
@@ -11948,6 +12023,7 @@ var PreviewDrawingController = class {
     this.resizingSelection = true;
     this.resizeSelectionHandle = handle;
     this.resizeSelectionPointerGeometry = this.captureCanvasPointerGeometry();
+    this.resizeSelectionStartClient = { x: event.clientX, y: event.clientY };
     this.resizeSelectionStartPoint = this.eventToPoint(event, this.resizeSelectionPointerGeometry);
     this.resizeSelectionOriginalBounds = bounds;
     this.resizeSelectionOriginalStrokes = new Map(resizableIndexes.map((index) => [
@@ -11966,7 +12042,6 @@ var PreviewDrawingController = class {
       const naturalHeight = this.markdownBlockNaturalHeight(element);
       const currentHeight = Math.max(
         naturalHeight,
-        Number(element?.offsetHeight) || 0,
         normalizeMarkdownBlockMinHeight(block.minHeight)
       );
       return [block.id, {
@@ -11997,13 +12072,10 @@ var PreviewDrawingController = class {
     if (!this.resizeSelectionOriginalBounds || !this.resizeSelectionOriginalStrokes?.size && !this.resizeSelectionOriginalMarkdownBlocks?.size || !this.resizeSelectionStartPoint) {
       return;
     }
-    const point = this.eventToPoint(event, this.resizeSelectionPointerGeometry);
-    const movedDistance = pointDistanceOnCanvas(
-      this.resizeSelectionStartPoint,
-      point,
-      this.canvasWidth(),
-      this.canvasHeight()
-    );
+    const point = this.resizeEventToPoint(event);
+    const movedDistance = this.resizeSelectionStartClient
+      ? pointerDistance(this.resizeSelectionStartClient, { x: event.clientX, y: event.clientY })
+      : pointDistanceOnCanvas(this.resizeSelectionStartPoint, point, this.canvasWidth(), this.canvasHeight());
     if (!this.resizeSelectionMoved && movedDistance <= this.tapDistancePx()) {
       event.preventDefault();
       event.stopPropagation();
@@ -12016,6 +12088,24 @@ var PreviewDrawingController = class {
     this.requestRender(this.selectionHasDomStrokes() ? "interaction" : false);
     event.preventDefault();
     event.stopPropagation();
+  }
+  resizeEventToPoint(event) {
+    const geometry = this.resizeSelectionPointerGeometry;
+    const startClient = this.resizeSelectionStartClient;
+    const startPoint = this.resizeSelectionStartPoint;
+    if (!geometry?.rect?.width || !geometry?.rect?.height || !startClient || !startPoint) {
+      return this.eventToPoint(event, geometry);
+    }
+    const deltaX = (Number(event?.clientX) - startClient.x) / geometry.rect.width;
+    const deltaY = (Number(event?.clientY) - startClient.y)
+      * Math.max(1, Number(geometry.canvasRenderHeight) || 1)
+      / geometry.rect.height
+      / Math.max(1, Number(geometry.canvasHeight) || 1);
+    return {
+      ...startPoint,
+      x: startPoint.x + deltaX,
+      y: startPoint.y + deltaY
+    };
   }
   applySelectedStrokeResize(point) {
     const bounds = this.resizeSelectionOriginalBounds;
@@ -12032,8 +12122,8 @@ var PreviewDrawingController = class {
     let scaleX = originalDx === 0 ? 1 : (point.x - anchor.x) / originalDx;
     let scaleY = originalDy === 0 ? 1 : (point.y - anchor.y) / originalDy;
     ({ scaleX, scaleY } = resolveSelectionResizeScales({ scaleX, scaleY }));
-    scaleX = Math.max(0.12, scaleX);
-    scaleY = Math.max(0.12, scaleY);
+    scaleX = limitSelectionResizeScaleToCanvas(scaleX, bounds, anchor, "x");
+    scaleY = limitSelectionResizeScaleToCanvas(scaleY, bounds, anchor, "y");
     const strokeScale = clamp((Math.abs(scaleX) + Math.abs(scaleY)) / 2, 0.2, 8);
     const nextByIndex = /* @__PURE__ */ new Map();
     for (const [index, original] of originalStrokes.entries()) {
@@ -12050,7 +12140,6 @@ var PreviewDrawingController = class {
         }))
       });
     }
-    shiftNormalizedStrokesInsideCanvas(nextByIndex);
     for (const [index, next] of nextByIndex.entries()) {
       const stroke = this.drawingData.strokes[index];
       if (!stroke) {
@@ -12171,6 +12260,7 @@ var PreviewDrawingController = class {
     this.resizingSelection = false;
     this.resizeSelectionHandle = null;
     this.resizeSelectionStartPoint = null;
+    this.resizeSelectionStartClient = null;
     this.resizeSelectionOriginalBounds = null;
     this.resizeSelectionOriginalStrokes = null;
     this.resizeSelectionOriginalMarkdownBlocks = null;
@@ -16174,7 +16264,6 @@ var PreviewDrawingController = class {
     element.addEventListener("input", onInput);
     element.addEventListener("keydown", onKeyDown);
     element.addEventListener("blur", onBlur);
-    this.installTextSortHandle(element);
   }
   focusSourceEditorAt(clientPoint) {
     if (!clientPoint || !Number.isFinite(clientPoint.x) || !Number.isFinite(clientPoint.y)) {
@@ -16245,44 +16334,6 @@ var PreviewDrawingController = class {
       this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
     }
     return commit;
-  }
-  installTextSortHandle(element) {
-    if (this.surfaceType !== "preview" || !element || element.querySelector(":scope > .notedraw-text-sort-handle")) {
-      return;
-    }
-    const handle = element.createEl("button", {
-      cls: "notedraw-text-sort-handle",
-      attr: { type: "button", contenteditable: "false", title: this.plugin.t("moveMarkdownBlock"), "aria-label": this.plugin.t("moveMarkdownBlock") }
-    });
-    setIcon(handle, "move");
-    const cleanup = element._noteDrawCleanup;
-    element._noteDrawCleanup = () => {
-      cleanup?.();
-    };
-    handle.addEventListener("pointerdown", (event) => {
-      if (event.button !== 0) {
-        return;
-      }
-      element.dataset.noteDrawSortDragging = "true";
-      this.selectMarkdownBlock(element);
-      this.startSelectedStrokeDrag(event, this.eventToPoint(event));
-      const pointerId = event.pointerId;
-      const finish = (finishEvent) => {
-        if (finishEvent.pointerId !== pointerId) {
-          return;
-        }
-        activeDocument.removeEventListener("pointerup", finish, true);
-        activeDocument.removeEventListener("pointercancel", finish, true);
-        delete element.dataset.noteDrawSortDragging;
-        if (this.draggingStroke) {
-          this.finishSelectedStrokeDrag(finishEvent);
-        }
-      };
-      activeDocument.addEventListener("pointerup", finish, true);
-      activeDocument.addEventListener("pointercancel", finish, true);
-      event.preventDefault();
-      event.stopPropagation();
-    });
   }
   commitWebviewTextEdit(element, originalText, editedText) {
     const normalizedOriginal = normalizeRenderedText(originalText);
@@ -19021,6 +19072,19 @@ function normalizeMarkdownBlockWidthScale(value) {
   const widthScale = Number(value);
   return Number.isFinite(widthScale) ? clamp(widthScale, 0.2, 1) : 1;
 }
+function collectDeletedVaultFiles(file, output = []) {
+  if (!file?.path) {
+    return output;
+  }
+  if (Array.isArray(file.children)) {
+    for (const child of file.children) {
+      collectDeletedVaultFiles(child, output);
+    }
+    return output;
+  }
+  output.push(file);
+  return output;
+}
 function normalizeElementGroups(value) {
   if (!Array.isArray(value)) {
     return [];
@@ -20199,48 +20263,25 @@ function getSelectionResizeCorner(bounds, handle) {
   }
   return { x: bounds.maxX, y: bounds.maxY };
 }
-function shiftNormalizedStrokesInsideCanvas(strokesByIndex) {
-  let bounds = null;
-  for (const stroke of strokesByIndex.values()) {
-    for (const point of stroke.points) {
-      bounds = bounds ? {
-        minX: Math.min(bounds.minX, point.x),
-        minY: Math.min(bounds.minY, point.y),
-        maxX: Math.max(bounds.maxX, point.x),
-        maxY: Math.max(bounds.maxY, point.y)
-      } : {
-        minX: point.x,
-        minY: point.y,
-        maxX: point.x,
-        maxY: point.y
-      };
-    }
+function limitSelectionResizeScaleToCanvas(scale, bounds, anchor, axis) {
+  const minimum = 0.04;
+  const value = Math.max(minimum, Number(scale) || 1);
+  const min = axis === "x" ? Number(bounds?.minX) : Number(bounds?.minY);
+  const max = axis === "x" ? Number(bounds?.maxX) : Number(bounds?.maxY);
+  const origin = axis === "x" ? Number(anchor?.x) : Number(anchor?.y);
+  if (![min, max, origin].every(Number.isFinite)) {
+    return value;
   }
-  if (!bounds) {
-    return;
+  let maximum = Number.POSITIVE_INFINITY;
+  const negativeDistance = min - origin;
+  const positiveDistance = max - origin;
+  if (negativeDistance < 0) {
+    maximum = Math.min(maximum, origin / -negativeDistance);
   }
-  let dx = 0;
-  let dy = 0;
-  if (bounds.minX < 0) {
-    dx = -bounds.minX;
-  } else if (bounds.maxX > 1) {
-    dx = 1 - bounds.maxX;
+  if (positiveDistance > 0) {
+    maximum = Math.min(maximum, (1 - origin) / positiveDistance);
   }
-  if (bounds.minY < 0) {
-    dy = -bounds.minY;
-  } else if (bounds.maxY > 1) {
-    dy = 1 - bounds.maxY;
-  }
-  if (dx === 0 && dy === 0) {
-    return;
-  }
-  for (const stroke of strokesByIndex.values()) {
-    stroke.points = stroke.points.map((point) => ({
-      ...point,
-      x: point.x + dx,
-      y: point.y + dy
-    }));
-  }
+  return Math.min(value, Math.max(minimum, maximum));
 }
 function getPenOffsets(count, width) {
   if (count <= 1) {
