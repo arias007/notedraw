@@ -583,6 +583,10 @@
   user-select: text;
 }
 
+.notedraw-shell .notedraw-md-block.notedraw-editing {
+  outline-offset: -1px;
+}
+
 .notedraw-text-sort-target-before {
   box-shadow: inset 0 2px 0 var(--interactive-accent);
 }

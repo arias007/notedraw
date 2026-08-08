@@ -49,6 +49,7 @@ test("NoteFlow layout persistence requires an explicit user operation", async ()
   assert.match(layout, /this\.noteFlowPersistencePending && \(migratedAnchor \|\| updatedNoteFlowMetadata \|\| frozenLayoutChanged\)/);
   assert.match(layout, /userOperation: this\.noteFlowPersistencePending/);
   assert.match(schedule, /if \(options\.operation === true && this\.active\)[\s\S]*this\.noteFlowPersistencePending = true;/);
+  assert.match(schedule, /if \(options\.defer === true\) \{\s*return;\s*\}/);
   assert.match(schedule, /this\.noteFlowOperationPending = false;\s*this\.noteFlowPersistencePending = false;/);
   assert.match(schedule, /cancelNoteFlowLayout\(\) \{\s*this\.noteFlowOperationPending = false;\s*this\.noteFlowPersistencePending = false;/);
   assert.match(schedule, /this\.noteFlowFrameId = window\.requestAnimationFrame\(run\);\s*this\.noteFlowFallbackTimer = window\.setTimeout\(run, 120\)/);

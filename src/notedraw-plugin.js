@@ -10830,7 +10830,7 @@ var PreviewDrawingController = class {
       this.enteredElementGroupIds.delete(pending.groupId);
       this.selectElementGroup(pending.groupId);
     } else if (pending.type === "edit-markdown-or-drag") {
-      this.startTextEdit(pending.editable || pending.element, pending.clientPoint || null);
+      return this.startTextEdit(pending.editable || pending.element, pending.clientPoint || null);
     } else if (pending.type === "edit-stroke-or-drag") {
       this.editFloatingTextStroke(pending.index);
     }
@@ -10846,8 +10846,10 @@ var PreviewDrawingController = class {
     this.releasePointerCapture(event.pointerId);
     if (pending && !pending.moved && movedDistance <= this.tapDistancePx()) {
       pending.clientPoint = { x: event.clientX, y: event.clientY };
-      this.applyPendingSelectionTap(pending);
-      this.render();
+      const applied = this.applyPendingSelectionTap(pending);
+      if (pending.type !== "edit-markdown-or-drag" || applied === false) {
+        this.render();
+      }
     }
     event.preventDefault();
     event.stopPropagation();
@@ -11404,10 +11406,16 @@ var PreviewDrawingController = class {
     if (this.selectionFrameAwaitingMarkdownSync) {
       this.selectionFrameAwaitingMarkdownSync.committed = true;
     }
-    this.scheduleMarkdownAnnotationRefresh({ layout: true, delay: 0 });
-    this.scheduleNoteFlowLayout({ operation: this.hasNoteFlowElements() });
-    this.scheduleLayoutRefresh({ settle: false });
-    this.render();
+    const hasNoteFlow = this.hasNoteFlowElements();
+    if (hasNoteFlow) {
+      // Mark the operation first so the annotation pass can perform one
+      // deferred NoteFlow layout after Obsidian has rebuilt the Markdown DOM.
+      this.scheduleNoteFlowLayout({ operation: true, defer: true });
+      this.scheduleMarkdownAnnotationRefresh({ layout: true, delay: 48 });
+    } else {
+      this.scheduleResize({ layout: false, measure: true });
+    }
+    this.requestRender(this.selectionHasDomStrokes() ? "interaction" : false);
     return true;
   }
   updateDraggedElementGroupMembership(event, strokeIndexes, markdownBlocks) {
@@ -15597,6 +15605,9 @@ var PreviewDrawingController = class {
     if (!editingNoteFlow) {
       return;
     }
+    if (options.defer === true) {
+      return;
+    }
     if (this.noteFlowFrameId !== null || this.noteFlowFallbackTimer !== null) {
       return;
     }
@@ -16199,12 +16210,20 @@ var PreviewDrawingController = class {
       hitPoint.y >= rect.y - hitPadding && hitPoint.y <= rect.y + rect.height + hitPadding;
   }
   startTextEdit(element, clientPoint = null) {
+    if (!element?.isConnected || this.surfaceType !== "webview" && !this.previewEl?.contains?.(element)) {
+      const block = this.findMarkdownBlockRecordForElement(element);
+      const replacement = block ? this.markdownBlockElement(block) : null;
+      if (!replacement?.isConnected || !this.previewEl?.contains?.(replacement)) {
+        return false;
+      }
+      element = replacement;
+    }
     if (this.currentEditor === element) {
       element.focus();
       placeCaretInEditable(element, clientPoint);
       this.currentTextRange = window.getSelection?.()?.rangeCount ? window.getSelection().getRangeAt(0).cloneRange() : null;
       this.positionFormatToolbar();
-      return;
+      return true;
     }
     this.endTextEdit();
     this.currentEditor = element;
@@ -16277,6 +16296,7 @@ var PreviewDrawingController = class {
     element.addEventListener("input", onInput);
     element.addEventListener("keydown", onKeyDown);
     element.addEventListener("blur", onBlur);
+    return true;
   }
   focusSourceEditorAt(clientPoint) {
     if (!clientPoint || !Number.isFinite(clientPoint.x) || !Number.isFinite(clientPoint.y)) {

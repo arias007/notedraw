@@ -211,12 +211,18 @@ test("selection resize applies the two-dimensional scale returned by the layout 
 test("selected Markdown text edits on a second tap while a moved tap still drags", async () => {
   const source = await readFile(sourceUrl, "utf8");
   const pointerSource = source.slice(source.indexOf("  onPointerDown(event"), source.indexOf("  startConnectorGesture", source.indexOf("  onPointerDown(event")));
+  const tapSource = source.slice(source.indexOf("  finishPendingSelectionTap("), source.indexOf("  cancelPendingSelectionTap(", source.indexOf("  finishPendingSelectionTap(")));
+  const editSource = source.slice(source.indexOf("  startTextEdit("), source.indexOf("  focusSourceEditorAt(", source.indexOf("  startTextEdit(")));
 
   assert.doesNotMatch(source, /this\.editMarkdownButton\s*=/);
   assert.match(pointerSource, /const selectedMarkdownEditableCandidate = markdownSelectionCandidate/);
   assert.match(pointerSource, /type: "edit-markdown-or-drag"/);
   assert.match(source, /pending\.type === "edit-markdown-or-drag"[\s\S]*this\.startSelectedStrokeDrag\(event, this\.eventToPoint\(event\), pending\.index \?\? -1/);
   assert.match(source, /startTextEdit\(pending\.editable \|\| pending\.element, pending\.clientPoint \|\| null\)/);
+  assert.match(tapSource, /const applied = this\.applyPendingSelectionTap\(pending\);[\s\S]*pending\.type !== "edit-markdown-or-drag" \|\| applied === false/);
+  assert.match(editSource, /!element\?\.isConnected[\s\S]*findMarkdownBlockRecordForElement\(element\)[\s\S]*markdownBlockElement\(block\)/);
+  assert.match(editSource, /return true;\s*}\s*this\.endTextEdit\(\)/);
+  assert.match(editSource, /element\.addEventListener\("blur", onBlur\);\s*return true;/);
 });
 
 test("Markdown resize keeps continuous horizontal width inside its grid span", async () => {
@@ -306,11 +312,16 @@ test("NoteFlow release commits the exact candidate and boundary shown by the blu
 test("Markdown drag keeps preview geometry stable and defers layout work until drop", async () => {
   const source = await readFile(sourceUrl, "utf8");
   const moveSource = source.slice(source.indexOf("  moveSelectedStroke("), source.indexOf("  finishSelectedStrokeDrag(", source.indexOf("  moveSelectedStroke(")));
+  const commitSource = source.slice(source.indexOf("  async commitDraggedMarkdownBlocks("), source.indexOf("  updateDraggedElementGroupMembership(", source.indexOf("  async commitDraggedMarkdownBlocks(")));
 
   assert.match(moveSource, /const previewDx = hasDraggedNoteFlow \? dx : snappedDx/);
   assert.match(moveSource, /const previewDy = hasDraggedNoteFlow \? dy : snappedDy/);
   assert.match(moveSource, /queueMarkdownBlockDropTarget\(event\.clientX, event\.clientY\)/);
   assert.doesNotMatch(moveSource, /markdownNoteFlowCollisionShift|collisionDx|collisionDy|markdownDrag/);
+  assert.match(commitSource, /const hasNoteFlow = this\.hasNoteFlowElements\(\);[\s\S]*scheduleNoteFlowLayout\(\{ operation: true, defer: true \}\)[\s\S]*scheduleMarkdownAnnotationRefresh\(\{ layout: true, delay: 48 \}\)/);
+  assert.match(commitSource, /this\.scheduleResize\(\{ layout: false, measure: true \}\)/);
+  assert.doesNotMatch(commitSource, /scheduleLayoutRefresh\(\{ settle: false \}\)/);
+  assert.match(commitSource, /requestRender\(this\.selectionHasDomStrokes\(\) \? "interaction" : false\)/);
 });
 
 test("selection resize freezes pointer geometry and defers canvas measurement until release", async () => {
