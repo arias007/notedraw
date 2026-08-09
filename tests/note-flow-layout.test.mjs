@@ -14,6 +14,7 @@ import {
   normalizeFrozenNoteFlowLayout,
   preserveAbsoluteNoteFlowPoints,
   projectNoteFlowDocumentPoint,
+  projectNoteFlowPointsToBox,
   projectStableNoteFlowBox,
   reflowNoteFlowRectangles,
   reflowNoteFlowIntervals,
@@ -604,6 +605,33 @@ test("NoteFlow stable box projection preserves width at the left edge", () => {
   });
   assert.deepEqual(projected, { x: 0, y: 120, width: 120, height: 60 });
   assert.ok(projected.width > 2);
+});
+
+test("NoteFlow current geometry expands into its stable box instead of collapsing left", () => {
+  const source = [
+    { x: 0.49, y: 0.2, pressure: 0.4 },
+    { x: 0.495, y: 0.25, pressure: 0.6 },
+    { x: 0.5, y: 0.3, pressure: 0.8 }
+  ];
+  const target = { x: 40, y: 180, width: 120, height: 80 };
+  const projected = projectNoteFlowPointsToBox(source, {
+    minX: 196,
+    minY: 160,
+    maxX: 200,
+    maxY: 240
+  }, target, { canvasWidth: 400, canvasHeight: 800 });
+  const xs = projected.map((point) => point.x * 400);
+  const ys = projected.map((point) => point.y * 800);
+  assert.deepEqual(xs.map(Math.round), [40, 100, 160]);
+  assert.deepEqual(ys.map(Math.round), [180, 220, 260]);
+  assert.deepEqual(projected.map((point) => point.pressure), [0.4, 0.6, 0.8]);
+  const repeated = projectNoteFlowPointsToBox(projected, {
+    minX: 40,
+    minY: 180,
+    maxX: 160,
+    maxY: 260
+  }, target, { canvasWidth: 400, canvasHeight: 800 });
+  assert.deepEqual(repeated, projected);
 });
 
 test("inserted note elements are excluded only from the source editing surface", () => {

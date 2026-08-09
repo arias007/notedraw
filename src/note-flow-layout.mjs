@@ -526,6 +526,28 @@ export function projectStableNoteFlowBox({
   };
 }
 
+export function projectNoteFlowPointsToBox(points, sourceBounds, targetBox, { canvasWidth, canvasHeight } = {}) {
+  const width = Math.max(1, finite(canvasWidth, 1));
+  const height = Math.max(1, finite(canvasHeight, 1));
+  const sourceLeft = finite(sourceBounds?.minX);
+  const sourceTop = finite(sourceBounds?.minY);
+  const sourceWidth = Math.max(0.001, finite(sourceBounds?.maxX) - sourceLeft);
+  const sourceHeight = Math.max(0.001, finite(sourceBounds?.maxY) - sourceTop);
+  const targetLeft = finite(targetBox?.x);
+  const targetTop = finite(targetBox?.y);
+  const targetWidth = Math.max(2, finite(targetBox?.width, 2));
+  const targetHeight = Math.max(2, finite(targetBox?.height, 2));
+  return (Array.isArray(points) ? points : []).map((point) => {
+    const x = clamp(finite(point?.x) * width, 0, width);
+    const y = clamp(finite(point?.y) * height, 0, height);
+    return {
+      ...point,
+      x: clamp((targetLeft + (x - sourceLeft) / sourceWidth * targetWidth) / width, 0, 1),
+      y: clamp((targetTop + (y - sourceTop) / sourceHeight * targetHeight) / height, 0, 1)
+    };
+  });
+}
+
 export function selectOwnedBlankSpaceCandidate(candidates, { clientX, clientY } = {}) {
   const x = finite(clientX, Number.NaN);
   const y = finite(clientY, Number.NaN);

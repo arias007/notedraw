@@ -86,14 +86,14 @@ test("deleting a vault file clears NoteDraw controllers, DOM presentation, cache
   assert.match(source, /collectDeletedVaultFiles\(deletedFile\)/);
 });
 
-test("3.4.40 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
+test("3.4.41 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
   const [source, manifestText] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(manifestUrl, "utf8")
   ]);
   const manifest = JSON.parse(manifestText);
 
-  assert.equal(manifest.version, "3.4.40");
+  assert.equal(manifest.version, "3.4.41");
   assert.match(source, /version: "3\.4\.19"/);
   assert.match(source, /this\.readingVirtualStyleState = \/\* @__PURE__ \*\/ new Map\(\)/);
   assert.match(source, /shouldClearStaleReadingVirtualMinHeight\(\{/);
@@ -438,11 +438,15 @@ test("selection tool previews and commits exact NoteFlow Markdown insertion targ
   assert.match(projectionSource, /noteFlowProjectedById\.set\(transitionId, projectedBox\)/);
   assert.match(projectionSource, /projectElementPoints\(stroke\.points, layout, box/);
   assert.match(reservedRowSource, /this\.draggingStroke \|\| this\.resizingSelection/);
-  assert.match(reservedRowSource, /noteFlowStoredRowCanvasY\(noteFlow, candidates\)/);
+  assert.match(reservedRowSource, /noteFlowStoredRowCanvasY\(noteFlow, candidates, strokeTop\)/);
   assert.match(reservedRowSource, /projectStableNoteFlowBox\([\s\S]*boxLeftRatio:[\s\S]*boxWidthRatio:[\s\S]*boxHeightRatio:/);
-  assert.match(reservedRowSource, /projectElementPoints\(stroke\.points, layout, targetBox/);
+  assert.match(reservedRowSource, /isStableResponsiveCaptureFrame\(canvasWidth, contentFrame\)/);
+  assert.match(reservedRowSource, /projectNoteFlowPointsToBox\(stroke\.points, bounds, targetBox/);
+  assert.match(reservedRowSource, /linePosition: null[\s\S]*lineOffsetY: 0/);
+  assert.match(reservedRowSource, /createElementLayout\([\s\S]*bounds:[\s\S]*targetBox\.x[\s\S]*relations: \[\]/);
   assert.match(frozenRestoreSource, /alignNoteFlowStrokesToReservedRows\(candidates\)/);
   assert.match(flowLayoutSource, /alignNoteFlowStrokesToReservedRows\(candidates\)/);
+  assert.match(finishSource, /if \(!affectsNoteFlow\) \{[\s\S]*scheduleDrawingSave/);
   assert.match(finishSource, /else if \(affectsNoteFlow\)[\s\S]*dragStrokeOriginalPoints[\s\S]*originalPoints\.map/);
   assert.doesNotMatch(dropSource.slice(dropSource.indexOf("  resolveDraggedNoteFlowPlacement("), dropSource.indexOf("  snapDraggedSelectionToNoteFlowPlacement(")), /dragDropGeometrySnapshot|selectStoredNoteFlowAnchorCandidate/);
   assert.doesNotMatch(dropSource, /vault\.modify|reorderTextBlock/);

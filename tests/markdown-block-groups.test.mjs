@@ -414,7 +414,7 @@ test("blank-space selection resolves its NoteDraw owner before the pushed Markdo
   assert.match(source, /findOwnedBlankSpaceStrokeAtClientPoint\(clientX, clientY\)[\s\S]*selectOwnedBlankSpaceCandidate/);
   assert.match(source, /readingBottomOwnerStrokeIndex\(\)/);
   assert.match(source, /const surfaceRect = \(this\.layoutMeasureEl\?\.isConnected \? this\.layoutMeasureEl : this\.previewEl\)/);
-  assert.match(source, /ownerStrokeIndex: this\.findNoteFlowOwnerStrokeIndex\(record\)/);
+  assert.match(source, /const ownerStrokeIndex = this\.findNoteFlowOwnerStrokeIndex\(record\)[\s\S]*ownerStrokeIndex,/);
   assert.match(source, /ownerId: strokeElementId\(item\.stroke\)/);
   const ownerSource = source.slice(source.indexOf("  findNoteFlowOwnerStrokeIndex("), source.indexOf("  readingBottomOwnerStrokeIndex("));
   assert.doesNotMatch(ownerSource, /fallbacks/);
@@ -500,6 +500,20 @@ test("Markdown selection and NoteFlow layout use concrete blocks instead of embe
   assert.match(edgeSource, /forcedIntent = edgeTarget\?\.intent \|\| null/);
   assert.match(styles, /\.notedraw-text-sort-target-left \{[\s\S]*inset 4px 0 0/);
   assert.match(styles, /\.notedraw-text-sort-target-right \{[\s\S]*inset -4px 0 0/);
+});
+
+test("inherited section line metadata is remapped before NoteFlow drop targeting", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const annotationSource = source.slice(source.indexOf("function annotateVisibleMarkdownElements("), source.indexOf("function annotateEditableElements("));
+  const candidateSource = source.slice(source.indexOf("  noteFlowCandidates()"), source.indexOf("  noteFlowTargetElement("));
+  const anchorSource = source.slice(source.indexOf("  noteFlowAnchorElement("), source.indexOf("  noteFlowStoredRowCanvasY("));
+
+  assert.match(annotationSource, /ownDataLine[\s\S]*inheritedDataLine[\s\S]*noteDrawDataLineInherited = "true"/);
+  assert.match(annotationSource, /noteDrawDataLineInherited === "true"/);
+  assert.match(annotationSource, /noteDrawLineMapped = "true"/);
+  assert.match(candidateSource, /noteDrawDataLineInherited === "true"[\s\S]*continue/);
+  assert.match(candidateSource, /inheritedStart: parseInteger\(sourceElement\.dataset\.noteDrawInheritedLineStart\)/);
+  assert.match(anchorSource, /semanticMatch[\s\S]*inheritedMatch/);
 });
 
 test("boxed groups have two-level selection, drag membership, and a non-obscuring fill layer", async () => {
