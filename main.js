@@ -1989,6 +1989,10 @@ function noteFlowNeedsActivationRepair(strokes, frozenLayout) {
 function noteFlowRowReservation({ rowOffset = 0, boxHeight = 0, gap = 12 } = {}) {
   return Math.max(0, finite4(rowOffset)) + Math.max(0, finite4(boxHeight)) + Math.max(0, finite4(gap, 12));
 }
+function noteFlowReservedRowTop({ side, anchorTop, anchorBottom, applied = 0, scale = 1 } = {}) {
+  const visualApplied = Math.max(0, finite4(applied)) * Math.max(0.01, finite4(scale, 1));
+  return side === "after" ? finite4(anchorBottom) - visualApplied : finite4(anchorTop);
+}
 function projectStableNoteFlowBox({
   boxLeftRatio,
   boxWidthRatio,
@@ -11736,7 +11740,7 @@ var PreviewDrawingController = class {
             contentLeft: context.frame?.left,
             contentWidth: context.frame?.width,
             canvasWidth: this.canvasWidth(),
-            y: box2?.y ?? layout2?.box?.y ?? 0
+            y: this.noteFlowStoredRowCanvasY(noteFlow) ?? box2?.y ?? layout2?.box?.y ?? 0
           })
         } : box2;
         if (layout2 && stableFlowBox) {
@@ -18311,6 +18315,30 @@ var PreviewDrawingController = class {
       side: noteFlow?.side,
       strokeTop
     });
+  }
+  noteFlowStoredRowCanvasY(noteFlow, allCandidates = null) {
+    const normalized = normalizeNoteFlow(noteFlow);
+    const canvasRect = this.noteFlowCanvasRect();
+    if (!normalized || !canvasRect || canvasRect.height <= 1) {
+      return null;
+    }
+    const anchor = this.noteFlowAnchorElement(normalized, allCandidates);
+    if (!anchor) {
+      return null;
+    }
+    const side = normalized.side;
+    const target = this.noteFlowTargetElement(anchor, side);
+    const property = side === "after" ? "padding-bottom" : "padding-top";
+    const applied = this.noteFlowStyledElements.get(target)?.get(property)?.applied || 0;
+    const scaleY = canvasRect.height / Math.max(1, this.canvasRenderHeight);
+    const rowTop = noteFlowReservedRowTop({
+      side,
+      anchorTop: anchor.top,
+      anchorBottom: anchor.bottom,
+      applied,
+      scale: scaleY
+    });
+    return this.canvasWindowTop + (rowTop - canvasRect.top) / Math.max(1e-4, scaleY) + Math.max(0, Number(normalized.rowOffset) || 0);
   }
   frozenNoteFlowAnchorsReady(frozen = normalizeFrozenNoteFlowLayout(this.drawingData?.noteFlowLayout)) {
     if (!frozen.offsets.length) {

@@ -8,6 +8,7 @@ import {
   noteFlowAvoidanceReference,
   noteFlowRequiredOffset,
   noteFlowRowReservation,
+  noteFlowReservedRowTop,
   noteFlowNeedsActivationRepair,
   noteFlowSurfaceRepairLimits,
   normalizeFrozenNoteFlowLayout,
@@ -572,6 +573,23 @@ test("NoteFlow row reservation is idempotent and never depends on previously app
   for (let pass = 0; pass < 5; pass += 1) {
     assert.equal(noteFlowRowReservation(input), first);
   }
+});
+
+test("NoteFlow ink stays at the top of its own reserved after-row", () => {
+  assert.equal(noteFlowReservedRowTop({
+    side: "after",
+    anchorTop: 400,
+    anchorBottom: 634.859,
+    applied: 116.859,
+    scale: 1
+  }), 518);
+  assert.equal(noteFlowReservedRowTop({
+    side: "before",
+    anchorTop: 400,
+    anchorBottom: 520,
+    applied: 116.859,
+    scale: 1
+  }), 400);
 });
 
 test("NoteFlow stable box projection preserves width at the left edge", () => {

@@ -498,6 +498,13 @@ export function noteFlowRowReservation({ rowOffset = 0, boxHeight = 0, gap = 12 
     + Math.max(0, finite(gap, 12));
 }
 
+export function noteFlowReservedRowTop({ side, anchorTop, anchorBottom, applied = 0, scale = 1 } = {}) {
+  const visualApplied = Math.max(0, finite(applied)) * Math.max(0.01, finite(scale, 1));
+  return side === "after"
+    ? finite(anchorBottom) - visualApplied
+    : finite(anchorTop);
+}
+
 export function projectStableNoteFlowBox({
   boxLeftRatio,
   boxWidthRatio,

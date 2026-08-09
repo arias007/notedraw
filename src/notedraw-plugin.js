@@ -107,6 +107,7 @@ import {
   hasStableNoteFlowAnchor,
   noteFlowAvoidanceReference,
   noteFlowRowReservation,
+  noteFlowReservedRowTop,
   noteFlowSurfaceRepairLimits,
   normalizeFrozenNoteFlowLayout,
   noteFlowNeedsActivationRepair,
@@ -8532,7 +8533,7 @@ var PreviewDrawingController = class {
               contentLeft: context.frame?.left,
               contentWidth: context.frame?.width,
               canvasWidth: this.canvasWidth(),
-              y: box?.y ?? layout?.box?.y ?? 0
+              y: this.noteFlowStoredRowCanvasY(noteFlow) ?? box?.y ?? layout?.box?.y ?? 0
             })
           }
           : box;
@@ -15344,6 +15345,32 @@ var PreviewDrawingController = class {
       side: noteFlow?.side,
       strokeTop
     });
+  }
+  noteFlowStoredRowCanvasY(noteFlow, allCandidates = null) {
+    const normalized = normalizeNoteFlow(noteFlow);
+    const canvasRect = this.noteFlowCanvasRect();
+    if (!normalized || !canvasRect || canvasRect.height <= 1) {
+      return null;
+    }
+    const anchor = this.noteFlowAnchorElement(normalized, allCandidates);
+    if (!anchor) {
+      return null;
+    }
+    const side = normalized.side;
+    const target = this.noteFlowTargetElement(anchor, side);
+    const property = side === "after" ? "padding-bottom" : "padding-top";
+    const applied = this.noteFlowStyledElements.get(target)?.get(property)?.applied || 0;
+    const scaleY = canvasRect.height / Math.max(1, this.canvasRenderHeight);
+    const rowTop = noteFlowReservedRowTop({
+      side,
+      anchorTop: anchor.top,
+      anchorBottom: anchor.bottom,
+      applied,
+      scale: scaleY
+    });
+    return this.canvasWindowTop
+      + (rowTop - canvasRect.top) / Math.max(0.0001, scaleY)
+      + Math.max(0, Number(normalized.rowOffset) || 0);
   }
   frozenNoteFlowAnchorsReady(frozen = normalizeFrozenNoteFlowLayout(this.drawingData?.noteFlowLayout)) {
     if (!frozen.offsets.length) {
