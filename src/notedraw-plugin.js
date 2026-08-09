@@ -15372,6 +15372,59 @@ var PreviewDrawingController = class {
       + (rowTop - canvasRect.top) / Math.max(0.0001, scaleY)
       + Math.max(0, Number(normalized.rowOffset) || 0);
   }
+  alignNoteFlowStrokesToReservedRows(allCandidates = null) {
+    if (this.draggingStroke || this.resizingSelection || !this.supportsNoteFlow() || !this.previewEl?.isConnected) {
+      return false;
+    }
+    const canvasWidth = this.canvasWidth();
+    const canvasHeight = this.canvasHeight();
+    const contentFrame = this.getResponsiveContentFrame();
+    const candidates = allCandidates || this.noteFlowCandidates();
+    let changed = false;
+    for (const stroke of this.drawingData?.strokes || []) {
+      const noteFlow = normalizeNoteFlow(stroke?.noteFlow);
+      const layout = normalizeElementLayout(stroke?.layout);
+      if (!noteFlow || !layout || !(noteFlow.boxWidthRatio > 0) || !(noteFlow.boxHeightRatio > 0) || isConnectorStroke(stroke)) {
+        continue;
+      }
+      const rowY = this.noteFlowStoredRowCanvasY(noteFlow, candidates);
+      if (!Number.isFinite(rowY)) {
+        continue;
+      }
+      const targetBox = projectStableNoteFlowBox({
+        boxLeftRatio: noteFlow.boxLeftRatio,
+        boxWidthRatio: noteFlow.boxWidthRatio,
+        boxHeightRatio: noteFlow.boxHeightRatio,
+        contentLeft: contentFrame?.left,
+        contentWidth: contentFrame?.width,
+        canvasWidth,
+        y: rowY
+      });
+      const nextPoints = projectElementPoints(stroke.points, layout, targetBox, {
+        canvasWidth,
+        canvasHeight
+      });
+      const moved = nextPoints.some((point, index) => {
+        const previous = stroke.points?.[index];
+        return !previous
+          || Math.abs(Number(point.x) - Number(previous.x)) * canvasWidth > 0.25
+          || Math.abs(Number(point.y) - Number(previous.y)) * canvasHeight > 0.25;
+      });
+      if (!moved) {
+        continue;
+      }
+      stroke.points = nextPoints;
+      const metrics = scaleElementMetrics(layout.metrics, targetBox);
+      if (metrics.width) {
+        stroke.width = metrics.width;
+      }
+      changed = true;
+    }
+    if (changed) {
+      this.invalidateStaticCache();
+    }
+    return changed;
+  }
   frozenNoteFlowAnchorsReady(frozen = normalizeFrozenNoteFlowLayout(this.drawingData?.noteFlowLayout)) {
     if (!frozen.offsets.length) {
       return true;
@@ -15615,8 +15668,9 @@ var PreviewDrawingController = class {
       }
       element.classList.add("notedraw-note-flow-anchor");
     }
+    const aligned = this.alignNoteFlowStrokesToReservedRows(candidates);
     this.noteFlowLayoutSignature = `frozen:${frozenNoteFlowLayoutSignature(frozen)}`;
-    return changed;
+    return changed || aligned;
   }
   clearNoteFlowLayout() {
     if (this.noteFlowStyledElements?.size) {
@@ -15976,6 +16030,7 @@ var PreviewDrawingController = class {
         }
       }
     }
+    const aligned = this.alignNoteFlowStrokesToReservedRows(candidates);
     const frozenLayoutChanged = !missingStableAnchor && this.updateFrozenNoteFlowLayout(frozenOffsets);
     this.captureReadingLogicalSizerHeight(undefined, { allowGrowth: true });
     this.noteFlowLayoutIncomplete = missingStableAnchor;
@@ -15988,7 +16043,7 @@ var PreviewDrawingController = class {
     if (this.noteFlowPersistencePending && (migratedAnchor || updatedNoteFlowMetadata || frozenLayoutChanged) && this.file && this.drawingData) {
       this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: this.noteFlowPersistencePending });
     }
-    const changed = migratedAnchor || updatedNoteFlowMetadata || frozenLayoutChanged || layoutStyleChanged || signature !== this.noteFlowLayoutSignature;
+    const changed = aligned || migratedAnchor || updatedNoteFlowMetadata || frozenLayoutChanged || layoutStyleChanged || signature !== this.noteFlowLayoutSignature;
     this.noteFlowLayoutSignature = signature;
     return changed;
   }

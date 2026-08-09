@@ -16,6 +16,10 @@ import {
   stabilizeElementRelations,
   stabilizeProjectedElementBox
 } from "../src/element-layout.mjs";
+import {
+  noteFlowReservedRowTop,
+  projectStableNoteFlowBox
+} from "../src/note-flow-layout.mjs";
 
 function makeLayout(id, x, y, width, height) {
   return createElementLayout({
@@ -94,6 +98,46 @@ test("box projection preserves NoteFlow ink geometry when the target lane reache
   assert.deepEqual(repeated.map((point) => point.y * 2400), ys);
   assert.equal((xs[1] - xs[0]) / (xs[2] - xs[0]), 0.5);
   assert.equal((ys[1] - ys[0]) / (ys[2] - ys[0]), 0.5);
+});
+
+test("reserved-row projection removes a stale self-height offset without collapsing the ink", () => {
+  const layout = makeLayout("restored-note-flow", 90.9, 534.4, 124.3, 104.95);
+  const sourcePoints = [
+    { x: 90.9 / 500, y: 534.4 / 2000, anchor: { x: 50.9 / 420, y: 534.4 / 2000, offsetY: 117 } },
+    { x: 153.05 / 500, y: 586.875 / 2000, anchor: { x: 113.05 / 420, y: 586.875 / 2000, offsetY: 117 } },
+    { x: 215.2 / 500, y: 639.35 / 2000, anchor: { x: 175.2 / 420, y: 639.35 / 2000, offsetY: 117 } }
+  ];
+  const rowTop = noteFlowReservedRowTop({
+    side: "after",
+    anchorTop: 500,
+    anchorBottom: 634.948,
+    applied: 116.948,
+    scale: 1
+  });
+  const targetBox = projectStableNoteFlowBox({
+    boxLeftRatio: 0.12872577635563193,
+    boxWidthRatio: 0.2816876880846227,
+    boxHeightRatio: 0.23779809287083614,
+    contentLeft: 40,
+    contentWidth: 420,
+    canvasWidth: 500,
+    y: rowTop
+  });
+  const projected = projectElementPoints(sourcePoints, layout, targetBox, {
+    canvasWidth: 500,
+    canvasHeight: 2000
+  });
+  const repeated = projectElementPoints(projected, layout, targetBox, {
+    canvasWidth: 500,
+    canvasHeight: 2000
+  });
+  const xs = projected.map((point) => point.x * 500);
+  const ys = projected.map((point) => point.y * 2000);
+
+  assert.equal(rowTop, 518);
+  assert.ok(Math.abs(ys[0] - 518) < 0.001, "the element starts at its reserved row top");
+  assert.ok(xs[2] - xs[0] > 100, "the full stroke width survives left-edge projection");
+  assert.deepEqual(repeated, projected, "repeated restore is idempotent");
 });
 
 test("nearby floating elements preserve their relationship after reprojection", () => {

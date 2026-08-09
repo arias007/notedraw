@@ -86,14 +86,14 @@ test("deleting a vault file clears NoteDraw controllers, DOM presentation, cache
   assert.match(source, /collectDeletedVaultFiles\(deletedFile\)/);
 });
 
-test("3.4.39 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
+test("3.4.40 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
   const [source, manifestText] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(manifestUrl, "utf8")
   ]);
   const manifest = JSON.parse(manifestText);
 
-  assert.equal(manifest.version, "3.4.39");
+  assert.equal(manifest.version, "3.4.40");
   assert.match(source, /version: "3\.4\.19"/);
   assert.match(source, /this\.readingVirtualStyleState = \/\* @__PURE__ \*\/ new Map\(\)/);
   assert.match(source, /shouldClearStaleReadingVirtualMinHeight\(\{/);
@@ -413,6 +413,9 @@ test("selection tool previews and commits exact NoteFlow Markdown insertion targ
   const finishSource = dragSource.slice(dragSource.indexOf("  finishSelectedStrokeDrag("), dragSource.indexOf("  cancelSelectedStrokeDrag("));
   const flowLayoutSource = source.slice(source.indexOf("  applyNoteFlowLayout()"), source.indexOf("  markNoteFlowLayoutMutation()"));
   const projectionSource = source.slice(source.indexOf("  initializeAndProjectResponsivePoints("), source.indexOf("  resizeCanvas(options = {})"));
+  const reservedRowSource = source.slice(source.indexOf("  alignNoteFlowStrokesToReservedRows("), source.indexOf("  frozenNoteFlowAnchorsReady("));
+  const frozenRestoreStart = source.indexOf("  restoreFrozenNoteFlowLayout() {");
+  const frozenRestoreSource = source.slice(frozenRestoreStart, source.indexOf("  clearNoteFlowLayout()", frozenRestoreStart));
 
   assert.match(source, /selectNoteFlowDropPlacement/);
   assert.match(dropSource, /this\.toolMode === TOOL_SELECT[\s\S]*queueDraggedNoteFlowPlacement\(clientX, clientY\)[\s\S]*window\.requestAnimationFrame/);
@@ -434,6 +437,12 @@ test("selection tool previews and commits exact NoteFlow Markdown insertion targ
   assert.match(projectionSource, /const noteFlowProjectedById = new Map\(\)/);
   assert.match(projectionSource, /noteFlowProjectedById\.set\(transitionId, projectedBox\)/);
   assert.match(projectionSource, /projectElementPoints\(stroke\.points, layout, box/);
+  assert.match(reservedRowSource, /this\.draggingStroke \|\| this\.resizingSelection/);
+  assert.match(reservedRowSource, /noteFlowStoredRowCanvasY\(noteFlow, candidates\)/);
+  assert.match(reservedRowSource, /projectStableNoteFlowBox\([\s\S]*boxLeftRatio:[\s\S]*boxWidthRatio:[\s\S]*boxHeightRatio:/);
+  assert.match(reservedRowSource, /projectElementPoints\(stroke\.points, layout, targetBox/);
+  assert.match(frozenRestoreSource, /alignNoteFlowStrokesToReservedRows\(candidates\)/);
+  assert.match(flowLayoutSource, /alignNoteFlowStrokesToReservedRows\(candidates\)/);
   assert.match(finishSource, /else if \(affectsNoteFlow\)[\s\S]*dragStrokeOriginalPoints[\s\S]*originalPoints\.map/);
   assert.doesNotMatch(dropSource.slice(dropSource.indexOf("  resolveDraggedNoteFlowPlacement("), dropSource.indexOf("  snapDraggedSelectionToNoteFlowPlacement(")), /dragDropGeometrySnapshot|selectStoredNoteFlowAnchorCandidate/);
   assert.doesNotMatch(dropSource, /vault\.modify|reorderTextBlock/);
