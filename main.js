@@ -2131,6 +2131,30 @@ function noteFlowNeedsActivationRepair(strokes, frozenLayout) {
 function noteFlowRowReservation({ rowOffset = 0, boxHeight = 0, gap = 12 } = {}) {
   return Math.max(0, finite4(rowOffset)) + Math.max(0, finite4(boxHeight)) + Math.max(0, finite4(gap, 12));
 }
+function resizeNoteFlowGeometry(noteFlow, {
+  originalBounds,
+  resizedBounds,
+  contentLeft = 0,
+  contentWidth
+} = {}) {
+  const laneWidth = finite4(contentWidth);
+  const originalTop = finite4(originalBounds?.minY, Number.NaN);
+  const minX = finite4(resizedBounds?.minX, Number.NaN);
+  const minY = finite4(resizedBounds?.minY, Number.NaN);
+  const maxX = finite4(resizedBounds?.maxX, Number.NaN);
+  const maxY = finite4(resizedBounds?.maxY, Number.NaN);
+  if (laneWidth < 24 || ![originalTop, minX, minY, maxX, maxY].every(Number.isFinite)) {
+    return null;
+  }
+  const width = Math.max(2, maxX - minX);
+  const height = Math.max(2, maxY - minY);
+  return {
+    rowOffset: clamp5(Math.max(0, finite4(noteFlow?.rowOffset) + minY - originalTop), 0, 2e5),
+    boxLeftRatio: clamp5((minX - finite4(contentLeft)) / laneWidth, -2, 3),
+    boxWidthRatio: clamp5(width / laneWidth, 2 / laneWidth, 5),
+    boxHeightRatio: clamp5(height / laneWidth, 2 / laneWidth, 5)
+  };
+}
 function noteFlowReservedRowTop({ side, anchorTop, anchorBottom, applied = 0, scale = 1 } = {}) {
   const visualApplied = Math.max(0, finite4(applied)) * Math.max(0.01, finite4(scale, 1));
   return side === "after" ? finite4(anchorBottom) - visualApplied : finite4(anchorTop);
@@ -15813,6 +15837,8 @@ var PreviewDrawingController = class {
     this.resizeSelectionOriginalStrokes = new Map(resizableIndexes.map((index) => [
       index,
       {
+        bounds: getStrokeBounds(this.drawingData.strokes[index], this.canvasWidth(), this.canvasHeight()),
+        noteFlow: this.drawingData.strokes[index].noteFlow ? { ...this.drawingData.strokes[index].noteFlow } : null,
         width: this.drawingData.strokes[index].width || this.penWidth,
         fontSize: this.drawingData.strokes[index].fontSize || 18,
         textWidth: Number(this.drawingData.strokes[index].textWidth) > 0 ? Number(this.drawingData.strokes[index].textWidth) : null,
@@ -15917,6 +15943,8 @@ var PreviewDrawingController = class {
     scaleY = limitSelectionResizeScaleToCanvas(scaleY, bounds, anchor, "y");
     this.resizeSelectionPreviewBounds = scaleNormalizedBoundsFromAnchor(bounds, anchor, scaleX, scaleY);
     const strokeScale = clamp10((Math.abs(scaleX) + Math.abs(scaleY)) / 2, 0.2, 8);
+    const contentFrame = this.getResponsiveContentFrame();
+    const stableContentFrame = isStableResponsiveCaptureFrame(this.canvasWidth(), contentFrame);
     const nextByIndex = /* @__PURE__ */ new Map();
     for (const [index, original] of originalStrokes.entries()) {
       nextByIndex.set(index, {
@@ -15951,6 +15979,18 @@ var PreviewDrawingController = class {
         x: clamp10(strokePoint.x, 0, 1),
         y: clamp10(strokePoint.y, 0, 1)
       }));
+      if (stableContentFrame && normalizeNoteFlow(stroke.noteFlow)) {
+        const original = originalStrokes.get(index);
+        const geometry = resizeNoteFlowGeometry(original?.noteFlow || stroke.noteFlow, {
+          originalBounds: original?.bounds,
+          resizedBounds: getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight()),
+          contentLeft: contentFrame.left,
+          contentWidth: contentFrame.width
+        });
+        if (geometry) {
+          stroke.noteFlow = { ...stroke.noteFlow, ...geometry };
+        }
+      }
     }
     for (const state of originalMarkdownBlocks?.values?.() || []) {
       const block = state.block;
@@ -16003,6 +16043,7 @@ var PreviewDrawingController = class {
       this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
       this.recordDrawingHistory(this.resizeDrawingHistoryBefore);
       if (resizedIndexes.some((index) => this.drawingData.strokes[index]?.noteFlow?.enabled)) {
+        this.alignNoteFlowStrokesToReservedRows(null, { measureOnly: true });
         this.scheduleNoteFlowLayout({ operation: true });
       }
     } else {
@@ -16029,6 +16070,7 @@ var PreviewDrawingController = class {
             stroke.previewHeight = original.previewHeight;
           }
           stroke.points = original.points.map((strokePoint) => ({ ...strokePoint }));
+          stroke.noteFlow = original.noteFlow ? { ...original.noteFlow } : null;
         }
       }
     }
@@ -18736,8 +18778,9 @@ var PreviewDrawingController = class {
     });
     return this.canvasWindowTop + (rowTop - canvasRect.top) / Math.max(1e-4, scaleY) + Math.max(0, Number(normalized.rowOffset) || 0);
   }
-  alignNoteFlowStrokesToReservedRows(allCandidates = null) {
-    if (this.draggingStroke || this.resizingSelection || !this.supportsNoteFlow() || !this.previewEl?.isConnected) {
+  alignNoteFlowStrokesToReservedRows(allCandidates = null, options = {}) {
+    const measureOnly = options.measureOnly === true;
+    if (!measureOnly && (this.draggingStroke || this.resizingSelection) || !this.supportsNoteFlow() || !this.previewEl?.isConnected) {
       return false;
     }
     const canvasWidth = this.canvasWidth();
@@ -18815,15 +18858,26 @@ var PreviewDrawingController = class {
     })), { gap: 6 }).map((placement) => [placement.index, placement]));
     const settledRowExtents = /* @__PURE__ */ new Map();
     for (const target of targets) {
-      const { stroke, noteFlow, layout, bounds } = target;
       const settled = settledByIndex.get(target.index);
-      const targetBox = settled ? { ...target.targetBox, y: settled.minY } : target.targetBox;
+      const targetY = settled?.minY ?? target.targetBox.y;
       if (target.rowKey) {
         settledRowExtents.set(target.rowKey, Math.max(
           settledRowExtents.get(target.rowKey) || 0,
-          targetBox.y + targetBox.height - target.targetBox.y
+          targetY + target.targetBox.height - target.targetBox.y
         ));
       }
+    }
+    const previousExtentSignature = Array.from(this.noteFlowSettledRowExtents || []).map(([key, value]) => `${key}:${Math.round(value * 100)}`).join("|");
+    const nextExtentSignature = Array.from(settledRowExtents).map(([key, value]) => `${key}:${Math.round(value * 100)}`).join("|");
+    const extentsChanged = previousExtentSignature !== nextExtentSignature;
+    this.noteFlowSettledRowExtents = settledRowExtents;
+    if (measureOnly) {
+      return extentsChanged;
+    }
+    for (const target of targets) {
+      const { stroke, noteFlow, layout, bounds } = target;
+      const settled = settledByIndex.get(target.index);
+      const targetBox = settled ? { ...target.targetBox, y: settled.minY } : target.targetBox;
       const nextPoints = this.noteFlowOperationPending ? translateNoteFlowPointsToRow(stroke.points, bounds, targetBox.y, {
         canvasWidth,
         canvasHeight
@@ -18887,10 +18941,6 @@ var PreviewDrawingController = class {
       }
       changed = true;
     }
-    const previousExtentSignature = Array.from(this.noteFlowSettledRowExtents || []).map(([key, value]) => `${key}:${Math.round(value * 100)}`).join("|");
-    const nextExtentSignature = Array.from(settledRowExtents).map(([key, value]) => `${key}:${Math.round(value * 100)}`).join("|");
-    const extentsChanged = previousExtentSignature !== nextExtentSignature;
-    this.noteFlowSettledRowExtents = settledRowExtents;
     if (changed) {
       this.invalidateStaticCache();
     }
@@ -19342,6 +19392,7 @@ var PreviewDrawingController = class {
     }
     const scaleY = canvasRect.height > 0 ? canvasRect.height / Math.max(1, this.canvasRenderHeight) : 1;
     const candidates = this.noteFlowCandidates();
+    const resizedRowExtentsChanged = this.resizingSelection ? this.alignNoteFlowStrokesToReservedRows(candidates, { measureOnly: true }) : false;
     let missingStableAnchor = candidates.length === 0;
     const canRepairStoredAnchors = this.noteFlowAnchorRepairReady && !this.noteFlowAnchorRepairComplete && Date.now() - this.lastScrollAt > 480;
     const offsets = /* @__PURE__ */ new Map();
@@ -19574,7 +19625,7 @@ var PreviewDrawingController = class {
     if (this.noteFlowPersistencePending && (aligned || migratedAnchor || updatedNoteFlowMetadata || frozenLayoutChanged) && this.file && this.drawingData) {
       this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: this.noteFlowPersistencePending });
     }
-    const changed = aligned || migratedAnchor || updatedNoteFlowMetadata || frozenLayoutChanged || layoutStyleChanged || signature !== this.noteFlowLayoutSignature;
+    const changed = resizedRowExtentsChanged || aligned || migratedAnchor || updatedNoteFlowMetadata || frozenLayoutChanged || layoutStyleChanged || signature !== this.noteFlowLayoutSignature;
     this.noteFlowLayoutSignature = signature;
     return changed;
   }

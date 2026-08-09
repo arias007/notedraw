@@ -86,14 +86,14 @@ test("deleting a vault file clears NoteDraw controllers, DOM presentation, cache
   assert.match(source, /collectDeletedVaultFiles\(deletedFile\)/);
 });
 
-test("3.4.47 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
+test("3.4.48 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
   const [source, manifestText] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(manifestUrl, "utf8")
   ]);
   const manifest = JSON.parse(manifestText);
 
-  assert.equal(manifest.version, "3.4.47");
+  assert.equal(manifest.version, "3.4.48");
   assert.match(source, /version: "3\.4\.19"/);
   assert.match(source, /this\.readingVirtualStyleState = \/\* @__PURE__ \*\/ new Map\(\)/);
   assert.match(source, /shouldClearStaleReadingVirtualMinHeight\(\{/);
@@ -506,4 +506,25 @@ test("selection requires a completed tap before moving an element and reserves r
   assert.match(source, /startPendingSelectionTap\(event, action\)/);
   assert.match(source, /pointerDistance\(pending\.startClient, \{ x: event\.clientX, y: event\.clientY \}\)/);
   assert.match(source, /if \(pending && !pending\.moved && movedDistance <= this\.tapDistancePx\(\)\)/);
+});
+
+test("NoteFlow resize updates stable geometry and remeasures row reservations before layout", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const resizeStart = source.indexOf("  startSelectedStrokeResize(event, handle) {");
+  const resizeSource = source.slice(resizeStart, source.indexOf("  finishSelectedStrokeResize", resizeStart));
+  const finishStart = source.indexOf("  finishSelectedStrokeResize(event) {");
+  const finishSource = source.slice(finishStart, source.indexOf("  cancelSelectedStrokeResize", finishStart));
+  const cancelStart = source.indexOf("  cancelSelectedStrokeResize(restoreOriginal = false) {");
+  const cancelSource = source.slice(cancelStart, source.indexOf("  clearSelectedStrokeResizeState", cancelStart));
+  const alignStart = source.indexOf("  alignNoteFlowStrokesToReservedRows(");
+  const alignSource = source.slice(alignStart, source.indexOf("  frozenNoteFlowAnchorsReady", alignStart));
+  const flowStart = source.indexOf("  applyNoteFlowLayout() {");
+  const flowSource = source.slice(flowStart, source.indexOf("  markNoteFlowLayoutMutation", flowStart));
+
+  assert.match(resizeSource, /bounds: getStrokeBounds[\s\S]*noteFlow: this\.drawingData\.strokes\[index\]\.noteFlow/);
+  assert.match(resizeSource, /resizeNoteFlowGeometry\([\s\S]*originalBounds:[\s\S]*resizedBounds:[\s\S]*contentWidth:/);
+  assert.match(finishSource, /alignNoteFlowStrokesToReservedRows\(null, \{ measureOnly: true \}\);\s*this\.scheduleNoteFlowLayout\(\{ operation: true \}\)/);
+  assert.match(cancelSource, /stroke\.noteFlow = original\.noteFlow \? \{ \.\.\.original\.noteFlow \} : null/);
+  assert.match(alignSource, /const measureOnly = options\.measureOnly === true[\s\S]*if \(measureOnly\) \{\s*return extentsChanged;/);
+  assert.match(flowSource, /alignNoteFlowStrokesToReservedRows\(candidates, \{ measureOnly: true \}\)[\s\S]*boxHeight: settledHeight/);
 });

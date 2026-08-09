@@ -20,6 +20,7 @@ import {
   projectStableNoteFlowBox,
   reflowNoteFlowRectangles,
   reflowNoteFlowIntervals,
+  resizeNoteFlowGeometry,
   selectOwnedBlankSpaceCandidate,
   selectNoteFlowAnchorPlacement,
   selectNoteFlowAvoidanceCandidate,
@@ -612,6 +613,46 @@ test("NoteFlow row reservation is idempotent and never depends on previously app
   for (let pass = 0; pass < 5; pass += 1) {
     assert.equal(noteFlowRowReservation(input), first);
   }
+});
+
+test("resizing NoteFlow geometry expands and contracts its Markdown reservation", () => {
+  const base = { rowOffset: 10 };
+  const originalBounds = { minX: 60, minY: 100, maxX: 180, maxY: 160 };
+  const enlarged = resizeNoteFlowGeometry(base, {
+    originalBounds,
+    resizedBounds: { minX: 60, minY: 100, maxX: 240, maxY: 220 },
+    contentLeft: 20,
+    contentWidth: 400
+  });
+  const contracted = resizeNoteFlowGeometry(base, {
+    originalBounds,
+    resizedBounds: { minX: 80, minY: 110, maxX: 140, maxY: 140 },
+    contentLeft: 20,
+    contentWidth: 400
+  });
+
+  assert.deepEqual(enlarged, {
+    rowOffset: 10,
+    boxLeftRatio: 0.1,
+    boxWidthRatio: 0.45,
+    boxHeightRatio: 0.3
+  });
+  assert.deepEqual(contracted, {
+    rowOffset: 20,
+    boxLeftRatio: 0.15,
+    boxWidthRatio: 0.15,
+    boxHeightRatio: 0.075
+  });
+  assert.equal(noteFlowRowReservation({
+    rowOffset: enlarged.rowOffset,
+    boxHeight: enlarged.boxHeightRatio * 400,
+    gap: 12
+  }), 142);
+  assert.equal(noteFlowRowReservation({
+    rowOffset: contracted.rowOffset,
+    boxHeight: contracted.boxHeightRatio * 400,
+    gap: 12
+  }), 62);
 });
 
 test("NoteFlow ink stays at the top of its own reserved after-row", () => {

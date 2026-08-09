@@ -526,6 +526,31 @@ export function noteFlowRowReservation({ rowOffset = 0, boxHeight = 0, gap = 12 
     + Math.max(0, finite(gap, 12));
 }
 
+export function resizeNoteFlowGeometry(noteFlow, {
+  originalBounds,
+  resizedBounds,
+  contentLeft = 0,
+  contentWidth
+} = {}) {
+  const laneWidth = finite(contentWidth);
+  const originalTop = finite(originalBounds?.minY, Number.NaN);
+  const minX = finite(resizedBounds?.minX, Number.NaN);
+  const minY = finite(resizedBounds?.minY, Number.NaN);
+  const maxX = finite(resizedBounds?.maxX, Number.NaN);
+  const maxY = finite(resizedBounds?.maxY, Number.NaN);
+  if (laneWidth < 24 || ![originalTop, minX, minY, maxX, maxY].every(Number.isFinite)) {
+    return null;
+  }
+  const width = Math.max(2, maxX - minX);
+  const height = Math.max(2, maxY - minY);
+  return {
+    rowOffset: clamp(Math.max(0, finite(noteFlow?.rowOffset) + minY - originalTop), 0, 200_000),
+    boxLeftRatio: clamp((minX - finite(contentLeft)) / laneWidth, -2, 3),
+    boxWidthRatio: clamp(width / laneWidth, 2 / laneWidth, 5),
+    boxHeightRatio: clamp(height / laneWidth, 2 / laneWidth, 5)
+  };
+}
+
 export function noteFlowReservedRowTop({ side, anchorTop, anchorBottom, applied = 0, scale = 1 } = {}) {
   const visualApplied = Math.max(0, finite(applied)) * Math.max(0.01, finite(scale, 1));
   return side === "after"
