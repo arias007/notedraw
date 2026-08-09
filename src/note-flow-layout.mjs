@@ -489,6 +489,33 @@ export function noteFlowRequiredOffset({
   return Math.max(0, logicalDesiredBottom - edge);
 }
 
+export function noteFlowRowReservation({ rowOffset = 0, boxHeight = 0, gap = 12 } = {}) {
+  return Math.max(0, finite(rowOffset))
+    + Math.max(0, finite(boxHeight))
+    + Math.max(0, finite(gap, 12));
+}
+
+export function projectStableNoteFlowBox({
+  boxLeftRatio,
+  boxWidthRatio,
+  boxHeightRatio,
+  contentLeft = 0,
+  contentWidth,
+  canvasWidth,
+  y = 0
+} = {}) {
+  const laneWidth = Math.max(1, finite(contentWidth, canvasWidth));
+  const surfaceWidth = Math.max(2, finite(canvasWidth, laneWidth));
+  const width = clamp(Math.max(2, finite(boxWidthRatio) * laneWidth), 2, surfaceWidth);
+  const height = Math.max(2, finite(boxHeightRatio) * laneWidth);
+  return {
+    x: clamp(finite(contentLeft) + finite(boxLeftRatio) * laneWidth, 0, Math.max(0, surfaceWidth - width)),
+    y: Math.max(0, finite(y)),
+    width,
+    height
+  };
+}
+
 export function selectOwnedBlankSpaceCandidate(candidates, { clientX, clientY } = {}) {
   const x = finite(clientX, Number.NaN);
   const y = finite(clientY, Number.NaN);

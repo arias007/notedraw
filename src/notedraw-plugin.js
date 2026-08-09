@@ -106,12 +106,13 @@ import {
   hasExactNoteFlowPlacement,
   hasStableNoteFlowAnchor,
   noteFlowAvoidanceReference,
-  noteFlowRequiredOffset,
+  noteFlowRowReservation,
   noteFlowSurfaceRepairLimits,
   normalizeFrozenNoteFlowLayout,
   noteFlowNeedsActivationRepair,
   preserveAbsoluteNoteFlowPoints,
   projectNoteFlowDocumentPoint,
+  projectStableNoteFlowBox,
   reflowNoteFlowRectangles,
   selectOwnedBlankSpaceCandidate,
   selectNoteFlowAvoidanceCandidate,
@@ -8412,13 +8413,25 @@ var PreviewDrawingController = class {
     const transitionProjected = [...projected];
     const noteFlowProjectedById = new Map();
     for (const [index, stroke] of (this.drawingData?.strokes || []).entries()) {
-      const noteFlow = normalizeNoteFlow(stroke?.noteFlow);
+      let noteFlow = normalizeNoteFlow(stroke?.noteFlow);
       if (!noteFlow || isConnectorStroke(stroke)) {
         continue;
       }
       const transitionId = `note-flow:${strokeElementId(stroke) || index}`;
       const previousBounds = getStrokeBounds(stroke, previousCanvasWidth, previousCanvasHeight);
       const layout = normalizeElementLayout(stroke.layout);
+      if (previousBounds && !(noteFlow.boxWidthRatio > 0 && noteFlow.boxHeightRatio > 0)) {
+        const sourceLeft = Number(layout?.sourceFrame?.contentLeft ?? context.frame?.left ?? 0);
+        const sourceWidth = Math.max(1, Number(layout?.sourceFrame?.contentWidth ?? context.frame?.width ?? previousCanvasWidth));
+        stroke.noteFlow = {
+          ...stroke.noteFlow,
+          boxLeftRatio: (previousBounds.minX - sourceLeft) / sourceWidth,
+          boxWidthRatio: Math.max(2 / sourceWidth, (previousBounds.maxX - previousBounds.minX) / sourceWidth),
+          boxHeightRatio: Math.max(2 / sourceWidth, (previousBounds.maxY - previousBounds.minY) / sourceWidth)
+        };
+        noteFlow = normalizeNoteFlow(stroke.noteFlow);
+        migrated = true;
+      }
       const projectedPoints = (stroke.points || []).map((point) => {
         const projectedPoint = projectResponsivePoint(point, {
           canvasWidth: this.canvasWidth(),
@@ -8509,12 +8522,26 @@ var PreviewDrawingController = class {
         const box = projectedBox
           ? stabilizeProjectedElementBox(projectedBox, currentBoundsById.get(transitionId))
           : null;
-        if (layout && box) {
-          stroke.points = projectElementPoints(stroke.points, layout, box, {
+        const stableFlowBox = noteFlow?.boxWidthRatio > 0 && noteFlow?.boxHeightRatio > 0
+          ? {
+            ...(box || {}),
+            ...projectStableNoteFlowBox({
+              boxLeftRatio: noteFlow.boxLeftRatio,
+              boxWidthRatio: noteFlow.boxWidthRatio,
+              boxHeightRatio: noteFlow.boxHeightRatio,
+              contentLeft: context.frame?.left,
+              contentWidth: context.frame?.width,
+              canvasWidth: this.canvasWidth(),
+              y: box?.y ?? layout?.box?.y ?? 0
+            })
+          }
+          : box;
+        if (layout && stableFlowBox) {
+          stroke.points = projectElementPoints(stroke.points, layout, stableFlowBox, {
             canvasWidth: this.canvasWidth(),
             canvasHeight: this.canvasHeight()
           });
-          const metrics = scaleElementMetrics(layout.metrics, box);
+          const metrics = scaleElementMetrics(layout.metrics, stableFlowBox);
           if (metrics.width) {
             stroke.width = metrics.width;
           }
@@ -14986,6 +15013,18 @@ var PreviewDrawingController = class {
         : preservePlacement
           ? previous?.placementMode || "row"
           : previous?.placementMode || "row";
+    const contentFrame = this.getResponsiveContentFrame();
+    const contentWidth = Math.max(1, Number(contentFrame?.width) || this.canvasWidth());
+    const anchorBoundary = anchor
+      ? placementMode === "inline"
+        ? anchor.top
+        : side === "after"
+          ? anchor.bottom
+          : anchor.top
+      : Number.NaN;
+    const anchorCanvasY = Number.isFinite(anchorBoundary)
+      ? this.canvasWindowTop + (anchorBoundary - canvasRect.top) / Math.max(0.0001, scaleY)
+      : Number.NaN;
     return {
       enabled: true,
       path: anchor?.path || previous?.path || this.file?.path || "",
@@ -15003,6 +15042,12 @@ var PreviewDrawingController = class {
       placementMode,
       inlineSide: placementMode === "inline" ? options.placement?.horizontalSide || previous?.inlineSide || "right" : null,
       leftSnap: placementMode === "row" ? options.placement?.leftSnap === true || !options.placement && previous?.leftSnap === true : false,
+      rowOffset: Number.isFinite(anchorCanvasY)
+        ? Math.max(0, bounds.minY - anchorCanvasY)
+        : Math.max(0, Number(previous?.rowOffset) || 0),
+      boxLeftRatio: (bounds.minX - Number(contentFrame?.left || 0)) / contentWidth,
+      boxWidthRatio: Math.max(2 / contentWidth, (bounds.maxX - bounds.minX) / contentWidth),
+      boxHeightRatio: Math.max(2 / contentWidth, (bounds.maxY - bounds.minY) / contentWidth),
       avoidancePath: "",
       avoidanceLine: null,
       gap: clamp(Number(stroke?.noteFlow?.gap) || 12, 4, 64)
@@ -15815,24 +15860,16 @@ var PreviewDrawingController = class {
         });
       }
       const state = states.get(property);
-      const blockMeasureElement = element.classList?.contains("notedraw-note-flow-block-spacer")
-        ? element._noteDrawMeasureElement
-        : null;
-      const rect = (blockMeasureElement || element).getBoundingClientRect();
-      const anchorTop = blockMeasureElement && side === "before"
-        ? rect.top - state.applied * scaleY
-        : rect.top + state.base * scaleY;
-      const anchorBottom = blockMeasureElement && side === "after"
-        ? rect.bottom + state.applied * scaleY
-        : rect.bottom;
-      const desiredBottom = canvasRect.top + (item.bounds.maxY - this.canvasWindowTop) * scaleY + Number(currentNoteFlow.gap || 12) * scaleY;
-      const required = noteFlowRequiredOffset({
-        side,
-        anchorTop,
-        anchorBottom,
-        desiredBottom,
-        applied: state.applied,
-        scale: scaleY
+      const stableHeight = currentNoteFlow.boxHeightRatio > 0
+        ? currentNoteFlow.boxHeightRatio * Math.max(1, contentFrame.width)
+        : Math.max(0, item.bounds.maxY - item.bounds.minY);
+      // The reservation belongs to the logical row, like a Markdown block's
+      // grid row. It is derived from stable box geometry, never from an anchor
+      // that may already contain our padding, so repeated layout is idempotent.
+      const required = noteFlowRowReservation({
+        rowOffset: currentNoteFlow.rowOffset,
+        boxHeight: stableHeight,
+        gap: currentNoteFlow.gap
       });
       let elementOffsets = offsets.get(element);
       if (!elementOffsets) {
@@ -16038,8 +16075,13 @@ var PreviewDrawingController = class {
       const path = normalizeVaultPath(movedItem ? placement?.path : noteFlow.path || this.file?.path || "");
       const line = Number(movedItem ? placement?.line : noteFlow.line);
       const side = movedItem ? placement?.side : noteFlow.side;
-      const anchor = !movedItem && path && Number.isFinite(line) && ["before", "after"].includes(side)
-        ? candidates.filter((candidate) => (
+      const placementMode = movedItem
+        ? placement?.horizontalSide ? "inline" : "row"
+        : noteFlow.placementMode;
+      const anchor = movedItem && placement?.candidate
+        ? placement.candidate
+        : path && Number.isFinite(line) && ["before", "after"].includes(side)
+          ? candidates.filter((candidate) => (
           normalizeVaultPath(candidate.path || this.file?.path || "") === path
           && line >= Number(candidate.start)
           && line <= Number(candidate.end)
@@ -16047,10 +16089,10 @@ var PreviewDrawingController = class {
           Number(Boolean(b.lineSpacer)) - Number(Boolean(a.lineSpacer))
           || (a.bottom - a.top) - (b.bottom - b.top)
           || a.order - b.order
-        ))[0] || null
-        : null;
+          ))[0] || null
+          : null;
       const anchorBoundary = anchor
-        ? noteFlow.placementMode === "inline" ? anchor.top : side === "after" ? anchor.bottom : anchor.top
+        ? placementMode === "inline" ? anchor.top : side === "after" ? anchor.bottom : anchor.top
         : Number.NaN;
       const baseMinY = Number.isFinite(anchorBoundary) && canvasRect
         ? this.canvasWindowTop + (anchorBoundary - canvasRect.top) / Math.max(0.0001, scaleY)
@@ -19210,6 +19252,10 @@ function normalizeNoteFlow(value) {
     placementMode,
     inlineSide: placementMode === "inline" && value.inlineSide === "right" ? "right" : null,
     leftSnap: placementMode === "row" && value.leftSnap === true,
+    rowOffset: clamp(Number(value.rowOffset) || 0, 0, 200_000),
+    boxLeftRatio: clamp(Number(value.boxLeftRatio) || 0, -2, 3),
+    boxWidthRatio: clamp(Number(value.boxWidthRatio) || 0, 0, 5),
+    boxHeightRatio: clamp(Number(value.boxHeightRatio) || 0, 0, 5),
     avoidancePath: Number.isFinite(avoidanceLine) && avoidanceLine >= 0 ? normalizeVaultPath(value.avoidancePath || value.path || "") : "",
     avoidanceLine: Number.isFinite(avoidanceLine) && avoidanceLine >= 0 ? avoidanceLine : null,
     gap: clamp(Number(value.gap) || 12, 4, 64)

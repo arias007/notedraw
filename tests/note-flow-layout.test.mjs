@@ -7,11 +7,13 @@ import {
   hasStableNoteFlowAnchor,
   noteFlowAvoidanceReference,
   noteFlowRequiredOffset,
+  noteFlowRowReservation,
   noteFlowNeedsActivationRepair,
   noteFlowSurfaceRepairLimits,
   normalizeFrozenNoteFlowLayout,
   preserveAbsoluteNoteFlowPoints,
   projectNoteFlowDocumentPoint,
+  projectStableNoteFlowBox,
   reflowNoteFlowRectangles,
   reflowNoteFlowIntervals,
   selectOwnedBlankSpaceCandidate,
@@ -570,6 +572,29 @@ test("note-flow padding preserves Markdown clearance at visual reading zoom", ()
       scale
     }), 134);
   }
+});
+
+test("NoteFlow row reservation is idempotent and never depends on previously applied padding", () => {
+  const input = { rowOffset: 36, boxHeight: 84, gap: 12 };
+  const first = noteFlowRowReservation(input);
+  assert.equal(first, 132);
+  for (let pass = 0; pass < 5; pass += 1) {
+    assert.equal(noteFlowRowReservation(input), first);
+  }
+});
+
+test("NoteFlow stable box projection preserves width at the left edge", () => {
+  const projected = projectStableNoteFlowBox({
+    boxLeftRatio: -0.25,
+    boxWidthRatio: 0.4,
+    boxHeightRatio: 0.2,
+    contentLeft: 24,
+    contentWidth: 300,
+    canvasWidth: 360,
+    y: 120
+  });
+  assert.deepEqual(projected, { x: 0, y: 120, width: 120, height: 60 });
+  assert.ok(projected.width > 2);
 });
 
 test("inserted note elements are excluded only from the source editing surface", () => {
