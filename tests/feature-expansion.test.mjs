@@ -207,6 +207,7 @@ test("selection frames freeze between operations and drag drops retain the last 
   assert.match(dragSource, /if \(!target\) \{\s*return this\.dragMarkdownLastValidDrop \? \{ \.\.\.this\.dragMarkdownLastValidDrop \} : null;/);
   assert.match(finishSource, /const lastDrop = this\.dragMarkdownLastValidDrop\?\.element\?\.isConnected/);
   assert.match(finishSource, /const markdownDrop = lastDrop \? \{/);
+  assert.match(finishSource, /this\.clearSelectedStrokeDragState\(\);[\s\S]*if \(didMove\) \{[\s\S]*this\.invalidateSelectionFrameSnapshot\(\);[\s\S]*this\.captureSelectionFrameSnapshot\(\{ force: true \}\);/);
   assert.match(heightSource, /const transientGrowth = observedHeight > runawayThreshold/);
   assert.match(heightSource, /const staleGrowth = priorHeight > runawayThreshold/);
   assert.match(heightSource, /sectionHeight \+ Math\.max\(192, Math\.min\(640, sectionHeight \* 0\.35\)\)/);
@@ -314,11 +315,17 @@ test("NoteFlow spacing targets the complete Markdown block and restores after re
   assert.match(targetSource, /const owner = anchor\?\.element \|\| null;/);
   assert.match(targetSource, /placementMode === "inline"[\s\S]*return owner/);
   assert.match(targetSource, /className = "notedraw-note-flow-block-spacer"/);
-  assert.match(targetSource, /owner\.insertAdjacentElement\("afterend", spacer\)/);
-  assert.match(targetSource, /owner\.insertAdjacentElement\("beforebegin", spacer\)/);
+  assert.match(targetSource, /owner\.appendChild\(spacer\)/);
+  assert.match(targetSource, /owner\.insertBefore\(spacer, owner\.firstChild\)/);
+  assert.match(targetSource, /owner\._noteDrawExternalFlowSpacing = true/);
+  assert.match(targetSource, /return owner;/);
+  assert.doesNotMatch(targetSource, /insertAdjacentElement\("(?:afterend|beforebegin)", spacer\)/);
   assert.doesNotMatch(targetSource, /heading\.style\.(?:setProperty|removeProperty)/);
   assert.match(flowLayout, /element\.style\.setProperty\(state\.styleProperty, nextValue, "important"\)/);
-  assert.match(source, /noteFlowStyleProperty\(element, property\) \{\s*return element\?\.classList\?\.contains\("notedraw-note-flow-block-spacer"\) \? "height" : property;/);
+  assert.match(source, /noteFlowStyleProperty\(element, property\)[\s\S]*_noteDrawExternalFlowSpacing[\s\S]*"margin-top"[\s\S]*"margin-bottom"/);
+  assert.match(source, /const targetRect = state\?\.styleProperty === "margin-top" \|\| state\?\.styleProperty === "margin-bottom"[\s\S]*targetRect\.top - applied \* scaleY/);
+  assert.match(source, /const selectedNoteFlowChanged = layoutChanged && this\.getSelectedStrokeIndexes\(\)\.some[\s\S]*this\.invalidateSelectionFrameSnapshot\(\);[\s\S]*this\.captureSelectionFrameSnapshot\(\{ force: true \}\);/);
+  assert.match(source, /noteFlowAppliedVerticalInsets\(element\)[\s\S]*element\?\.children[\s\S]*noteDrawNoteFlowSide === "after"/);
   assert.match(flowLayout, /const styleProperty = this\.noteFlowStyleProperty\(element, property\)[\s\S]*element\.style\.setProperty\(state\.styleProperty, nextValue, "important"\)/);
   assert.match(source, /element\.classList\?\.contains\("notedraw-note-flow-block-spacer"\)[\s\S]*properties\.push\("height"\)/);
   assert.match(prepareSource, /annotateVisibleMarkdownElements\(this\.plugin\.app, this\.previewEl/);

@@ -622,10 +622,22 @@ export function selectOwnedBlankSpaceCandidate(candidates, { clientX, clientY } 
     if (![left, right, top, bottom].every(Number.isFinite) || right <= left || bottom <= top || applied <= 0) {
       return null;
     }
-    const visualApplied = Math.min(bottom - top, applied * scale);
+    const externalBefore = candidate?.styleProperty === "margin-top";
+    const externalAfter = candidate?.styleProperty === "margin-bottom";
+    const visualApplied = externalBefore || externalAfter
+      ? applied * scale
+      : Math.min(bottom - top, applied * scale);
     const heightOwned = candidate?.styleProperty === "height" || candidate?.property === "height";
-    const ownedTop = heightOwned || candidate?.property === "padding-top" ? top : bottom - visualApplied;
-    const ownedBottom = heightOwned || candidate?.property === "padding-bottom" ? bottom : top + visualApplied;
+    const ownedTop = externalBefore
+      ? top - visualApplied
+      : externalAfter
+        ? bottom
+        : heightOwned || candidate?.property === "padding-top" ? top : bottom - visualApplied;
+    const ownedBottom = externalBefore
+      ? top
+      : externalAfter
+        ? bottom + visualApplied
+        : heightOwned || candidate?.property === "padding-bottom" ? bottom : top + visualApplied;
     if (x < left || x > right || y < ownedTop || y > ownedBottom) {
       return null;
     }

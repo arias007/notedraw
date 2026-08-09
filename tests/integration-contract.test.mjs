@@ -86,14 +86,14 @@ test("deleting a vault file clears NoteDraw controllers, DOM presentation, cache
   assert.match(source, /collectDeletedVaultFiles\(deletedFile\)/);
 });
 
-test("3.4.46 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
+test("3.4.47 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
   const [source, manifestText] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(manifestUrl, "utf8")
   ]);
   const manifest = JSON.parse(manifestText);
 
-  assert.equal(manifest.version, "3.4.46");
+  assert.equal(manifest.version, "3.4.47");
   assert.match(source, /version: "3\.4\.19"/);
   assert.match(source, /this\.readingVirtualStyleState = \/\* @__PURE__ \*\/ new Map\(\)/);
   assert.match(source, /shouldClearStaleReadingVirtualMinHeight\(\{/);
@@ -400,6 +400,8 @@ test("note pen ignores element selection and selection-only gestures preserve Ma
   assert.doesNotMatch(startSource, /prepareReadingBottomExtentForDrag|clearNoteFlowLayout|scheduleNoteFlowLayout/);
   assert.match(moveSource, /if \(!this\.dragStrokeMoved && movedDistance <= this\.tapDistancePx\(\)\) \{[\s\S]*return;[\s\S]*this\.cancelResizeFrame\(\);[\s\S]*this\.prepareReadingBottomExtentForDrag\(\)/);
   assert.match(finishSource, /const didMove = this\.dragStrokeMoved;[\s\S]*if \(didMove\) \{[\s\S]*this\.clearNoteFlowLayout\(\)[\s\S]*this\.scheduleNoteFlowLayout\([\s\S]*\} else if \(!this\.dragStrokePreserveSelection/);
+  assert.match(finishSource, /const affectsNoteFlow = movedNoteFlowIndexes\.length > 0;[\s\S]*if \(!affectsNoteFlow && movedIndexes\.length[\s\S]*this\.applyDraggedEdgeInsertion\(event, movedIndexes\)/);
+  assert.match(source, /const boundedDx = clamp\(dx, -selectedBounds\.minX, canvasWidth - selectedBounds\.maxX\);[\s\S]*const boundedDy = clamp\(dy, -selectedBounds\.minY, canvasHeight - selectedBounds\.maxY\);/);
   assert.doesNotMatch(finishSource, /cancelSelectedStrokeDrag\(true\)/);
   assert.doesNotMatch(selectionStateSource, /clearNoteFlowLayout|scheduleNoteFlowLayout|scheduleResize|scheduleLayoutRefresh|noteFlowOperationPending/);
 });

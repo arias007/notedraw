@@ -60,6 +60,22 @@ test("owned NoteFlow blank bands select the element that created the whitespace"
       styleProperty: "height",
       applied: 30,
       scale: 1
+    },
+    {
+      ownerIndex: 9,
+      rect: { left: 10, right: 210, top: 100, bottom: 140 },
+      property: "padding-top",
+      styleProperty: "margin-top",
+      applied: 60,
+      scale: 1
+    },
+    {
+      ownerIndex: 10,
+      rect: { left: 10, right: 210, top: 100, bottom: 140 },
+      property: "padding-bottom",
+      styleProperty: "margin-bottom",
+      applied: 45,
+      scale: 1
     }
   ];
 
@@ -67,6 +83,9 @@ test("owned NoteFlow blank bands select the element that created the whitespace"
   assert.equal(selectOwnedBlankSpaceCandidate(candidates, { clientX: 60, clientY: 200 })?.ownerIndex, 4);
   assert.equal(selectOwnedBlankSpaceCandidate([candidates[2]], { clientX: 60, clientY: 130 })?.ownerIndex, 7);
   assert.equal(selectOwnedBlankSpaceCandidate(candidates.slice(0, 2), { clientX: 60, clientY: 130 }), null);
+  assert.equal(selectOwnedBlankSpaceCandidate([candidates[3]], { clientX: 60, clientY: 70 })?.ownerIndex, 9);
+  assert.equal(selectOwnedBlankSpaceCandidate([candidates[4]], { clientX: 60, clientY: 170 })?.ownerIndex, 10);
+  assert.equal(selectOwnedBlankSpaceCandidate(candidates.slice(3), { clientX: 60, clientY: 120 }), null);
 });
 
 test("frozen note-flow spacing is deterministic and keeps the largest offset per Markdown block", () => {

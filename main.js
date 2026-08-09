@@ -2217,10 +2217,12 @@ function selectOwnedBlankSpaceCandidate(candidates, { clientX, clientY } = {}) {
     if (![left, right, top, bottom].every(Number.isFinite) || right <= left || bottom <= top || applied <= 0) {
       return null;
     }
-    const visualApplied = Math.min(bottom - top, applied * scale);
+    const externalBefore = candidate?.styleProperty === "margin-top";
+    const externalAfter = candidate?.styleProperty === "margin-bottom";
+    const visualApplied = externalBefore || externalAfter ? applied * scale : Math.min(bottom - top, applied * scale);
     const heightOwned = candidate?.styleProperty === "height" || candidate?.property === "height";
-    const ownedTop = heightOwned || candidate?.property === "padding-top" ? top : bottom - visualApplied;
-    const ownedBottom = heightOwned || candidate?.property === "padding-bottom" ? bottom : top + visualApplied;
+    const ownedTop = externalBefore ? top - visualApplied : externalAfter ? bottom : heightOwned || candidate?.property === "padding-top" ? top : bottom - visualApplied;
+    const ownedBottom = externalBefore ? top : externalAfter ? bottom + visualApplied : heightOwned || candidate?.property === "padding-bottom" ? bottom : top + visualApplied;
     if (x < left || x > right || y < ownedTop || y > ownedBottom) {
       return null;
     }
@@ -15236,8 +15238,12 @@ var PreviewDrawingController = class {
     const gap = 10;
     const dx = ratioX <= 0.34 ? targetBounds.minX - gap - selectedBounds.maxX : targetBounds.maxX + gap - selectedBounds.minX;
     const dy = targetBounds.minY - selectedBounds.minY;
-    const normalizedDx = dx / this.canvasWidth();
-    const normalizedDy = dy / this.canvasHeight();
+    const canvasWidth = this.canvasWidth();
+    const canvasHeight = this.canvasHeight();
+    const boundedDx = clamp10(dx, -selectedBounds.minX, canvasWidth - selectedBounds.maxX);
+    const boundedDy = clamp10(dy, -selectedBounds.minY, canvasHeight - selectedBounds.maxY);
+    const normalizedDx = boundedDx / canvasWidth;
+    const normalizedDy = boundedDy / canvasHeight;
     for (const index of strokeIndexes) {
       const stroke = this.drawingData.strokes[index];
       if (!stroke) {
@@ -15487,7 +15493,7 @@ var PreviewDrawingController = class {
       if (!markdownDrop) {
         this.updateDraggedFloatingMarkdownBlocks(event, false);
       }
-      if (movedIndexes.length && (!markdownDrop || markdownDrop.side === "left" || markdownDrop.side === "right")) {
+      if (!affectsNoteFlow && movedIndexes.length && (!markdownDrop || markdownDrop.side === "left" || markdownDrop.side === "right")) {
         this.applyDraggedEdgeInsertion(event, movedIndexes);
       }
       this.updateDraggedElementGroupMembership(event, movedIndexes, Array.from(this.dragMarkdownOriginalElements?.values?.() || []).map((state) => state.block));
@@ -15546,6 +15552,12 @@ var PreviewDrawingController = class {
     }
     this.releasePointerCapture(event.pointerId);
     this.clearSelectedStrokeDragState();
+    if (didMove) {
+      this.invalidateSelectionFrameSnapshot();
+      if (!this.selectionFrameAwaitingMarkdownSync) {
+        this.captureSelectionFrameSnapshot({ force: true });
+      }
+    }
     this.render();
     if (didMove && markdownDrop) {
       this.commitDraggedMarkdownBlocks(markdownDrop, drawingHistoryBefore).then((committed) => {
@@ -18648,7 +18660,7 @@ var PreviewDrawingController = class {
     let spacer = this.noteFlowBlockSpacers.get(key);
     if (!spacer?.isConnected) {
       spacer?.remove?.();
-      spacer = owner.ownerDocument.createElement(owner.matches?.("li") ? "li" : "div");
+      spacer = owner.ownerDocument.createElement("div");
       spacer.className = "notedraw-note-flow-block-spacer";
       spacer.setAttribute("aria-hidden", "true");
       spacer.dataset.noteDrawNoteFlowBlockKey = blockKey;
@@ -18657,16 +18669,17 @@ var PreviewDrawingController = class {
       this.markNoteFlowLayoutMutation();
     }
     spacer._noteDrawMeasureElement = owner;
-    const expectedSibling = side === "after" ? owner.nextElementSibling : owner.previousElementSibling;
-    if (expectedSibling !== spacer) {
+    owner._noteDrawExternalFlowSpacing = true;
+    const expectedChild = side === "after" ? owner.lastElementChild : owner.firstElementChild;
+    if (spacer.parentElement !== owner || expectedChild !== spacer) {
       this.markNoteFlowLayoutMutation();
       if (side === "after") {
-        owner.insertAdjacentElement("afterend", spacer);
+        owner.appendChild(spacer);
       } else {
-        owner.insertAdjacentElement("beforebegin", spacer);
+        owner.insertBefore(spacer, owner.firstChild);
       }
     }
-    return spacer;
+    return owner;
   }
   noteFlowAnchorElement(noteFlow, allCandidates = null, strokeTop = Number.NaN) {
     const path = normalizeVaultPath(noteFlow?.path || this.file?.path || "");
@@ -18709,10 +18722,12 @@ var PreviewDrawingController = class {
     const side = normalized.side;
     const target = this.noteFlowTargetElement(anchor, side, normalized.placementMode || "row");
     const property = side === "after" ? "padding-bottom" : "padding-top";
-    const applied = this.noteFlowStyledElements.get(target)?.get(property)?.applied || 0;
+    const state = this.noteFlowStyledElements.get(target)?.get(property);
+    const applied = state?.applied || 0;
     const scaleY = canvasRect.height / Math.max(1, this.canvasRenderHeight);
     const spacerRect = target?.classList?.contains("notedraw-note-flow-block-spacer") ? target.getBoundingClientRect?.() : null;
-    const rowTop = spacerRect && Number.isFinite(spacerRect.top) ? spacerRect.top : noteFlowReservedRowTop({
+    const targetRect = state?.styleProperty === "margin-top" || state?.styleProperty === "margin-bottom" ? target?.getBoundingClientRect?.() : null;
+    const rowTop = targetRect && Number.isFinite(targetRect.top) && Number.isFinite(targetRect.bottom) ? side === "after" ? targetRect.bottom : targetRect.top - applied * scaleY : spacerRect && Number.isFinite(spacerRect.top) ? spacerRect.top : noteFlowReservedRowTop({
       side,
       anchorTop: anchor.top,
       anchorBottom: anchor.bottom,
@@ -19008,19 +19023,35 @@ var PreviewDrawingController = class {
     }
   }
   noteFlowStyleProperty(element, property) {
-    return element?.classList?.contains("notedraw-note-flow-block-spacer") ? "height" : property;
+    if (element?.classList?.contains("notedraw-note-flow-block-spacer")) {
+      return "height";
+    }
+    if (element?._noteDrawExternalFlowSpacing) {
+      if (property === "padding-top") {
+        return "margin-top";
+      }
+      if (property === "padding-bottom") {
+        return "margin-bottom";
+      }
+    }
+    return property;
   }
   removeNoteFlowBlockSpacer(element) {
-    if (!element?.classList?.contains("notedraw-note-flow-block-spacer")) {
+    const directSpacer = element?.classList?.contains("notedraw-note-flow-block-spacer") ? element : null;
+    const owner = directSpacer?._noteDrawMeasureElement || (element?._noteDrawExternalFlowSpacing ? element : null);
+    if (!directSpacer && !owner) {
       return;
     }
     for (const [key, spacer] of this.noteFlowBlockSpacers || []) {
-      if (spacer === element) {
+      if (spacer === directSpacer || spacer?._noteDrawMeasureElement === owner) {
         this.noteFlowBlockSpacers.delete(key);
+        spacer._noteDrawMeasureElement = null;
+        spacer.remove?.();
       }
     }
-    element._noteDrawMeasureElement = null;
-    element.remove?.();
+    if (owner) {
+      owner._noteDrawExternalFlowSpacing = false;
+    }
   }
   pruneDisconnectedNoteFlowLayout() {
     for (const [element, states] of Array.from(this.noteFlowStyledElements || [])) {
@@ -19207,6 +19238,9 @@ var PreviewDrawingController = class {
     this.noteFlowSettledRowExtents?.clear();
     for (const spacer of this.noteFlowBlockSpacers?.values?.() || []) {
       if (spacer) {
+        if (spacer._noteDrawMeasureElement) {
+          spacer._noteDrawMeasureElement._noteDrawExternalFlowSpacing = false;
+        }
         spacer._noteDrawMeasureElement = null;
       }
       spacer?.remove?.();
@@ -19776,6 +19810,14 @@ var PreviewDrawingController = class {
           this.noteFlowPersistencePending = false;
         }
       }
+      const selectedNoteFlowChanged = layoutChanged && this.getSelectedStrokeIndexes().some((index) => normalizeNoteFlow(this.drawingData?.strokes?.[index]?.noteFlow));
+      if (selectedNoteFlowChanged && !this.draggingStroke && !this.resizingSelection) {
+        this.invalidateSelectionFrameSnapshot();
+        if (!this.selectionFrameAwaitingMarkdownSync) {
+          this.captureSelectionFrameSnapshot({ force: true });
+        }
+        this.requestRender(this.selectionHasDomStrokes() ? "interaction" : false);
+      }
       if (layoutChanged && !this.draggingStroke) {
         this.scheduleNoteFlowSettleResize();
       }
@@ -19878,15 +19920,29 @@ var PreviewDrawingController = class {
   noteFlowAppliedVerticalInsets(element) {
     const insets = { top: 0, bottom: 0 };
     const states = this.noteFlowStyledElements?.get(element);
-    if (!states) {
-      return insets;
-    }
-    for (const state of states.values()) {
+    for (const state of states?.values?.() || []) {
       const applied = Math.max(0, Number(state.applied) || 0);
       if (state.styleProperty === "padding-top") {
         insets.top += applied;
       } else if (state.styleProperty === "padding-bottom") {
         insets.bottom += applied;
+      }
+    }
+    for (const spacer of Array.from(element?.children || [])) {
+      if (!spacer.classList?.contains("notedraw-note-flow-block-spacer")) {
+        continue;
+      }
+      const spacerStates = this.noteFlowStyledElements?.get(spacer);
+      let applied = 0;
+      for (const state of spacerStates?.values?.() || []) {
+        if (state.styleProperty === "height") {
+          applied = Math.max(applied, Math.max(0, Number(state.applied) || 0));
+        }
+      }
+      if (spacer.dataset.noteDrawNoteFlowSide === "after") {
+        insets.bottom += applied;
+      } else {
+        insets.top += applied;
       }
     }
     return insets;
@@ -19907,24 +19963,32 @@ var PreviewDrawingController = class {
   }
   noteFlowEmptyOwnerClientRect(element) {
     const rect = element?.getBoundingClientRect?.();
-    if (!rect || rect.width <= 1 || rect.height > 0) {
+    if (!rect || rect.width <= 1) {
       return null;
     }
     const hasMedia = element.matches?.(".el-img,.internal-embed,.markdown-embed,.markdown-embed-content,figure,video,audio,iframe") || element.querySelector?.(".el-img,.internal-embed,.markdown-embed,.markdown-embed-content,figure,img,video,audio,iframe");
     if (!hasMedia) {
       return null;
     }
+    const localHeight = Number(element.offsetHeight) || 0;
+    const visualScale = localHeight > 0 ? rect.height / localHeight : this.readingZoomScale();
+    const flowInsets = this.noteFlowAppliedVerticalInsets(element);
+    const contentTop = rect.top + flowInsets.top * visualScale;
+    const contentBottom = rect.bottom - flowInsets.bottom * visualScale;
+    if (contentBottom - contentTop > 1) {
+      return null;
+    }
     const computed = window.getComputedStyle?.(element);
     const fontSize = Number.parseFloat(computed?.fontSize) || 16;
     const lineHeight = Number.parseFloat(computed?.lineHeight) || fontSize * 1.5;
-    const nextBlockTop = Array.from(element.parentElement?.children || []).map((sibling) => sibling === element ? null : sibling.getBoundingClientRect?.().top).filter((top) => Number.isFinite(top) && top > rect.top + 0.5).sort((a, b) => a - b)[0];
-    const availableHeight = Number.isFinite(nextBlockTop) ? nextBlockTop - rect.top : lineHeight;
+    const nextBlockTop = Array.from(element.parentElement?.children || []).map((sibling) => sibling === element ? null : sibling.getBoundingClientRect?.().top).filter((top) => Number.isFinite(top) && top > contentTop + 0.5).sort((a, b) => a - b)[0];
+    const availableHeight = Number.isFinite(nextBlockTop) ? nextBlockTop - contentTop : lineHeight;
     const height = Math.max(1, Math.min(96, lineHeight, availableHeight));
     return {
       left: rect.left,
       right: rect.right,
-      top: rect.top,
-      bottom: rect.top + height,
+      top: contentTop,
+      bottom: contentTop + height,
       width: rect.width,
       height
     };
