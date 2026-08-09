@@ -174,10 +174,7 @@ export function selectNoteFlowDropPlacementFromIndex(index, { dropY } = {}) {
       placementDistance = distance;
     }
   }
-  // The visually stable upper insertion zone maps to the rendered block's
-  // `after` boundary. Reject the opposite boundary and leave the element at
-  // its original position when that zone wins.
-  return placement?.side === "after" ? {
+  return placement ? {
     candidate: placement.candidate,
     side: placement.side,
     line: placement.line,
@@ -561,6 +558,22 @@ export function projectNoteFlowPointsToBox(points, sourceBounds, targetBox, { ca
   });
 }
 
+export function translateNoteFlowPointsToRow(points, sourceBounds, rowY, { canvasWidth, canvasHeight } = {}) {
+  const width = Math.max(1, finite(canvasWidth, 1));
+  const height = Math.max(1, finite(canvasHeight, 1));
+  const sourceTop = finite(sourceBounds?.minY, Number.NaN);
+  const targetTop = finite(rowY, Number.NaN);
+  if (!Number.isFinite(sourceTop) || !Number.isFinite(targetTop)) {
+    return Array.isArray(points) ? points.map((point) => ({ ...point })) : [];
+  }
+  const dy = targetTop - sourceTop;
+  return (Array.isArray(points) ? points : []).map((point) => ({
+    ...point,
+    x: clamp(finite(point?.x) * width, 0, width) / width,
+    y: clamp(finite(point?.y) * height + dy, 0, height) / height
+  }));
+}
+
 export function selectOwnedBlankSpaceCandidate(candidates, { clientX, clientY } = {}) {
   const x = finite(clientX, Number.NaN);
   const y = finite(clientY, Number.NaN);
@@ -782,7 +795,8 @@ export function reflowNoteFlowRectangles(items, { gap = 6 } = {}) {
     while (changed) {
       changed = false;
       for (const blocker of settledRows) {
-        const overlapsLane = row.items.some((item) => blocker.items.some((other) => horizontallyOverlaps(item, other)));
+        const sameFlow = row.rowKey && blocker.rowKey && row.rowKey !== blocker.rowKey;
+        const overlapsLane = sameFlow || row.items.some((item) => blocker.items.some((other) => horizontallyOverlaps(item, other)));
         if (!overlapsLane) {
           continue;
         }

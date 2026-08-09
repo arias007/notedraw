@@ -1746,7 +1746,7 @@ function selectNoteFlowDropPlacementFromIndex(index, { dropY } = {}) {
       placementDistance = distance;
     }
   }
-  return placement?.side === "after" ? {
+  return placement ? {
     candidate: placement.candidate,
     side: placement.side,
     line: placement.line,
@@ -2043,6 +2043,21 @@ function projectNoteFlowPointsToBox(points, sourceBounds, targetBox, { canvasWid
     };
   });
 }
+function translateNoteFlowPointsToRow(points, sourceBounds, rowY, { canvasWidth, canvasHeight } = {}) {
+  const width = Math.max(1, finite4(canvasWidth, 1));
+  const height = Math.max(1, finite4(canvasHeight, 1));
+  const sourceTop = finite4(sourceBounds?.minY, Number.NaN);
+  const targetTop = finite4(rowY, Number.NaN);
+  if (!Number.isFinite(sourceTop) || !Number.isFinite(targetTop)) {
+    return Array.isArray(points) ? points.map((point) => ({ ...point })) : [];
+  }
+  const dy = targetTop - sourceTop;
+  return (Array.isArray(points) ? points : []).map((point) => ({
+    ...point,
+    x: clamp5(finite4(point?.x) * width, 0, width) / width,
+    y: clamp5(finite4(point?.y) * height + dy, 0, height) / height
+  }));
+}
 function selectOwnedBlankSpaceCandidate(candidates, { clientX, clientY } = {}) {
   const x = finite4(clientX, Number.NaN);
   const y = finite4(clientY, Number.NaN);
@@ -2170,7 +2185,8 @@ function reflowNoteFlowRectangles(items, { gap = 6 } = {}) {
     while (changed) {
       changed = false;
       for (const blocker of settledRows) {
-        const overlapsLane = row.items.some((item) => blocker.items.some((other) => horizontallyOverlaps(item, other)));
+        const sameFlow = row.rowKey && blocker.rowKey && row.rowKey !== blocker.rowKey;
+        const overlapsLane = sameFlow || row.items.some((item) => blocker.items.some((other) => horizontallyOverlaps(item, other)));
         if (!overlapsLane) {
           continue;
         }
@@ -18485,7 +18501,10 @@ var PreviewDrawingController = class {
           targetBox.y + targetBox.height - target.targetBox.y
         ));
       }
-      const nextPoints = projectNoteFlowPointsToBox(stroke.points, bounds, targetBox, {
+      const nextPoints = this.noteFlowOperationPending ? translateNoteFlowPointsToRow(stroke.points, bounds, targetBox.y, {
+        canvasWidth,
+        canvasHeight
+      }) : projectNoteFlowPointsToBox(stroke.points, bounds, targetBox, {
         canvasWidth,
         canvasHeight
       });
@@ -18539,8 +18558,8 @@ var PreviewDrawingController = class {
         },
         relations: []
       });
-      const metrics = scaleElementMetrics(stroke.layout?.metrics, targetBox);
-      if (metrics.width) {
+      const metrics = this.noteFlowOperationPending ? null : scaleElementMetrics(stroke.layout?.metrics, targetBox);
+      if (metrics?.width) {
         stroke.width = metrics.width;
       }
       changed = true;

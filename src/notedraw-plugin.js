@@ -127,7 +127,8 @@ import {
   shouldPlaceStrokeBelowMarkdown,
   shouldRenderStrokeOnSurface,
   stabilizeNoteFlowPointProjection,
-  stabilizeNoteFlowBounds
+  stabilizeNoteFlowBounds,
+  translateNoteFlowPointsToRow
 } from "./note-flow-layout.mjs";
 import { pickRootPreview, shouldMountRootPreview, shouldRecoverEmptyRootPreview, shouldResetDormantRootPreview } from "./preview-lifecycle.mjs";
 import { buildSnappedConnectorPoints, connectorSnapThreshold } from "./connector-binding.mjs";
@@ -15507,10 +15508,15 @@ var PreviewDrawingController = class {
           targetBox.y + targetBox.height - target.targetBox.y
         ));
       }
-      const nextPoints = projectNoteFlowPointsToBox(stroke.points, bounds, targetBox, {
-        canvasWidth,
-        canvasHeight
-      });
+      const nextPoints = this.noteFlowOperationPending
+        ? translateNoteFlowPointsToRow(stroke.points, bounds, targetBox.y, {
+          canvasWidth,
+          canvasHeight
+        })
+        : projectNoteFlowPointsToBox(stroke.points, bounds, targetBox, {
+          canvasWidth,
+          canvasHeight
+        });
       const moved = nextPoints.some((point, index) => {
         const previous = stroke.points?.[index];
         return !previous
@@ -15567,8 +15573,8 @@ var PreviewDrawingController = class {
         },
         relations: []
       });
-      const metrics = scaleElementMetrics(stroke.layout?.metrics, targetBox);
-      if (metrics.width) {
+      const metrics = this.noteFlowOperationPending ? null : scaleElementMetrics(stroke.layout?.metrics, targetBox);
+      if (metrics?.width) {
         stroke.width = metrics.width;
       }
       changed = true;

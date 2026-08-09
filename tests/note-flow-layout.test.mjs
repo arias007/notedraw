@@ -29,7 +29,8 @@ import {
   shouldPlaceStrokeBelowMarkdown,
   shouldRenderStrokeOnSurface,
   stabilizeNoteFlowPointProjection,
-  stabilizeNoteFlowBounds
+  stabilizeNoteFlowBounds,
+  translateNoteFlowPointsToRow
 } from "../src/note-flow-layout.mjs";
 
 test("owned NoteFlow blank bands select the element that created the whitespace", () => {
@@ -285,25 +286,27 @@ test("note-flow starts at a precise rendered line crossed by the stroke", () => 
   assert.equal(placement?.line, 5);
 });
 
-test("dragged note-flow elements allow only the visually stable boundary", () => {
+test("dragged note-flow elements commit to the nearest visible blue-bar boundary", () => {
   const candidates = [
     { id: "first", top: 80, bottom: 112, start: 0, end: 0, order: 0 },
     { id: "second", top: 180, bottom: 214, start: 5, end: 6, order: 1 }
   ];
 
-  assert.equal(selectNoteFlowDropPlacement(candidates, { dropY: 87 }), null);
+  assert.equal(selectNoteFlowDropPlacement(candidates, { dropY: 87 })?.side, "before");
   assert.equal(selectNoteFlowDropPlacement(candidates, { dropY: 108 })?.side, "after");
-  assert.equal(selectNoteFlowDropPlacement(candidates, { dropY: 166 }), null);
+  assert.equal(selectNoteFlowDropPlacement(candidates, { dropY: 166 })?.side, "before");
   assert.equal(selectNoteFlowDropPlacement(candidates, { dropY: 260 })?.side, "after");
 });
 
-test("dragged note-flow elements prefer a precise rendered line boundary", () => {
+test("dragged note-flow elements prefer the nearest precise rendered line boundary", () => {
   const placement = selectNoteFlowDropPlacement([
     { id: "paragraph", top: 80, bottom: 260, start: 0, end: 7, order: 0 },
     { id: "line-5", top: 168, bottom: 194, start: 5, end: 5, order: 1, lineSpacer: {} }
   ], { dropY: 171 });
 
-  assert.equal(placement, null);
+  assert.equal(placement?.candidate.id, "line-5");
+  assert.equal(placement?.side, "before");
+  assert.equal(placement?.line, 5);
 });
 
 test("note-flow skips a broad paragraph above the stroke and starts at the next block", () => {
@@ -663,6 +666,24 @@ test("NoteFlow current geometry expands into its stable box instead of collapsin
   assert.deepEqual(repeated, projected);
 });
 
+test("NoteFlow drag settlement translates points without changing horizontal geometry", () => {
+  const source = [
+    { x: 0.2, y: 0.2, pressure: 0.4 },
+    { x: 0.45, y: 0.24, pressure: 0.6 },
+    { x: 0.7, y: 0.28, pressure: 0.8 }
+  ];
+  const translated = translateNoteFlowPointsToRow(source, {
+    minX: 80,
+    minY: 160,
+    maxX: 280,
+    maxY: 224
+  }, 360, { canvasWidth: 400, canvasHeight: 800 });
+
+  assert.deepEqual(translated.map((point) => point.x), source.map((point) => point.x));
+  assert.deepEqual(translated.map((point) => point.pressure), source.map((point) => point.pressure));
+  assert.deepEqual(translated.map((point) => Math.round(point.y * 800)), [360, 392, 424]);
+});
+
 test("inserted note elements are excluded only from the source editing surface", () => {
   const inserted = { noteFlow: { enabled: true } };
   assert.equal(shouldRenderStrokeOnSurface(inserted, "preview"), true);
@@ -740,6 +761,20 @@ test("NoteFlow recomputes from stable row bases instead of accumulating old disp
     { id: "next", minY: 186, maxY: 226 }
   ]);
   assert.deepEqual(replay.map(({ id, minY, maxY }) => ({ id, minY, maxY })), first.map(({ id, minY, maxY }) => ({ id, minY, maxY })));
+});
+
+test("NoteFlow row-key insertion reserves one exclusive row even when elements do not overlap horizontally", () => {
+  const placements = reflowNoteFlowRectangles([
+    { id: "left", index: 0, rowKey: "line-1\0after", minX: 0, maxX: 60, minY: 100, maxY: 150, baseMinY: 100, originalMinY: 100 },
+    { id: "right", index: 1, rowKey: "line-1\0after", minX: 240, maxX: 300, minY: 110, maxY: 130, baseMinY: 100, originalMinY: 110 },
+    { id: "next", index: 2, rowKey: "line-2\0after", minX: 0, maxX: 300, minY: 130, maxY: 170, baseMinY: 130, originalMinY: 130 }
+  ], { gap: 6 });
+
+  assert.deepEqual(placements.map(({ id, minY, maxY }) => ({ id, minY, maxY })), [
+    { id: "left", minY: 100, maxY: 150 },
+    { id: "right", minY: 100, maxY: 120 },
+    { id: "next", minY: 156, maxY: 196 }
+  ]);
 });
 
 test("a blue-bar row top cannot rise through an upper NoteFlow row", () => {
