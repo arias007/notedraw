@@ -1746,7 +1746,7 @@ function selectNoteFlowDropPlacementFromIndex(index, { dropY } = {}) {
       placementDistance = distance;
     }
   }
-  return placement?.side === "before" ? {
+  return placement?.side === "after" ? {
     candidate: placement.candidate,
     side: placement.side,
     line: placement.line,
