@@ -46,9 +46,15 @@ import {
   settleProjectedElementTransition,
   stabilizeProjectedElementBox
 } from "./element-layout.mjs";
-import { matchRenderedTextToMarkdown } from "./markdown-anchors.mjs";
+import {
+  createMarkdownSourceIndex,
+  findRenderedMarkdownSourceTargets,
+  matchRenderedTextToMarkdown,
+  resolveRenderedMarkdownSourceTarget
+} from "./markdown-anchors.mjs";
 import {
   clientPointInRect,
+  markdownClientRectsOverlap,
   markdownBlockPresentationMinHeight,
   normalizeMarkdownBlockMinHeight,
   normalizeMarkdownFloatBox,
@@ -5006,11 +5012,17 @@ var NoteDrawPlugin = class extends Plugin {
       return false;
     }
     const source = await this.app.vault.read(file);
-    const moving = movingStates.map((state) => resolveSourceEditTarget(
-      source,
-      state?.sourceInfo || getSourceInfo(state?.element),
-      state?.sourceText || state?.element?.innerText
-    )).filter(Boolean).sort((a, b) => a.start - b.start);
+    const lockedMovingTargets = Array.isArray(sourceState.lockedMovingTargets) ? sourceState.lockedMovingTargets : [];
+    const moving = movingStates.map((state, index) => {
+      const renderedText = state?.sourceText || state?.element?.innerText;
+      const locked = lockedMovingTargets[index];
+      if (locked) {
+        return resolveLockedTarget(source, locked, renderedText);
+      }
+      return sourceState.strictMoving
+        ? null
+        : resolveSourceEditTarget(source, state?.sourceInfo || getSourceInfo(state?.element), renderedText);
+    }).filter(Boolean).sort((a, b) => a.start - b.start);
     const targetText = sourceState.targetText || targetElement.innerText;
     const target = sourceState.lockedTarget
       ? resolveLockedTarget(source, sourceState.lockedTarget, targetText)
@@ -5021,7 +5033,7 @@ var NoteDrawPlugin = class extends Plugin {
           sourceState.targetInfo || getSourceInfo(targetElement),
           targetText
         );
-    if (!moving.length || !target || moving.some((item) => item.start === target.start || item.start < target.end && item.end > target.start)) {
+    if (moving.length !== movingStates.length || !target || moving.some((item) => item.start === target.start || item.start < target.end && item.end > target.start)) {
       return false;
     }
     const uniqueMoving = moving.filter((item, index) => index === 0 || item.start !== moving[index - 1].start);
@@ -5170,6 +5182,7 @@ var PreviewDrawingController = class {
     this.dragStrokePreserveSelection = false;
     this.dragMarkdownOriginalElements = null;
     this.dragMarkdownSourcePromise = null;
+    this.dragMarkdownSourceIndexPromise = null;
     this.dragNoteFlowOriginalBounds = null;
     this.dragMarkdownDropTarget = null;
     this.dragMarkdownDropSide = null;
@@ -6226,6 +6239,9 @@ var PreviewDrawingController = class {
       });
       this.resizeCanvas({ layout: false, measure: true });
       this.render();
+      if (this.markdownBlockRecords().length) {
+        this.scheduleMarkdownAnnotationRefresh({ layout: false, delay: 0, force: true });
+      }
       if (this.active && this.drawingsVisible) {
         this.prepareNoteFlowForEditing();
       }
@@ -6469,7 +6485,7 @@ var PreviewDrawingController = class {
     }
   }
   scheduleMarkdownAnnotationRefresh(options = {}) {
-    const editingLayout = this.active && (
+    const editingLayout = options.force === true || this.active && (
       this.toolMode === TOOL_EDIT_MD
       || this.noteFlowOperationPending
       || this.draggingStroke
@@ -6494,7 +6510,7 @@ var PreviewDrawingController = class {
       }
       this.applyReadingZoom();
       annotateVisibleMarkdownElements(this.plugin.app, this.previewEl, this.file.path);
-      annotateRenderedMarkdownLines(this.plugin.app, this.previewEl, this.file.path).catch((error) => {
+      annotateRenderedMarkdownLines(this.plugin.app, this.previewEl, this.file.path, { force: options.force === true }).catch((error) => {
         void error;
       }).finally(() => {
         if (this.destroyed || !this.previewEl?.isConnected) {
@@ -11002,6 +11018,7 @@ var PreviewDrawingController = class {
         span: block.span,
         widthScale: normalizeMarkdownBlockWidthScale(block.widthScale),
         floatBox: block.floatBox ? { ...block.floatBox } : null,
+        floatingExplicit: Boolean(block.floatingExplicit),
         canvasBounds: this.markdownElementCanvasBounds(element, { forSelection: true }),
         clientRect: {
           left: clientRect.left,
@@ -11014,6 +11031,16 @@ var PreviewDrawingController = class {
     this.dragMarkdownSourcePromise = this.dragMarkdownOriginalElements.size
       ? this.plugin.app.vault.read(this.file).catch(() => null)
       : null;
+    this.dragMarkdownSourceIndexPromise = this.dragMarkdownSourcePromise?.then((source) => {
+      return source ? createMarkdownSourceIndex(source) : null;
+    }) || null;
+    for (const state of this.dragMarkdownOriginalElements.values()) {
+      state.lockedTargetPromise = this.dragMarkdownSourcePromise && this.dragMarkdownSourceIndexPromise
+        ? Promise.all([this.dragMarkdownSourcePromise, this.dragMarkdownSourceIndexPromise]).then(([source, sourceIndex]) => {
+          return source ? resolveSourceDropTarget(source, state.sourceInfo, state.sourceText, sourceIndex) : null;
+        })
+        : Promise.resolve(null);
+    }
     const markdownClientRects = Array.from(this.dragMarkdownOriginalElements.values()).map((state) => state.clientRect);
     this.dragMarkdownOriginalClientBounds = markdownClientRects.length ? {
       left: Math.min(...markdownClientRects.map((rect) => rect.left)),
@@ -11286,8 +11313,13 @@ var PreviewDrawingController = class {
       : path
         ? this.plugin.app.vault.read(targetFile).catch(() => null)
         : Promise.resolve(null);
+    const sourceIndexPromise = path === normalizeVaultPath(this.file?.path) && this.dragMarkdownSourceIndexPromise
+      ? this.dragMarkdownSourceIndexPromise
+      : sourcePromise.then((source) => source ? createMarkdownSourceIndex(source) : null);
     const lockedTargetPromise = path && targetText
-      ? sourcePromise.then((source) => source ? resolveSourceDropTarget(source, targetInfo, targetText) : null)
+      ? Promise.all([sourcePromise, sourceIndexPromise]).then(([source, sourceIndex]) => {
+        return source ? resolveSourceDropTarget(source, targetInfo, targetText, sourceIndex) : null;
+      })
       : Promise.resolve(null);
     return {
       element: target,
@@ -11451,8 +11483,17 @@ var PreviewDrawingController = class {
       this.recordDrawingHistory(drawingHistoryBefore);
       return false;
     }
+    const lockedMovingTargets = await Promise.all(moving.map((state) => {
+      return Promise.resolve(state.lockedTargetPromise).catch(() => null);
+    }));
+    if (lockedMovingTargets.some((target) => !target)) {
+      this.recordDrawingHistory(drawingHistoryBefore);
+      return false;
+    }
     const targetState = {
       lockedTarget,
+      lockedMovingTargets,
+      strictMoving: true,
       strictTarget: true,
       targetText: drop.targetText
     };
@@ -11460,6 +11501,12 @@ var PreviewDrawingController = class {
       || this.ensureMarkdownBlockRecord(target);
     const originalTargetSpan = targetBlock?.span || 12;
     const originalTargetWidthScale = normalizeMarkdownBlockWidthScale(targetBlock?.widthScale);
+    const originalTargetLineStart = targetBlock?.lineStart;
+    const originalTargetLineEnd = targetBlock?.lineEnd;
+    if (targetBlock && Number.isFinite(lockedTarget.line)) {
+      targetBlock.lineStart = lockedTarget.line;
+      targetBlock.lineEnd = lockedTarget.endLine ?? lockedTarget.line;
+    }
     const row = drop.row || this.markdownDropRowMetrics(target, new Set(moving.map((state) => state.element)));
     const requestedHorizontal = drop.side === "left" || drop.side === "right";
     const horizontal = requestedHorizontal && row.canFit;
@@ -11472,6 +11519,7 @@ var PreviewDrawingController = class {
         state.block.span = span;
         state.block.widthScale = 1;
         state.block.floating = false;
+        state.block.floatingExplicit = false;
         state.block.floatBox = null;
       }
     } else {
@@ -11479,6 +11527,7 @@ var PreviewDrawingController = class {
         state.block.span = 12;
         state.block.widthScale = 1;
         state.block.floating = false;
+        state.block.floatingExplicit = false;
         state.block.floatBox = null;
       }
     }
@@ -11493,11 +11542,14 @@ var PreviewDrawingController = class {
       if (targetBlock) {
         targetBlock.span = originalTargetSpan;
         targetBlock.widthScale = originalTargetWidthScale;
+        targetBlock.lineStart = originalTargetLineStart;
+        targetBlock.lineEnd = originalTargetLineEnd;
       }
       for (const state of moving) {
         state.block.span = state.span;
         state.block.widthScale = state.widthScale;
         state.block.floating = Boolean(state.floatBox);
+        state.block.floatingExplicit = Boolean(state.floatingExplicit);
         state.block.floatBox = state.floatBox ? { ...state.floatBox } : null;
       }
       this.recordDrawingHistory(drawingHistoryBefore);
@@ -11515,10 +11567,9 @@ var PreviewDrawingController = class {
       // Mark the operation first so the annotation pass can perform one
       // deferred NoteFlow layout after Obsidian has rebuilt the Markdown DOM.
       this.scheduleNoteFlowLayout({ operation: true, defer: true });
-      this.scheduleMarkdownAnnotationRefresh({ layout: true, delay: 48 });
-    } else {
-      this.scheduleResize({ layout: false, measure: true });
     }
+    this.scheduleMarkdownAnnotationRefresh({ layout: hasNoteFlow, delay: 48, force: true });
+    this.scheduleResize({ layout: false, measure: true });
     this.requestRender(this.selectionHasDomStrokes() ? "interaction" : false);
     return true;
   }
@@ -11655,13 +11706,7 @@ var PreviewDrawingController = class {
       }));
     }
     for (const state of this.dragMarkdownOriginalElements?.values?.() || []) {
-      const currentBounds = this.markdownElementCanvasBounds(state.element);
-      const box = state.block.floatBox || currentBounds && normalizeMarkdownFloatBox({
-        x: currentBounds.minX / this.canvasWidth(),
-        y: currentBounds.minY / this.canvasHeight(),
-        width: (currentBounds.maxX - currentBounds.minX) / this.canvasWidth(),
-        height: (currentBounds.maxY - currentBounds.minY) / this.canvasHeight()
-      });
+      const box = state.block.floating && state.block.floatBox ? state.block.floatBox : null;
       if (!box) {
         continue;
       }
@@ -11906,8 +11951,10 @@ var PreviewDrawingController = class {
       const movedIndexes = Array.from(this.dragStrokeOriginalPoints?.keys() || []);
       const movedNoteFlowIndexes = this.draggedNoteFlowIndexes(movedIndexes);
       const affectsNoteFlow = movedNoteFlowIndexes.length > 0;
-      this.updateDraggedFloatingMarkdownBlocks(event, !markdownDrop);
-      if (!markdownDrop || markdownDrop.side === "left" || markdownDrop.side === "right") {
+      if (!markdownDrop) {
+        this.updateDraggedFloatingMarkdownBlocks(event, false);
+      }
+      if (movedIndexes.length && (!markdownDrop || markdownDrop.side === "left" || markdownDrop.side === "right")) {
         this.applyDraggedEdgeInsertion(event, movedIndexes);
       }
       this.updateDraggedElementGroupMembership(event, movedIndexes, Array.from(this.dragMarkdownOriginalElements?.values?.() || []).map((state) => state.block));
@@ -12025,6 +12072,7 @@ var PreviewDrawingController = class {
     }
     this.dragMarkdownOriginalElements = null;
     this.dragMarkdownSourcePromise = null;
+    this.dragMarkdownSourceIndexPromise = null;
     this.dragNoteFlowOriginalBounds = null;
     this.dragMarkdownOriginalClientBounds = null;
     this.dragMarkdownClientDeltaX = 0;
@@ -13998,6 +14046,7 @@ var PreviewDrawingController = class {
       queueCandidate(hintCandidates, `${path}\u0000${hint}`, element);
     }
     const used = /* @__PURE__ */ new Set();
+    let markdownMetadataChanged = false;
     const takeUnused = (values) => values?.find((element) => !used.has(element)) || null;
     const next = /* @__PURE__ */ new Map();
     for (const block of this.markdownBlockRecords()) {
@@ -14016,10 +14065,14 @@ var PreviewDrawingController = class {
       const meta = candidateMeta.get(element) || { info: getSourceInfo(element), hint: normalizeRenderedText(element.innerText || element.textContent || "").slice(0, 240) };
       const info = meta.info;
       if (Number.isFinite(info.lineStart)) {
+        markdownMetadataChanged = markdownMetadataChanged
+          || block.lineStart !== info.lineStart
+          || block.lineEnd !== (info.lineEnd ?? info.lineStart);
         block.lineStart = info.lineStart;
         block.lineEnd = info.lineEnd ?? info.lineStart;
       }
       if (meta.hint) {
+        markdownMetadataChanged = markdownMetadataChanged || block.textHint !== meta.hint;
         block.textHint = meta.hint;
       }
       element.dataset.noteDrawMarkdownBlockId = block.id;
@@ -14097,6 +14150,53 @@ var PreviewDrawingController = class {
     }
     for (const parent of nextParents) {
       parent?.addClass?.("notedraw-md-grid");
+    }
+    let repairedImplicitFloatingOverlap = false;
+    if (!this.draggingStroke) {
+      const records = new Map(this.markdownBlockRecords().map((block) => [block.id, block]));
+      const hasImplicitFloating = Array.from(records.values()).some((block) => block.floating && !block.floatingExplicit);
+      const visibleRects = hasImplicitFloating
+        ? new Map(Array.from(next.entries()).map(([id, element]) => [id, this.markdownElementVisibleClientRect(element)]))
+        : new Map();
+      for (const block of records.values()) {
+        if (!block.floating || block.floatingExplicit) {
+          continue;
+        }
+        const element = next.get(block.id);
+        const rect = visibleRects.get(block.id);
+        if (!rect) {
+          continue;
+        }
+        const overlapsFlow = Array.from(next.keys()).some((otherId) => {
+          if (otherId === block.id || records.get(otherId)?.floating) {
+            return false;
+          }
+          return markdownClientRectsOverlap(rect, visibleRects.get(otherId));
+        });
+        if (!overlapsFlow) {
+          continue;
+        }
+        block.floating = false;
+        block.floatingExplicit = false;
+        block.floatBox = null;
+        block.span = 12;
+        block.widthScale = 1;
+        element.removeClass("is-floating");
+        element.style.gridColumn = "span 12";
+        for (const property of ["--notedraw-md-float-x", "--notedraw-md-float-y", "--notedraw-md-float-width"]) {
+          element.style.removeProperty(property);
+        }
+        repairedImplicitFloatingOverlap = true;
+      }
+    }
+    markdownMetadataChanged = markdownMetadataChanged || repairedImplicitFloatingOverlap;
+    if (markdownMetadataChanged && !this.draggingStroke && this.file && this.drawingData) {
+      this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
+    }
+    if (repairedImplicitFloatingOverlap) {
+      this.readingLogicalSizerHeight = 0;
+      this.invalidateSelectionFrameSnapshot();
+      this.scheduleResize({ layout: false, measure: true });
     }
     if (this.selectionFrameAwaitingMarkdownSync?.committed) {
       this.selectionFrameAwaitingMarkdownSync = null;
@@ -16312,6 +16412,7 @@ var PreviewDrawingController = class {
     for (const block of blocks) {
       if (dock) {
         block.floating = false;
+        block.floatingExplicit = false;
         block.floatBox = null;
         block.widthScale = 1;
         continue;
@@ -16321,6 +16422,7 @@ var PreviewDrawingController = class {
         continue;
       }
       block.floating = true;
+      block.floatingExplicit = true;
       block.floatBox = normalizeMarkdownFloatBox({
         x: bounds.minX / this.canvasWidth(),
         y: bounds.minY / this.canvasHeight(),
@@ -17758,10 +17860,13 @@ function annotateVisibleMarkdownElements(app, root, fallbackPath) {
     }
   }
 }
-async function annotateRenderedMarkdownLines(app, root, fallbackPath) {
+async function annotateRenderedMarkdownLines(app, root, fallbackPath, options = {}) {
   annotateVisibleMarkdownElements(app, root, fallbackPath);
   const annotated = Array.from(root?.querySelectorAll?.(EDITABLE_SELECTOR) || []).filter((element) => element.dataset.noteDrawSourcePath);
   const elements = annotated.filter((element) => {
+    if (options.force === true) {
+      return true;
+    }
     const line = parseInteger(element.dataset.noteDrawLineStart);
     if (!Number.isFinite(line)) {
       return true;
@@ -17780,15 +17885,39 @@ async function annotateRenderedMarkdownLines(app, root, fallbackPath) {
       void error;
     }
   }
+  const usedTargets = /* @__PURE__ */ new Map();
+  const sourceIndexes = new Map(Array.from(sources.entries()).map(([path, source]) => {
+    return [path, createMarkdownSourceIndex(source)];
+  }));
   for (const element of elements) {
     const path = normalizeVaultPath(element.dataset.noteDrawSourcePath || fallbackPath);
     const source = sources.get(path);
+    const sourceIndex = sourceIndexes.get(path);
     if (typeof source !== "string") {
       continue;
     }
-    const match = matchRenderedTextToMarkdown(source, element.innerText || element.textContent || element._noteDrawSourceText || "");
+    const renderedText = element.innerText || element.textContent || element._noteDrawSourceText || "";
+    const sourceInfo = getSourceInfo(element);
+    const used = usedTargets.get(path) || /* @__PURE__ */ new Set();
+    const sourceTargets = findRenderedMarkdownSourceTargets(source, renderedText, sourceIndex);
+    let target = resolveRenderedMarkdownSourceTarget(source, renderedText, sourceInfo, sourceIndex);
+    if (!target || used.has(`${target.start}:${target.end}`)) {
+      target = sourceTargets.find((candidate) => {
+        return !used.has(`${candidate.start}:${candidate.end}`);
+      }) || null;
+    }
+    const fallback = target || sourceTargets.length ? null : matchRenderedTextToMarkdown(source, renderedText, sourceIndex);
+    const match = target ? {
+      lineStart: target.line,
+      lineEnd: target.endLine,
+      confidence: 1
+    } : fallback;
     if (!match) {
       continue;
+    }
+    if (target) {
+      used.add(`${target.start}:${target.end}`);
+      usedTargets.set(path, used);
     }
     element.dataset.noteDrawLineStart = String(match.lineStart);
     element.dataset.noteDrawLineEnd = String(match.lineEnd);
@@ -19349,6 +19478,7 @@ function normalizeMarkdownBlocks(value, file) {
       borderColor: isCssColor(block?.borderColor) ? block.borderColor : "",
       backgroundColor: isCssColor(block?.backgroundColor) ? block.backgroundColor : "",
       floating: Boolean(block?.floating && floatBox),
+      floatingExplicit: Boolean(block?.floatingExplicit),
       floatBox,
       locked: Boolean(block?.locked),
       groupId: typeof block?.groupId === "string" ? block.groupId : ""
@@ -19620,17 +19750,9 @@ function resolveSourceEditTarget(source, sourceInfo, originalText) {
   }
   return match ? createTextEditTarget(match, sourceInfo, originalText) : null;
 }
-function resolveSourceDropTarget(source, sourceInfo, originalText) {
-  const lineStart = sourceInfo?.lineStart;
-  const lineEnd = sourceInfo?.lineEnd ?? sourceInfo?.lineStart;
-  if (!Number.isFinite(lineStart) || !Number.isFinite(lineEnd)) {
-    return null;
-  }
-  const target = resolveSourceEditTarget(source, sourceInfo, originalText);
-  if (!target || !Number.isFinite(target.line) || !Number.isFinite(target.endLine)) {
-    return null;
-  }
-  return target.line <= lineEnd && target.endLine >= lineStart ? target : null;
+function resolveSourceDropTarget(source, sourceInfo, originalText, sourceIndex = null) {
+  const stableTarget = resolveRenderedMarkdownSourceTarget(source, originalText, sourceInfo, sourceIndex);
+  return stableTarget ? createTextEditTarget(stableTarget, sourceInfo, originalText) : null;
 }
 function resolveLockedTarget(source, target, baselineText) {
   if (!target) {

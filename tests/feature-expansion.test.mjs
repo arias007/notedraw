@@ -310,7 +310,10 @@ test("heading NoteFlow spacing moves the complete heading and restores after rea
   assert.match(prepareSource, /this\.restoreFrozenNoteFlowLayout\(\)/);
   assert.match(prepareSource, /window\.requestAnimationFrame\([\s\S]*prepareFrozenNoteFlowLayout\(\{ retry: false \}\)/);
   assert.doesNotMatch(prepareSource, /vault\.(?:create|modify|process|delete|rename)|writeDrawings|scheduleDrawingSave/);
-  assert.match(source, /matchRenderedTextToMarkdown\(source, element\.innerText \|\| element\.textContent \|\| element\._noteDrawSourceText \|\| ""\)/);
+  assert.match(source, /const renderedText = element\.innerText \|\| element\.textContent \|\| element\._noteDrawSourceText \|\| "";/);
+  assert.match(source, /findRenderedMarkdownSourceTargets\(source, renderedText, sourceIndex\)/);
+  assert.match(source, /resolveRenderedMarkdownSourceTarget\(source, renderedText, sourceInfo, sourceIndex\)/);
+  assert.match(source, /matchRenderedTextToMarkdown\(source, renderedText, sourceIndex\)/);
   assert.match(source, /this\.prepareFrozenNoteFlowLayout\(\)\.catch[\s\S]*this\.resizeCanvas\(\{ layout: false, measure: true \}\)/);
   assert.match(source, /noteFlowTargetElement\(anchor, record\.side\)/);
   assert.match(source, /for \(const spacer of this\.noteFlowBlockSpacers\?\.values\?\.\(\) \|\| \[\]\)/);

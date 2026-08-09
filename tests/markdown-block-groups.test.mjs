@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   clientPointInRect,
+  markdownClientRectsOverlap,
   markdownBlockPresentationMinHeight,
   normalizeMarkdownBlockMinHeight,
   normalizeMarkdownFloatBox,
@@ -32,6 +33,14 @@ test("horizontal drag intent reserves the left edge for magnetic line insertion"
   assert.equal(resolveDragDropHorizontalIntent({ ...target, clientX: 620 }), "vertical");
   assert.equal(resolveDragDropHorizontalIntent({ ...target, clientX: 640 }), "inline-right");
   assert.equal(resolveDragDropHorizontalIntent({ ...target, clientX: 640, horizontalRoom: false }), "vertical");
+});
+
+test("legacy floating overlap repair requires a real two-dimensional collision", () => {
+  const first = { left: 10, right: 210, top: 100, bottom: 150 };
+
+  assert.equal(markdownClientRectsOverlap(first, { left: 20, right: 200, top: 120, bottom: 170 }), true);
+  assert.equal(markdownClientRectsOverlap(first, { left: 20, right: 200, top: 151, bottom: 180 }), false);
+  assert.equal(markdownClientRectsOverlap(first, { left: 208, right: 240, top: 110, bottom: 140 }), false);
 });
 
 test("Markdown drag uses a left magnetic row drop and one move event chain", async () => {
@@ -359,7 +368,7 @@ test("Markdown drag keeps preview geometry stable and defers layout work until d
   assert.match(moveSource, /const previewDy = hasDraggedNoteFlow \? dy : snappedDy/);
   assert.match(moveSource, /queueMarkdownBlockDropTarget\(event\.clientX, event\.clientY\)/);
   assert.doesNotMatch(moveSource, /markdownNoteFlowCollisionShift|collisionDx|collisionDy|markdownDrag/);
-  assert.match(commitSource, /const hasNoteFlow = this\.hasNoteFlowElements\(\);[\s\S]*scheduleNoteFlowLayout\(\{ operation: true, defer: true \}\)[\s\S]*scheduleMarkdownAnnotationRefresh\(\{ layout: true, delay: 48 \}\)/);
+  assert.match(commitSource, /const hasNoteFlow = this\.hasNoteFlowElements\(\);[\s\S]*scheduleNoteFlowLayout\(\{ operation: true, defer: true \}\)[\s\S]*scheduleMarkdownAnnotationRefresh\(\{ layout: hasNoteFlow, delay: 48, force: true \}\)/);
   assert.match(commitSource, /this\.scheduleResize\(\{ layout: false, measure: true \}\)/);
   assert.doesNotMatch(commitSource, /scheduleLayoutRefresh\(\{ settle: false \}\)/);
   assert.match(commitSource, /requestRender\(this\.selectionHasDomStrokes\(\) \? "interaction" : false\)/);
@@ -421,12 +430,49 @@ test("Markdown editing and drop commits use the same visible target snapshot", a
   assert.match(source, /markdownElementContainsClientPoint\(element, clientPoint/);
   assert.match(source, /findStrokeAt\(point, clientPoint = null\)[\s\S]*clientPointInRect\(domRect, clientPoint\)/);
   assert.match(dropSource, /lockedTargetPromise[\s\S]*resolveSourceDropTarget/);
+  assert.match(dropSource, /lockedMovingTargets[\s\S]*strictMoving: true/);
   assert.match(dropSource, /drop\.row \|\| this\.markdownDropRowMetrics/);
   assert.match(dropSource, /lockedTarget,[\s\S]*strictTarget: true,[\s\S]*targetText: drop\.targetText/);
   assert.doesNotMatch(dropSource, /targetInfo: getSourceInfo\(target\)/);
   assert.match(editSource, /--notedraw-editing-flow-top/);
   assert.match(editSource, /--notedraw-editing-flow-bottom/);
   assert.match(styles, /\.notedraw-editing\.notedraw-editing-flow-clipped[\s\S]*clip-path: inset/);
+});
+
+test("a missed Markdown drop restores document flow instead of creating a floating overlap", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const finishSource = source.slice(source.indexOf("  finishSelectedStrokeDrag("), source.indexOf("  cancelSelectedStrokeDrag(", source.indexOf("  finishSelectedStrokeDrag(")));
+  const edgeSource = source.slice(source.indexOf("  applyDraggedEdgeInsertion("), source.indexOf("  selectRelatedElements(", source.indexOf("  applyDraggedEdgeInsertion(")));
+
+  assert.match(finishSource, /if \(!markdownDrop\) \{\s*this\.updateDraggedFloatingMarkdownBlocks\(event, false\);\s*\}/);
+  assert.doesNotMatch(finishSource, /updateDraggedFloatingMarkdownBlocks\(event, !markdownDrop\)/);
+  assert.match(edgeSource, /const box = state\.block\.floating && state\.block\.floatBox \? state\.block\.floatBox : null/);
+  assert.doesNotMatch(edgeSource, /currentBounds && normalizeMarkdownFloatBox/);
+});
+
+test("only legacy implicit floating collisions are docked automatically", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const presentationSource = source.slice(source.indexOf("  syncMarkdownBlockPresentation()"), source.indexOf("  selectMarkdownBlock(", source.indexOf("  syncMarkdownBlockPresentation()")));
+  const floatingSource = source.slice(source.indexOf("  toggleSelectedMarkdownFloating()"), source.indexOf("  getSelectedStrokeMaxWidth(", source.indexOf("  toggleSelectedMarkdownFloating()")));
+
+  assert.match(source, /floatingExplicit: Boolean\(block\?\.floatingExplicit\)/);
+  assert.match(floatingSource, /block\.floating = true;\s*block\.floatingExplicit = true;/);
+  assert.match(presentationSource, /if \(!block\.floating \|\| block\.floatingExplicit\) \{\s*continue;/);
+  assert.match(presentationSource, /const visibleRects = hasImplicitFloating[\s\S]*this\.markdownElementVisibleClientRect\(element\)/);
+  assert.match(presentationSource, /markdownClientRectsOverlap\(rect, visibleRects\.get\(otherId\)\)/);
+  assert.match(presentationSource, /block\.floating = false;\s*block\.floatingExplicit = false;\s*block\.floatBox = null;/);
+});
+
+test("Markdown drop settlement remaps every rendered block and persists repaired source lines", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const annotationSource = source.slice(source.indexOf("  scheduleMarkdownAnnotationRefresh("), source.indexOf("  updateFloatingControlsPosition(", source.indexOf("  scheduleMarkdownAnnotationRefresh(")));
+  const presentationSource = source.slice(source.indexOf("  syncMarkdownBlockPresentation()"), source.indexOf("  selectMarkdownBlock(", source.indexOf("  syncMarkdownBlockPresentation()")));
+
+  assert.match(annotationSource, /options\.force === true/);
+  assert.match(annotationSource, /annotateRenderedMarkdownLines\([\s\S]*\{ force: options\.force === true \}/);
+  assert.match(source, /const sourceIndexes = new Map\([\s\S]*createMarkdownSourceIndex\(source\)/);
+  assert.match(source, /resolveSourceDropTarget\(source, state\.sourceInfo, state\.sourceText, sourceIndex\)/);
+  assert.match(presentationSource, /markdownMetadataChanged[\s\S]*block\.lineStart !== info\.lineStart[\s\S]*scheduleDrawingSave\(this\.file, this\.drawingData, \{ userOperation: true \}\)/);
 });
 
 test("Markdown selection and NoteFlow layout use concrete blocks instead of embed parents or visual lines", async () => {

@@ -78,6 +78,26 @@ export function clientPointInRect(rect, clientPoint = {}) {
     && y <= rect.bottom;
 }
 
+export function markdownClientRectsOverlap(first, second, minimumOverlap = 4) {
+  const values = [
+    first?.left,
+    first?.right,
+    first?.top,
+    first?.bottom,
+    second?.left,
+    second?.right,
+    second?.top,
+    second?.bottom
+  ].map(Number);
+  if (!values.every(Number.isFinite)) {
+    return false;
+  }
+  const overlapX = Math.min(values[1], values[5]) - Math.max(values[0], values[4]);
+  const overlapY = Math.min(values[3], values[7]) - Math.max(values[2], values[6]);
+  const threshold = Math.max(0, Number(minimumOverlap) || 0);
+  return overlapX > threshold && overlapY > threshold;
+}
+
 export function resolveDragDropHorizontalIntent({
   clientX,
   targetLeft,
