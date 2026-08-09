@@ -174,7 +174,10 @@ export function selectNoteFlowDropPlacementFromIndex(index, { dropY } = {}) {
       placementDistance = distance;
     }
   }
-  return placement ? {
+  // Row insertion is deliberately top-only. Bottom/after drops previously
+  // produced unstable clearance and ambiguous ownership, so fail closed and
+  // leave the element at its original position when that boundary wins.
+  return placement?.side === "before" ? {
     candidate: placement.candidate,
     side: placement.side,
     line: placement.line,

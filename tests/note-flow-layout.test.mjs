@@ -283,7 +283,7 @@ test("note-flow starts at a precise rendered line crossed by the stroke", () => 
   assert.equal(placement?.line, 5);
 });
 
-test("dragged note-flow elements choose the nearest Markdown block boundary", () => {
+test("dragged note-flow elements allow only upper Markdown block boundaries", () => {
   const candidates = [
     { id: "first", top: 80, bottom: 112, start: 0, end: 0, order: 0 },
     { id: "second", top: 180, bottom: 214, start: 5, end: 6, order: 1 }
@@ -295,10 +295,10 @@ test("dragged note-flow elements choose the nearest Markdown block boundary", ()
     line: 0,
     boundary: 80
   });
-  assert.equal(selectNoteFlowDropPlacement(candidates, { dropY: 108 })?.side, "after");
+  assert.equal(selectNoteFlowDropPlacement(candidates, { dropY: 108 }), null);
   assert.equal(selectNoteFlowDropPlacement(candidates, { dropY: 166 })?.candidate.id, "second");
   assert.equal(selectNoteFlowDropPlacement(candidates, { dropY: 166 })?.side, "before");
-  assert.equal(selectNoteFlowDropPlacement(candidates, { dropY: 260 })?.side, "after");
+  assert.equal(selectNoteFlowDropPlacement(candidates, { dropY: 260 }), null);
 });
 
 test("dragged note-flow elements prefer a precise rendered line boundary", () => {
