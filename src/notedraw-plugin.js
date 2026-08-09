@@ -111,7 +111,7 @@ import {
   noteFlowNeedsActivationRepair,
   preserveAbsoluteNoteFlowPoints,
   projectNoteFlowDocumentPoint,
-  reflowNoteFlowIntervals,
+  reflowNoteFlowRectangles,
   selectOwnedBlankSpaceCandidate,
   selectNoteFlowAvoidanceCandidate,
   createNoteFlowDropIndex,
@@ -402,6 +402,9 @@ var I18N = {
     pasteElement: "Paste",
     insertIntoNote: "Insert into note flow",
     removeFromNote: "Remove from note flow",
+    convertToNoteFlow: "Convert to NoteFlow",
+    convertToFloating: "Convert to floating",
+    toggleFlowMode: "Switch NoteFlow / floating",
     copiedElements: "Copied {count} element(s).",
     copiedElementLink: "Copied NoteDraw element link.",
     elementLinkLabel: "NoteDraw element",
@@ -570,6 +573,9 @@ var I18N = {
     pasteElement: "粘贴元素",
     insertIntoNote: "插入笔记",
     removeFromNote: "取消插入笔记",
+    convertToNoteFlow: "转为 NoteFlow 元素",
+    convertToFloating: "转为悬浮元素",
+    toggleFlowMode: "切换 NoteFlow / 悬浮",
     copiedElements: "已复制 {count} 个元素。",
     copiedElementLink: "已复制 NoteDraw 元素链接。",
     elementLinkLabel: "NoteDraw 元素",
@@ -590,6 +596,9 @@ var I18N = {
     selectMarkdownOnly: "只選 MD 和插入元素",
     selectAllElements: "選擇全部重疊元素",
     editMarkdownTool: "編輯 MD",
+    convertToNoteFlow: "轉為 NoteFlow 元素",
+    convertToFloating: "轉為浮動元素",
+    toggleFlowMode: "切換 NoteFlow / 浮動",
     pen: "筆",
     watercolorBrush: "水彩筆",
     floatingText: "浮動文字",
@@ -5365,6 +5374,7 @@ var PreviewDrawingController = class {
     this.onCanvasContextMenu = this.onCanvasContextMenu.bind(this);
     this.onPreviewContextMenu = this.onPreviewContextMenu.bind(this);
     this.onCanvasDoubleClick = this.onCanvasDoubleClick.bind(this);
+    this.onPreviewDoubleClick = this.onPreviewDoubleClick.bind(this);
     this.onWheel = this.onWheel.bind(this);
     this.onResize = this.onResize.bind(this);
     this.onScroll = this.onScroll.bind(this);
@@ -5451,6 +5461,15 @@ var PreviewDrawingController = class {
     });
     setIcon(this.selectButton, "mouse-pointer-2");
     this.selectButton.addEventListener("click", () => this.toggleSelectMode());
+    this.editMarkdownButton = this.surfaceType === "source"
+      ? this.toolbar.createEl("button", {
+        attr: { type: "button", title: this.plugin.t("editMarkdownTool") }
+      })
+      : null;
+    if (this.editMarkdownButton) {
+      setIcon(this.editMarkdownButton, "file-pen-line");
+      this.editMarkdownButton.addEventListener("click", () => this.setEditMarkdownMode());
+    }
     this.penButton = this.toolbar.createEl("button", {
       attr: { type: "button", title: this.plugin.t("pen") }
     });
@@ -5613,6 +5632,7 @@ var PreviewDrawingController = class {
     this.canvas.addEventListener("contextmenu", this.onCanvasContextMenu);
     this.canvas.addEventListener("wheel", this.onWheel, { passive: false });
     this.previewEl.addEventListener("contextmenu", this.onPreviewContextMenu, true);
+    this.previewEl.addEventListener("dblclick", this.onPreviewDoubleClick, true);
     if (this.usesVisualReadingZoom()) {
       this.previewEl.addEventListener("pointerdown", this.onReadingTouchPointerDown, true);
       this.previewEl.addEventListener("pointermove", this.onReadingTouchPointerMove, true);
@@ -5745,6 +5765,7 @@ var PreviewDrawingController = class {
   refreshLocalizedLabels() {
     this.plugin.setAccessibleLabel(this.button, this.surfaceType === "webview" ? "editWebviewDraw" : this.drawingsVisible ? "editTextDraw" : "editTextDrawHidden");
     this.plugin.setAccessibleLabel(this.selectButton, "selectDrawings");
+    this.plugin.setAccessibleLabel(this.editMarkdownButton, "editMarkdownTool");
     this.plugin.setAccessibleLabel(this.penButton, "pen");
     this.plugin.setAccessibleLabel(this.watercolorButton, "watercolorBrush");
     this.plugin.setAccessibleLabel(this.textButton, "floatingText");
@@ -6018,6 +6039,7 @@ var PreviewDrawingController = class {
     this.canvas?.removeEventListener("contextmenu", this.onCanvasContextMenu);
     this.canvas?.removeEventListener("wheel", this.onWheel);
     this.previewEl?.removeEventListener("contextmenu", this.onPreviewContextMenu, true);
+    this.previewEl?.removeEventListener("dblclick", this.onPreviewDoubleClick, true);
     this.previewEl?.removeEventListener("pointerdown", this.onReadingTouchPointerDown, true);
     this.previewEl?.removeEventListener("pointermove", this.onReadingTouchPointerMove, true);
     this.previewEl?.removeEventListener("pointerup", this.onReadingTouchPointerFinish, true);
@@ -6903,6 +6925,7 @@ var PreviewDrawingController = class {
     this.textButton?.classList.toggle("is-active", this.toolMode === TOOL_TEXT || this.textPanelOpen);
     this.textButton?.toggleAttribute("hidden", false);
     this.selectButton?.classList.toggle("is-active", this.toolMode === TOOL_SELECT);
+    this.editMarkdownButton?.classList.toggle("is-active", this.toolMode === TOOL_EDIT_MD);
     const selectedElements = this.hasHybridSelection();
     const paletteDisabled = this.toolMode === TOOL_EDIT_MD || this.toolMode === TOOL_SELECT && !selectedElements;
     this.paletteButton?.toggleAttribute("disabled", paletteDisabled);
@@ -6988,14 +7011,13 @@ var PreviewDrawingController = class {
       { icon: "copy", key: "copyElement", action: () => this.copySelectedElements() },
       { icon: "clipboard-paste", key: "pasteElement", action: () => this.pasteCopiedElements() },
       { icon: "external-link", key: "openSourceNote", action: () => void this.openSelectedMindMapSource() },
-      { icon: "wrap-text", key: "insertIntoNote", action: () => this.toggleSelectedNoteFlow() },
+      { icon: "repeat-2", key: "toggleFlowMode", action: () => this.toggleSelectedFlowMode() },
       { icon: "bring-to-front", key: "bringToFront", action: () => this.reorderSelectedStrokes("front") },
       { icon: "move-up", key: "moveForward", action: () => this.reorderSelectedStrokes("forward") },
       { icon: "move-down", key: "moveBackward", action: () => this.reorderSelectedStrokes("backward") },
       { icon: "send-to-back", key: "sendToBack", action: () => this.reorderSelectedStrokes("back") },
       { icon: "group", key: "selectRelatedElements", action: () => this.selectRelatedElements() },
       { icon: "box-select", key: "boxElements", action: () => this.toggleSelectedElementBox() },
-      { icon: "pin", key: "floatMarkdownBlock", action: () => this.toggleSelectedMarkdownFloating() },
       { icon: "lock", key: "lockElement", action: () => this.toggleSelectedStrokeLock() }
     ];
     for (const item of actions) {
@@ -7049,15 +7071,18 @@ var PreviewDrawingController = class {
       setIcon(filterButton, nextMode === SELECTION_FILTER_FLOATING ? "layers-2" : nextMode === SELECTION_FILTER_MARKDOWN ? "file-text" : "layers-3");
       filterButton.toggleAttribute("hidden", !filterContext.snapshot.hasMixedSelection);
     }
-    const noteFlowIndexes = this.getSelectedStrokeIndexes().filter((index) => !isConnectorStroke(this.drawingData.strokes[index]));
-    const noteFlowEnabled = noteFlowIndexes.length > 0 && noteFlowIndexes.every((index) => this.drawingData.strokes[index]?.noteFlow?.enabled);
-    const noteFlowButton = this.selectionMenu.querySelector('[data-note-draw-title-key="insertIntoNote"], [data-note-draw-title-key="removeFromNote"]');
-    if (noteFlowButton) {
-      const key = noteFlowEnabled ? "removeFromNote" : "insertIntoNote";
-      noteFlowButton.dataset.noteDrawTitleKey = key;
-      this.plugin.setAccessibleLabel(noteFlowButton, key);
-      setIcon(noteFlowButton, noteFlowEnabled ? "unfold-vertical" : "wrap-text");
-      noteFlowButton.toggleAttribute("hidden", !this.supportsNoteFlow());
+    const flowSelection = this.selectedFlowModeElements();
+    const flowModeButton = this.selectionMenu.querySelector('[data-note-draw-title-key="toggleFlowMode"], [data-note-draw-title-key="convertToNoteFlow"], [data-note-draw-title-key="convertToFloating"]');
+    if (flowModeButton) {
+      const key = flowSelection.noteFlowCount === flowSelection.total
+        ? "convertToFloating"
+        : flowSelection.floatingCount === flowSelection.total
+          ? "convertToNoteFlow"
+          : "toggleFlowMode";
+      flowModeButton.dataset.noteDrawTitleKey = key;
+      this.plugin.setAccessibleLabel(flowModeButton, key);
+      setIcon(flowModeButton, key === "convertToFloating" ? "pin" : key === "convertToNoteFlow" ? "wrap-text" : "repeat-2");
+      flowModeButton.toggleAttribute("hidden", !this.supportsNoteFlow() || flowSelection.total === 0);
     }
     const boxed = this.selectedWholeElementGroups().some((group) => group.boxed);
     const boxButton = this.selectionMenu.querySelector('[data-note-draw-title-key="boxElements"], [data-note-draw-title-key="unboxElements"]');
@@ -7067,14 +7092,23 @@ var PreviewDrawingController = class {
       this.plugin.setAccessibleLabel(boxButton, key);
       setIcon(boxButton, boxed ? "package-open" : "box-select");
     }
-    const markdownBlocks = this.getSelectedMarkdownBlocks();
-    const floating = markdownBlocks.length > 0 && markdownBlocks.every((block) => block.floating);
-    const floatButton = this.selectionMenu.querySelector('[data-note-draw-title-key="floatMarkdownBlock"]');
-    if (floatButton) {
-      this.plugin.setAccessibleLabel(floatButton, "floatMarkdownBlock");
-      setIcon(floatButton, "pin");
-      floatButton.toggleAttribute("hidden", !markdownBlocks.length || floating);
-    }
+  }
+  selectedFlowModeElements() {
+    const strokes = this.getSelectedStrokeIndexes().filter((index) => {
+      const stroke = this.drawingData?.strokes?.[index];
+      return stroke && !stroke.locked && !isConnectorStroke(stroke);
+    });
+    const markdownBlocks = this.getSelectedMarkdownBlocks().filter((block) => !block.locked);
+    const noteFlowCount = strokes.filter((index) => Boolean(normalizeNoteFlow(this.drawingData.strokes[index]?.noteFlow))).length
+      + markdownBlocks.filter((block) => !block.floating).length;
+    const total = strokes.length + markdownBlocks.length;
+    return {
+      strokes,
+      markdownBlocks,
+      noteFlowCount,
+      floatingCount: total - noteFlowCount,
+      total
+    };
   }
   selectionFilterContext() {
     const strokeIndexes = this.getSelectedStrokeIndexes();
@@ -9356,6 +9390,15 @@ var PreviewDrawingController = class {
       event.preventDefault();
       event.stopPropagation();
     }
+  }
+  onPreviewDoubleClick(event) {
+    if (!this.active || this.surfaceType !== "preview" || event.button !== 0) {
+      return;
+    }
+    this.onCanvasDoubleClick(event);
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation?.();
   }
   rememberTextTap(index, point, event) {
     this.lastTextTap = {
@@ -11970,16 +12013,26 @@ var PreviewDrawingController = class {
         : null;
       if (resolvedDropPlacement) {
         this.snapDraggedSelectionToNoteFlowPlacement(resolvedDropPlacement, movedIndexes);
+      } else if (affectsNoteFlow) {
+        for (const index of movedNoteFlowIndexes) {
+          const originalPoints = this.dragStrokeOriginalPoints?.get(index);
+          if (originalPoints?.length) {
+            this.drawingData.strokes[index].points = originalPoints.map((point) => ({ ...point }));
+          }
+        }
       }
-      const flowedIndexes = affectsNoteFlow ? this.reflowNoteFlowElementsAfterDrag(movedIndexes) : [];
+      const flowedIndexes = resolvedDropPlacement ? this.reflowNoteFlowElementsAfterDrag(movedIndexes) : [];
       const affectedIndexes = Array.from(new Set([...movedIndexes, ...flowedIndexes]));
       const droppedNoteFlowIndexes = new Set(this.draggedNoteFlowIndexes(movedIndexes));
       for (const index of affectedIndexes) {
         const stroke = this.drawingData.strokes[index];
         if (stroke?.noteFlow?.enabled) {
-          stroke.noteFlow = this.captureNoteFlowAnchor(stroke, {
-            placement: droppedNoteFlowIndexes.has(index) ? resolvedDropPlacement : null
-          });
+          const rejectedDrop = droppedNoteFlowIndexes.has(index) && !resolvedDropPlacement;
+          stroke.noteFlow = rejectedDrop
+            ? { ...this.dragStrokeOriginalNoteFlows.get(index) }
+            : this.captureNoteFlowAnchor(stroke, {
+              placement: droppedNoteFlowIndexes.has(index) ? resolvedDropPlacement : null
+            });
         }
       }
       this.captureResponsiveAnchorsForIndexes(affectedIndexes);
@@ -14627,6 +14680,33 @@ var PreviewDrawingController = class {
       return null;
     }
     const laneRect = geometry?.laneRect || targetRect;
+    const draggedBounds = this.getStrokeIndexesBounds(this.draggedNoteFlowIndexes());
+    const canvasRect = this.noteFlowCanvasRect();
+    const draggedClientWidth = draggedBounds && canvasRect?.width > 1
+      ? (draggedBounds.maxX - draggedBounds.minX) * canvasRect.width / Math.max(1, this.canvasWidth())
+      : Number.POSITIVE_INFINITY;
+    const draggedClientHeight = draggedBounds && canvasRect?.height > 1
+      ? (draggedBounds.maxY - draggedBounds.minY) * canvasRect.height / Math.max(1, this.canvasRenderHeight)
+      : targetRect.height;
+    const proposedInlineRect = {
+      left: targetRect.right + 10,
+      right: targetRect.right + 10 + draggedClientWidth,
+      top: targetRect.top,
+      bottom: targetRect.top + draggedClientHeight
+    };
+    const horizontalRoom = Number.isFinite(draggedClientWidth)
+      && proposedInlineRect.right <= laneRect.right + 0.5
+      && !(geometry?.markdownCandidates || []).some((entry) => {
+        const element = entry?.element;
+        const sameTarget = element === target || element?.contains?.(target) || target?.contains?.(element);
+        if (sameTarget) {
+          return false;
+        }
+        const rect = entry?.rect;
+        return rect
+          && Math.min(proposedInlineRect.right, rect.right) - Math.max(proposedInlineRect.left, rect.left) > 2
+          && Math.min(proposedInlineRect.bottom, rect.bottom) - Math.max(proposedInlineRect.top, rect.top) > 2;
+      });
     const intent = resolveDragDropHorizontalIntent({
       clientX,
       targetLeft: targetRect.left,
@@ -14634,7 +14714,7 @@ var PreviewDrawingController = class {
       laneLeft: laneRect.left,
       laneRight: laneRect.right,
       draggedLeft: this.draggedSelectionClientLeft(),
-      horizontalRoom: true
+      horizontalRoom
     });
     const horizontalSide = intent === "inline-right" ? "right" : null;
     const leftSnap = intent === "line-start";
@@ -14681,7 +14761,7 @@ var PreviewDrawingController = class {
       horizontalSide,
       leftSnap,
       boundary: Number(placement.boundary),
-      candidate: placement.candidate
+      candidate: { ...placement.candidate }
     };
     return this.dragNoteFlowPlacement;
   }
@@ -14692,27 +14772,18 @@ var PreviewDrawingController = class {
     if (!Number.isFinite(line) || !["before", "after"].includes(side)) {
       return null;
     }
-    const exactCandidate = placement?.candidate;
-    let candidate = exactCandidate && normalizeVaultPath(exactCandidate.path || this.file?.path || "") === path
-      && Number.isFinite(Number(exactCandidate.start))
-      && Number.isFinite(Number(exactCandidate.end))
-      && line >= Number(exactCandidate.start)
-      && line <= Number(exactCandidate.end)
-      ? exactCandidate
+    const candidate = placement?.candidate;
+    const exactCandidate = candidate
+      && (candidate.sourceElement || candidate.element)?.isConnected
+      && normalizeVaultPath(candidate.path || this.file?.path || "") === path
+      && Number.isFinite(Number(candidate.start))
+      && Number.isFinite(Number(candidate.end))
+      && line >= Number(candidate.start)
+      && line <= Number(candidate.end)
+      ? candidate
       : null;
-    if (!candidate) {
-      const candidates = this.dragDropGeometrySnapshot()?.noteFlowCandidates || this.noteFlowCandidates();
-      const matching = candidates.filter((item) => item.path === path && line >= item.start && line <= item.end);
-      const bounds = this.getStrokeIndexesBounds(this.draggedNoteFlowIndexes(indexes));
-      const canvasRect = this.noteFlowCanvasRect();
-      const scaleY = canvasRect?.height > 0 ? canvasRect.height / Math.max(1, this.canvasRenderHeight) : 1;
-      const strokeTop = bounds && canvasRect
-        ? canvasRect.top + (bounds.minY - this.canvasWindowTop) * scaleY
-        : Number.NaN;
-      candidate = selectStoredNoteFlowAnchorCandidate(matching, { side, strokeTop });
-    }
-    return candidate ? {
-      candidate,
+    return exactCandidate ? {
+      candidate: exactCandidate,
       path,
       line,
       side,
@@ -14793,6 +14864,9 @@ var PreviewDrawingController = class {
         positionPath: this.file?.path || "",
         positionLine: null,
         positionVersion: 0,
+        placementMode: "row",
+        inlineSide: null,
+        leftSnap: false,
         gap: 12
       };
     }
@@ -14818,6 +14892,13 @@ var PreviewDrawingController = class {
     });
     const positionAnchor = position?.candidate;
     const candidatesReady = candidates.length > 0;
+    const placementMode = options.placement?.horizontalSide
+      ? "inline"
+      : options.placement?.candidate
+        ? "row"
+        : preservePlacement
+          ? previous?.placementMode || "row"
+          : previous?.placementMode || "row";
     return {
       enabled: true,
       path: anchor?.path || previous?.path || this.file?.path || "",
@@ -14829,31 +14910,63 @@ var PreviewDrawingController = class {
         ? position.line
         : candidatesReady ? null : previous?.positionLine ?? null,
       positionVersion: 1,
+      placementMode,
+      inlineSide: placementMode === "inline" ? options.placement?.horizontalSide || previous?.inlineSide || "right" : null,
+      leftSnap: placementMode === "row" ? options.placement?.leftSnap === true || !options.placement && previous?.leftSnap === true : false,
       gap: clamp(Number(stroke?.noteFlow?.gap) || 12, 4, 64)
     };
   }
-  toggleSelectedNoteFlow() {
-    const indexes = this.getSelectedStrokeIndexes().filter((index) => !this.drawingData.strokes[index]?.locked && !isConnectorStroke(this.drawingData.strokes[index]));
-    if (!indexes.length || !this.supportsNoteFlow()) {
+  toggleSelectedFlowMode() {
+    const selection = this.selectedFlowModeElements();
+    if (!selection.total || !this.supportsNoteFlow()) {
       return;
     }
     const historyBefore = this.captureDrawingHistorySnapshot();
-    const disable = indexes.every((index) => this.drawingData.strokes[index]?.noteFlow?.enabled);
+    const markdownBounds = new Map(selection.markdownBlocks.map((block) => [
+      block.id,
+      this.markdownElementCanvasBounds(this.markdownBlockElement(block), { forSelection: true })
+    ]));
     this.resetNoteFlowSettle();
     this.clearNoteFlowLayout();
     this.noteFlowAvoidanceAnchors.clear();
-    for (const index of indexes) {
+    for (const index of selection.strokes) {
       const stroke = this.drawingData.strokes[index];
-      stroke.noteFlow = disable ? null : this.captureNoteFlowAnchor(stroke);
-      stroke.belowMarkdown = !disable;
+      if (normalizeNoteFlow(stroke.noteFlow)) {
+        stroke.noteFlow = null;
+        stroke.belowMarkdown = false;
+      } else {
+        stroke.noteFlow = this.captureNoteFlowAnchor(stroke);
+        stroke.belowMarkdown = true;
+      }
     }
-    this.captureResponsiveAnchorsForIndexes(indexes);
+    for (const block of selection.markdownBlocks) {
+      if (block.floating) {
+        block.floating = false;
+        block.floatingExplicit = false;
+        block.floatBox = null;
+        continue;
+      }
+      const bounds = markdownBounds.get(block.id);
+      if (!bounds) {
+        continue;
+      }
+      block.floating = true;
+      block.floatingExplicit = true;
+      block.floatBox = normalizeMarkdownFloatBox({
+        x: bounds.minX / this.canvasWidth(),
+        y: bounds.minY / this.canvasHeight(),
+        width: (bounds.maxX - bounds.minX) / this.canvasWidth(),
+        height: (bounds.maxY - bounds.minY) / this.canvasHeight()
+      });
+    }
+    this.captureResponsiveAnchorsForIndexes(selection.strokes);
     this.hideSelectionMenu();
     this.redoStack = [];
     this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
     this.recordDrawingHistory(historyBefore);
     this.scheduleNoteFlowLayout({ operation: true });
     this.scheduleLayoutRefresh({ settle: false });
+    this.syncSelectionMenuButtons();
     this.render();
   }
   noteFlowLayoutElement(element) {
@@ -15794,7 +15907,7 @@ var PreviewDrawingController = class {
     }
     const moved = new Set((movedIndexes || []).filter((index) => {
       const stroke = this.drawingData?.strokes?.[index];
-      return normalizeNoteFlow(stroke?.noteFlow) && isTextLikeStroke(stroke);
+      return normalizeNoteFlow(stroke?.noteFlow) && !isConnectorStroke(stroke);
     }));
     if (!moved.size) {
       return [];
@@ -15804,31 +15917,27 @@ var PreviewDrawingController = class {
     const items = [];
     for (const [index, stroke] of (this.drawingData?.strokes || []).entries()) {
       const noteFlow = normalizeNoteFlow(stroke?.noteFlow);
-      if (!noteFlow || !isTextLikeStroke(stroke) || isConnectorStroke(stroke)) {
+      if (!noteFlow || isConnectorStroke(stroke)) {
         continue;
       }
       const bounds = getStrokeBounds(stroke, canvasWidth, canvasHeight);
       if (!bounds) {
         continue;
       }
-      const originalPoints = this.dragStrokeOriginalPoints.get(index);
-      const originalBounds = originalPoints
-        ? getStrokeBounds({ ...stroke, points: originalPoints }, canvasWidth, canvasHeight)
-        : null;
       items.push({
         id: strokeElementId(stroke) || String(index),
         index,
         order: index,
+        minX: bounds.minX,
+        maxX: bounds.maxX,
         minY: bounds.minY,
         maxY: bounds.maxY,
         originalMinY: bounds.minY,
-        previousMinY: originalBounds?.minY,
-        previousMaxY: originalBounds?.maxY,
         moved: moved.has(index),
-        gap: noteFlow.gap
+        gap: Math.min(8, noteFlow.gap)
       });
     }
-    const placements = reflowNoteFlowIntervals(items);
+    const placements = reflowNoteFlowRectangles(items);
     const changed = [];
     for (const placement of placements) {
       if (Math.abs(placement.deltaY) < 0.5) {
@@ -16397,42 +16506,6 @@ var PreviewDrawingController = class {
     this.pruneElementGroups();
     this.redoStack = [];
     this.invalidateStaticCache();
-    this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
-    this.recordDrawingHistory(historyBefore);
-    this.syncSelectionMenuButtons();
-    this.render();
-  }
-  toggleSelectedMarkdownFloating() {
-    const blocks = this.getSelectedMarkdownBlocks();
-    if (!blocks.length) {
-      return;
-    }
-    const historyBefore = this.captureDrawingHistorySnapshot();
-    const dock = blocks.every((block) => block.floating);
-    for (const block of blocks) {
-      if (dock) {
-        block.floating = false;
-        block.floatingExplicit = false;
-        block.floatBox = null;
-        block.widthScale = 1;
-        continue;
-      }
-      const bounds = this.markdownElementCanvasBounds(this.markdownBlockElement(block));
-      if (!bounds) {
-        continue;
-      }
-      block.floating = true;
-      block.floatingExplicit = true;
-      block.floatBox = normalizeMarkdownFloatBox({
-        x: bounds.minX / this.canvasWidth(),
-        y: bounds.minY / this.canvasHeight(),
-        width: (bounds.maxX - bounds.minX) / this.canvasWidth(),
-        height: (bounds.maxY - bounds.minY) / this.canvasHeight()
-      });
-      block.span = 12;
-      block.widthScale = 1;
-    }
-    this.redoStack = [];
     this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
     this.recordDrawingHistory(historyBefore);
     this.syncSelectionMenuButtons();
@@ -18983,6 +19056,7 @@ function normalizeNoteFlow(value) {
   const positionBasis = value.positionBasis === "document"
     ? "document"
     : value.positionBasis === "above" && Number.isFinite(positionLine) && positionLine >= 0 ? "above" : null;
+  const placementMode = value.placementMode === "inline" ? "inline" : "row";
   return {
     enabled: true,
     path: normalizeVaultPath(value.path || ""),
@@ -18992,6 +19066,9 @@ function normalizeNoteFlow(value) {
     positionPath: normalizeVaultPath(value.positionPath || value.path || ""),
     positionLine: positionBasis === "above" ? positionLine : null,
     positionVersion: Number(value.positionVersion) >= 1 ? 1 : 0,
+    placementMode,
+    inlineSide: placementMode === "inline" && value.inlineSide === "right" ? "right" : null,
+    leftSnap: placementMode === "row" && value.leftSnap === true,
     avoidancePath: Number.isFinite(avoidanceLine) && avoidanceLine >= 0 ? normalizeVaultPath(value.avoidancePath || value.path || "") : "",
     avoidanceLine: Number.isFinite(avoidanceLine) && avoidanceLine >= 0 ? avoidanceLine : null,
     gap: clamp(Number(value.gap) || 12, 4, 64)
@@ -19559,7 +19636,9 @@ function normalizeStroke(stroke) {
   const kind = normalizeStrokeKind(stroke?.kind);
   const brush = stroke?.brush === BRUSH_WATERCOLOR ? BRUSH_WATERCOLOR : BRUSH_PEN;
   const layout = normalizeElementLayout(stroke?.layout);
-  const noteFlow = normalizeNoteFlow(stroke?.noteFlow);
+  const connector = normalizeConnector(stroke?.connector);
+  const noteFlow = normalizeNoteFlow(stroke?.noteFlow)
+    || (!connector && stroke?.belowMarkdown ? normalizeNoteFlow({ enabled: true, placementMode: "row" }) : null);
   return {
     elementId: typeof stroke?.elementId === "string" && stroke.elementId ? stroke.elementId : layout?.id || "",
     kind,
@@ -19590,8 +19669,8 @@ function normalizeStroke(stroke) {
     snap: Boolean(stroke?.snap),
     locked: Boolean(stroke?.locked),
     groupId: typeof stroke?.groupId === "string" ? stroke.groupId : "",
-    belowMarkdown: Boolean(stroke?.belowMarkdown || noteFlow?.enabled),
-    connector: normalizeConnector(stroke?.connector),
+    belowMarkdown: Boolean(noteFlow),
+    connector,
     noteFlow,
     mindMapNode: normalizeMindMapNode(stroke?.mindMapNode),
     layout,

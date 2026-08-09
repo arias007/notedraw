@@ -221,7 +221,13 @@ test("reading-only note pen and selected elements can reserve Markdown flow spac
   assert.match(source, /var PEN_VARIANT_NOTE = "note-flow"/);
   assert.match(source, /variant: PEN_VARIANT_NOTE, labelKey: "notePen"/);
   assert.match(source, /return this\.surfaceType === "preview" && !this\.embeddedSurface/);
-  assert.match(source, /toggleSelectedNoteFlow\(\)/);
+  assert.match(source, /toggleSelectedFlowMode\(\)/);
+  assert.match(source, /selectedFlowModeElements\(\)/);
+  assert.match(source, /convertToFloating[\s\S]*convertToNoteFlow[\s\S]*toggleFlowMode/);
+  const selectionMenuSource = source.slice(source.indexOf("  createSelectionMenu()"), source.indexOf("  selectionFilterContext()", source.indexOf("  createSelectionMenu()")));
+  assert.doesNotMatch(selectionMenuSource, /floatMarkdownBlock|toggleSelectedMarkdownFloating|toggleSelectedNoteFlow/);
+  assert.match(source, /const placementMode = value\.placementMode === "inline" \? "inline" : "row"/);
+  assert.match(source, /belowMarkdown: Boolean\(noteFlow\)/);
   assert.match(source, /captureNoteFlowAnchor\(stroke\)/);
   assert.match(source, /captureNoteFlowResponsiveAnchors\(stroke, context/);
   assert.match(source, /selectNoteFlowPositionAnchor\(candidates, \{[\s\S]*strokeTop,[\s\S]*maxOrderExclusive:/);
@@ -282,7 +288,7 @@ test("reading-only note pen and selected elements can reserve Markdown flow spac
   assert.match(source, /shouldPlaceStrokeBelowMarkdown\(stroke\)/);
   assert.match(source, /for \(const canvas of \[this\.underlayCanvas, this\.staticCanvas, this\.canvas\]\) \{\s*applyElementStyles\(canvas/);
   assert.match(source, /const layer = belowMarkdown \? this\.underlayEmbedLayer : this\.embedLayer/);
-  assert.match(source, /belowMarkdown: Boolean\(stroke\?\.belowMarkdown \|\| noteFlow\?\.enabled\)/);
+  assert.match(source, /belowMarkdown: Boolean\(noteFlow\)/);
   assert.match(styles, /\.notedraw-underlay-embed-layer \{\s*z-index: 0;/);
 });
 

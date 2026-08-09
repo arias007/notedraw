@@ -260,7 +260,7 @@ test("selected Markdown text edits on a second tap while a moved tap still drags
   const tapSource = source.slice(source.indexOf("  finishPendingSelectionTap("), source.indexOf("  cancelPendingSelectionTap(", source.indexOf("  finishPendingSelectionTap(")));
   const editSource = source.slice(source.indexOf("  startTextEdit("), source.indexOf("  focusSourceEditorAt(", source.indexOf("  startTextEdit(")));
 
-  assert.doesNotMatch(source, /this\.editMarkdownButton\s*=/);
+  assert.match(source, /this\.editMarkdownButton = this\.surfaceType === "source"/);
   assert.match(pointerSource, /const selectedMarkdownEditableCandidate = markdownSelectionCandidate/);
   assert.match(pointerSource, /type: "edit-markdown-or-drag"/);
   assert.match(source, /pending\.type === "edit-markdown-or-drag"[\s\S]*this\.startSelectedStrokeDrag\(event, this\.eventToPoint\(event\), pending\.index \?\? -1/);
@@ -353,8 +353,9 @@ test("NoteFlow release commits the exact candidate and boundary shown by the blu
   assert.match(dragFinishSource, /if \(!this\.dragNoteFlowPlacement\) \{\s*this\.updateDraggedNoteFlowPlacement/);
   assert.match(dragFinishSource, /const visibleDrop = this\.dragMarkdownDropTarget\?\.isConnected[\s\S]*captureMarkdownBlockDropTarget/);
   assert.match(placementSource, /placement\.side === "before"[\s\S]*flowBounds\.maxY[\s\S]*flowBounds\.minY/);
-  assert.match(placementSource, /const exactCandidate = placement\?\.candidate/);
-  assert.match(placementSource, /\? exactCandidate\s+: null/);
+  assert.match(placementSource, /const candidate = placement\?\.candidate;[\s\S]*const exactCandidate = candidate/);
+  assert.match(placementSource, /return exactCandidate \? \{[\s\S]*candidate: exactCandidate[\s\S]*\} : null/);
+  assert.doesNotMatch(placementSource.slice(placementSource.indexOf("  resolveDraggedNoteFlowPlacement("), placementSource.indexOf("  snapDraggedSelectionToNoteFlowPlacement(")), /dragDropGeometrySnapshot|selectStoredNoteFlowAnchorCandidate/);
   assert.match(placementSource, /Number\.isFinite\(Number\(placement\?\.boundary\)\)/);
   assert.match(placementSource, /const boundary = horizontalSide[\s\S]*Number\.isFinite\(Number\(placement\.boundary\)\)/);
 });
@@ -453,7 +454,7 @@ test("a missed Markdown drop restores document flow instead of creating a floati
 test("only legacy implicit floating collisions are docked automatically", async () => {
   const source = await readFile(sourceUrl, "utf8");
   const presentationSource = source.slice(source.indexOf("  syncMarkdownBlockPresentation()"), source.indexOf("  selectMarkdownBlock(", source.indexOf("  syncMarkdownBlockPresentation()")));
-  const floatingSource = source.slice(source.indexOf("  toggleSelectedMarkdownFloating()"), source.indexOf("  getSelectedStrokeMaxWidth(", source.indexOf("  toggleSelectedMarkdownFloating()")));
+  const floatingSource = source.slice(source.indexOf("  toggleSelectedFlowMode()"), source.indexOf("  noteFlowLayoutElement(", source.indexOf("  toggleSelectedFlowMode()")));
 
   assert.match(source, /floatingExplicit: Boolean\(block\?\.floatingExplicit\)/);
   assert.match(floatingSource, /block\.floating = true;\s*block\.floatingExplicit = true;/);

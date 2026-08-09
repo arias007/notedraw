@@ -11,6 +11,7 @@ import {
   normalizeFrozenNoteFlowLayout,
   preserveAbsoluteNoteFlowPoints,
   projectNoteFlowDocumentPoint,
+  reflowNoteFlowRectangles,
   reflowNoteFlowIntervals,
   selectOwnedBlankSpaceCandidate,
   selectNoteFlowAnchorPlacement,
@@ -549,5 +550,37 @@ test("moving an inserted element pushes later elements and fills a usable upper 
     { id: "next", minY: 100, maxY: 160 },
     { id: "moved", minY: 240, maxY: 320 },
     { id: "later", minY: 332, maxY: 382 }
+  ]);
+});
+
+test("NoteFlow rectangles keep upper and side-by-side elements fixed while pushing real collisions down", () => {
+  const placements = reflowNoteFlowRectangles([
+    { id: "upper", index: 0, minX: 0, maxX: 100, minY: 0, maxY: 40, originalMinY: 0 },
+    { id: "moved", index: 1, minX: 0, maxX: 100, minY: 60, maxY: 100, originalMinY: 60, moved: true },
+    { id: "collision", index: 2, minX: 20, maxX: 80, minY: 80, maxY: 120, originalMinY: 80 },
+    { id: "inline", index: 3, minX: 120, maxX: 200, minY: 80, maxY: 120, originalMinY: 80 }
+  ], { gap: 6 });
+
+  assert.deepEqual(placements.map(({ id, minY, maxY }) => ({ id, minY, maxY })), [
+    { id: "upper", minY: 0, maxY: 40 },
+    { id: "moved", minY: 60, maxY: 100 },
+    { id: "collision", minY: 106, maxY: 146 },
+    { id: "inline", minY: 80, maxY: 120 }
+  ]);
+});
+
+test("NoteFlow rectangle displacement propagates only through the colliding vertical lane", () => {
+  const placements = reflowNoteFlowRectangles([
+    { id: "moved", index: 0, minX: 0, maxX: 100, minY: 40, maxY: 90, originalMinY: 40, moved: true },
+    { id: "next", index: 1, minX: 10, maxX: 90, minY: 70, maxY: 110, originalMinY: 70 },
+    { id: "later", index: 2, minX: 10, maxX: 90, minY: 100, maxY: 130, originalMinY: 100 },
+    { id: "other-column", index: 3, minX: 120, maxX: 200, minY: 70, maxY: 130, originalMinY: 70 }
+  ], { gap: 6 });
+
+  assert.deepEqual(placements.map(({ id, minY }) => ({ id, minY })), [
+    { id: "moved", minY: 40 },
+    { id: "next", minY: 96 },
+    { id: "later", minY: 142 },
+    { id: "other-column", minY: 70 }
   ]);
 });
