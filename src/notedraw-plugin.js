@@ -106,6 +106,8 @@ import {
   hasExactNoteFlowPlacement,
   hasStableNoteFlowAnchor,
   noteFlowAvoidanceReference,
+  noteFlowBlockKey,
+  noteFlowPlacementRowKey,
   noteFlowRowReservation,
   noteFlowReservedRowTop,
   noteFlowSurfaceRepairLimits,
@@ -1223,6 +1225,31 @@ var DEFAULT_SETTINGS = {
   enableDebugLog: false
 };
 var MARKDOWN_TEXT_SELECTOR = "h1,h2,h3,h4,h5,h6,p,li,blockquote,td,th,.callout-content";
+var NOTE_FLOW_RENDERED_BLOCK_SELECTOR = [
+  ".el-p",
+  ".el-h1",
+  ".el-h2",
+  ".el-h3",
+  ".el-h4",
+  ".el-h5",
+  ".el-h6",
+  ".el-blockquote",
+  ".el-pre",
+  ".el-code",
+  ".el-table",
+  ".el-hr",
+  ".el-img",
+  "li",
+  "tr",
+  "pre",
+  "table",
+  "blockquote",
+  "hr",
+  "figure",
+  ".callout",
+  ".internal-embed",
+  ".math-block"
+].join(",");
 var EDITABLE_SELECTOR = [
   ".markdown-preview-view",
   ".markdown-embed-content",
@@ -9070,6 +9097,9 @@ var PreviewDrawingController = class {
         path: this.file?.path || "",
         line: null,
         side: null,
+        blockStart: null,
+        blockEnd: null,
+        blockKey: "",
         positionBasis: null,
         positionPath: this.file?.path || "",
         positionLine: null,
@@ -13757,6 +13787,7 @@ var PreviewDrawingController = class {
     const path = normalizeVaultPath(record.path || this.file?.path || "");
     const line = Number(record.line);
     const side = record.side === "after" || record.property === "padding-bottom" ? "after" : "before";
+    const recordBlockKey = noteFlowBlockKey(record, this.file?.path || "");
     const matches = [];
     for (const [index, stroke] of strokes.entries()) {
       const flow = normalizeNoteFlow(stroke?.noteFlow);
@@ -13768,8 +13799,11 @@ var PreviewDrawingController = class {
       const avoidance = noteFlowAvoidanceReference(flow, this.file?.path || "");
       const anchorPath = normalizeVaultPath(flow.path || this.file?.path || "");
       const anchorLine = Number(flow.line);
+      const anchorBlockKey = noteFlowBlockKey(flow, this.file?.path || "");
       if (avoidance?.path === path && avoidance.line === line
-        || anchorPath === path && anchorLine === line && (flow.side || "before") === side) {
+        || anchorPath === path
+          && (recordBlockKey && anchorBlockKey === recordBlockKey || anchorLine === line)
+          && (flow.side || "before") === side) {
         matches.push(candidate);
       }
     }
@@ -15051,6 +15085,13 @@ var PreviewDrawingController = class {
       path: anchor?.path || previous?.path || this.file?.path || "",
       line,
       side,
+      blockStart: Number.isFinite(Number(anchor?.blockStart ?? anchor?.start))
+        ? Number(anchor?.blockStart ?? anchor?.start)
+        : previous?.blockStart ?? line,
+      blockEnd: Number.isFinite(Number(anchor?.blockEnd ?? anchor?.end))
+        ? Number(anchor?.blockEnd ?? anchor?.end)
+        : previous?.blockEnd ?? line,
+      blockKey: anchor?.blockKey || previous?.blockKey || "",
       positionBasis: positionAnchor ? "above" : candidatesReady ? "document" : previous?.positionBasis || null,
       positionPath: positionAnchor?.path || previous?.positionPath || this.file?.path || "",
       positionLine: positionAnchor && Number.isFinite(position?.line)
@@ -15135,12 +15176,7 @@ var PreviewDrawingController = class {
     if (!element || !this.previewEl?.contains?.(element)) {
       return null;
     }
-    const block = element.matches?.(MARKDOWN_TEXT_SELECTOR)
-      ? element
-      : element.closest?.(MARKDOWN_TEXT_SELECTOR);
-    return block && this.previewEl.contains(block) && isConcreteMarkdownBlockElement(block)
-      ? block
-      : element;
+    return findNoteFlowMarkdownBlockElement(element, this.previewEl);
   }
   noteFlowInlineLineCandidates(sourceElement, path, start, end) {
     if (sourceElement?.tagName !== "P" || !Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
@@ -15281,24 +15317,49 @@ var PreviewDrawingController = class {
   noteFlowCandidates() {
     const grouped = /* @__PURE__ */ new Map();
     let order = 0;
-    for (const sourceElement of this.previewEl.querySelectorAll?.("[data-note-draw-line-start]") || []) {
+    const sourceElements = new Set([
+      ...Array.from(this.previewEl.querySelectorAll?.("[data-note-draw-line-start]") || []),
+      ...Array.from(this.previewEl.querySelectorAll?.("[data-line]") || [])
+    ]);
+    for (const sourceElement of sourceElements) {
       if (sourceElement.closest?.(".notedraw-body-control, .notedraw-embed-layer, .notedraw-underlay-embed-layer")) {
         continue;
       }
-      if (sourceElement.dataset.noteDrawDataLineInherited === "true") {
-        continue;
-      }
-      if (sourceElement.matches?.(EDITABLE_SELECTOR) && !isConcreteMarkdownBlockElement(sourceElement)) {
-        continue;
-      }
-      const start = parseInteger(sourceElement.dataset.noteDrawLineStart);
-      const end = parseInteger(sourceElement.dataset.noteDrawLineEnd) ?? start;
       const element = this.noteFlowLayoutElement(sourceElement);
+      if (!element || isNoteFlowCollectionBlock(element)) {
+        continue;
+      }
+      const sourceOwnLine = parseDataLine(sourceElement.getAttribute?.("data-line"));
+      const blockOwnLine = parseDataLine(element.getAttribute?.("data-line"));
+      const inherited = sourceElement.dataset.noteDrawDataLineInherited === "true";
+      let start = parseInteger(sourceElement.dataset.noteDrawLineStart);
+      let end = parseInteger(sourceElement.dataset.noteDrawLineEnd) ?? start;
+      if (inherited) {
+        if (!Number.isFinite(blockOwnLine) || isNoteFlowCollectionBlock(element)) {
+          continue;
+        }
+        start = blockOwnLine;
+        end = blockOwnLine;
+      } else if (!Number.isFinite(start)) {
+        start = sourceOwnLine ?? blockOwnLine;
+        end = start;
+      }
       const rect = element?.getBoundingClientRect?.();
       if (!element || !Number.isFinite(start) || !rect || rect.width <= 1 || rect.height <= 1) {
         continue;
       }
-      const path = normalizeVaultPath(sourceElement.dataset.noteDrawSourcePath || this.file?.path || "");
+      const annotatedPathElement = sourceElement.dataset.noteDrawSourcePath
+        ? sourceElement
+        : element.querySelector?.("[data-note-draw-source-path]");
+      const identityQuality = sourceElement.dataset.noteDrawLineMapped === "true"
+        ? 3
+        : !inherited && Number.isFinite(parseInteger(sourceElement.dataset.noteDrawLineStart)) ? 2 : 1;
+      const path = normalizeVaultPath(
+        annotatedPathElement?.dataset?.noteDrawSourcePath
+        || resolveRenderedSourcePath(this.plugin.app, element, this.file?.path || "")
+        || this.file?.path
+        || ""
+      );
       let byPath = grouped.get(element);
       if (!byPath) {
         byPath = /* @__PURE__ */ new Map();
@@ -15306,8 +15367,21 @@ var PreviewDrawingController = class {
       }
       const existing = byPath.get(path);
       if (existing) {
-        existing.start = Math.min(existing.start, start);
-        existing.end = Math.max(existing.end, end);
+        if (identityQuality > existing.identityQuality) {
+          existing.start = start;
+          existing.end = end;
+          existing.sourceElement = sourceElement;
+          existing.identityQuality = identityQuality;
+        } else if (identityQuality === existing.identityQuality) {
+          existing.start = Math.min(existing.start, start);
+          existing.end = Math.max(existing.end, end);
+        }
+        existing.blockStart = existing.start;
+        existing.blockEnd = existing.end;
+        existing.blockKey = noteFlowBlockKey(existing);
+        if (!inherited && sourceElement.dataset.noteDrawLineMapped === "true") {
+          existing.sourceElement = sourceElement;
+        }
         continue;
       }
       byPath.set(path, {
@@ -15316,17 +15390,29 @@ var PreviewDrawingController = class {
         path,
         start,
         end,
+        blockStart: start,
+        blockEnd: end,
+        blockKey: noteFlowBlockKey({ path, line: start, blockStart: start, blockEnd: end }),
         inheritedStart: parseInteger(sourceElement.dataset.noteDrawInheritedLineStart),
         inheritedEnd: parseInteger(sourceElement.dataset.noteDrawInheritedLineEnd),
         left: rect.left,
         right: rect.right,
         top: rect.top,
         bottom: rect.bottom,
-        order: order++
+        order: order++,
+        identityQuality
       });
     }
-    return Array.from(grouped.values()).flatMap((byPath) => Array.from(byPath.values()))
-      .sort((a, b) => a.top - b.top || a.bottom - b.bottom || a.order - b.order);
+    const candidates = Array.from(grouped.values()).flatMap((byPath) => Array.from(byPath.values()));
+    return candidates.filter((candidate) => {
+      return !candidates.some((other) => (
+        other !== candidate
+        && other.path === candidate.path
+        && candidate.element !== other.element
+        && !candidate.element.matches?.("li")
+        && candidate.element.contains?.(other.element)
+      ));
+    }).sort((a, b) => a.top - b.top || a.bottom - b.bottom || a.order - b.order);
   }
   noteFlowTargetElement(anchor, side = anchor?.side) {
     const descriptor = anchor?.lineSpacer;
@@ -15345,21 +15431,7 @@ var PreviewDrawingController = class {
       this.noteFlowLineSpacers.set(descriptor.key, spacer);
       return spacer;
     }
-    const heading = anchor?.sourceElement?.matches?.("h1,h2,h3,h4,h5,h6")
-      ? anchor.sourceElement
-      : null;
-    const headingTag = heading?.tagName?.toLowerCase?.();
-    const wrapper = headingTag ? heading.closest?.(`.el-${headingTag}`) || heading : null;
-    if (!heading || !wrapper || !this.previewEl?.contains?.(wrapper) || !["before", "after"].includes(side)) {
-      return anchor?.element || null;
-    }
-    const key = [anchor?.path || this.file?.path || "", anchor?.start, headingTag, side].join("\0");
-    const legacySpacer = this.noteFlowBlockSpacers.get(key);
-    if (legacySpacer) {
-      this.noteFlowStyledElements.delete(legacySpacer);
-      this.removeNoteFlowBlockSpacer(legacySpacer);
-    }
-    return wrapper;
+    return anchor?.element || null;
   }
   noteFlowAnchorElement(noteFlow, allCandidates = null, strokeTop = Number.NaN) {
     const path = normalizeVaultPath(noteFlow?.path || this.file?.path || "");
@@ -15367,13 +15439,18 @@ var PreviewDrawingController = class {
     if (!Number.isFinite(line)) {
       return null;
     }
-    const candidates = (allCandidates || this.noteFlowCandidates()).filter((candidate) => {
+    const allMatchingCandidates = (allCandidates || this.noteFlowCandidates()).filter((candidate) => {
       const semanticMatch = line >= candidate.start && line <= candidate.end;
       const inheritedMatch = Number.isFinite(candidate.inheritedStart)
         && line >= candidate.inheritedStart
         && line <= (Number.isFinite(candidate.inheritedEnd) ? candidate.inheritedEnd : candidate.inheritedStart);
       return candidate.path === path && (semanticMatch || inheritedMatch);
     });
+    const storedBlockKey = noteFlowBlockKey(noteFlow, this.file?.path || "");
+    const exactBlockCandidates = storedBlockKey
+      ? allMatchingCandidates.filter((candidate) => candidate.blockKey === storedBlockKey)
+      : [];
+    const candidates = exactBlockCandidates.length ? exactBlockCandidates : allMatchingCandidates;
     return selectStoredNoteFlowAnchorCandidate(candidates, {
       side: noteFlow?.side,
       strokeTop
@@ -15477,9 +15554,7 @@ var PreviewDrawingController = class {
         layout,
         bounds,
         targetBox,
-        rowKey: Number.isFinite(Number(noteFlow.line)) && ["before", "after"].includes(noteFlow.side)
-          ? `${normalizeVaultPath(noteFlow.path || this.file?.path || "")}\0${Math.floor(noteFlow.line)}\0${noteFlow.side}`
-          : ""
+        rowKey: noteFlowPlacementRowKey(noteFlow, this.file?.path || "")
       });
     }
     const settledByIndex = new Map(reflowNoteFlowRectangles(targets.map((target) => ({
@@ -15596,7 +15671,9 @@ var PreviewDrawingController = class {
     return frozen.offsets.every((record) => Boolean(this.noteFlowAnchorElement({
       path: record.path,
       line: record.line,
-      side: record.side
+      side: record.side,
+      blockStart: record.blockStart,
+      blockEnd: record.blockEnd
     }, candidates)));
   }
   prepareFrozenNoteFlowLayout(options = {}) {
@@ -15746,10 +15823,13 @@ var PreviewDrawingController = class {
     for (const record of frozen.offsets) {
       const ownerStrokeIndex = this.findNoteFlowOwnerStrokeIndex(record);
       const ownerStroke = this.drawingData?.strokes?.[ownerStrokeIndex];
+      const ownerNoteFlow = normalizeNoteFlow(ownerStroke?.noteFlow);
       const anchor = this.noteFlowAnchorElement({
         path: record.path,
         line: record.line,
-        side: record.side
+        side: record.side,
+        blockStart: ownerNoteFlow?.blockStart ?? record.blockStart,
+        blockEnd: ownerNoteFlow?.blockEnd ?? record.blockEnd
       }, candidates, this.noteFlowStrokeClientTop(ownerStroke));
       const element = this.noteFlowTargetElement(anchor, record.side);
       if (!element) {
@@ -15761,7 +15841,7 @@ var PreviewDrawingController = class {
         offsets = /* @__PURE__ */ new Map();
         wanted.set(element, offsets);
       }
-      const rowKey = `${normalizeVaultPath(record.path)}\0${Math.floor(record.line)}\0${record.side}`;
+      const rowKey = noteFlowPlacementRowKey(ownerNoteFlow || record, record.path);
       const ownerGap = Math.max(0, Number(normalizeNoteFlow(ownerStroke?.noteFlow)?.gap) || 0);
       const effectiveOffset = Math.max(
         record.offset,
@@ -16116,9 +16196,7 @@ var PreviewDrawingController = class {
       const stableHeight = currentNoteFlow.boxHeightRatio > 0
         ? currentNoteFlow.boxHeightRatio * Math.max(1, contentFrame.width)
         : Math.max(0, item.bounds.maxY - item.bounds.minY);
-      const settledRowKey = Number.isFinite(Number(currentNoteFlow.line)) && ["before", "after"].includes(currentNoteFlow.side)
-        ? `${normalizeVaultPath(currentNoteFlow.path || this.file?.path || "")}\0${Math.floor(currentNoteFlow.line)}\0${currentNoteFlow.side}`
-        : "";
+      const settledRowKey = noteFlowPlacementRowKey(currentNoteFlow, this.file?.path || "");
       const settledHeight = Math.max(stableHeight, this.noteFlowSettledRowExtents.get(settledRowKey) || 0);
       // The reservation belongs to the logical row, like a Markdown block's
       // grid row. It is derived from stable box geometry, never from an anchor
@@ -16144,6 +16222,8 @@ var PreviewDrawingController = class {
         descriptors.set(property, {
           path: normalizeVaultPath(selectedAnchor?.path || currentNoteFlow?.path || this.file?.path || ""),
           line: exactPlacement ? currentNoteFlow.line : side === "after" ? selectedAnchor?.end : selectedAnchor?.start,
+          blockStart: selectedAnchor?.blockStart ?? selectedAnchor?.start,
+          blockEnd: selectedAnchor?.blockEnd ?? selectedAnchor?.end,
           side,
           property,
           ownerId: strokeElementId(item.stroke),
@@ -16333,6 +16413,8 @@ var PreviewDrawingController = class {
       const path = normalizeVaultPath(movedItem ? placement?.path : noteFlow.path || this.file?.path || "");
       const line = Number(movedItem ? placement?.line : noteFlow.line);
       const side = movedItem ? placement?.side : noteFlow.side;
+      const blockStart = movedItem ? placement?.candidate?.blockStart ?? placement?.candidate?.start : noteFlow.blockStart;
+      const blockEnd = movedItem ? placement?.candidate?.blockEnd ?? placement?.candidate?.end : noteFlow.blockEnd;
       const placementMode = movedItem
         ? placement?.horizontalSide ? "inline" : "row"
         : noteFlow.placementMode;
@@ -16341,8 +16423,8 @@ var PreviewDrawingController = class {
         : path && Number.isFinite(line) && ["before", "after"].includes(side)
           ? candidates.filter((candidate) => (
           normalizeVaultPath(candidate.path || this.file?.path || "") === path
-          && line >= Number(candidate.start)
-          && line <= Number(candidate.end)
+          && (candidate.blockKey === noteFlowBlockKey(noteFlow, this.file?.path || "")
+            || line >= Number(candidate.start) && line <= Number(candidate.end))
         )).sort((a, b) => (
           Number(Boolean(b.lineSpacer)) - Number(Boolean(a.lineSpacer))
           || (a.bottom - a.top) - (b.bottom - b.top)
@@ -16366,9 +16448,7 @@ var PreviewDrawingController = class {
         baseMinY,
         originalMinY: bounds.minY,
         moved: movedItem,
-        rowKey: path && Number.isFinite(line) && ["before", "after"].includes(side)
-          ? `${path}\0${Math.floor(line)}\0${side}`
-          : "",
+        rowKey: noteFlowPlacementRowKey({ path, line, side, blockStart, blockEnd }),
         align: "top",
         gap: Math.min(8, noteFlow.gap)
       });
@@ -16433,6 +16513,9 @@ var PreviewDrawingController = class {
         path: captured.path,
         line: captured.line,
         side: captured.side,
+        blockStart: captured.blockStart,
+        blockEnd: captured.blockEnd,
+        blockKey: captured.blockKey,
         gap: captured.gap
       };
       refreshed = true;
@@ -17736,6 +17819,34 @@ function isConcreteMarkdownBlockElement(element) {
     return false;
   }
   return !element.querySelector?.(MARKDOWN_TEXT_SELECTOR);
+}
+function isNoteFlowCollectionBlock(element) {
+  return Boolean(element?.matches?.("ul,ol,.el-ul,.el-ol,.markdown-preview-section,.markdown-preview-sizer,.markdown-rendered,.callout-content"));
+}
+function findNoteFlowMarkdownBlockElement(element, previewEl = null) {
+  if (!element || previewEl && !previewEl.contains?.(element)) {
+    return null;
+  }
+  const listItem = element.closest?.("li");
+  if (listItem && (!previewEl || previewEl.contains(listItem))) {
+    return listItem;
+  }
+  const tableBlock = element.closest?.(".el-table") || element.closest?.("table");
+  if (tableBlock && (!previewEl || previewEl.contains(tableBlock))) {
+    return tableBlock;
+  }
+  const renderedBlock = element.matches?.(NOTE_FLOW_RENDERED_BLOCK_SELECTOR)
+    ? element
+    : element.closest?.(NOTE_FLOW_RENDERED_BLOCK_SELECTOR);
+  if (renderedBlock && (!previewEl || previewEl.contains(renderedBlock))) {
+    return renderedBlock;
+  }
+  const markdownBlock = element.matches?.(MARKDOWN_TEXT_SELECTOR)
+    ? element
+    : element.closest?.(MARKDOWN_TEXT_SELECTOR);
+  return markdownBlock && (!previewEl || previewEl.contains(markdownBlock))
+    ? markdownBlock
+    : element;
 }
 function findEditableTarget(target, previewEl, clientPoint = null) {
   if (!target || !previewEl.contains(target)) {
@@ -19508,6 +19619,8 @@ function normalizeNoteFlow(value) {
     return null;
   }
   const line = value.line === null || value.line === void 0 || value.line === "" ? NaN : Number(value.line);
+  const blockStartValue = value.blockStart === null || value.blockStart === void 0 || value.blockStart === "" ? NaN : Number(value.blockStart);
+  const blockEndValue = value.blockEnd === null || value.blockEnd === void 0 || value.blockEnd === "" ? NaN : Number(value.blockEnd);
   const positionLine = value.positionLine === null || value.positionLine === void 0 || value.positionLine === "" ? NaN : Number(value.positionLine);
   const avoidanceLine = value.avoidanceLine === null || value.avoidanceLine === void 0 || value.avoidanceLine === "" ? NaN : Number(value.avoidanceLine);
   const positionBasis = value.positionBasis === "document"
@@ -19518,11 +19631,21 @@ function normalizeNoteFlow(value) {
     && line >= 0
     && ["before", "after"].includes(value.side)
     && Number(value.positionVersion) >= 1;
+  const path = normalizeVaultPath(value.path || "");
+  const blockStart = Number.isFinite(blockStartValue) && blockStartValue >= 0
+    ? Math.floor(blockStartValue)
+    : Number.isFinite(line) && line >= 0 ? Math.floor(line) : null;
+  const blockEnd = Number.isFinite(blockEndValue) && blockEndValue >= 0
+    ? Math.floor(blockEndValue)
+    : blockStart;
   return {
     enabled: true,
-    path: normalizeVaultPath(value.path || ""),
+    path,
     line: Number.isFinite(line) && line >= 0 ? line : null,
     side: ["before", "after"].includes(value.side) ? value.side : null,
+    blockStart,
+    blockEnd,
+    blockKey: noteFlowBlockKey({ path, line, blockStart, blockEnd }),
     positionBasis,
     positionPath: normalizeVaultPath(value.positionPath || value.path || ""),
     positionLine: positionBasis === "above" ? positionLine : null,

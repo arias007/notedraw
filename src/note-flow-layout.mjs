@@ -420,6 +420,37 @@ export function hasStableNoteFlowAnchor(noteFlow) {
     && Number(noteFlow?.positionVersion) >= 1;
 }
 
+function normalizeNoteFlowPath(path) {
+  return String(path || "").replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+}
+
+export function noteFlowBlockKey(noteFlow, fallbackPath = "") {
+  const path = normalizeNoteFlowPath(noteFlow?.path || fallbackPath);
+  const line = Number(noteFlow?.line);
+  const startValue = Number(noteFlow?.blockStart);
+  const endValue = Number(noteFlow?.blockEnd);
+  const start = Number.isFinite(startValue) && startValue >= 0
+    ? Math.floor(startValue)
+    : Number.isFinite(line) && line >= 0
+      ? Math.floor(line)
+      : null;
+  const end = Number.isFinite(endValue) && endValue >= 0
+    ? Math.floor(endValue)
+    : start;
+  if (!path || start === null || end === null) {
+    return "";
+  }
+  return `${path}\0${Math.min(start, end)}\0${Math.max(start, end)}`;
+}
+
+export function noteFlowPlacementRowKey(noteFlow, fallbackPath = "") {
+  const side = noteFlow?.side;
+  const blockKey = noteFlowBlockKey(noteFlow, fallbackPath);
+  return blockKey && ["before", "after"].includes(side)
+    ? `${blockKey}\0${side}`
+    : "";
+}
+
 export function hasExactNoteFlowPlacement(noteFlow) {
   const version = noteFlow?.placementVersion;
   return hasStableNoteFlowAnchor(noteFlow)
@@ -619,17 +650,22 @@ export function normalizeFrozenNoteFlowLayout(value) {
     if (!path || !Number.isFinite(line) || line < 0 || offset <= 0) {
       continue;
     }
+    const blockStart = Number(item?.blockStart);
+    const blockEnd = Number(item?.blockEnd);
     const normalized = {
       path,
       line: Math.floor(line),
+      blockStart: Number.isFinite(blockStart) && blockStart >= 0 ? Math.floor(blockStart) : Math.floor(line),
+      blockEnd: Number.isFinite(blockEnd) && blockEnd >= 0 ? Math.floor(blockEnd) : Math.floor(line),
       side,
       property,
       offset: Math.round(offset * 1000) / 1000
     };
+    normalized.blockKey = noteFlowBlockKey(normalized);
     if (typeof item?.ownerId === "string" && item.ownerId) {
       normalized.ownerId = item.ownerId.slice(0, 160);
     }
-    const key = `${normalized.path}\0${normalized.line}\0${normalized.property}`;
+    const key = `${normalized.blockKey}\0${normalized.property}`;
     const previous = records.get(key);
     if (!previous || normalized.offset > previous.offset) {
       records.set(key, normalized);
@@ -639,7 +675,8 @@ export function normalizeFrozenNoteFlowLayout(value) {
     version: 1,
     offsets: Array.from(records.values()).sort((a, b) => (
       a.path.localeCompare(b.path)
-      || a.line - b.line
+      || a.blockStart - b.blockStart
+      || a.blockEnd - b.blockEnd
       || a.property.localeCompare(b.property)
     ))
   };
@@ -647,7 +684,7 @@ export function normalizeFrozenNoteFlowLayout(value) {
 
 export function frozenNoteFlowLayoutSignature(value) {
   return normalizeFrozenNoteFlowLayout(value).offsets.map((item) => (
-    `${item.path}:${item.line}:${item.property}:${item.offset}${item.ownerId ? `:${item.ownerId}` : ""}`
+    `${item.blockKey}:${item.property}:${item.offset}${item.ownerId ? `:${item.ownerId}` : ""}`
   )).join("|");
 }
 

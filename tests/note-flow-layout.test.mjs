@@ -6,6 +6,8 @@ import {
   hasExactNoteFlowPlacement,
   hasStableNoteFlowAnchor,
   noteFlowAvoidanceReference,
+  noteFlowBlockKey,
+  noteFlowPlacementRowKey,
   noteFlowRequiredOffset,
   noteFlowRowReservation,
   noteFlowReservedRowTop,
@@ -67,7 +69,7 @@ test("owned NoteFlow blank bands select the element that created the whitespace"
   assert.equal(selectOwnedBlankSpaceCandidate(candidates.slice(0, 2), { clientX: 60, clientY: 130 }), null);
 });
 
-test("frozen note-flow spacing is deterministic and keeps the largest offset per Markdown line", () => {
+test("frozen note-flow spacing is deterministic and keeps the largest offset per Markdown block", () => {
   const normalized = normalizeFrozenNoteFlowLayout({
     offsets: [
       { path: "Folder\\Note.md", line: 8.9, side: "before", offset: 42.1254 },
@@ -81,13 +83,13 @@ test("frozen note-flow spacing is deterministic and keeps the largest offset per
   assert.deepEqual(normalized, {
     version: 1,
     offsets: [
-      { path: "Folder/Note.md", line: 8, side: "before", property: "padding-top", offset: 56 },
-      { path: "Folder/Note.md", line: 12, side: "after", property: "padding-bottom", offset: 20 }
+      { path: "Folder/Note.md", line: 8, blockStart: 8, blockEnd: 8, blockKey: "Folder/Note.md\u00008\u00008", side: "before", property: "padding-top", offset: 56 },
+      { path: "Folder/Note.md", line: 12, blockStart: 12, blockEnd: 12, blockKey: "Folder/Note.md\u000012\u000012", side: "after", property: "padding-bottom", offset: 20 }
     ]
   });
   assert.equal(
     frozenNoteFlowLayoutSignature(normalized),
-    "Folder/Note.md:8:padding-top:56|Folder/Note.md:12:padding-bottom:20"
+    "Folder/Note.md\u00008\u00008:padding-top:56|Folder/Note.md\u000012\u000012:padding-bottom:20"
   );
 });
 
@@ -102,7 +104,21 @@ test("frozen NoteFlow spacing keeps a stable owner for blank-space selection", (
     }]
   });
   assert.equal(normalized.offsets[0].ownerId, "element-42");
-  assert.equal(frozenNoteFlowLayoutSignature(normalized), "Folder/Note.md:8:padding-top:56:element-42");
+  assert.equal(frozenNoteFlowLayoutSignature(normalized), "Folder/Note.md\u00008\u00008:padding-top:56:element-42");
+});
+
+test("NoteFlow uses one Markdown block identity for preview, settlement, and restore", () => {
+  const taskBlock = {
+    path: "Folder/Note.md",
+    line: 12,
+    blockStart: 10,
+    blockEnd: 12,
+    side: "after"
+  };
+
+  assert.equal(noteFlowBlockKey(taskBlock), "Folder/Note.md\u000010\u000012");
+  assert.equal(noteFlowPlacementRowKey(taskBlock), "Folder/Note.md\u000010\u000012\u0000after");
+  assert.equal(noteFlowPlacementRowKey({ ...taskBlock, side: null }), "");
 });
 
 test("saved note-flow anchors remain stable while their Markdown block is virtualized", () => {

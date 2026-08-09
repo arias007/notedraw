@@ -293,18 +293,20 @@ test("reading-only note pen and selected elements can reserve Markdown flow spac
   assert.match(styles, /\.notedraw-underlay-embed-layer \{\s*z-index: 0;/);
 });
 
-test("heading NoteFlow spacing moves the complete heading and restores after reading-view rebuilds", async () => {
+test("NoteFlow spacing targets the complete Markdown block and restores after reading-view rebuilds", async () => {
   const [source, styles] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(stylesUrl, "utf8")
   ]);
   const targetSource = source.slice(source.indexOf("  noteFlowTargetElement("), source.indexOf("  noteFlowAnchorElement("));
+  const blockSource = source.slice(source.indexOf("function findNoteFlowMarkdownBlockElement("), source.indexOf("function findEditableTarget("));
   const prepareSource = source.slice(source.indexOf("  frozenNoteFlowAnchorsReady("), source.indexOf("  updateFrozenNoteFlowLayout("));
   const flowLayout = source.slice(source.indexOf("  applyNoteFlowLayout()"), source.indexOf("  scheduleNoteFlowLayout(options"));
 
-  assert.match(targetSource, /matches\?\.\("h1,h2,h3,h4,h5,h6"\)/);
-  assert.match(targetSource, /heading\.closest\?\.\(`\.el-\$\{headingTag\}`\) \|\| heading/);
-  assert.match(targetSource, /return wrapper;/);
+  assert.match(blockSource, /const listItem = element\.closest\?\.\("li"\)/);
+  assert.match(blockSource, /const tableBlock = element\.closest\?\.\("\.el-table"\) \|\| element\.closest\?\.\("table"\)/);
+  assert.match(blockSource, /NOTE_FLOW_RENDERED_BLOCK_SELECTOR/);
+  assert.match(targetSource, /return anchor\?\.element \|\| null;/);
   assert.doesNotMatch(targetSource, /parent\.insertBefore\(spacer, side ===/);
   assert.doesNotMatch(targetSource, /className = "notedraw-note-flow-block-spacer"/);
   assert.doesNotMatch(targetSource, /heading\.style\.(?:setProperty|removeProperty)/);

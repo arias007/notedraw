@@ -478,7 +478,7 @@ test("Markdown drop settlement remaps every rendered block and persists repaired
   assert.match(presentationSource, /markdownMetadataChanged[\s\S]*block\.lineStart !== info\.lineStart[\s\S]*scheduleDrawingSave\(this\.file, this\.drawingData, \{ userOperation: true \}\)/);
 });
 
-test("Markdown selection and NoteFlow layout use concrete blocks instead of embed parents or visual lines", async () => {
+test("Markdown selection and NoteFlow layout use complete rendered blocks instead of visual lines", async () => {
   const [source, styles] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(stylesUrl, "utf8")
@@ -493,8 +493,13 @@ test("Markdown selection and NoteFlow layout use concrete blocks instead of embe
   assert.match(concreteSource, /!element\.querySelector\?\.\(MARKDOWN_TEXT_SELECTOR\)/);
   assert.match(presentationSource, /querySelectorAll\(EDITABLE_SELECTOR\)[\s\S]*isConcreteMarkdownBlockElement\(element\)/);
   assert.match(presentationSource, /connectedIds[\s\S]*selectedMarkdownBlockIds[\s\S]*invalidateSelectionFrameSnapshot/);
-  assert.match(candidateSource, /!isConcreteMarkdownBlockElement\(sourceElement\)/);
+  assert.match(candidateSource, /querySelectorAll\?\.\("\[data-note-draw-line-start\]"\)/);
+  assert.match(candidateSource, /querySelectorAll\?\.\("\[data-line\]"\)/);
+  assert.match(candidateSource, /const element = this\.noteFlowLayoutElement\(sourceElement\)/);
   assert.match(candidateSource, /grouped\.get\(element\)[\s\S]*existing\.start = Math\.min[\s\S]*existing\.end = Math\.max/);
+  assert.match(candidateSource, /identityQuality > existing\.identityQuality[\s\S]*existing\.blockKey = noteFlowBlockKey\(existing\)/);
+  assert.match(candidateSource, /!candidate\.element\.matches\?\.\("li"\)/);
+  assert.match(candidateSource, /candidate\.element\.contains\?\.\(other\.element\)/);
   assert.doesNotMatch(candidateSource, /noteFlowInlineLineCandidates|noteFlowVisualLineCandidates|visualLine/);
   assert.match(edgeSource, /markdownEdgeDropTarget\(clientX, clientY[\s\S]*const intent = resolveDragDropHorizontalIntent/);
   assert.match(edgeSource, /forcedIntent = edgeTarget\?\.intent \|\| null/);
@@ -511,7 +516,7 @@ test("inherited section line metadata is remapped before NoteFlow drop targeting
   assert.match(annotationSource, /ownDataLine[\s\S]*inheritedDataLine[\s\S]*noteDrawDataLineInherited = "true"/);
   assert.match(annotationSource, /noteDrawDataLineInherited === "true"/);
   assert.match(annotationSource, /noteDrawLineMapped = "true"/);
-  assert.match(candidateSource, /noteDrawDataLineInherited === "true"[\s\S]*continue/);
+  assert.match(candidateSource, /const inherited = sourceElement\.dataset\.noteDrawDataLineInherited === "true"[\s\S]*if \(inherited\)[\s\S]*blockOwnLine/);
   assert.match(candidateSource, /inheritedStart: parseInteger\(sourceElement\.dataset\.noteDrawInheritedLineStart\)/);
   assert.match(anchorSource, /semanticMatch[\s\S]*inheritedMatch/);
 });
