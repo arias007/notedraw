@@ -267,6 +267,34 @@ function mergeControllerDrawingSnapshot(latest, incoming) {
     elementGroups
   };
 }
+function coalesceDrawingSaveRequest(previous, next) {
+  const priorEntries = Array.isArray(previous?.entries) ? previous.entries : [];
+  const entry = {
+    data: next?.data,
+    excludeData: next?.excludeData || next?.data,
+    replace: next?.replace === true
+  };
+  const entries = entry.replace ? [] : priorEntries.slice();
+  const priorIndex = entries.findIndex((candidate) => candidate?.data === entry.data);
+  if (priorIndex >= 0) {
+    entry.replace = entry.replace || entries[priorIndex]?.replace === true;
+    entries.splice(priorIndex, 1);
+  }
+  entries.push(entry);
+  return {
+    file: next?.file || previous?.file || null,
+    generation: Math.max(0, Number(previous?.generation) || 0) + 1,
+    entries
+  };
+}
+function materializeDrawingSaveRequest(latest, request, normalize) {
+  let canonical = latest || null;
+  for (const entry of Array.isArray(request?.entries) ? request.entries : []) {
+    const incoming = normalize(entry?.data, request?.file);
+    canonical = entry?.replace === true ? incoming : mergeControllerDrawingSnapshot(canonical, incoming);
+  }
+  return canonical;
+}
 
 // src/layout-coordinates.mjs
 var RESPONSIVE_POINT_BASIS = "note-content-v1";
@@ -2059,37 +2087,67 @@ function reflowNoteFlowRectangles(items, { gap = 6 } = {}) {
       maxX,
       minY,
       maxY,
+      baseMinY: finite4(item?.baseMinY, minY),
       originalMinY: finite4(item?.originalMinY, minY),
       height: Math.max(0, maxY - minY),
       gap: Math.max(0, finite4(item?.gap, defaultGap)),
-      moved: Boolean(item?.moved)
+      moved: Boolean(item?.moved),
+      rowKey: typeof item?.rowKey === "string" ? item.rowKey : "",
+      align: item?.align === "bottom" ? "bottom" : "top"
     };
   }).filter(Boolean);
-  const moved = normalized.filter((item) => item.moved);
-  const flowing = normalized.filter((item) => !item.moved).sort((a, b) => a.minY - b.minY || a.order - b.order);
-  const settled = [...moved];
   const horizontallyOverlaps = (first, second) => Math.min(first.maxX, second.maxX) - Math.max(first.minX, second.minX) > 0.5;
-  for (const item of flowing) {
-    let minY = item.minY;
+  const rows = [];
+  const ordered = normalized.slice().sort((a, b) => a.baseMinY - b.baseMinY || Number(b.moved) - Number(a.moved) || a.order - b.order);
+  for (const item of ordered) {
+    const row = rows.find((candidate) => {
+      const sameLogicalRow = item.rowKey ? candidate.rowKey === item.rowKey : !candidate.rowKey && Math.abs(candidate.baseMinY - item.baseMinY) <= 0.5;
+      return sameLogicalRow && !candidate.items.some((other) => horizontallyOverlaps(item, other));
+    });
+    if (row) {
+      row.items.push(item);
+      row.height = Math.max(row.height, item.height);
+      row.gap = Math.max(row.gap, item.gap);
+      row.moved = row.moved || item.moved;
+      continue;
+    }
+    rows.push({
+      rowKey: item.rowKey,
+      baseMinY: item.baseMinY,
+      height: item.height,
+      gap: item.gap,
+      moved: item.moved,
+      order: item.order,
+      items: [item]
+    });
+  }
+  rows.sort((a, b) => a.baseMinY - b.baseMinY || Number(b.moved) - Number(a.moved) || a.order - b.order);
+  const settledRows = [];
+  for (const row of rows) {
+    let minY = row.baseMinY;
     let changed = true;
     while (changed) {
       changed = false;
-      const maxY = minY + item.height;
-      for (const blocker of settled) {
-        if (!horizontallyOverlaps(item, blocker)) {
+      for (const blocker of settledRows) {
+        const overlapsLane = row.items.some((item) => blocker.items.some((other) => horizontallyOverlaps(item, other)));
+        if (!overlapsLane) {
           continue;
         }
-        const clearance = Math.max(defaultGap, item.gap, blocker.gap);
-        if (maxY <= blocker.minY || minY >= blocker.maxY + clearance) {
+        const clearance = Math.max(defaultGap, row.gap, blocker.gap);
+        if (minY >= blocker.maxY + clearance || minY + row.height <= blocker.minY) {
           continue;
         }
         minY = blocker.maxY + clearance;
         changed = true;
       }
     }
-    item.minY = minY;
-    item.maxY = minY + item.height;
-    settled.push(item);
+    row.minY = minY;
+    row.maxY = minY + row.height;
+    for (const item of row.items) {
+      item.minY = item.align === "bottom" ? row.maxY - item.height : row.minY;
+      item.maxY = item.minY + item.height;
+    }
+    settledRows.push(row);
   }
   return normalized.map((item) => ({
     id: item.id,
@@ -4615,6 +4673,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     this.registeredSurfaceRecords = /* @__PURE__ */ new Map();
     this.headerActions = /* @__PURE__ */ new Map();
     this.saveTimers = /* @__PURE__ */ new Map();
+    this.saveIdleCallbacks = /* @__PURE__ */ new Map();
     this.pendingDrawingSaves = /* @__PURE__ */ new Map();
     this.drawingWritePromises = /* @__PURE__ */ new Map();
     this.suppressedDrawingSaves = [];
@@ -4800,14 +4859,14 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     }
     this.headerActions.clear();
     cleanupAllDrawingHeaderButtons();
-    for (const [path, timer] of this.saveTimers.entries()) {
-      window.clearTimeout(timer);
+    for (const path of Array.from(this.pendingDrawingSaves.keys())) {
+      this.cancelScheduledDrawingSave(path);
       this.flushDrawingSave(path).catch((error) => {
         console.error(`[${PLUGIN_ID}] Failed to flush drawing data during unload`, error);
       });
     }
     this.saveTimers.clear();
-    this.pendingDrawingSaves.clear();
+    this.saveIdleCallbacks.clear();
     this.suppressedDrawingSaves = [];
     if (this.settingsSaveTimer !== null) {
       window.clearTimeout(this.settingsSaveTimer);
@@ -4958,9 +5017,8 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       return normalizeVaultPath(controller?.file?.path || "") === normalizeVaultPath(activeFile?.path || "");
     });
     const activeSnapshot = activeFile && activeController?.drawingData ? normalizeDrawingDataForStorage(activeController.drawingData, activeFile) : null;
-    for (const [path, timer] of Array.from(this.saveTimers.entries())) {
-      window.clearTimeout(timer);
-      this.saveTimers.delete(path);
+    for (const path of Array.from(this.pendingDrawingSaves.keys())) {
+      this.cancelScheduledDrawingSave(path);
       await this.flushDrawingSave(path);
     }
     this.noteDrawSettings.drawingStorageMode = nextMode;
@@ -6357,10 +6415,14 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       this.portableBundles.delete(filePath);
       this.portableBundleLoads.delete(filePath);
     }
-    for (const [key, timer] of this.saveTimers.entries()) {
+    for (const key of Array.from(this.saveTimers.keys())) {
       if (storageKeys.has(key)) {
-        window.clearTimeout(timer);
-        this.saveTimers.delete(key);
+        this.cancelScheduledDrawingSave(key);
+      }
+    }
+    for (const key of Array.from(this.saveIdleCallbacks.keys())) {
+      if (storageKeys.has(key)) {
+        this.cancelScheduledDrawingSave(key);
       }
     }
     for (const key of storageKeys) {
@@ -7581,6 +7643,15 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
   async readDrawings(file2, options = {}) {
     const storageMode = this.drawingStorageModeForFile(file2);
     const storageKey = this.drawingStorageKey(file2, storageMode);
+    const pending = this.pendingDrawingSaves.get(storageKey);
+    if (pending?.entries?.length) {
+      const latest = materializeDrawingSaveRequest(
+        this.drawingStateCache.get(storageKey),
+        pending,
+        normalizeDrawingDataForStorage
+      );
+      return normalizeDrawingData(latest, file2);
+    }
     const cached = this.drawingStateCache.get(storageKey);
     if (cached) {
       return normalizeDrawingData(cached, file2);
@@ -7691,40 +7762,72 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       this.suppressedDrawingSaves.splice(0, Math.max(0, this.suppressedDrawingSaves.length - 20));
       return false;
     }
-    const incoming = normalizeDrawingDataForStorage(data, file2);
-    const canonical = options.replace === true ? incoming : mergeControllerDrawingSnapshot(this.drawingStateCache.get(path), incoming);
-    this.drawingStateCache.set(path, canonical);
-    this.pendingDrawingSaves.set(path, file2);
-    this.refreshControllersForFile(file2, canonical, { excludeData: options.excludeData || data });
-    const previous = this.saveTimers.get(path);
-    if (previous) {
-      window.clearTimeout(previous);
-    }
+    this.pendingDrawingSaves.set(path, coalesceDrawingSaveRequest(
+      this.pendingDrawingSaves.get(path),
+      {
+        file: file2,
+        data,
+        excludeData: options.excludeData || data,
+        replace: options.replace === true
+      }
+    ));
+    this.cancelScheduledDrawingSave(path);
     const timer = window.setTimeout(() => {
       this.saveTimers.delete(path);
-      this.flushDrawingSave(path).catch((error) => {
-        console.error(`[${PLUGIN_ID}] Failed to save drawing file`, error);
-        new import_obsidian.Notice(this.t("failedSaveDrawing"));
-      });
+      const run = () => {
+        this.saveIdleCallbacks.delete(path);
+        this.flushDrawingSave(path).catch((error) => {
+          console.error(`[${PLUGIN_ID}] Failed to save drawing file`, error);
+          new import_obsidian.Notice(this.t("failedSaveDrawing"));
+        });
+      };
+      if (typeof window.requestIdleCallback === "function") {
+        const idleId = window.requestIdleCallback(run, { timeout: 800 });
+        this.saveIdleCallbacks.set(path, idleId);
+      } else {
+        run();
+      }
     }, this.noteDrawSettings?.autoSaveDelayMs ?? DEFAULT_SETTINGS.autoSaveDelayMs);
     this.saveTimers.set(path, timer);
     return true;
   }
+  cancelScheduledDrawingSave(path) {
+    const timer = this.saveTimers.get(path);
+    if (timer !== void 0) {
+      window.clearTimeout(timer);
+      this.saveTimers.delete(path);
+    }
+    const idleId = this.saveIdleCallbacks.get(path);
+    if (idleId !== void 0) {
+      window.cancelIdleCallback?.(idleId);
+      this.saveIdleCallbacks.delete(path);
+    }
+  }
   async flushDrawingSave(path) {
-    const file2 = this.pendingDrawingSaves.get(path);
-    const latest = this.drawingStateCache.get(path);
-    if (!file2) {
+    this.cancelScheduledDrawingSave(path);
+    const request = this.pendingDrawingSaves.get(path);
+    if (!request) {
       return;
     }
-    this.pendingDrawingSaves.delete(path);
+    if (this.pendingDrawingSaves.get(path) === request) {
+      this.pendingDrawingSaves.delete(path);
+    }
     const previousWrite = this.drawingWritePromises.get(path) || Promise.resolve();
     const write = previousWrite.catch(() => void 0).then(async () => {
-      if (!latest) {
+      const canonical = materializeDrawingSaveRequest(
+        this.drawingStateCache.get(path),
+        request,
+        normalizeDrawingDataForStorage
+      );
+      if (!canonical) {
         return;
       }
-      const compacted = normalizeDrawingDataForStorage(latest, file2);
+      this.drawingStateCache.set(path, canonical);
+      const lastEntry = request.entries[request.entries.length - 1];
+      this.refreshControllersForFile(request.file, canonical, { excludeData: lastEntry?.excludeData });
+      const compacted = normalizeDrawingDataForStorage(canonical, request.file);
       compactDrawingData(compacted, this.noteDrawSettings?.drawingCompactDistance ?? DEFAULT_SETTINGS.drawingCompactDistance);
-      await this.writeDrawings(file2, compacted, { refresh: false, updateCache: false });
+      await this.writeDrawings(request.file, compacted, { normalized: true, refresh: false, updateCache: false });
     });
     this.drawingWritePromises.set(path, write);
     try {
@@ -7739,7 +7842,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     const storageMode = this.drawingStorageModeForFile(file2);
     const path = this.drawingPathForFile(file2, storageMode);
     const storageKey = this.drawingStorageKey(file2, storageMode);
-    const normalized = normalizeDrawingDataForStorage(data, file2);
+    const normalized = options.normalized === true ? data : normalizeDrawingDataForStorage(data, file2);
     const updatedAt = (/* @__PURE__ */ new Date()).toISOString();
     normalized.updatedAt = updatedAt;
     if (options.updateCache !== false) {
@@ -15088,7 +15191,7 @@ var PreviewDrawingController = class {
           }
         }
       }
-      const flowedIndexes = resolvedDropPlacement ? this.reflowNoteFlowElementsAfterDrag(movedIndexes) : [];
+      const flowedIndexes = resolvedDropPlacement ? this.reflowNoteFlowElementsAfterDrag(movedIndexes, resolvedDropPlacement) : [];
       const affectedIndexes = Array.from(/* @__PURE__ */ new Set([...movedIndexes, ...flowedIndexes]));
       const droppedNoteFlowIndexes = new Set(this.draggedNoteFlowIndexes(movedIndexes));
       for (const index of affectedIndexes) {
@@ -15096,7 +15199,8 @@ var PreviewDrawingController = class {
         if (stroke?.noteFlow?.enabled) {
           const rejectedDrop = droppedNoteFlowIndexes.has(index) && !resolvedDropPlacement;
           stroke.noteFlow = rejectedDrop ? { ...this.dragStrokeOriginalNoteFlows.get(index) } : this.captureNoteFlowAnchor(stroke, {
-            placement: droppedNoteFlowIndexes.has(index) ? resolvedDropPlacement : null
+            placement: droppedNoteFlowIndexes.has(index) ? resolvedDropPlacement : null,
+            preservePlacement: !droppedNoteFlowIndexes.has(index)
           });
         }
       }
@@ -15106,7 +15210,7 @@ var PreviewDrawingController = class {
       this.redoStack = [];
       this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
       if (!markdownDrop) {
-        this.recordDrawingHistory(drawingHistoryBefore);
+        this.recordDrawingHistory(drawingHistoryBefore, { knownChanged: true });
       }
       if (affectedIndexes.some((index) => this.drawingData.strokes[index]?.noteFlow?.enabled)) {
         this.scheduleNoteFlowLayout({ operation: true });
@@ -15134,7 +15238,7 @@ var PreviewDrawingController = class {
         this.captureSelectionFrameSnapshot({ force: true });
         this.render();
         console.error(`[${PLUGIN_ID}] Failed to move Markdown blocks`, error);
-        this.recordDrawingHistory(drawingHistoryBefore);
+        this.recordDrawingHistory(drawingHistoryBefore, { knownChanged: true });
         new import_obsidian.Notice(this.plugin.t("failedMoveMarkdownBlock"));
       });
     }
@@ -17791,7 +17895,7 @@ var PreviewDrawingController = class {
     const leftSnap = placement.leftSnap === true;
     const boundary = horizontalSide ? placement.candidate.top : Number.isFinite(Number(placement.boundary)) ? Number(placement.boundary) : placement.side === "after" ? placement.candidate.bottom : placement.candidate.top;
     const targetCanvasY = this.canvasWindowTop + (boundary - canvasRect.top) / Math.max(1e-4, scaleY);
-    const sourceCanvasY = !horizontalSide && placement.side === "before" ? flowBounds.maxY : flowBounds.minY;
+    const sourceCanvasY = flowBounds.minY;
     const deltaY = clamp10(targetCanvasY - sourceCanvasY, -allBounds.minY, this.canvasHeight() - allBounds.maxY);
     let deltaX = 0;
     if (horizontalSide || leftSnap) {
@@ -18851,7 +18955,7 @@ var PreviewDrawingController = class {
       this.scheduleResize({ layout: false, measure: true, preserveAbsolutePlacement: true });
     }, delay);
   }
-  reflowNoteFlowElementsAfterDrag(movedIndexes) {
+  reflowNoteFlowElementsAfterDrag(movedIndexes, placement = null) {
     if (!this.supportsNoteFlow() || !this.dragStrokeOriginalPoints?.size) {
       return [];
     }
@@ -18864,6 +18968,9 @@ var PreviewDrawingController = class {
     }
     const canvasWidth = this.canvasWidth();
     const canvasHeight = this.canvasHeight();
+    const canvasRect = this.noteFlowCanvasRect();
+    const scaleY = canvasRect?.height > 1 ? canvasRect.height / Math.max(1, this.canvasRenderHeight) : 1;
+    const candidates = canvasRect?.height > 1 ? this.noteFlowCandidates() : [];
     const items = [];
     for (const [index, stroke] of (this.drawingData?.strokes || []).entries()) {
       const noteFlow = normalizeNoteFlow(stroke?.noteFlow);
@@ -18874,6 +18981,13 @@ var PreviewDrawingController = class {
       if (!bounds) {
         continue;
       }
+      const movedItem = moved.has(index);
+      const path = normalizeVaultPath(movedItem ? placement?.path : noteFlow.path || this.file?.path || "");
+      const line = Number(movedItem ? placement?.line : noteFlow.line);
+      const side = movedItem ? placement?.side : noteFlow.side;
+      const anchor = !movedItem && path && Number.isFinite(line) && ["before", "after"].includes(side) ? candidates.filter((candidate) => normalizeVaultPath(candidate.path || this.file?.path || "") === path && line >= Number(candidate.start) && line <= Number(candidate.end)).sort((a, b) => Number(Boolean(b.lineSpacer)) - Number(Boolean(a.lineSpacer)) || a.bottom - a.top - (b.bottom - b.top) || a.order - b.order)[0] || null : null;
+      const anchorBoundary = anchor ? noteFlow.placementMode === "inline" ? anchor.top : side === "after" ? anchor.bottom : anchor.top : Number.NaN;
+      const baseMinY = Number.isFinite(anchorBoundary) && canvasRect ? this.canvasWindowTop + (anchorBoundary - canvasRect.top) / Math.max(1e-4, scaleY) : bounds.minY;
       items.push({
         id: strokeElementId(stroke) || String(index),
         index,
@@ -18882,27 +18996,30 @@ var PreviewDrawingController = class {
         maxX: bounds.maxX,
         minY: bounds.minY,
         maxY: bounds.maxY,
+        baseMinY,
         originalMinY: bounds.minY,
-        moved: moved.has(index),
+        moved: movedItem,
+        rowKey: path && Number.isFinite(line) && ["before", "after"].includes(side) ? `${path}\0${Math.floor(line)}\0${side}` : "",
+        align: "top",
         gap: Math.min(8, noteFlow.gap)
       });
     }
     const placements = reflowNoteFlowRectangles(items);
     const changed = [];
-    for (const placement of placements) {
-      if (Math.abs(placement.deltaY) < 0.5) {
+    for (const placement2 of placements) {
+      if (Math.abs(placement2.deltaY) < 0.5) {
         continue;
       }
-      const stroke = this.drawingData.strokes[placement.index];
+      const stroke = this.drawingData.strokes[placement2.index];
       if (!stroke || stroke.locked) {
         continue;
       }
-      const deltaY = placement.deltaY / Math.max(1, canvasHeight);
+      const deltaY = placement2.deltaY / Math.max(1, canvasHeight);
       stroke.points = stroke.points.map((point) => ({
         ...point,
         y: clamp10(Number(point.y) + deltaY, 0, 1)
       }));
-      changed.push(placement.index);
+      changed.push(placement2.index);
     }
     if (changed.length) {
       this.invalidateStaticCache();
@@ -19806,9 +19923,9 @@ var PreviewDrawingController = class {
   captureDrawingHistorySnapshot() {
     return cloneDrawingData(this.drawingData, this.file);
   }
-  recordDrawingHistory(before) {
+  recordDrawingHistory(before, options = {}) {
     const after = this.captureDrawingHistorySnapshot();
-    if (JSON.stringify(before) === JSON.stringify(after)) {
+    if (options.knownChanged !== true && JSON.stringify(before) === JSON.stringify(after)) {
       return;
     }
     this.plugin.recordControllerHistory(this, { kind: "drawing", file: this.file, before, after });

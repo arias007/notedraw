@@ -599,7 +599,7 @@ test("moving an inserted element pushes later elements and fills a usable upper 
   ]);
 });
 
-test("NoteFlow rectangles keep upper and side-by-side elements fixed while pushing real collisions down", () => {
+test("NoteFlow rows move side-by-side elements together after a real collision", () => {
   const placements = reflowNoteFlowRectangles([
     { id: "upper", index: 0, minX: 0, maxX: 100, minY: 0, maxY: 40, originalMinY: 0 },
     { id: "moved", index: 1, minX: 0, maxX: 100, minY: 60, maxY: 100, originalMinY: 60, moved: true },
@@ -611,11 +611,11 @@ test("NoteFlow rectangles keep upper and side-by-side elements fixed while pushi
     { id: "upper", minY: 0, maxY: 40 },
     { id: "moved", minY: 60, maxY: 100 },
     { id: "collision", minY: 106, maxY: 146 },
-    { id: "inline", minY: 80, maxY: 120 }
+    { id: "inline", minY: 106, maxY: 146 }
   ]);
 });
 
-test("NoteFlow rectangle displacement propagates only through the colliding vertical lane", () => {
+test("NoteFlow row height follows its tallest side-by-side element", () => {
   const placements = reflowNoteFlowRectangles([
     { id: "moved", index: 0, minX: 0, maxX: 100, minY: 40, maxY: 90, originalMinY: 40, moved: true },
     { id: "next", index: 1, minX: 10, maxX: 90, minY: 70, maxY: 110, originalMinY: 70 },
@@ -626,7 +626,39 @@ test("NoteFlow rectangle displacement propagates only through the colliding vert
   assert.deepEqual(placements.map(({ id, minY }) => ({ id, minY })), [
     { id: "moved", minY: 40 },
     { id: "next", minY: 96 },
-    { id: "later", minY: 142 },
-    { id: "other-column", minY: 70 }
+    { id: "later", minY: 162 },
+    { id: "other-column", minY: 96 }
+  ]);
+});
+
+test("NoteFlow recomputes from stable row bases instead of accumulating old displacement", () => {
+  const input = [
+    { id: "tall", index: 0, rowKey: "line-1", minX: 0, maxX: 90, minY: 160, maxY: 240, baseMinY: 100, originalMinY: 160 },
+    { id: "short", index: 1, rowKey: "line-1", minX: 110, maxX: 180, minY: 180, maxY: 220, baseMinY: 100, originalMinY: 180, align: "bottom" },
+    { id: "next", index: 2, rowKey: "line-2", minX: 0, maxX: 90, minY: 260, maxY: 300, baseMinY: 140, originalMinY: 260 }
+  ];
+  const first = reflowNoteFlowRectangles(input, { gap: 6 });
+  const replay = reflowNoteFlowRectangles(input.map((item) => {
+    const placement = first.find((candidate) => candidate.id === item.id);
+    return { ...item, minY: placement.minY, maxY: placement.maxY, originalMinY: placement.minY };
+  }), { gap: 6 });
+
+  assert.deepEqual(first.map(({ id, minY, maxY }) => ({ id, minY, maxY })), [
+    { id: "tall", minY: 100, maxY: 180 },
+    { id: "short", minY: 140, maxY: 180 },
+    { id: "next", minY: 186, maxY: 226 }
+  ]);
+  assert.deepEqual(replay.map(({ id, minY, maxY }) => ({ id, minY, maxY })), first.map(({ id, minY, maxY }) => ({ id, minY, maxY })));
+});
+
+test("a blue-bar row top cannot rise through an upper NoteFlow row", () => {
+  const placements = reflowNoteFlowRectangles([
+    { id: "upper", index: 0, rowKey: "line-1", minX: 0, maxX: 100, minY: 100, maxY: 160, baseMinY: 100, originalMinY: 100 },
+    { id: "dropped", index: 1, rowKey: "line-2", minX: 20, maxX: 80, minY: 130, maxY: 170, baseMinY: 130, originalMinY: 130, moved: true }
+  ], { gap: 6 });
+
+  assert.deepEqual(placements.map(({ id, minY, maxY }) => ({ id, minY, maxY })), [
+    { id: "upper", minY: 100, maxY: 160 },
+    { id: "dropped", minY: 166, maxY: 206 }
   ]);
 });

@@ -352,7 +352,9 @@ test("NoteFlow release commits the exact candidate and boundary shown by the blu
   assert.match(dragFinishSource, /candidate: this\.dragNoteFlowPlacement\.candidate/);
   assert.match(dragFinishSource, /if \(!this\.dragNoteFlowPlacement\) \{\s*this\.updateDraggedNoteFlowPlacement/);
   assert.match(dragFinishSource, /const visibleDrop = this\.dragMarkdownDropTarget\?\.isConnected[\s\S]*captureMarkdownBlockDropTarget/);
-  assert.match(placementSource, /placement\.side === "before"[\s\S]*flowBounds\.maxY[\s\S]*flowBounds\.minY/);
+  assert.match(placementSource, /const targetCanvasY =[\s\S]*const sourceCanvasY = flowBounds\.minY/);
+  assert.doesNotMatch(placementSource, /sourceCanvasY[\s\S]*flowBounds\.maxY/);
+  assert.match(source, /noteFlow\.placementMode === "inline" \? anchor\.top : side === "after" \? anchor\.bottom : anchor\.top/);
   assert.match(placementSource, /const candidate = placement\?\.candidate;[\s\S]*const exactCandidate = candidate/);
   assert.match(placementSource, /return exactCandidate \? \{[\s\S]*candidate: exactCandidate[\s\S]*\} : null/);
   assert.doesNotMatch(placementSource.slice(placementSource.indexOf("  resolveDraggedNoteFlowPlacement("), placementSource.indexOf("  snapDraggedSelectionToNoteFlowPlacement(")), /dragDropGeometrySnapshot|selectStoredNoteFlowAnchorCandidate/);

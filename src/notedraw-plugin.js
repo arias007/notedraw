@@ -22,7 +22,7 @@ import {
   measureCanvasExtent,
   shouldClearStaleReadingVirtualMinHeight
 } from "./canvas-sizing.mjs";
-import { mergeControllerDrawingSnapshot } from "./drawing-persistence.mjs";
+import { coalesceDrawingSaveRequest, materializeDrawingSaveRequest } from "./drawing-persistence.mjs";
 import {
   RESPONSIVE_POINT_BASIS,
   constrainWideContentFrame,
@@ -1370,6 +1370,7 @@ var NoteDrawPlugin = class extends Plugin {
     this.registeredSurfaceRecords = /* @__PURE__ */ new Map();
     this.headerActions = /* @__PURE__ */ new Map();
     this.saveTimers = /* @__PURE__ */ new Map();
+    this.saveIdleCallbacks = /* @__PURE__ */ new Map();
     this.pendingDrawingSaves = /* @__PURE__ */ new Map();
     this.drawingWritePromises = /* @__PURE__ */ new Map();
     this.suppressedDrawingSaves = [];
@@ -1555,14 +1556,14 @@ var NoteDrawPlugin = class extends Plugin {
     }
     this.headerActions.clear();
     cleanupAllDrawingHeaderButtons();
-    for (const [path, timer] of this.saveTimers.entries()) {
-      window.clearTimeout(timer);
+    for (const path of Array.from(this.pendingDrawingSaves.keys())) {
+      this.cancelScheduledDrawingSave(path);
       this.flushDrawingSave(path).catch((error) => {
         console.error(`[${PLUGIN_ID}] Failed to flush drawing data during unload`, error);
       });
     }
     this.saveTimers.clear();
-    this.pendingDrawingSaves.clear();
+    this.saveIdleCallbacks.clear();
     this.suppressedDrawingSaves = [];
     if (this.settingsSaveTimer !== null) {
       window.clearTimeout(this.settingsSaveTimer);
@@ -1721,9 +1722,8 @@ var NoteDrawPlugin = class extends Plugin {
     const activeSnapshot = activeFile && activeController?.drawingData
       ? normalizeDrawingDataForStorage(activeController.drawingData, activeFile)
       : null;
-    for (const [path, timer] of Array.from(this.saveTimers.entries())) {
-      window.clearTimeout(timer);
-      this.saveTimers.delete(path);
+    for (const path of Array.from(this.pendingDrawingSaves.keys())) {
+      this.cancelScheduledDrawingSave(path);
       await this.flushDrawingSave(path);
     }
     this.noteDrawSettings.drawingStorageMode = nextMode;
@@ -3142,10 +3142,14 @@ var NoteDrawPlugin = class extends Plugin {
       this.portableBundles.delete(filePath);
       this.portableBundleLoads.delete(filePath);
     }
-    for (const [key, timer] of this.saveTimers.entries()) {
+    for (const key of Array.from(this.saveTimers.keys())) {
       if (storageKeys.has(key)) {
-        window.clearTimeout(timer);
-        this.saveTimers.delete(key);
+        this.cancelScheduledDrawingSave(key);
+      }
+    }
+    for (const key of Array.from(this.saveIdleCallbacks.keys())) {
+      if (storageKeys.has(key)) {
+        this.cancelScheduledDrawingSave(key);
       }
     }
     for (const key of storageKeys) {
@@ -4381,6 +4385,15 @@ var NoteDrawPlugin = class extends Plugin {
   async readDrawings(file, options = {}) {
     const storageMode = this.drawingStorageModeForFile(file);
     const storageKey = this.drawingStorageKey(file, storageMode);
+    const pending = this.pendingDrawingSaves.get(storageKey);
+    if (pending?.entries?.length) {
+      const latest = materializeDrawingSaveRequest(
+        this.drawingStateCache.get(storageKey),
+        pending,
+        normalizeDrawingDataForStorage
+      );
+      return normalizeDrawingData(latest, file);
+    }
     const cached = this.drawingStateCache.get(storageKey);
     if (cached) {
       return normalizeDrawingData(cached, file);
@@ -4491,42 +4504,72 @@ var NoteDrawPlugin = class extends Plugin {
       this.suppressedDrawingSaves.splice(0, Math.max(0, this.suppressedDrawingSaves.length - 20));
       return false;
     }
-    const incoming = normalizeDrawingDataForStorage(data, file);
-    const canonical = options.replace === true
-      ? incoming
-      : mergeControllerDrawingSnapshot(this.drawingStateCache.get(path), incoming);
-    this.drawingStateCache.set(path, canonical);
-    this.pendingDrawingSaves.set(path, file);
-    this.refreshControllersForFile(file, canonical, { excludeData: options.excludeData || data });
-    const previous = this.saveTimers.get(path);
-    if (previous) {
-      window.clearTimeout(previous);
-    }
+    this.pendingDrawingSaves.set(path, coalesceDrawingSaveRequest(
+      this.pendingDrawingSaves.get(path),
+      {
+        file,
+        data,
+        excludeData: options.excludeData || data,
+        replace: options.replace === true
+      }
+    ));
+    this.cancelScheduledDrawingSave(path);
     const timer = window.setTimeout(() => {
       this.saveTimers.delete(path);
-      this.flushDrawingSave(path).catch((error) => {
-        console.error(`[${PLUGIN_ID}] Failed to save drawing file`, error);
-        new Notice(this.t("failedSaveDrawing"));
-      });
+      const run = () => {
+        this.saveIdleCallbacks.delete(path);
+        this.flushDrawingSave(path).catch((error) => {
+          console.error(`[${PLUGIN_ID}] Failed to save drawing file`, error);
+          new Notice(this.t("failedSaveDrawing"));
+        });
+      };
+      if (typeof window.requestIdleCallback === "function") {
+        const idleId = window.requestIdleCallback(run, { timeout: 800 });
+        this.saveIdleCallbacks.set(path, idleId);
+      } else {
+        run();
+      }
     }, this.noteDrawSettings?.autoSaveDelayMs ?? DEFAULT_SETTINGS.autoSaveDelayMs);
     this.saveTimers.set(path, timer);
     return true;
   }
+  cancelScheduledDrawingSave(path) {
+    const timer = this.saveTimers.get(path);
+    if (timer !== undefined) {
+      window.clearTimeout(timer);
+      this.saveTimers.delete(path);
+    }
+    const idleId = this.saveIdleCallbacks.get(path);
+    if (idleId !== undefined) {
+      window.cancelIdleCallback?.(idleId);
+      this.saveIdleCallbacks.delete(path);
+    }
+  }
   async flushDrawingSave(path) {
-    const file = this.pendingDrawingSaves.get(path);
-    const latest = this.drawingStateCache.get(path);
-    if (!file) {
+    this.cancelScheduledDrawingSave(path);
+    const request = this.pendingDrawingSaves.get(path);
+    if (!request) {
       return;
     }
-    this.pendingDrawingSaves.delete(path);
+    if (this.pendingDrawingSaves.get(path) === request) {
+      this.pendingDrawingSaves.delete(path);
+    }
     const previousWrite = this.drawingWritePromises.get(path) || Promise.resolve();
     const write = previousWrite.catch(() => void 0).then(async () => {
-      if (!latest) {
+      const canonical = materializeDrawingSaveRequest(
+        this.drawingStateCache.get(path),
+        request,
+        normalizeDrawingDataForStorage
+      );
+      if (!canonical) {
         return;
       }
-      const compacted = normalizeDrawingDataForStorage(latest, file);
+      this.drawingStateCache.set(path, canonical);
+      const lastEntry = request.entries[request.entries.length - 1];
+      this.refreshControllersForFile(request.file, canonical, { excludeData: lastEntry?.excludeData });
+      const compacted = normalizeDrawingDataForStorage(canonical, request.file);
       compactDrawingData(compacted, this.noteDrawSettings?.drawingCompactDistance ?? DEFAULT_SETTINGS.drawingCompactDistance);
-      await this.writeDrawings(file, compacted, { refresh: false, updateCache: false });
+      await this.writeDrawings(request.file, compacted, { normalized: true, refresh: false, updateCache: false });
     });
     this.drawingWritePromises.set(path, write);
     try {
@@ -4541,7 +4584,7 @@ var NoteDrawPlugin = class extends Plugin {
     const storageMode = this.drawingStorageModeForFile(file);
     const path = this.drawingPathForFile(file, storageMode);
     const storageKey = this.drawingStorageKey(file, storageMode);
-    const normalized = normalizeDrawingDataForStorage(data, file);
+    const normalized = options.normalized === true ? data : normalizeDrawingDataForStorage(data, file);
     const updatedAt = (/* @__PURE__ */ new Date()).toISOString();
     normalized.updatedAt = updatedAt;
     if (options.updateCache !== false) {
@@ -12061,7 +12104,7 @@ var PreviewDrawingController = class {
           }
         }
       }
-      const flowedIndexes = resolvedDropPlacement ? this.reflowNoteFlowElementsAfterDrag(movedIndexes) : [];
+      const flowedIndexes = resolvedDropPlacement ? this.reflowNoteFlowElementsAfterDrag(movedIndexes, resolvedDropPlacement) : [];
       const affectedIndexes = Array.from(new Set([...movedIndexes, ...flowedIndexes]));
       const droppedNoteFlowIndexes = new Set(this.draggedNoteFlowIndexes(movedIndexes));
       for (const index of affectedIndexes) {
@@ -12071,7 +12114,8 @@ var PreviewDrawingController = class {
           stroke.noteFlow = rejectedDrop
             ? { ...this.dragStrokeOriginalNoteFlows.get(index) }
             : this.captureNoteFlowAnchor(stroke, {
-              placement: droppedNoteFlowIndexes.has(index) ? resolvedDropPlacement : null
+              placement: droppedNoteFlowIndexes.has(index) ? resolvedDropPlacement : null,
+              preservePlacement: !droppedNoteFlowIndexes.has(index)
             });
         }
       }
@@ -12081,7 +12125,7 @@ var PreviewDrawingController = class {
       this.redoStack = [];
       this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
       if (!markdownDrop) {
-        this.recordDrawingHistory(drawingHistoryBefore);
+        this.recordDrawingHistory(drawingHistoryBefore, { knownChanged: true });
       }
       if (affectedIndexes.some((index) => this.drawingData.strokes[index]?.noteFlow?.enabled)) {
         this.scheduleNoteFlowLayout({ operation: true });
@@ -12109,7 +12153,7 @@ var PreviewDrawingController = class {
         this.captureSelectionFrameSnapshot({ force: true });
         this.render();
         console.error(`[${PLUGIN_ID}] Failed to move Markdown blocks`, error);
-        this.recordDrawingHistory(drawingHistoryBefore);
+        this.recordDrawingHistory(drawingHistoryBefore, { knownChanged: true });
         new Notice(this.plugin.t("failedMoveMarkdownBlock"));
       });
     }
@@ -14851,9 +14895,7 @@ var PreviewDrawingController = class {
           ? placement.candidate.bottom
           : placement.candidate.top;
     const targetCanvasY = this.canvasWindowTop + (boundary - canvasRect.top) / Math.max(0.0001, scaleY);
-    const sourceCanvasY = !horizontalSide && placement.side === "before"
-      ? flowBounds.maxY
-      : flowBounds.minY;
+    const sourceCanvasY = flowBounds.minY;
     const deltaY = clamp(targetCanvasY - sourceCanvasY, -allBounds.minY, this.canvasHeight() - allBounds.maxY);
     let deltaX = 0;
     if (horizontalSide || leftSnap) {
@@ -15966,7 +16008,7 @@ var PreviewDrawingController = class {
       this.scheduleResize({ layout: false, measure: true, preserveAbsolutePlacement: true });
     }, delay);
   }
-  reflowNoteFlowElementsAfterDrag(movedIndexes) {
+  reflowNoteFlowElementsAfterDrag(movedIndexes, placement = null) {
     if (!this.supportsNoteFlow() || !this.dragStrokeOriginalPoints?.size) {
       return [];
     }
@@ -15979,6 +16021,9 @@ var PreviewDrawingController = class {
     }
     const canvasWidth = this.canvasWidth();
     const canvasHeight = this.canvasHeight();
+    const canvasRect = this.noteFlowCanvasRect();
+    const scaleY = canvasRect?.height > 1 ? canvasRect.height / Math.max(1, this.canvasRenderHeight) : 1;
+    const candidates = canvasRect?.height > 1 ? this.noteFlowCandidates() : [];
     const items = [];
     for (const [index, stroke] of (this.drawingData?.strokes || []).entries()) {
       const noteFlow = normalizeNoteFlow(stroke?.noteFlow);
@@ -15989,6 +16034,27 @@ var PreviewDrawingController = class {
       if (!bounds) {
         continue;
       }
+      const movedItem = moved.has(index);
+      const path = normalizeVaultPath(movedItem ? placement?.path : noteFlow.path || this.file?.path || "");
+      const line = Number(movedItem ? placement?.line : noteFlow.line);
+      const side = movedItem ? placement?.side : noteFlow.side;
+      const anchor = !movedItem && path && Number.isFinite(line) && ["before", "after"].includes(side)
+        ? candidates.filter((candidate) => (
+          normalizeVaultPath(candidate.path || this.file?.path || "") === path
+          && line >= Number(candidate.start)
+          && line <= Number(candidate.end)
+        )).sort((a, b) => (
+          Number(Boolean(b.lineSpacer)) - Number(Boolean(a.lineSpacer))
+          || (a.bottom - a.top) - (b.bottom - b.top)
+          || a.order - b.order
+        ))[0] || null
+        : null;
+      const anchorBoundary = anchor
+        ? noteFlow.placementMode === "inline" ? anchor.top : side === "after" ? anchor.bottom : anchor.top
+        : Number.NaN;
+      const baseMinY = Number.isFinite(anchorBoundary) && canvasRect
+        ? this.canvasWindowTop + (anchorBoundary - canvasRect.top) / Math.max(0.0001, scaleY)
+        : bounds.minY;
       items.push({
         id: strokeElementId(stroke) || String(index),
         index,
@@ -15997,8 +16063,13 @@ var PreviewDrawingController = class {
         maxX: bounds.maxX,
         minY: bounds.minY,
         maxY: bounds.maxY,
+        baseMinY,
         originalMinY: bounds.minY,
-        moved: moved.has(index),
+        moved: movedItem,
+        rowKey: path && Number.isFinite(line) && ["before", "after"].includes(side)
+          ? `${path}\0${Math.floor(line)}\0${side}`
+          : "",
+        align: "top",
         gap: Math.min(8, noteFlow.gap)
       });
     }
@@ -16941,9 +17012,9 @@ var PreviewDrawingController = class {
   captureDrawingHistorySnapshot() {
     return cloneDrawingData(this.drawingData, this.file);
   }
-  recordDrawingHistory(before) {
+  recordDrawingHistory(before, options = {}) {
     const after = this.captureDrawingHistorySnapshot();
-    if (JSON.stringify(before) === JSON.stringify(after)) {
+    if (options.knownChanged !== true && JSON.stringify(before) === JSON.stringify(after)) {
       return;
     }
     this.plugin.recordControllerHistory(this, { kind: "drawing", file: this.file, before, after });

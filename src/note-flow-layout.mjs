@@ -654,41 +654,81 @@ export function reflowNoteFlowRectangles(items, { gap = 6 } = {}) {
       maxX,
       minY,
       maxY,
+      baseMinY: finite(item?.baseMinY, minY),
       originalMinY: finite(item?.originalMinY, minY),
       height: Math.max(0, maxY - minY),
       gap: Math.max(0, finite(item?.gap, defaultGap)),
-      moved: Boolean(item?.moved)
+      moved: Boolean(item?.moved),
+      rowKey: typeof item?.rowKey === "string" ? item.rowKey : "",
+      align: item?.align === "bottom" ? "bottom" : "top"
     };
   }).filter(Boolean);
-  const moved = normalized.filter((item) => item.moved);
-  const flowing = normalized.filter((item) => !item.moved)
-    .sort((a, b) => a.minY - b.minY || a.order - b.order);
-  const settled = [...moved];
   const horizontallyOverlaps = (first, second) => (
     Math.min(first.maxX, second.maxX) - Math.max(first.minX, second.minX) > 0.5
   );
 
-  for (const item of flowing) {
-    let minY = item.minY;
+  const rows = [];
+  const ordered = normalized.slice().sort((a, b) => (
+    a.baseMinY - b.baseMinY
+    || Number(b.moved) - Number(a.moved)
+    || a.order - b.order
+  ));
+  for (const item of ordered) {
+    const row = rows.find((candidate) => {
+      const sameLogicalRow = item.rowKey
+        ? candidate.rowKey === item.rowKey
+        : !candidate.rowKey && Math.abs(candidate.baseMinY - item.baseMinY) <= 0.5;
+      return sameLogicalRow && !candidate.items.some((other) => horizontallyOverlaps(item, other));
+    });
+    if (row) {
+      row.items.push(item);
+      row.height = Math.max(row.height, item.height);
+      row.gap = Math.max(row.gap, item.gap);
+      row.moved = row.moved || item.moved;
+      continue;
+    }
+    rows.push({
+      rowKey: item.rowKey,
+      baseMinY: item.baseMinY,
+      height: item.height,
+      gap: item.gap,
+      moved: item.moved,
+      order: item.order,
+      items: [item]
+    });
+  }
+
+  rows.sort((a, b) => (
+    a.baseMinY - b.baseMinY
+    || Number(b.moved) - Number(a.moved)
+    || a.order - b.order
+  ));
+  const settledRows = [];
+  for (const row of rows) {
+    let minY = row.baseMinY;
     let changed = true;
     while (changed) {
       changed = false;
-      const maxY = minY + item.height;
-      for (const blocker of settled) {
-        if (!horizontallyOverlaps(item, blocker)) {
+      for (const blocker of settledRows) {
+        const overlapsLane = row.items.some((item) => blocker.items.some((other) => horizontallyOverlaps(item, other)));
+        if (!overlapsLane) {
           continue;
         }
-        const clearance = Math.max(defaultGap, item.gap, blocker.gap);
-        if (maxY <= blocker.minY || minY >= blocker.maxY + clearance) {
+        const clearance = Math.max(defaultGap, row.gap, blocker.gap);
+        if (minY >= blocker.maxY + clearance || minY + row.height <= blocker.minY) {
           continue;
         }
         minY = blocker.maxY + clearance;
         changed = true;
       }
     }
-    item.minY = minY;
-    item.maxY = minY + item.height;
-    settled.push(item);
+    row.minY = minY;
+    row.maxY = minY + row.height;
+    for (const item of row.items) {
+      item.minY = item.align === "bottom" ? row.maxY - item.height : row.minY;
+      item.maxY = item.minY + item.height;
+    }
+    settledRows.push(row);
   }
 
   return normalized.map((item) => ({

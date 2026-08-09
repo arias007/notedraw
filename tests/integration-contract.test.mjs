@@ -86,14 +86,14 @@ test("deleting a vault file clears NoteDraw controllers, DOM presentation, cache
   assert.match(source, /collectDeletedVaultFiles\(deletedFile\)/);
 });
 
-test("3.4.34 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
+test("3.4.35 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
   const [source, manifestText] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(manifestUrl, "utf8")
   ]);
   const manifest = JSON.parse(manifestText);
 
-  assert.equal(manifest.version, "3.4.34");
+  assert.equal(manifest.version, "3.4.35");
   assert.match(source, /version: "3\.4\.19"/);
   assert.match(source, /this\.readingVirtualStyleState = \/\* @__PURE__ \*\/ new Map\(\)/);
   assert.match(source, /shouldClearStaleReadingVirtualMinHeight\(\{/);
@@ -197,10 +197,11 @@ test("reading text edits avoid placeholder breaks and support undo, redo, and bl
 test("reading and source controllers share the latest in-memory drawing state", async () => {
   const source = await readFile(sourceUrl, "utf8");
 
-  assert.match(source, /const storageKey = this\.drawingStorageKey\(file, storageMode\);\s*const cached = this\.drawingStateCache\.get\(storageKey\);\s*if \(cached\) \{\s*return normalizeDrawingData\(cached, file\)/);
-  assert.match(source, /const incoming = normalizeDrawingDataForStorage\(data, file\);\s*const canonical = options\.replace === true[\s\S]*mergeControllerDrawingSnapshot\(this\.drawingStateCache\.get\(path\), incoming\);\s*this\.drawingStateCache\.set\(path, canonical\);\s*this\.pendingDrawingSaves\.set\(path, file\);\s*this\.refreshControllersForFile\(file, canonical, \{ excludeData: options\.excludeData \|\| data \}\)/);
+  assert.match(source, /const pending = this\.pendingDrawingSaves\.get\(storageKey\);\s*if \(pending\?\.entries\?\.length\) \{[\s\S]*materializeDrawingSaveRequest[\s\S]*const cached = this\.drawingStateCache\.get\(storageKey\)/);
+  assert.match(source, /this\.pendingDrawingSaves\.set\(path, coalesceDrawingSaveRequest[\s\S]*requestIdleCallback\(run, \{ timeout: 800 \}\)/);
+  assert.match(source, /const canonical = materializeDrawingSaveRequest\([\s\S]*this\.drawingStateCache\.set\(path, canonical\);[\s\S]*refreshControllersForFile\(request\.file, canonical/);
   assert.match(source, /this\.scheduleDrawingSave\(entry\.file, data, \{ replace: true \}\)/);
-  assert.match(source, /writeDrawings\(file, compacted, \{ refresh: false, updateCache: false \}\)/);
+  assert.match(source, /writeDrawings\(request\.file, compacted, \{ normalized: true, refresh: false, updateCache: false \}\)/);
   assert.match(source, /this\.plugin\.setControllerActivation\(this, nextActive\)/);
   assert.match(source, /controller\.scheduleLayoutRefresh\(\{ settle: false \}\);\s*controller\.requestRender\(true\)/);
   assert.match(source, /this\.textPanel = createNoteDrawControlElement\(this\.floatingControlsHost, "notedraw-text-panel"\)/);

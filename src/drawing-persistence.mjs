@@ -50,3 +50,35 @@ export function mergeControllerDrawingSnapshot(latest, incoming) {
     elementGroups
   };
 }
+
+export function coalesceDrawingSaveRequest(previous, next) {
+  const priorEntries = Array.isArray(previous?.entries) ? previous.entries : [];
+  const entry = {
+    data: next?.data,
+    excludeData: next?.excludeData || next?.data,
+    replace: next?.replace === true
+  };
+  const entries = entry.replace ? [] : priorEntries.slice();
+  const priorIndex = entries.findIndex((candidate) => candidate?.data === entry.data);
+  if (priorIndex >= 0) {
+    entry.replace = entry.replace || entries[priorIndex]?.replace === true;
+    entries.splice(priorIndex, 1);
+  }
+  entries.push(entry);
+  return {
+    file: next?.file || previous?.file || null,
+    generation: Math.max(0, Number(previous?.generation) || 0) + 1,
+    entries
+  };
+}
+
+export function materializeDrawingSaveRequest(latest, request, normalize) {
+  let canonical = latest || null;
+  for (const entry of Array.isArray(request?.entries) ? request.entries : []) {
+    const incoming = normalize(entry?.data, request?.file);
+    canonical = entry?.replace === true
+      ? incoming
+      : mergeControllerDrawingSnapshot(canonical, incoming);
+  }
+  return canonical;
+}
