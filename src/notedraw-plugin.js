@@ -1225,6 +1225,28 @@ var DEFAULT_SETTINGS = {
   enableDebugLog: false
 };
 var MARKDOWN_TEXT_SELECTOR = "h1,h2,h3,h4,h5,h6,p,li,blockquote,td,th,.callout-content";
+var NOTE_FLOW_RENDERED_OWNER_SELECTOR = [
+  ".el-p",
+  ".el-h1",
+  ".el-h2",
+  ".el-h3",
+  ".el-h4",
+  ".el-h5",
+  ".el-h6",
+  ".el-blockquote",
+  ".el-pre",
+  ".el-code",
+  ".el-table",
+  ".el-hr",
+  ".el-img",
+  ".callout",
+  ".math-block",
+  "figure",
+  "blockquote",
+  "pre",
+  "table",
+  "hr"
+].join(",");
 var NOTE_FLOW_RENDERED_BLOCK_SELECTOR = [
   ".el-p",
   ".el-h1",
@@ -5366,10 +5388,13 @@ var PreviewDrawingController = class {
     this.noteFlowLineSpacers = /* @__PURE__ */ new Map();
     this.noteFlowSettledRowExtents = /* @__PURE__ */ new Map();
     this.noteFlowBlockSpacers = /* @__PURE__ */ new Map();
+    this.noteFlowMarkdownAnnotationComplete = false;
     this.noteFlowAvoidanceAnchors = /* @__PURE__ */ new Map();
     this.noteFlowLayoutSignature = "";
     this.frozenNoteFlowPreparation = null;
     this.frozenNoteFlowRetryFrameId = null;
+    this.frozenNoteFlowRestoreTimer = null;
+    this.frozenNoteFlowPostMeasurePending = false;
     this.readingBottomSpacer = null;
     this.readingBottomSpacerHeight = 0;
     this.readingBottomExtentResizeAt = 0;
@@ -5431,6 +5456,7 @@ var PreviewDrawingController = class {
     this.layoutRefreshGeneration = 0;
     this.markdownAnnotationTimer = null;
     this.markdownAnnotationNeedsLayout = false;
+    this.markdownAnnotationForce = false;
     this.lastScrollAt = 0;
     this.markdownRenderObserver = null;
     this.staticCanvas = activeDocument.createElement("canvas");
@@ -5743,6 +5769,7 @@ var PreviewDrawingController = class {
     if (typeof MutationObserver !== "undefined") {
       this.markdownRenderObserver = new MutationObserver((mutations) => {
         if (mutations.some((mutation) => isMarkdownContentMutation(mutation))) {
+          this.noteFlowMarkdownAnnotationComplete = false;
           this.repairConnectedReadingSections();
           const editingLayout = this.active && (
             this.toolMode === TOOL_EDIT_MD
@@ -5940,6 +5967,7 @@ var PreviewDrawingController = class {
     this.cancelNoteFlowLayout();
     this.cancelFrozenNoteFlowLayoutRestore();
     this.frozenNoteFlowPreparation = null;
+    this.noteFlowMarkdownAnnotationComplete = false;
     this.clearDraggedNoteFlowPlacement();
     this.clearNoteFlowLayout();
     this.noteFlowLayoutSignature = "";
@@ -6091,6 +6119,7 @@ var PreviewDrawingController = class {
       this.markdownAnnotationTimer = null;
     }
     this.markdownAnnotationNeedsLayout = false;
+    this.markdownAnnotationForce = false;
     this.scrollEventTarget?.removeEventListener("scroll", this.onScroll);
     this.scrollContainer = null;
     this.scrollEventTarget = null;
@@ -6337,6 +6366,9 @@ var PreviewDrawingController = class {
         void error;
       });
       this.resizeCanvas({ layout: false, measure: true });
+      if (!this.active && this.hasNoteFlowElements()) {
+        this.scheduleFrozenNoteFlowLayoutRestoreAfterMeasurement();
+      }
       this.render();
       if (this.markdownBlockRecords().length) {
         this.scheduleMarkdownAnnotationRefresh({ layout: false, delay: 0, force: true });
@@ -6508,6 +6540,9 @@ var PreviewDrawingController = class {
     this.resizePreserveNoteFlowAbsolute = false;
     this.resizePreserveAbsolutePlacement = false;
     const canvasChanged = this.resizeCanvas({ layout, measure, preserveNoteFlowAbsolute, preserveAbsolutePlacement });
+    if (canvasChanged && !this.active && this.hasNoteFlowElements()) {
+      this.scheduleFrozenNoteFlowLayoutRestoreAfterMeasurement();
+    }
     this.updateFloatingControlsPosition();
     this.positionFormatToolbar();
     this.positionFloatingTextInput();
@@ -6584,7 +6619,12 @@ var PreviewDrawingController = class {
     }
   }
   scheduleMarkdownAnnotationRefresh(options = {}) {
-    const editingLayout = options.force === true || this.active && (
+    const requestedForce = options.force === true || this.hasNoteFlowElements();
+    this.markdownAnnotationForce = this.markdownAnnotationForce || requestedForce;
+    if (requestedForce) {
+      this.noteFlowMarkdownAnnotationComplete = false;
+    }
+    const editingLayout = this.markdownAnnotationForce || this.active && (
       this.toolMode === TOOL_EDIT_MD
       || this.noteFlowOperationPending
       || this.draggingStroke
@@ -6594,22 +6634,32 @@ var PreviewDrawingController = class {
       return;
     }
     this.markdownAnnotationNeedsLayout = this.markdownAnnotationNeedsLayout || options.layout !== false;
-    if (this.markdownAnnotationTimer !== null || this.destroyed) {
-      return;
-    }
     const delay = Number.isFinite(Number(options.delay))
       ? Math.max(0, Math.min(120, Number(options.delay)))
       : 120;
+    if (this.markdownAnnotationTimer !== null && requestedForce && delay === 0) {
+      window.clearTimeout(this.markdownAnnotationTimer);
+      this.markdownAnnotationTimer = null;
+    }
+    if (this.markdownAnnotationTimer !== null || this.destroyed) {
+      return;
+    }
     this.markdownAnnotationTimer = window.setTimeout(() => {
       this.markdownAnnotationTimer = null;
       const layout = this.markdownAnnotationNeedsLayout;
+      const force = this.markdownAnnotationForce || this.hasNoteFlowElements();
       this.markdownAnnotationNeedsLayout = false;
+      this.markdownAnnotationForce = false;
       if (this.destroyed || !this.previewEl?.isConnected) {
         return;
       }
       this.applyReadingZoom();
       annotateVisibleMarkdownElements(this.plugin.app, this.previewEl, this.file.path);
-      annotateRenderedMarkdownLines(this.plugin.app, this.previewEl, this.file.path, { force: options.force === true }).catch((error) => {
+      annotateRenderedMarkdownLines(this.plugin.app, this.previewEl, this.file.path, { force }).then(() => {
+        if (force) {
+          this.noteFlowMarkdownAnnotationComplete = true;
+        }
+      }).catch((error) => {
         void error;
       }).finally(() => {
         if (this.destroyed || !this.previewEl?.isConnected) {
@@ -6769,6 +6819,9 @@ var PreviewDrawingController = class {
     this.syncPaletteInputs();
     this.syncBrushPanelButtons();
     this.updateToolButtons();
+    if (this.isNoteFlowPenActive()) {
+      this.scheduleMarkdownAnnotationRefresh({ layout: false, delay: 0, force: true });
+    }
     this.persistInteractionSettings();
     this.syncSharedToolbarState();
     this.render();
@@ -9481,7 +9534,11 @@ var PreviewDrawingController = class {
       const insertedNoteFlow = Boolean(this.currentStroke.noteFlow?.enabled);
       if (insertedNoteFlow) {
         this.resetNoteFlowSettle();
-        this.currentStroke.noteFlow = this.captureNoteFlowAnchor(this.currentStroke);
+        if (this.noteFlowMarkdownAnnotationComplete) {
+          this.currentStroke.noteFlow = this.captureNoteFlowAnchor(this.currentStroke);
+        } else {
+          this.scheduleMarkdownAnnotationRefresh({ layout: false, delay: 0, force: true });
+        }
       }
       this.captureResponsiveAnchorsForIndexes([insertedIndex]);
       this.clearSelectedStrokes();
@@ -15317,21 +15374,34 @@ var PreviewDrawingController = class {
   noteFlowCandidates() {
     const grouped = /* @__PURE__ */ new Map();
     let order = 0;
-    const sourceElements = new Set([
+    const sourceElements = new Set();
+    for (const sourceElement of [
       ...Array.from(this.previewEl.querySelectorAll?.("[data-note-draw-line-start]") || []),
-      ...Array.from(this.previewEl.querySelectorAll?.("[data-line]") || [])
-    ]);
-    for (const sourceElement of sourceElements) {
-      if (sourceElement.closest?.(".notedraw-body-control, .notedraw-embed-layer, .notedraw-underlay-embed-layer")) {
+      ...Array.from(this.previewEl.querySelectorAll?.("[data-line]") || []),
+      ...Array.from(this.previewEl.querySelectorAll?.(NOTE_FLOW_RENDERED_OWNER_SELECTOR) || [])
+    ]) {
+      const owner = findNoteFlowMarkdownBlockElement(sourceElement, this.previewEl);
+      if (owner && !isNoteFlowCollectionBlock(owner)) {
+        sourceElements.add(owner);
+      }
+    }
+    for (const element of sourceElements) {
+      if (element.closest?.(".notedraw-body-control, .notedraw-embed-layer, .notedraw-underlay-embed-layer")) {
         continue;
       }
-      const element = this.noteFlowLayoutElement(sourceElement);
       if (!element || isNoteFlowCollectionBlock(element)) {
         continue;
       }
+      const sourceElement = element;
       const sourceOwnLine = parseDataLine(sourceElement.getAttribute?.("data-line"));
       const blockOwnLine = parseDataLine(element.getAttribute?.("data-line"));
       const inherited = sourceElement.dataset.noteDrawDataLineInherited === "true";
+      const canonical = sourceElement.dataset.noteDrawLineMapped === "true";
+      const exactOwnDataLine = Number.isFinite(sourceOwnLine)
+        && sourceElement.dataset.noteDrawDataLineScope !== "ancestor";
+      if (!canonical && !exactOwnDataLine) {
+        continue;
+      }
       let start = parseInteger(sourceElement.dataset.noteDrawLineStart);
       let end = parseInteger(sourceElement.dataset.noteDrawLineEnd) ?? start;
       if (inherited) {
@@ -15344,16 +15414,18 @@ var PreviewDrawingController = class {
         start = sourceOwnLine ?? blockOwnLine;
         end = start;
       }
-      const rect = element?.getBoundingClientRect?.();
+      // Measure Markdown content without any NoteFlow-owned reservation.
+      const rect = this.markdownElementVisibleClientRect(element)
+        || this.noteFlowEmptyOwnerClientRect(element);
       if (!element || !Number.isFinite(start) || !rect || rect.width <= 1 || rect.height <= 1) {
         continue;
       }
       const annotatedPathElement = sourceElement.dataset.noteDrawSourcePath
         ? sourceElement
         : element.querySelector?.("[data-note-draw-source-path]");
-      const identityQuality = sourceElement.dataset.noteDrawLineMapped === "true"
+      const identityQuality = canonical
         ? 3
-        : !inherited && Number.isFinite(parseInteger(sourceElement.dataset.noteDrawLineStart)) ? 2 : 1;
+        : exactOwnDataLine ? 2 : 1;
       const path = normalizeVaultPath(
         annotatedPathElement?.dataset?.noteDrawSourcePath
         || resolveRenderedSourcePath(this.plugin.app, element, this.file?.path || "")
@@ -15414,7 +15486,7 @@ var PreviewDrawingController = class {
       ));
     }).sort((a, b) => a.top - b.top || a.bottom - b.bottom || a.order - b.order);
   }
-  noteFlowTargetElement(anchor, side = anchor?.side) {
+  noteFlowTargetElement(anchor, side = anchor?.side, placementMode = "row") {
     const descriptor = anchor?.lineSpacer;
     if (descriptor?.parent?.isConnected && descriptor.before?.isConnected) {
       const existing = this.noteFlowLineSpacers.get(descriptor.key);
@@ -15431,7 +15503,37 @@ var PreviewDrawingController = class {
       this.noteFlowLineSpacers.set(descriptor.key, spacer);
       return spacer;
     }
-    return anchor?.element || null;
+    const owner = anchor?.element || null;
+    if (!owner?.isConnected || placementMode === "inline" || !["before", "after"].includes(side)) {
+      return owner;
+    }
+    const blockKey = anchor.blockKey || noteFlowBlockKey(anchor, this.file?.path || "");
+    if (!blockKey || !owner.parentElement) {
+      return owner;
+    }
+    const key = `${blockKey}\0${side}`;
+    let spacer = this.noteFlowBlockSpacers.get(key);
+    if (!spacer?.isConnected) {
+      spacer?.remove?.();
+      spacer = owner.ownerDocument.createElement(owner.matches?.("li") ? "li" : "div");
+      spacer.className = "notedraw-note-flow-block-spacer";
+      spacer.setAttribute("aria-hidden", "true");
+      spacer.dataset.noteDrawNoteFlowBlockKey = blockKey;
+      spacer.dataset.noteDrawNoteFlowSide = side;
+      this.noteFlowBlockSpacers.set(key, spacer);
+      this.markNoteFlowLayoutMutation();
+    }
+    spacer._noteDrawMeasureElement = owner;
+    const expectedSibling = side === "after" ? owner.nextElementSibling : owner.previousElementSibling;
+    if (expectedSibling !== spacer) {
+      this.markNoteFlowLayoutMutation();
+      if (side === "after") {
+        owner.insertAdjacentElement("afterend", spacer);
+      } else {
+        owner.insertAdjacentElement("beforebegin", spacer);
+      }
+    }
+    return spacer;
   }
   noteFlowAnchorElement(noteFlow, allCandidates = null, strokeTop = Number.NaN) {
     const path = normalizeVaultPath(noteFlow?.path || this.file?.path || "");
@@ -15476,17 +15578,22 @@ var PreviewDrawingController = class {
       return null;
     }
     const side = normalized.side;
-    const target = this.noteFlowTargetElement(anchor, side);
+    const target = this.noteFlowTargetElement(anchor, side, normalized.placementMode || "row");
     const property = side === "after" ? "padding-bottom" : "padding-top";
     const applied = this.noteFlowStyledElements.get(target)?.get(property)?.applied || 0;
     const scaleY = canvasRect.height / Math.max(1, this.canvasRenderHeight);
-    const rowTop = noteFlowReservedRowTop({
-      side,
-      anchorTop: anchor.top,
-      anchorBottom: anchor.bottom,
-      applied,
-      scale: scaleY
-    });
+    const spacerRect = target?.classList?.contains("notedraw-note-flow-block-spacer")
+      ? target.getBoundingClientRect?.()
+      : null;
+    const rowTop = spacerRect && Number.isFinite(spacerRect.top)
+      ? spacerRect.top
+      : noteFlowReservedRowTop({
+        side,
+        anchorTop: anchor.top,
+        anchorBottom: anchor.bottom,
+        applied,
+        scale: scaleY
+      });
     return this.canvasWindowTop
       + (rowTop - canvasRect.top) / Math.max(0.0001, scaleY)
       + Math.max(0, Number(normalized.rowOffset) || 0);
@@ -15695,7 +15802,12 @@ var PreviewDrawingController = class {
       }
       return changed;
     };
-    if (!frozen.offsets.length || this.frozenNoteFlowAnchorsReady(frozen)) {
+    if (!frozen.offsets.length) {
+      return Promise.resolve(restore());
+    }
+    const requiresCanonicalAnnotation = !this.noteFlowMarkdownAnnotationComplete
+      || !this.frozenNoteFlowAnchorsReady(frozen);
+    if (!requiresCanonicalAnnotation) {
       return Promise.resolve(restore());
     }
     if (this.frozenNoteFlowPreparation) {
@@ -15703,10 +15815,11 @@ var PreviewDrawingController = class {
     }
     const filePath = this.file?.path || "";
     const generation = this.drawingLoadGeneration;
-    const preparation = annotateRenderedMarkdownLines(this.plugin.app, this.previewEl, filePath).then(() => {
+    const preparation = annotateRenderedMarkdownLines(this.plugin.app, this.previewEl, filePath, { force: true }).then(() => {
       if (this.destroyed || generation !== this.drawingLoadGeneration || this.file?.path !== filePath) {
         return false;
       }
+      this.noteFlowMarkdownAnnotationComplete = true;
       const changed = restore();
       if (options.retry !== false && !this.frozenNoteFlowAnchorsReady(frozen) && this.frozenNoteFlowRetryFrameId === null) {
         this.frozenNoteFlowRetryFrameId = window.requestAnimationFrame(() => {
@@ -15726,26 +15839,58 @@ var PreviewDrawingController = class {
     return preparation;
   }
   scheduleFrozenNoteFlowLayoutRestore() {
-    if (this.destroyed || !this.drawingsLoaded || this.frozenNoteFlowRestoreFrameId !== null) {
+    if (this.destroyed || !this.drawingsLoaded || this.frozenNoteFlowRestoreFrameId !== null || this.frozenNoteFlowRestoreTimer !== null) {
       return;
     }
     if (this.noteFlowOperationPending || this.draggingStroke || this.resizingSelection || this.currentStroke?.noteFlow?.enabled) {
       return;
     }
-    this.frozenNoteFlowRestoreFrameId = window.requestAnimationFrame(() => {
-      this.frozenNoteFlowRestoreFrameId = null;
+    const run = () => {
+      if (this.frozenNoteFlowRestoreFrameId !== null) {
+        window.cancelAnimationFrame(this.frozenNoteFlowRestoreFrameId);
+        this.frozenNoteFlowRestoreFrameId = null;
+      }
+      if (this.frozenNoteFlowRestoreTimer !== null) {
+        window.clearTimeout(this.frozenNoteFlowRestoreTimer);
+        this.frozenNoteFlowRestoreTimer = null;
+      }
       if (this.destroyed || this.noteFlowOperationPending || this.draggingStroke || this.resizingSelection) {
         return;
       }
       this.prepareFrozenNoteFlowLayout().catch((error) => {
         void error;
       });
-    });
+    };
+    this.frozenNoteFlowRestoreFrameId = window.requestAnimationFrame(run);
+    this.frozenNoteFlowRestoreTimer = window.setTimeout(run, 120);
+  }
+  scheduleFrozenNoteFlowLayoutRestoreAfterMeasurement() {
+    if (this.destroyed || this.frozenNoteFlowPostMeasurePending) {
+      return;
+    }
+    const schedule = () => {
+      this.frozenNoteFlowPostMeasurePending = false;
+      if (this.destroyed || !this.previewEl?.isConnected) {
+        return;
+      }
+      this.scheduleFrozenNoteFlowLayoutRestore();
+    };
+    const preparation = this.frozenNoteFlowPreparation;
+    if (preparation) {
+      this.frozenNoteFlowPostMeasurePending = true;
+      preparation.then(schedule, schedule);
+      return;
+    }
+    schedule();
   }
   cancelFrozenNoteFlowLayoutRestore() {
     if (this.frozenNoteFlowRestoreFrameId !== null) {
       window.cancelAnimationFrame(this.frozenNoteFlowRestoreFrameId);
       this.frozenNoteFlowRestoreFrameId = null;
+    }
+    if (this.frozenNoteFlowRestoreTimer !== null) {
+      window.clearTimeout(this.frozenNoteFlowRestoreTimer);
+      this.frozenNoteFlowRestoreTimer = null;
     }
     if (this.frozenNoteFlowRetryFrameId !== null) {
       window.cancelAnimationFrame(this.frozenNoteFlowRetryFrameId);
@@ -15809,7 +15954,11 @@ var PreviewDrawingController = class {
     this.pruneDisconnectedNoteFlowLayout();
     const frozen = normalizeFrozenNoteFlowLayout(this.drawingData?.noteFlowLayout);
     if (!this.drawingsVisible || !frozen.offsets.length) {
-      const changed = Boolean(this.noteFlowStyledElements?.size || this.noteFlowLineSpacers?.size);
+      const changed = Boolean(
+        this.noteFlowStyledElements?.size
+        || this.noteFlowLineSpacers?.size
+        || this.noteFlowBlockSpacers?.size
+      );
       if (changed) {
         this.clearNoteFlowLayout();
       }
@@ -15831,7 +15980,7 @@ var PreviewDrawingController = class {
         blockStart: ownerNoteFlow?.blockStart ?? record.blockStart,
         blockEnd: ownerNoteFlow?.blockEnd ?? record.blockEnd
       }, candidates, this.noteFlowStrokeClientTop(ownerStroke));
-      const element = this.noteFlowTargetElement(anchor, record.side);
+      const element = this.noteFlowTargetElement(anchor, record.side, ownerNoteFlow?.placementMode || "row");
       if (!element) {
         missingAnchor = true;
         continue;
@@ -16029,6 +16178,11 @@ var PreviewDrawingController = class {
       });
       return { stroke, index, ...stabilized };
     }).filter(Boolean).sort((a, b) => a.bounds.minY - b.bounds.minY);
+    if (this.noteFlowOperationPending && flows.length && !this.noteFlowMarkdownAnnotationComplete) {
+      this.noteFlowLayoutIncomplete = true;
+      this.scheduleMarkdownAnnotationRefresh({ layout: false, delay: 0, force: true });
+      return false;
+    }
     if (!flows.length) {
       this.noteFlowLayoutIncomplete = false;
       const frozenLayoutChanged = this.updateFrozenNoteFlowLayout([]);
@@ -16166,7 +16320,7 @@ var PreviewDrawingController = class {
       }
       const selectedAnchor = exactPlacement ? anchor : avoidanceAnchor || anchor;
       const side = exactPlacement ? currentNoteFlow.side : avoidanceAnchor ? "before" : currentNoteFlow.side;
-      const element = this.noteFlowTargetElement(selectedAnchor, side);
+      const element = this.noteFlowTargetElement(selectedAnchor, side, currentNoteFlow?.placementMode || "row");
       if (!element) {
         missingStableAnchor = true;
         continue;
@@ -16693,6 +16847,34 @@ var PreviewDrawingController = class {
       insetBottom: flowInsets.bottom,
       scale: visualScale
     });
+  }
+  noteFlowEmptyOwnerClientRect(element) {
+    const rect = element?.getBoundingClientRect?.();
+    if (!rect || rect.width <= 1 || rect.height > 0) {
+      return null;
+    }
+    const hasMedia = element.matches?.(".el-img,.internal-embed,.markdown-embed,.markdown-embed-content,figure,video,audio,iframe")
+      || element.querySelector?.(".el-img,.internal-embed,.markdown-embed,.markdown-embed-content,figure,img,video,audio,iframe");
+    if (!hasMedia) {
+      return null;
+    }
+    const computed = window.getComputedStyle?.(element);
+    const fontSize = Number.parseFloat(computed?.fontSize) || 16;
+    const lineHeight = Number.parseFloat(computed?.lineHeight) || fontSize * 1.5;
+    const nextBlockTop = Array.from(element.parentElement?.children || [])
+      .map((sibling) => sibling === element ? null : sibling.getBoundingClientRect?.().top)
+      .filter((top) => Number.isFinite(top) && top > rect.top + 0.5)
+      .sort((a, b) => a - b)[0];
+    const availableHeight = Number.isFinite(nextBlockTop) ? nextBlockTop - rect.top : lineHeight;
+    const height = Math.max(1, Math.min(96, lineHeight, availableHeight));
+    return {
+      left: rect.left,
+      right: rect.right,
+      top: rect.top,
+      bottom: rect.top + height,
+      width: rect.width,
+      height
+    };
   }
   markdownElementContainsClientPoint(element, clientPoint = null) {
     if (!clientPoint || !Number.isFinite(Number(clientPoint.x)) || !Number.isFinite(Number(clientPoint.y))) {
@@ -17827,13 +18009,34 @@ function findNoteFlowMarkdownBlockElement(element, previewEl = null) {
   if (!element || previewEl && !previewEl.contains?.(element)) {
     return null;
   }
-  const listItem = element.closest?.("li");
+  let listItem = element.closest?.("li");
+  while (listItem?.parentElement) {
+    const parentItem = listItem.parentElement.closest?.("li");
+    if (!parentItem || previewEl && !previewEl.contains(parentItem)) {
+      break;
+    }
+    listItem = parentItem;
+  }
   if (listItem && (!previewEl || previewEl.contains(listItem))) {
     return listItem;
+  }
+  const calloutBlock = element.closest?.(".callout");
+  if (calloutBlock && (!previewEl || previewEl.contains(calloutBlock))) {
+    return calloutBlock;
+  }
+  const quoteBlock = element.closest?.(".el-blockquote") || element.closest?.("blockquote");
+  if (quoteBlock && (!previewEl || previewEl.contains(quoteBlock))) {
+    return quoteBlock;
   }
   const tableBlock = element.closest?.(".el-table") || element.closest?.("table");
   if (tableBlock && (!previewEl || previewEl.contains(tableBlock))) {
     return tableBlock;
+  }
+  const renderedOwner = element.matches?.(NOTE_FLOW_RENDERED_OWNER_SELECTOR)
+    ? element
+    : element.closest?.(NOTE_FLOW_RENDERED_OWNER_SELECTOR);
+  if (renderedOwner && (!previewEl || previewEl.contains(renderedOwner))) {
+    return renderedOwner;
   }
   const renderedBlock = element.matches?.(NOTE_FLOW_RENDERED_BLOCK_SELECTOR)
     ? element
@@ -18457,6 +18660,13 @@ function resolveRenderedSourcePath(app, root, fallbackPath) {
   if (!embed) {
     return normalizeVaultPath(fallbackPath);
   }
+  if (embed.matches?.(".internal-embed")
+    && !embed.querySelector?.(".markdown-embed-content, .markdown-preview-view")
+    && !normalizeRenderedText(embed.innerText || embed.textContent || "")) {
+    // A bare internal-embed is the source note's placeholder, not the
+    // rendered content of the referenced note.
+    return normalizeVaultPath(fallbackPath);
+  }
   const owner = embed.matches?.(".internal-embed") ? embed : embed.closest?.(".internal-embed") || embed.querySelector?.(".internal-embed") || embed;
   const rawLink = owner?.getAttribute?.("data-src") || owner?.getAttribute?.("data-path") || owner?.getAttribute?.("src") || "";
   const link = unwrapWikiLink(String(rawLink || "").replace(/^!/, "")).split("|")[0].split("#")[0].trim();
@@ -18466,8 +18676,67 @@ function resolveRenderedSourcePath(app, root, fallbackPath) {
   const file = app.metadataCache.getFirstLinkpathDest?.(link, fallbackPath || "") || getVaultFileByPath(app.vault, link);
   return normalizeVaultPath(file?.path || fallbackPath);
 }
+function collectNoteFlowMarkdownOwners(root) {
+  if (!root) {
+    return [];
+  }
+  const raw = [];
+  const selector = `${NOTE_FLOW_RENDERED_OWNER_SELECTOR},${MARKDOWN_TEXT_SELECTOR},[data-line],.internal-embed,.markdown-embed,.markdown-embed-content`;
+  if (root.matches?.(selector)) {
+    raw.push(root);
+  }
+  raw.push(...Array.from(root.querySelectorAll?.(selector) || []));
+  const owners = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const element of raw) {
+    const owner = findNoteFlowMarkdownBlockElement(element, root);
+    if (!owner || seen.has(owner) || isNoteFlowCollectionBlock(owner)
+      || owner.closest?.(NOTEDRAW_OWNED_MUTATION_SELECTOR)
+      || owner.closest?.(".frontmatter,.metadata-container")) {
+      continue;
+    }
+    seen.add(owner);
+    owners.push(owner);
+  }
+  return owners;
+}
+function renderedMarkdownIdentityText(element) {
+  const text = element?.innerText || element?.textContent || element?._noteDrawSourceText || "";
+  if (normalizeRenderedText(text)) {
+    return text;
+  }
+  const media = element?.matches?.("[alt], [data-href], [src]")
+    ? element
+    : element?.querySelector?.("[alt], [data-href], [src]");
+  const mediaText = media?.getAttribute?.("alt") || media?.getAttribute?.("data-href") || media?.getAttribute?.("src") || "";
+  if (mediaText) {
+    return mediaText;
+  }
+  return element?.matches?.("hr,.el-hr") || element?.querySelector?.("hr") ? "---" : "";
+}
+function applyRenderedMarkdownLineMetadata(element, match) {
+  const members = [element, ...Array.from(element?.querySelectorAll?.(MARKDOWN_TEXT_SELECTOR) || [])].filter((member) => {
+    return member === element || findNoteFlowMarkdownBlockElement(member, element.parentElement) === element;
+  });
+  for (const member of members) {
+    const previousStart = parseInteger(member.dataset.noteDrawLineStart);
+    const previousEnd = parseInteger(member.dataset.noteDrawLineEnd) ?? previousStart;
+    if (Number.isFinite(previousStart) && (previousStart !== match.lineStart || previousEnd !== match.lineEnd)) {
+      member.dataset.noteDrawInheritedLineStart = String(previousStart);
+      member.dataset.noteDrawInheritedLineEnd = String(previousEnd);
+    } else {
+      delete member.dataset.noteDrawInheritedLineStart;
+      delete member.dataset.noteDrawInheritedLineEnd;
+    }
+    member.dataset.noteDrawLineStart = String(match.lineStart);
+    member.dataset.noteDrawLineEnd = String(match.lineEnd);
+    member.dataset.noteDrawLineConfidence = String(match.confidence);
+    member.dataset.noteDrawLineMapped = "true";
+    delete member.dataset.noteDrawDataLineInherited;
+  }
+}
 function annotateVisibleMarkdownElements(app, root, fallbackPath) {
-  for (const element of root?.querySelectorAll?.(EDITABLE_SELECTOR) || []) {
+  for (const element of collectNoteFlowMarkdownOwners(root)) {
     const sourcePath = resolveRenderedSourcePath(app, element, fallbackPath);
     if (element.dataset.noteDrawSourcePath !== sourcePath) {
       delete element.dataset.noteDrawLineMapped;
@@ -18501,7 +18770,7 @@ function annotateVisibleMarkdownElements(app, root, fallbackPath) {
 }
 async function annotateRenderedMarkdownLines(app, root, fallbackPath, options = {}) {
   annotateVisibleMarkdownElements(app, root, fallbackPath);
-  const annotated = Array.from(root?.querySelectorAll?.(EDITABLE_SELECTOR) || []).filter((element) => element.dataset.noteDrawSourcePath);
+  const annotated = collectNoteFlowMarkdownOwners(root).filter((element) => element.dataset.noteDrawSourcePath);
   const elements = annotated.filter((element) => {
     if (options.force === true) {
       return true;
@@ -18535,7 +18804,7 @@ async function annotateRenderedMarkdownLines(app, root, fallbackPath, options = 
     if (typeof source !== "string") {
       continue;
     }
-    const renderedText = element.innerText || element.textContent || element._noteDrawSourceText || "";
+    const renderedText = renderedMarkdownIdentityText(element);
     const sourceInfo = getSourceInfo(element);
     const used = usedTargets.get(path) || /* @__PURE__ */ new Set();
     const sourceTargets = findRenderedMarkdownSourceTargets(source, renderedText, sourceIndex);
@@ -18558,11 +18827,7 @@ async function annotateRenderedMarkdownLines(app, root, fallbackPath, options = 
       used.add(`${target.start}:${target.end}`);
       usedTargets.set(path, used);
     }
-    element.dataset.noteDrawLineStart = String(match.lineStart);
-    element.dataset.noteDrawLineEnd = String(match.lineEnd);
-    element.dataset.noteDrawLineConfidence = String(match.confidence);
-    element.dataset.noteDrawLineMapped = "true";
-    delete element.dataset.noteDrawDataLineInherited;
+    applyRenderedMarkdownLineMetadata(element, match);
   }
 }
 function annotateEditableElements(root, ctx, sourcePath = ctx?.sourcePath || "") {
@@ -18571,9 +18836,19 @@ function annotateEditableElements(root, ctx, sourcePath = ctx?.sourcePath || "")
     elements.push(root);
   }
   elements.push(...root.querySelectorAll(EDITABLE_SELECTOR));
+  elements.push(...collectNoteFlowMarkdownOwners(root));
+  const seen = /* @__PURE__ */ new Set();
   for (const element of elements) {
+    if (seen.has(element)) {
+      continue;
+    }
+    seen.add(element);
     element.dataset.noteDrawSourcePath = normalizeVaultPath(sourcePath);
-    const info = safeGetSectionInfo(ctx, element) || safeGetSectionInfo(ctx, root);
+    const owner = findNoteFlowMarkdownBlockElement(element, root) || element;
+    const semanticChild = owner === element ? owner.querySelector?.(MARKDOWN_TEXT_SELECTOR) : element;
+    const info = safeGetSectionInfo(ctx, element)
+      || safeGetSectionInfo(ctx, owner)
+      || safeGetSectionInfo(ctx, semanticChild);
     const ownDataLine = parseDataLine(element.getAttribute("data-line"));
     const dataLineEl = element.closest("[data-line]");
     const closestDataLine = parseDataLine(dataLineEl?.getAttribute("data-line"));

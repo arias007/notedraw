@@ -86,14 +86,14 @@ test("deleting a vault file clears NoteDraw controllers, DOM presentation, cache
   assert.match(source, /collectDeletedVaultFiles\(deletedFile\)/);
 });
 
-test("3.4.45 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
+test("3.4.46 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
   const [source, manifestText] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(manifestUrl, "utf8")
   ]);
   const manifest = JSON.parse(manifestText);
 
-  assert.equal(manifest.version, "3.4.45");
+  assert.equal(manifest.version, "3.4.46");
   assert.match(source, /version: "3\.4\.19"/);
   assert.match(source, /this\.readingVirtualStyleState = \/\* @__PURE__ \*\/ new Map\(\)/);
   assert.match(source, /shouldClearStaleReadingVirtualMinHeight\(\{/);
@@ -104,7 +104,7 @@ test("3.4.45 preserves reading content and cross-view frames without hidden-surf
   assert.match(source, /window\.setTimeout\(\(\) => this\.flushScheduledResize\(\), 120\)/);
   assert.match(source, /flushScheduledResize\(\)[\s\S]*window\.cancelAnimationFrame\(this\.resizeFrameId\)[\s\S]*window\.clearTimeout\(this\.resizeFallbackTimer\)/);
   assert.match(source, /this\.repairConnectedReadingSections\(\);\s*await this\.prepareInitialReadingLayout\(\)/);
-  assert.match(source, /new MutationObserver\(\(mutations\) => \{\s*if \(mutations\.some\(\(mutation\) => isMarkdownContentMutation\(mutation\)\)\) \{\s*this\.repairConnectedReadingSections\(\)/);
+  assert.match(source, /new MutationObserver\(\(mutations\) => \{\s*if \(mutations\.some\(\(mutation\) => isMarkdownContentMutation\(mutation\)\)\) \{\s*this\.noteFlowMarkdownAnnotationComplete = false;\s*this\.repairConnectedReadingSections\(\)/);
   assert.match(source, /await this\.ensureDrawingsLoaded\(\);\s*this\.repairConnectedReadingSections\(\);/);
   assert.match(source, /repairConnectedReadingSections\(renderer = this\.readingPreviewRenderer\(\)\)[\s\S]*renderer\.updateVirtualDisplay\?\.\(\);[\s\S]*section\.rendered !== false[\s\S]*section\.render\?\.\(\);[\s\S]*renderer\.measureSection\?\.\(section\);[\s\S]*renderer\.updateVirtualDisplay\?\.\(\)/);
   assert.match(source, /restoreReadingVirtualSections\(\)[\s\S]*this\.repairConnectedReadingSections\(renderer\)/);
@@ -148,7 +148,9 @@ test("3.4.45 preserves reading content and cross-view frames without hidden-surf
   assert.match(source, /const primaryDocumentSurface = preview\.classList\?\.contains\("mwv-note-browser-document"\)[\s\S]*otherBodyBlocks\.length === 0/);
   assert.match(source, /surfaceWidth >= previewWidth \* 0\.8[\s\S]*surfaceHeight >= previewHeight \* 0\.8 \|\| primaryDocumentSurface/);
   assert.match(source, /if \(!previewVisible\) \{\s*if \(alternateSurfaceVisible\)[\s\S]*controller\.destroy\(\)/);
-  assert.match(source, /this\.prepareFrozenNoteFlowLayout\(\)\.catch\(\(error\) => \{\s*void error;\s*}\);\s*this\.resizeCanvas\(\{ layout: false, measure: true \}\);\s*this\.render\(\)/);
+  assert.match(source, /this\.prepareFrozenNoteFlowLayout\(\)\.catch\(\(error\) => \{\s*void error;\s*}\);\s*this\.resizeCanvas\(\{ layout: false, measure: true \}\);[\s\S]{0,240}if \(!this\.active && this\.hasNoteFlowElements\(\)\) \{\s*this\.scheduleFrozenNoteFlowLayoutRestoreAfterMeasurement\(\);\s*}\s*this\.render\(\)/);
+  const scheduledResize = source.slice(source.indexOf("  flushScheduledResize()"), source.indexOf("  cancelResizeFrame()", source.indexOf("  flushScheduledResize()")));
+  assert.match(scheduledResize, /const canvasChanged = this\.resizeCanvas[\s\S]*canvasChanged && !this\.active && this\.hasNoteFlowElements\(\)[\s\S]*this\.scheduleFrozenNoteFlowLayoutRestoreAfterMeasurement\(\)/);
   assert.match(source, /const refreshLayout = options\.layout === true && !interactionActive/);
   const activeState = source.slice(source.indexOf("  applyActiveState(active, options = {})"), source.indexOf("  controlsShouldBeVisible()", source.indexOf("  applyActiveState(active, options = {})")));
   assert.doesNotMatch(activeState, /scheduleLayoutRefresh/);

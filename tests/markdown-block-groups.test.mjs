@@ -472,7 +472,10 @@ test("Markdown drop settlement remaps every rendered block and persists repaired
   const presentationSource = source.slice(source.indexOf("  syncMarkdownBlockPresentation()"), source.indexOf("  selectMarkdownBlock(", source.indexOf("  syncMarkdownBlockPresentation()")));
 
   assert.match(annotationSource, /options\.force === true/);
-  assert.match(annotationSource, /annotateRenderedMarkdownLines\([\s\S]*\{ force: options\.force === true \}/);
+  assert.match(annotationSource, /this\.markdownAnnotationForce = this\.markdownAnnotationForce \|\| requestedForce/);
+  assert.match(annotationSource, /const force = this\.markdownAnnotationForce \|\| this\.hasNoteFlowElements\(\)/);
+  assert.match(annotationSource, /annotateRenderedMarkdownLines\([\s\S]*\{ force \}/);
+  assert.match(annotationSource, /if \(force\) \{\s*this\.noteFlowMarkdownAnnotationComplete = true/);
   assert.match(source, /const sourceIndexes = new Map\([\s\S]*createMarkdownSourceIndex\(source\)/);
   assert.match(source, /resolveSourceDropTarget\(source, state\.sourceInfo, state\.sourceText, sourceIndex\)/);
   assert.match(presentationSource, /markdownMetadataChanged[\s\S]*block\.lineStart !== info\.lineStart[\s\S]*scheduleDrawingSave\(this\.file, this\.drawingData, \{ userOperation: true \}\)/);
@@ -495,7 +498,13 @@ test("Markdown selection and NoteFlow layout use complete rendered blocks instea
   assert.match(presentationSource, /connectedIds[\s\S]*selectedMarkdownBlockIds[\s\S]*invalidateSelectionFrameSnapshot/);
   assert.match(candidateSource, /querySelectorAll\?\.\("\[data-note-draw-line-start\]"\)/);
   assert.match(candidateSource, /querySelectorAll\?\.\("\[data-line\]"\)/);
-  assert.match(candidateSource, /const element = this\.noteFlowLayoutElement\(sourceElement\)/);
+  assert.match(candidateSource, /querySelectorAll\?\.\(NOTE_FLOW_RENDERED_OWNER_SELECTOR\)/);
+  assert.match(candidateSource, /const owner = findNoteFlowMarkdownBlockElement\(sourceElement, this\.previewEl\)/);
+  assert.match(candidateSource, /sourceElements\.add\(owner\)/);
+  assert.match(candidateSource, /const canonical = sourceElement\.dataset\.noteDrawLineMapped === "true"/);
+  assert.match(candidateSource, /if \(!canonical && !exactOwnDataLine\) \{\s*continue/);
+  assert.match(candidateSource, /this\.markdownElementVisibleClientRect\(element\)[\s\S]*this\.noteFlowEmptyOwnerClientRect\(element\)/);
+  assert.match(source, /const nextBlockTop = Array\.from\(element\.parentElement\?\.children \|\| \[\]\)/);
   assert.match(candidateSource, /grouped\.get\(element\)[\s\S]*existing\.start = Math\.min[\s\S]*existing\.end = Math\.max/);
   assert.match(candidateSource, /identityQuality > existing\.identityQuality[\s\S]*existing\.blockKey = noteFlowBlockKey\(existing\)/);
   assert.match(candidateSource, /!candidate\.element\.matches\?\.\("li"\)/);
@@ -515,7 +524,8 @@ test("inherited section line metadata is remapped before NoteFlow drop targeting
 
   assert.match(annotationSource, /ownDataLine[\s\S]*inheritedDataLine[\s\S]*noteDrawDataLineInherited = "true"/);
   assert.match(annotationSource, /noteDrawDataLineInherited === "true"/);
-  assert.match(annotationSource, /noteDrawLineMapped = "true"/);
+  assert.match(source, /function applyRenderedMarkdownLineMetadata\(element, match\)[\s\S]*noteDrawLineMapped = "true"/);
+  assert.match(annotationSource, /applyRenderedMarkdownLineMetadata\(element, match\)/);
   assert.match(candidateSource, /const inherited = sourceElement\.dataset\.noteDrawDataLineInherited === "true"[\s\S]*if \(inherited\)[\s\S]*blockOwnLine/);
   assert.match(candidateSource, /inheritedStart: parseInteger\(sourceElement\.dataset\.noteDrawInheritedLineStart\)/);
   assert.match(anchorSource, /semanticMatch[\s\S]*inheritedMatch/);

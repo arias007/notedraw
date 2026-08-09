@@ -15,8 +15,15 @@ function normalizeMarkdownText(value) {
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<\/(p|div|li|h[1-6])>/gi, "\n")
     .replace(/<pre[^>]*><code[^>]*>([\s\S]*?)<\/code><\/pre>/gi, "$1")
+    .replace(/^\s*(?:```|~~~)[^\n]*$/gm, "")
+    .replace(/\$\$([\s\S]*?)\$\$/g, "$1")
+    .replace(/^\s*\$\$\s*$/gm, "")
+    .replace(/^\s*:::[^\n]*$/gm, "")
     .replace(/<\/?(span|u|mark|kbd|sup|sub|small|strong|b|em|i|code)[^>]*>/gi, "")
     .replace(/<[^>]+>/g, "")
+    .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1")
+    .replace(/!\[\[([^\]|]+)\|([^\]]+)\]\]/g, "$2")
+    .replace(/!\[\[([^\]]+)\]\]/g, "$1")
     .replace(/^\s*[-*+]\s+\[[ xX]\]\s+/gm, "")
     .replace(/^#{1,6}\s+/gm, "")
     .replace(/^\s{0,3}>\s?/gm, "")
@@ -30,8 +37,164 @@ function normalizeMarkdownText(value) {
     .replace(/`([^`]+)`/g, "$1")
     .replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, "$2")
     .replace(/\[\[([^\]]+)\]\]/g, "$1")
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .split("\n")
+    .map((line) => {
+      if (!line.includes("|")) {
+        return line;
+      }
+      const cells = line.trim().replace(/^\||\|$/g, "").split("|").map((cell) => cell.trim());
+      if (cells.length > 1 && cells.every((cell) => /^:?-{3,}:?$/.test(cell))) {
+        return "";
+      }
+      return cells.length > 1 ? cells.join("\t") : line;
+    })
+    .join("\n");
   return normalizeRenderedText(text);
+}
+
+function isMarkdownTableDelimiter(rawLine) {
+  const cells = String(rawLine || "").trim().replace(/^\||\|$/g, "").split("|").map((cell) => cell.trim());
+  return cells.length > 1 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
+}
+
+function markdownLineKind(rawLine) {
+  const raw = String(rawLine || "");
+  const trimmed = raw.trim();
+  if (!trimmed) return "blank";
+  if (/^\s{0,3}(?:```|~~~)/.test(raw)) return "fence";
+  if (/^\s{0,3}#{1,6}(?:\s+|$)/.test(raw)) return "heading";
+  if (/^\s{0,3}(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/.test(raw)) return "thematic-break";
+  if (/^\s*(?:[-+*]|\d+[.)])\s+/.test(raw)) return "list-item";
+  if (/^\s{0,3}>/.test(raw)) return "blockquote";
+  if (/^\s*(?:!\[[^\]]*\]\([^)]+\)|!\[\[[^\]]+\]\])\s*$/.test(raw)) return "media";
+  if (/^\s*\|/.test(raw) || isMarkdownTableDelimiter(raw)) return "table";
+  if (/^\s{0,3}(?:\$\$|:::)/.test(raw)) return "container";
+  return "paragraph";
+}
+
+function collectSemanticBlocks(input, rawLines) {
+  const blocks = [];
+  let active = null;
+  let fenceMarker = "";
+  let containerMarker = "";
+
+  const appendBlock = (lineStart, lineEnd, kind) => {
+    if (lineStart < 0 || lineEnd < lineStart || !rawLines[lineStart] || !rawLines[lineEnd]) {
+      return;
+    }
+    const start = rawLines[lineStart].start;
+    const end = rawLines[lineEnd].end;
+    const sourceText = input.slice(start, end);
+    const identitySource = kind === "heading" && lineEnd > lineStart
+      ? rawLines[lineStart].raw
+      : sourceText;
+    const text = normalizeMarkdownText(identitySource);
+    if (!text && !["thematic-break", "media"].includes(kind)) {
+      return;
+    }
+    blocks.push({ lineStart, lineEnd, start, end, sourceText, text, kind });
+  };
+  const flush = () => {
+    if (active) {
+      appendBlock(active.start, active.end, active.kind);
+      active = null;
+    }
+  };
+  const begin = (line, kind) => {
+    active = { start: line, end: line, kind };
+  };
+
+  for (let line = 0; line < rawLines.length; line += 1) {
+    const raw = rawLines[line].raw;
+    const nextRaw = rawLines[line + 1]?.raw || "";
+    const kind = raw.includes("|") && isMarkdownTableDelimiter(nextRaw)
+      ? "table"
+      : markdownLineKind(raw);
+    if (active?.kind === "fence") {
+      active.end = line;
+      if (line > active.start && raw.trim().startsWith(fenceMarker)) {
+        flush();
+        fenceMarker = "";
+      }
+      continue;
+    }
+    if (active?.kind === "container") {
+      active.end = line;
+      if (line > active.start && raw.trim().startsWith(containerMarker)) {
+        flush();
+        containerMarker = "";
+      }
+      continue;
+    }
+    if (active?.kind === "paragraph" && active.start === active.end && /^\s*(?:=+|-+)\s*$/.test(raw)) {
+      active.end = line;
+      active.kind = "heading";
+      flush();
+      continue;
+    }
+    if (kind === "blank") {
+      flush();
+      continue;
+    }
+    if (kind === "fence") {
+      flush();
+      fenceMarker = raw.trim().startsWith("~~~") ? "~~~" : "```";
+      begin(line, "fence");
+      continue;
+    }
+    if (["heading", "thematic-break", "media"].includes(kind)) {
+      flush();
+      appendBlock(line, line, kind);
+      continue;
+    }
+    if (active?.kind === "list-item" && /^\s{2,}\S/.test(raw)) {
+      active.end = line;
+      continue;
+    }
+    if (active?.kind === "list-item" && kind === "paragraph") {
+      // CommonMark permits a lazy continuation without indentation. It is
+      // still part of the list item owner until a blank or block boundary.
+      active.end = line;
+      continue;
+    }
+    if (kind === "list-item") {
+      flush();
+      begin(line, kind);
+      continue;
+    }
+    if (active?.kind === "table" && raw.includes("|")) {
+      active.end = line;
+      continue;
+    }
+    if (["blockquote", "table", "container"].includes(kind)) {
+      if (kind === "container") {
+        flush();
+        const trimmed = raw.trim();
+        containerMarker = trimmed.startsWith("$$") ? "$$" : ":::";
+        if (trimmed.length > containerMarker.length && trimmed.endsWith(containerMarker)) {
+          appendBlock(line, line, kind);
+          containerMarker = "";
+          continue;
+        }
+        begin(line, kind);
+      } else if (active?.kind === kind) {
+        active.end = line;
+      } else {
+        flush();
+        begin(line, kind);
+      }
+      continue;
+    }
+    if (active?.kind === "paragraph") {
+      active.end = line;
+    } else {
+      flush();
+      begin(line, "paragraph");
+    }
+  }
+  flush();
+  return blocks;
 }
 
 function collectCandidates(source) {
@@ -46,6 +209,11 @@ function collectCandidates(source) {
     offset += raw.length + newline.length;
   }
   const candidates = [];
+  const semanticBlocks = collectSemanticBlocks(input, rawLines);
+  candidates.push(...semanticBlocks);
+  // Keep line candidates only as a compatibility fallback for renderers that
+  // expose a fragment without a complete owner. Complete owners are inserted
+  // first so all exact matches prefer the semantic range.
   for (let line = 0; line < rawLines.length; line += 1) {
     const text = normalizeMarkdownText(rawLines[line].raw);
     if (text) {
@@ -60,40 +228,6 @@ function collectCandidates(source) {
       });
     }
   }
-  let blockStart = -1;
-  let blockLines = [];
-  const flushBlock = (endLine) => {
-    if (blockStart < 0) {
-      return;
-    }
-    const text = normalizeMarkdownText(blockLines.join("\n"));
-    if (text) {
-      const start = rawLines[blockStart].start;
-      const end = rawLines[endLine].end;
-      candidates.push({
-        lineStart: blockStart,
-        lineEnd: endLine,
-        start,
-        end,
-        sourceText: input.slice(start, end),
-        text,
-        kind: "block"
-      });
-    }
-    blockStart = -1;
-    blockLines = [];
-  };
-  for (let line = 0; line < rawLines.length; line += 1) {
-    if (!rawLines[line].raw.trim()) {
-      flushBlock(line - 1);
-      continue;
-    }
-    if (blockStart < 0) {
-      blockStart = line;
-    }
-    blockLines.push(rawLines[line].raw);
-  }
-  flushBlock(rawLines.length - 1);
   return candidates;
 }
 
@@ -170,6 +304,7 @@ function sourceTarget(candidate, renderedText) {
     line: candidate.lineStart,
     endLine: candidate.lineEnd,
     text: candidate.sourceText,
+    kind: candidate.kind,
     normalizedText: normalizeRenderedText(renderedText),
     normalizedMarkdown: candidate.text
   } : null;
@@ -218,11 +353,25 @@ export function resolveRenderedMarkdownSourceTarget(source, renderedText, source
     const ranked = matches.map((candidate) => ({
       candidate,
       distance: candidateDistanceFromRange(candidate, lineStart, lineEnd)
-    })).sort((a, b) => a.distance - b.distance || a.candidate.lineStart - b.candidate.lineStart);
-    if (!ranked.length || ranked[0].distance > maxDistance || ranked[1]?.distance === ranked[0].distance) {
+    })).sort((a, b) => {
+      const distance = a.distance - b.distance;
+      if (distance) return distance;
+      const aSpan = a.candidate.lineEnd - a.candidate.lineStart;
+      const bSpan = b.candidate.lineEnd - b.candidate.lineStart;
+      const aSemantic = a.candidate.kind === "line" ? 1 : 0;
+      const bSemantic = b.candidate.kind === "line" ? 1 : 0;
+      return aSemantic - bSemantic || bSpan - aSpan || a.candidate.lineStart - b.candidate.lineStart;
+    });
+    const first = ranked[0];
+    const second = ranked[1];
+    const equallyRanked = first && second
+      && first.distance === second.distance
+      && (first.candidate.kind === "line") === (second.candidate.kind === "line")
+      && first.candidate.lineEnd - first.candidate.lineStart === second.candidate.lineEnd - second.candidate.lineStart;
+    if (!first || first.distance > maxDistance || equallyRanked) {
       return null;
     }
-    return ranked[0].candidate;
+    return first.candidate;
   };
   const exactMatch = choose(exact, { allowUnique: true });
   if (exactMatch) {
@@ -250,7 +399,8 @@ export function matchRenderedTextToMarkdown(source, renderedText, sourceIndex = 
     : candidates.filter((candidate) => candidate.text === rendered);
   const exact = indexedExact
     .slice()
-    .sort((a, b) => (a.lineEnd - a.lineStart) - (b.lineEnd - b.lineStart) || (a.kind === "line" ? -1 : 1))[0];
+    .sort((a, b) => (a.kind === "line" ? 1 : 0) - (b.kind === "line" ? 1 : 0)
+      || (b.lineEnd - b.lineStart) - (a.lineEnd - a.lineStart))[0];
   if (exact) {
     return { lineStart: exact.lineStart, lineEnd: exact.lineEnd, confidence: 1 };
   }
@@ -260,7 +410,8 @@ export function matchRenderedTextToMarkdown(source, renderedText, sourceIndex = 
     : candidates.filter((candidate) => candidate.text.replace(/\s+/g, "") === compactRendered);
   const whitespaceEquivalent = indexedCompact
     .slice()
-    .sort((a, b) => (a.lineEnd - a.lineStart) - (b.lineEnd - b.lineStart) || (a.kind === "line" ? -1 : 1))[0];
+    .sort((a, b) => (a.kind === "line" ? 1 : 0) - (b.kind === "line" ? 1 : 0)
+      || (b.lineEnd - b.lineStart) - (a.lineEnd - a.lineStart))[0];
   if (whitespaceEquivalent) {
     return { lineStart: whitespaceEquivalent.lineStart, lineEnd: whitespaceEquivalent.lineEnd, confidence: 0.98 };
   }

@@ -271,7 +271,7 @@ test("reading-only note pen and selected elements can reserve Markdown flow spac
   assert.match(source, /noteFlowVisualLineCandidates\(sourceElement, path, start, end\)[\s\S]*const layoutElement = this\.noteFlowLayoutElement\(sourceElement\)/);
   assert.match(source, /cls: "notedraw-note-flow-line-spacer"/);
   assert.match(source, /NOTEDRAW_OWNED_MUTATION_SELECTOR = \[[\s\S]*"\.notedraw-note-flow-line-spacer"/);
-  assert.match(flowLayout, /const selectedAnchor = exactPlacement \? anchor : avoidanceAnchor \|\| anchor;[\s\S]*const element = this\.noteFlowTargetElement\(selectedAnchor, side\)/);
+  assert.match(flowLayout, /const selectedAnchor = exactPlacement \? anchor : avoidanceAnchor \|\| anchor;[\s\S]*const element = this\.noteFlowTargetElement\(selectedAnchor, side, currentNoteFlow\?\.placementMode \|\| "row"\)/);
   assert.match(source, /for \(const spacer of this\.noteFlowLineSpacers\?\.values\?\.\(\) \|\| \[\]\)/);
   assert.match(source, /scheduleNoteFlowAnchorRepair\(\)[\s\S]*this\.noteFlowAnchorRepairReady = true[\s\S]*this\.scheduleNoteFlowLayout\(\)[\s\S]*}, 700\)/);
   assert.match(source, /window\.clearTimeout\(this\.noteFlowAnchorRepairTimer\)/);
@@ -303,28 +303,39 @@ test("NoteFlow spacing targets the complete Markdown block and restores after re
   const prepareSource = source.slice(source.indexOf("  frozenNoteFlowAnchorsReady("), source.indexOf("  updateFrozenNoteFlowLayout("));
   const flowLayout = source.slice(source.indexOf("  applyNoteFlowLayout()"), source.indexOf("  scheduleNoteFlowLayout(options"));
 
-  assert.match(blockSource, /const listItem = element\.closest\?\.\("li"\)/);
+  assert.match(blockSource, /let listItem = element\.closest\?\.\("li"\)/);
+  assert.match(blockSource, /while \(listItem\?\.parentElement\)[\s\S]*listItem = parentItem/);
   assert.match(blockSource, /const tableBlock = element\.closest\?\.\("\.el-table"\) \|\| element\.closest\?\.\("table"\)/);
+  assert.match(blockSource, /NOTE_FLOW_RENDERED_OWNER_SELECTOR/);
   assert.match(blockSource, /NOTE_FLOW_RENDERED_BLOCK_SELECTOR/);
-  assert.match(targetSource, /return anchor\?\.element \|\| null;/);
-  assert.doesNotMatch(targetSource, /parent\.insertBefore\(spacer, side ===/);
-  assert.doesNotMatch(targetSource, /className = "notedraw-note-flow-block-spacer"/);
+  assert.match(source, /\.internal-embed,\.markdown-embed,\.markdown-embed-content/);
+  assert.match(source, /A bare internal-embed is the source note's placeholder/);
+  assert.match(source, /element\?\.matches\?\.\("\[alt\], \[data-href\], \[src\]"\)/);
+  assert.match(targetSource, /const owner = anchor\?\.element \|\| null;/);
+  assert.match(targetSource, /placementMode === "inline"[\s\S]*return owner/);
+  assert.match(targetSource, /className = "notedraw-note-flow-block-spacer"/);
+  assert.match(targetSource, /owner\.insertAdjacentElement\("afterend", spacer\)/);
+  assert.match(targetSource, /owner\.insertAdjacentElement\("beforebegin", spacer\)/);
   assert.doesNotMatch(targetSource, /heading\.style\.(?:setProperty|removeProperty)/);
   assert.match(flowLayout, /element\.style\.setProperty\(state\.styleProperty, nextValue, "important"\)/);
   assert.match(source, /noteFlowStyleProperty\(element, property\) \{\s*return element\?\.classList\?\.contains\("notedraw-note-flow-block-spacer"\) \? "height" : property;/);
   assert.match(flowLayout, /const styleProperty = this\.noteFlowStyleProperty\(element, property\)[\s\S]*element\.style\.setProperty\(state\.styleProperty, nextValue, "important"\)/);
   assert.match(source, /element\.classList\?\.contains\("notedraw-note-flow-block-spacer"\)[\s\S]*properties\.push\("height"\)/);
   assert.match(prepareSource, /annotateVisibleMarkdownElements\(this\.plugin\.app, this\.previewEl/);
-  assert.match(prepareSource, /annotateRenderedMarkdownLines\(this\.plugin\.app, this\.previewEl, filePath\)/);
+  assert.match(prepareSource, /annotateRenderedMarkdownLines\(this\.plugin\.app, this\.previewEl, filePath, \{ force: true \}\)/);
   assert.match(prepareSource, /this\.restoreFrozenNoteFlowLayout\(\)/);
+  assert.match(prepareSource, /this\.frozenNoteFlowRestoreFrameId = window\.requestAnimationFrame\(run\);\s*this\.frozenNoteFlowRestoreTimer = window\.setTimeout\(run, 120\)/);
+  assert.match(prepareSource, /cancelFrozenNoteFlowLayoutRestore\(\)[\s\S]*window\.clearTimeout\(this\.frozenNoteFlowRestoreTimer\)/);
   assert.match(prepareSource, /window\.requestAnimationFrame\([\s\S]*prepareFrozenNoteFlowLayout\(\{ retry: false \}\)/);
   assert.doesNotMatch(prepareSource, /vault\.(?:create|modify|process|delete|rename)|writeDrawings|scheduleDrawingSave/);
-  assert.match(source, /const renderedText = element\.innerText \|\| element\.textContent \|\| element\._noteDrawSourceText \|\| "";/);
+  assert.match(source, /const renderedText = renderedMarkdownIdentityText\(element\)/);
   assert.match(source, /findRenderedMarkdownSourceTargets\(source, renderedText, sourceIndex\)/);
   assert.match(source, /resolveRenderedMarkdownSourceTarget\(source, renderedText, sourceInfo, sourceIndex\)/);
   assert.match(source, /matchRenderedTextToMarkdown\(source, renderedText, sourceIndex\)/);
   assert.match(source, /this\.prepareFrozenNoteFlowLayout\(\)\.catch[\s\S]*this\.resizeCanvas\(\{ layout: false, measure: true \}\)/);
-  assert.match(source, /noteFlowTargetElement\(anchor, record\.side\)/);
+  assert.match(source, /this\.resizeCanvas\(\{ layout: false, measure: true \}\);[\s\S]{0,240}if \(!this\.active && this\.hasNoteFlowElements\(\)\) \{\s*this\.scheduleFrozenNoteFlowLayoutRestoreAfterMeasurement\(\)/);
+  assert.match(prepareSource, /scheduleFrozenNoteFlowLayoutRestoreAfterMeasurement\(\)[\s\S]*const preparation = this\.frozenNoteFlowPreparation;[\s\S]*preparation\.then\(schedule, schedule\)/);
+  assert.match(source, /noteFlowTargetElement\(anchor, record\.side, ownerNoteFlow\?\.placementMode \|\| "row"\)/);
   assert.match(source, /for \(const spacer of this\.noteFlowBlockSpacers\?\.values\?\.\(\) \|\| \[\]\)/);
   assert.match(source, /pruneDisconnectedNoteFlowLayout\(\)/);
   assert.match(flowLayout, /const frozenLayoutChanged = !missingStableAnchor && this\.updateFrozenNoteFlowLayout\(frozenOffsets\)/);
@@ -334,6 +345,19 @@ test("NoteFlow spacing targets the complete Markdown block and restores after re
   assert.match(source, /cleanupOrphanedNoteFlowLayout\(preview\)[\s\S]*\.notedraw-note-flow-block-spacer/);
   assert.match(source, /NOTEDRAW_OWNED_MUTATION_SELECTOR = \[[\s\S]*"\.notedraw-note-flow-block-spacer"/);
   assert.match(styles, /\.notedraw-note-flow-block-spacer \{[\s\S]*display: block;[\s\S]*height: 0;[\s\S]*overflow-anchor: none;/);
+});
+
+test("a new NoteFlow stroke waits for canonical Markdown owners before committing layout", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const annotationSource = source.slice(source.indexOf("  scheduleMarkdownAnnotationRefresh("), source.indexOf("  updateFloatingControlsPosition(", source.indexOf("  scheduleMarkdownAnnotationRefresh(")));
+  const pointerFinishSource = source.slice(source.indexOf("  onPointerUp(event"), source.indexOf("  finishPointerInteraction(event", source.indexOf("  onPointerUp(event")));
+  const flowLayout = source.slice(source.indexOf("  applyNoteFlowLayout()"), source.indexOf("  scheduleNoteFlowLayout(options"));
+  const frozenRestore = source.slice(source.indexOf("  restoreFrozenNoteFlowLayout()"), source.indexOf("  clearNoteFlowLayout()", source.indexOf("  restoreFrozenNoteFlowLayout()")));
+
+  assert.match(annotationSource, /markdownAnnotationTimer !== null && requestedForce && delay === 0[\s\S]*window\.clearTimeout\(this\.markdownAnnotationTimer\)/);
+  assert.match(pointerFinishSource, /if \(this\.noteFlowMarkdownAnnotationComplete\) \{\s*this\.currentStroke\.noteFlow = this\.captureNoteFlowAnchor\(this\.currentStroke\);\s*} else \{\s*this\.scheduleMarkdownAnnotationRefresh\(\{ layout: false, delay: 0, force: true \}\)/);
+  assert.match(flowLayout, /this\.noteFlowOperationPending && flows\.length && !this\.noteFlowMarkdownAnnotationComplete[\s\S]*this\.noteFlowLayoutIncomplete = true;[\s\S]*scheduleMarkdownAnnotationRefresh\(\{ layout: false, delay: 0, force: true \}\)/);
+  assert.match(frozenRestore, /this\.noteFlowBlockSpacers\?\.size/);
 });
 
 test("dragged inserted note elements use stable drop placement or frame-batched avoidance refresh", async () => {

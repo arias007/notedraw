@@ -72,6 +72,7 @@
   max-width: 100%;
   min-height: 0;
   height: 0;
+  list-style: none;
   margin: 0;
   padding: 0;
   pointer-events: none;
@@ -1039,7 +1040,12 @@
 
 .notedraw-note-flow-block-spacer {
   display: block;
+  box-sizing: border-box;
+  width: 100%;
+  grid-column: 1 / -1;
+  min-height: 0;
   height: 0;
+  list-style: none;
   margin: 0;
   padding: 0;
   pointer-events: none;
