@@ -5336,6 +5336,7 @@ var PreviewDrawingController = class {
     this.noteFlowLayoutIncomplete = false;
     this.noteFlowStyledElements = /* @__PURE__ */ new Map();
     this.noteFlowLineSpacers = /* @__PURE__ */ new Map();
+    this.noteFlowSettledRowExtents = /* @__PURE__ */ new Map();
     this.noteFlowBlockSpacers = /* @__PURE__ */ new Map();
     this.noteFlowAvoidanceAnchors = /* @__PURE__ */ new Map();
     this.noteFlowLayoutSignature = "";
@@ -8534,6 +8535,9 @@ var PreviewDrawingController = class {
               contentLeft: context.frame?.left,
               contentWidth: context.frame?.width,
               canvasWidth: this.canvasWidth(),
+              fallbackWidth: Number(layout?.sourceFrame?.contentWidth) >= 24
+                ? Number(layout?.box?.width) * Number(context.frame?.width) / Number(layout.sourceFrame.contentWidth)
+                : Number(box?.width) || Number(layout?.box?.width) || 0,
               y: this.noteFlowStoredRowCanvasY(noteFlow) ?? box?.y ?? layout?.box?.y ?? 0
             })
           }
@@ -15412,8 +15416,17 @@ var PreviewDrawingController = class {
     }
     const scaleY = canvasRect.height / Math.max(1, this.canvasRenderHeight);
     const candidates = allCandidates || this.noteFlowCandidates();
+    const targets = [];
+    const stableFallbackWidth = (layout, bounds) => {
+      const sourceWidth = Number(layout?.sourceFrame?.contentWidth) || 0;
+      const savedWidth = Number(layout?.box?.width) || 0;
+      if (sourceWidth >= 24 && savedWidth > 0) {
+        return savedWidth * contentFrame.width / sourceWidth;
+      }
+      return Math.max(0, bounds.maxX - bounds.minX);
+    };
     let changed = false;
-    for (const stroke of this.drawingData?.strokes || []) {
+    for (const [index, stroke] of (this.drawingData?.strokes || []).entries()) {
       const noteFlow = normalizeNoteFlow(stroke?.noteFlow);
       const layout = normalizeElementLayout(stroke?.layout);
       const bounds = getStrokeBounds(stroke, canvasWidth, canvasHeight);
@@ -15432,8 +15445,47 @@ var PreviewDrawingController = class {
         contentLeft: contentFrame?.left,
         contentWidth: contentFrame?.width,
         canvasWidth,
+        fallbackWidth: stableFallbackWidth(layout, bounds),
         y: rowY
       });
+      targets.push({
+        index,
+        stroke,
+        noteFlow,
+        layout,
+        bounds,
+        targetBox,
+        rowKey: Number.isFinite(Number(noteFlow.line)) && ["before", "after"].includes(noteFlow.side)
+          ? `${normalizeVaultPath(noteFlow.path || this.file?.path || "")}\0${Math.floor(noteFlow.line)}\0${noteFlow.side}`
+          : ""
+      });
+    }
+    const settledByIndex = new Map(reflowNoteFlowRectangles(targets.map((target) => ({
+      id: strokeElementId(target.stroke) || String(target.index),
+      index: target.index,
+      order: target.index,
+      minX: target.targetBox.x,
+      maxX: target.targetBox.x + target.targetBox.width,
+      minY: target.targetBox.y,
+      maxY: target.targetBox.y + target.targetBox.height,
+      baseMinY: target.targetBox.y,
+      originalMinY: target.targetBox.y,
+      rowKey: target.rowKey,
+      gap: Math.min(8, target.noteFlow.gap)
+    })), { gap: 6 }).map((placement) => [placement.index, placement]));
+    const settledRowExtents = /* @__PURE__ */ new Map();
+    for (const target of targets) {
+      const { stroke, noteFlow, layout, bounds } = target;
+      const settled = settledByIndex.get(target.index);
+      const targetBox = settled
+        ? { ...target.targetBox, y: settled.minY }
+        : target.targetBox;
+      if (target.rowKey) {
+        settledRowExtents.set(target.rowKey, Math.max(
+          settledRowExtents.get(target.rowKey) || 0,
+          targetBox.y + targetBox.height - target.targetBox.y
+        ));
+      }
       const nextPoints = projectNoteFlowPointsToBox(stroke.points, bounds, targetBox, {
         canvasWidth,
         canvasHeight
@@ -15500,10 +15552,14 @@ var PreviewDrawingController = class {
       }
       changed = true;
     }
+    const previousExtentSignature = Array.from(this.noteFlowSettledRowExtents || []).map(([key, value]) => `${key}:${Math.round(value * 100)}`).join("|");
+    const nextExtentSignature = Array.from(settledRowExtents).map(([key, value]) => `${key}:${Math.round(value * 100)}`).join("|");
+    const extentsChanged = previousExtentSignature !== nextExtentSignature;
+    this.noteFlowSettledRowExtents = settledRowExtents;
     if (changed) {
       this.invalidateStaticCache();
     }
-    return changed;
+    return changed || extentsChanged;
   }
   frozenNoteFlowAnchorsReady(frozen = normalizeFrozenNoteFlowLayout(this.drawingData?.noteFlowLayout)) {
     if (!frozen.offsets.length) {
@@ -15678,9 +15734,15 @@ var PreviewDrawingController = class {
         offsets = /* @__PURE__ */ new Map();
         wanted.set(element, offsets);
       }
+      const rowKey = `${normalizeVaultPath(record.path)}\0${Math.floor(record.line)}\0${record.side}`;
+      const ownerGap = Math.max(0, Number(normalizeNoteFlow(ownerStroke?.noteFlow)?.gap) || 0);
+      const effectiveOffset = Math.max(
+        record.offset,
+        (this.noteFlowSettledRowExtents.get(rowKey) || 0) + ownerGap
+      );
       const previousOffset = offsets.get(record.property) || 0;
-      if (record.offset >= previousOffset) {
-        offsets.set(record.property, record.offset);
+      if (effectiveOffset >= previousOffset) {
+        offsets.set(record.property, effectiveOffset);
         let owners = wantedOwners.get(element);
         if (!owners) {
           owners = /* @__PURE__ */ new Map();
@@ -15778,6 +15840,7 @@ var PreviewDrawingController = class {
       spacer?.remove?.();
     }
     this.noteFlowLineSpacers?.clear();
+    this.noteFlowSettledRowExtents?.clear();
     for (const spacer of this.noteFlowBlockSpacers?.values?.() || []) {
       if (spacer) {
         spacer._noteDrawMeasureElement = null;
@@ -16026,12 +16089,16 @@ var PreviewDrawingController = class {
       const stableHeight = currentNoteFlow.boxHeightRatio > 0
         ? currentNoteFlow.boxHeightRatio * Math.max(1, contentFrame.width)
         : Math.max(0, item.bounds.maxY - item.bounds.minY);
+      const settledRowKey = Number.isFinite(Number(currentNoteFlow.line)) && ["before", "after"].includes(currentNoteFlow.side)
+        ? `${normalizeVaultPath(currentNoteFlow.path || this.file?.path || "")}\0${Math.floor(currentNoteFlow.line)}\0${currentNoteFlow.side}`
+        : "";
+      const settledHeight = Math.max(stableHeight, this.noteFlowSettledRowExtents.get(settledRowKey) || 0);
       // The reservation belongs to the logical row, like a Markdown block's
       // grid row. It is derived from stable box geometry, never from an anchor
       // that may already contain our padding, so repeated layout is idempotent.
       const required = noteFlowRowReservation({
         rowOffset: currentNoteFlow.rowOffset,
-        boxHeight: stableHeight,
+        boxHeight: settledHeight,
         gap: currentNoteFlow.gap
       });
       let elementOffsets = offsets.get(element);

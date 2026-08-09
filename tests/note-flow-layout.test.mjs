@@ -607,6 +607,35 @@ test("NoteFlow stable box projection preserves width at the left edge", () => {
   assert.ok(projected.width > 2);
 });
 
+test("NoteFlow stable box projection never accepts a transient collapsed lane", () => {
+  for (const contentWidth of [0, 1, 20]) {
+    const projected = projectStableNoteFlowBox({
+      boxLeftRatio: 0.1,
+      boxWidthRatio: 0.3,
+      boxHeightRatio: 0.2,
+      contentLeft: 0,
+      contentWidth,
+      canvasWidth: 400,
+      y: 50
+    });
+    assert.equal(projected.width, 120);
+    assert.ok(projected.width >= 24);
+  }
+});
+
+test("NoteFlow stable box projection restores a saved width when old points already collapsed", () => {
+  const projected = projectStableNoteFlowBox({
+    boxLeftRatio: 0.2,
+    boxWidthRatio: 0.002,
+    boxHeightRatio: 0.2,
+    contentWidth: 360,
+    canvasWidth: 400,
+    fallbackWidth: 96,
+    y: 50
+  });
+  assert.equal(projected.width, 96);
+});
+
 test("NoteFlow current geometry expands into its stable box instead of collapsing left", () => {
   const source = [
     { x: 0.49, y: 0.2, pressure: 0.4 },
@@ -723,4 +752,21 @@ test("a blue-bar row top cannot rise through an upper NoteFlow row", () => {
     { id: "upper", minY: 100, maxY: 160 },
     { id: "dropped", minY: 166, maxY: 206 }
   ]);
+});
+
+test("overlapping NoteFlow boxes in one logical row stack tightly and never intersect", () => {
+  const placements = reflowNoteFlowRectangles([
+    { id: "left", index: 0, rowKey: "line-8", minX: 0, maxX: 120, minY: 100, maxY: 150, baseMinY: 100, originalMinY: 100 },
+    { id: "overlap", index: 1, rowKey: "line-8", minX: 80, maxX: 180, minY: 100, maxY: 140, baseMinY: 100, originalMinY: 100 },
+    { id: "right", index: 2, rowKey: "line-8", minX: 190, maxX: 260, minY: 100, maxY: 130, baseMinY: 100, originalMinY: 100 }
+  ], { gap: 6 });
+
+  assert.deepEqual(placements.map(({ id, minY, maxY }) => ({ id, minY, maxY })), [
+    { id: "left", minY: 100, maxY: 150 },
+    { id: "overlap", minY: 156, maxY: 196 },
+    { id: "right", minY: 100, maxY: 130 }
+  ]);
+  const left = placements[0];
+  const overlap = placements[1];
+  assert.equal(overlap.minY - left.maxY, 6);
 });

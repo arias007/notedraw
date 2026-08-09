@@ -512,11 +512,24 @@ export function projectStableNoteFlowBox({
   contentLeft = 0,
   contentWidth,
   canvasWidth,
+  fallbackWidth = 0,
+  minWidth = 24,
   y = 0
 } = {}) {
-  const laneWidth = Math.max(1, finite(contentWidth, canvasWidth));
+  const safeCanvasWidth = Math.max(2, finite(canvasWidth, 2));
+  const measuredContentWidth = finite(contentWidth, 0);
+  const minimumStableWidth = clamp(Math.max(2, finite(minWidth, 24)), 2, safeCanvasWidth);
+  // A transient 0-20px content frame is a layout measurement failure, not a
+  // real lane. Projecting against it used to turn NoteFlow ink into a line.
+  const laneWidth = measuredContentWidth >= minimumStableWidth
+    ? measuredContentWidth
+    : safeCanvasWidth;
   const surfaceWidth = Math.max(2, finite(canvasWidth, laneWidth));
-  const width = clamp(Math.max(2, finite(boxWidthRatio) * laneWidth), 2, surfaceWidth);
+  const width = clamp(Math.max(
+    minimumStableWidth,
+    finite(boxWidthRatio) * laneWidth,
+    finite(fallbackWidth)
+  ), minimumStableWidth, surfaceWidth);
   const height = Math.max(2, finite(boxHeightRatio) * laneWidth);
   return {
     x: clamp(finite(contentLeft) + finite(boxLeftRatio) * laneWidth, 0, Math.max(0, surfaceWidth - width)),

@@ -245,7 +245,8 @@ test("reading-only note pen and selected elements can reserve Markdown flow spac
   assert.match(flowLayout, /const nextValue = `\$\{appliedValue\}px`/);
   assert.match(flowLayout, /const property = side === "after" \? "padding-bottom" : "padding-top"/);
   assert.match(flowLayout, /anchor\.top < strokeTop - 4/);
-  assert.match(flowLayout, /noteFlowRowReservation\(\{[\s\S]*rowOffset: currentNoteFlow\.rowOffset[\s\S]*boxHeight: stableHeight/);
+  assert.match(flowLayout, /const settledHeight = Math\.max\(stableHeight, this\.noteFlowSettledRowExtents\.get\(settledRowKey\) \|\| 0\)/);
+  assert.match(flowLayout, /noteFlowRowReservation\(\{[\s\S]*rowOffset: currentNoteFlow\.rowOffset[\s\S]*boxHeight: settledHeight/);
   assert.match(flowLayout, /state\.applied = Math\.max\(0, appliedValue - state\.base\)/);
   assert.match(flowLayout, /stabilizeNoteFlowBounds\(\{/);
   assert.match(flowLayout, /preferCurrent: Boolean\(normalizeNoteFlow\(stroke\.noteFlow\)\?\.positionBasis\)/);
