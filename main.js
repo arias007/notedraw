@@ -19155,6 +19155,7 @@ var PreviewDrawingController = class {
       return changed2;
     }
     const candidates = this.noteFlowCandidates();
+    const settledRowExtentsChanged = this.alignNoteFlowStrokesToReservedRows(candidates, { measureOnly: true });
     const wanted = /* @__PURE__ */ new Map();
     const wantedOwners = /* @__PURE__ */ new Map();
     let missingAnchor = false;
@@ -19180,10 +19181,15 @@ var PreviewDrawingController = class {
         wanted.set(element, offsets);
       }
       const rowKey = noteFlowPlacementRowKey(ownerNoteFlow || record, record.path);
-      const ownerGap = Math.max(0, Number(normalizeNoteFlow(ownerStroke?.noteFlow)?.gap) || 0);
+      const ownerGap = Math.max(0, Number(ownerNoteFlow?.gap) || 0);
+      const settledOffset = noteFlowRowReservation({
+        rowOffset: ownerNoteFlow?.rowOffset,
+        boxHeight: this.noteFlowSettledRowExtents.get(rowKey) || 0,
+        gap: ownerGap
+      });
       const effectiveOffset = Math.max(
         record.offset,
-        (this.noteFlowSettledRowExtents.get(rowKey) || 0) + ownerGap
+        settledOffset
       );
       const previousOffset = offsets.get(record.property) || 0;
       if (effectiveOffset >= previousOffset) {
@@ -19259,7 +19265,7 @@ var PreviewDrawingController = class {
     }
     const aligned = this.alignNoteFlowStrokesToReservedRows(candidates);
     this.noteFlowLayoutSignature = `frozen:${frozenNoteFlowLayoutSignature(frozen)}`;
-    return changed || aligned;
+    return changed || aligned || settledRowExtentsChanged;
   }
   clearNoteFlowLayout() {
     if (this.noteFlowStyledElements?.size) {
@@ -19392,7 +19398,7 @@ var PreviewDrawingController = class {
     }
     const scaleY = canvasRect.height > 0 ? canvasRect.height / Math.max(1, this.canvasRenderHeight) : 1;
     const candidates = this.noteFlowCandidates();
-    const resizedRowExtentsChanged = this.resizingSelection ? this.alignNoteFlowStrokesToReservedRows(candidates, { measureOnly: true }) : false;
+    const settledRowExtentsChanged = this.alignNoteFlowStrokesToReservedRows(candidates, { measureOnly: true });
     let missingStableAnchor = candidates.length === 0;
     const canRepairStoredAnchors = this.noteFlowAnchorRepairReady && !this.noteFlowAnchorRepairComplete && Date.now() - this.lastScrollAt > 480;
     const offsets = /* @__PURE__ */ new Map();
@@ -19625,7 +19631,7 @@ var PreviewDrawingController = class {
     if (this.noteFlowPersistencePending && (aligned || migratedAnchor || updatedNoteFlowMetadata || frozenLayoutChanged) && this.file && this.drawingData) {
       this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: this.noteFlowPersistencePending });
     }
-    const changed = resizedRowExtentsChanged || aligned || migratedAnchor || updatedNoteFlowMetadata || frozenLayoutChanged || layoutStyleChanged || signature !== this.noteFlowLayoutSignature;
+    const changed = settledRowExtentsChanged || aligned || migratedAnchor || updatedNoteFlowMetadata || frozenLayoutChanged || layoutStyleChanged || signature !== this.noteFlowLayoutSignature;
     this.noteFlowLayoutSignature = signature;
     return changed;
   }

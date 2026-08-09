@@ -615,6 +615,22 @@ test("NoteFlow row reservation is idempotent and never depends on previously app
   }
 });
 
+test("a lower NoteFlow row reserves its cumulative displacement below an upper row", () => {
+  const placements = reflowNoteFlowRectangles([
+    { id: "upper", index: 0, rowKey: "line-15-after", minX: 40, maxX: 100, minY: 100, maxY: 250, baseMinY: 100, originalMinY: 100, gap: 8 },
+    { id: "lower", index: 1, rowKey: "line-21-before", minX: 40, maxX: 100, minY: 120, maxY: 280, baseMinY: 120, originalMinY: 120, gap: 8 }
+  ], { gap: 6 });
+  const lower = placements.find((item) => item.id === "lower");
+  const settledExtent = lower.maxY - 120;
+
+  assert.deepEqual(placements.map(({ id, minY, maxY }) => ({ id, minY, maxY })), [
+    { id: "upper", minY: 100, maxY: 250 },
+    { id: "lower", minY: 258, maxY: 418 }
+  ]);
+  assert.equal(settledExtent, 298);
+  assert.equal(noteFlowRowReservation({ rowOffset: 15, boxHeight: settledExtent, gap: 12 }), 325);
+});
+
 test("resizing NoteFlow geometry expands and contracts its Markdown reservation", () => {
   const base = { rowOffset: 10 };
   const originalBounds = { minX: 60, minY: 100, maxX: 180, maxY: 160 };

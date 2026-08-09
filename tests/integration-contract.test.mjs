@@ -86,14 +86,14 @@ test("deleting a vault file clears NoteDraw controllers, DOM presentation, cache
   assert.match(source, /collectDeletedVaultFiles\(deletedFile\)/);
 });
 
-test("3.4.48 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
+test("3.4.49 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
   const [source, manifestText] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(manifestUrl, "utf8")
   ]);
   const manifest = JSON.parse(manifestText);
 
-  assert.equal(manifest.version, "3.4.48");
+  assert.equal(manifest.version, "3.4.49");
   assert.match(source, /version: "3\.4\.19"/);
   assert.match(source, /this\.readingVirtualStyleState = \/\* @__PURE__ \*\/ new Map\(\)/);
   assert.match(source, /shouldClearStaleReadingVirtualMinHeight\(\{/);
@@ -454,6 +454,8 @@ test("selection tool previews and commits exact NoteFlow Markdown insertion targ
   assert.match(reservedRowSource, /linePosition: null[\s\S]*lineOffsetY: 0/);
   assert.match(reservedRowSource, /createElementLayout\([\s\S]*bounds:[\s\S]*targetBox\.x[\s\S]*relations: \[\]/);
   assert.match(frozenRestoreSource, /alignNoteFlowStrokesToReservedRows\(candidates\)/);
+  assert.match(frozenRestoreSource, /alignNoteFlowStrokesToReservedRows\(candidates, \{ measureOnly: true \}\)[\s\S]*noteFlowRowReservation\(\{[\s\S]*rowOffset: ownerNoteFlow\?\.rowOffset[\s\S]*boxHeight: this\.noteFlowSettledRowExtents\.get\(rowKey\)/);
+  assert.match(flowLayoutSource, /const settledRowExtentsChanged = this\.alignNoteFlowStrokesToReservedRows\(candidates, \{ measureOnly: true \}\)/);
   assert.match(flowLayoutSource, /alignNoteFlowStrokesToReservedRows\(candidates\)/);
   assert.match(finishSource, /if \(!affectsNoteFlow\) \{[\s\S]*scheduleDrawingSave/);
   assert.match(finishSource, /else if \(affectsNoteFlow\)[\s\S]*dragStrokeOriginalPoints[\s\S]*originalPoints\.map/);
