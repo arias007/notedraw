@@ -12123,7 +12123,6 @@ var PreviewDrawingController = class {
       this.invalidateStaticCache();
       if (affectsNoteFlow) {
         this.resetNoteFlowSettle();
-        this.clearNoteFlowLayout();
         this.noteFlowAvoidanceAnchors.clear();
       }
       this.resetDragDropGeometry();
@@ -12151,11 +12150,20 @@ var PreviewDrawingController = class {
             ? { ...this.dragStrokeOriginalNoteFlows.get(index) }
             : this.captureNoteFlowAnchor(stroke, {
               placement: droppedNoteFlowIndexes.has(index) ? resolvedDropPlacement : null,
-              preservePlacement: !droppedNoteFlowIndexes.has(index)
+              preservePlacement: !droppedNoteFlowIndexes.has(index),
+              preserveBoxGeometry: droppedNoteFlowIndexes.has(index)
+                ? this.dragStrokeOriginalNoteFlows.get(index)
+                : null
             });
         }
       }
       this.captureResponsiveAnchorsForIndexes(affectedIndexes);
+      if (affectsNoteFlow) {
+        // The blue-bar snapshot is measured with the current reservation. Move
+        // and capture first; clearing it earlier makes the snapshot coordinate
+        // stale and encourages a second, geometry-changing projection.
+        this.clearNoteFlowLayout();
+      }
       this.syncBoundConnectors({ elementIds: this.connectorTargetIdsForStrokeIndexes(affectedIndexes) });
       this.lastTextTap = null;
       this.redoStack = [];
@@ -14972,6 +14980,7 @@ var PreviewDrawingController = class {
   }
   captureNoteFlowAnchor(stroke, options = {}) {
     const previous = normalizeNoteFlow(stroke?.noteFlow);
+    const preservedBox = normalizeNoteFlow(options.preserveBoxGeometry);
     const bounds = getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight());
     const canvasRect = this.noteFlowCanvasRect();
     if (!bounds || !canvasRect || canvasRect.width <= 1 || canvasRect.height <= 1) {
@@ -15057,8 +15066,12 @@ var PreviewDrawingController = class {
         ? Math.max(0, bounds.minY - anchorCanvasY)
         : Math.max(0, Number(previous?.rowOffset) || 0),
       boxLeftRatio: (bounds.minX - Number(contentFrame?.left || 0)) / contentWidth,
-      boxWidthRatio: Math.max(2 / contentWidth, (bounds.maxX - bounds.minX) / contentWidth),
-      boxHeightRatio: Math.max(2 / contentWidth, (bounds.maxY - bounds.minY) / contentWidth),
+      boxWidthRatio: preservedBox?.boxWidthRatio > 0
+        ? preservedBox.boxWidthRatio
+        : Math.max(2 / contentWidth, (bounds.maxX - bounds.minX) / contentWidth),
+      boxHeightRatio: preservedBox?.boxHeightRatio > 0
+        ? preservedBox.boxHeightRatio
+        : Math.max(2 / contentWidth, (bounds.maxY - bounds.minY) / contentWidth),
       avoidancePath: "",
       avoidanceLine: null,
       gap: clamp(Number(stroke?.noteFlow?.gap) || 12, 4, 64)
@@ -15438,7 +15451,7 @@ var PreviewDrawingController = class {
       if (!Number.isFinite(rowY)) {
         continue;
       }
-      const targetBox = projectStableNoteFlowBox({
+      const projectedTargetBox = projectStableNoteFlowBox({
         boxLeftRatio: noteFlow.boxLeftRatio,
         boxWidthRatio: noteFlow.boxWidthRatio,
         boxHeightRatio: noteFlow.boxHeightRatio,
@@ -15448,6 +15461,14 @@ var PreviewDrawingController = class {
         fallbackWidth: stableFallbackWidth(layout, bounds),
         y: rowY
       });
+      const targetBox = this.noteFlowOperationPending
+        ? {
+          x: bounds.minX,
+          y: rowY,
+          width: Math.max(0.001, bounds.maxX - bounds.minX),
+          height: Math.max(0.001, bounds.maxY - bounds.minY)
+        }
+        : projectedTargetBox;
       targets.push({
         index,
         stroke,

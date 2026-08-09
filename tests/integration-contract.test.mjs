@@ -86,14 +86,14 @@ test("deleting a vault file clears NoteDraw controllers, DOM presentation, cache
   assert.match(source, /collectDeletedVaultFiles\(deletedFile\)/);
 });
 
-test("3.4.42 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
+test("3.4.43 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
   const [source, manifestText] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(manifestUrl, "utf8")
   ]);
   const manifest = JSON.parse(manifestText);
 
-  assert.equal(manifest.version, "3.4.42");
+  assert.equal(manifest.version, "3.4.43");
   assert.match(source, /version: "3\.4\.19"/);
   assert.match(source, /this\.readingVirtualStyleState = \/\* @__PURE__ \*\/ new Map\(\)/);
   assert.match(source, /shouldClearStaleReadingVirtualMinHeight\(\{/);
@@ -426,10 +426,14 @@ test("selection tool previews and commits exact NoteFlow Markdown insertion targ
   assert.match(dropSource, /applyElementStyles\(indicator, horizontalSide \? \{[\s\S]*width: "4px"[\s\S]*height: `\$\{Math\.max\(16, Math\.round\(targetRect\.height\)\)\}px`/);
   assert.match(dropSource, /snapDraggedSelectionToNoteFlowPlacement[\s\S]*if \(horizontalSide \|\| leftSnap\)[\s\S]*laneCanvasX[\s\S]*leftSnap[\s\S]*laneCanvasX - allBounds\.minX[\s\S]*targetBounds\.maxX \+ gap - allBounds\.minX/);
   assert.match(dragSource, /this\.usesDraggedNoteFlowPlacement\(\)[\s\S]*this\.queueDraggedNoteFlowPlacement\(event\.clientX, event\.clientY\)[\s\S]*this\.queueDraggedNoteFlowRefresh/);
-  assert.match(finishSource, /requestedDropPlacement[\s\S]*this\.clearNoteFlowLayout\(\)[\s\S]*this\.resolveDraggedNoteFlowPlacement[\s\S]*this\.snapDraggedSelectionToNoteFlowPlacement/);
+  assert.match(finishSource, /requestedDropPlacement[\s\S]*this\.resolveDraggedNoteFlowPlacement[\s\S]*this\.snapDraggedSelectionToNoteFlowPlacement[\s\S]*preserveBoxGeometry:[\s\S]*this\.clearNoteFlowLayout\(\)/);
+  assert.doesNotMatch(finishSource.slice(0, finishSource.indexOf("this.snapDraggedSelectionToNoteFlowPlacement")), /this\.clearNoteFlowLayout\(\)/);
   assert.match(finishSource, /placement: droppedNoteFlowIndexes\.has\(index\) \? resolvedDropPlacement : null/);
   assert.match(captureSource, /selectExactNoteFlowPositionAnchor\(candidates, \{ candidate: anchor, side, line \}\)/);
   assert.match(captureSource, /placementVersion:[\s\S]*\? 1/);
+  assert.match(captureSource, /const preservedBox = normalizeNoteFlow\(options\.preserveBoxGeometry\)/);
+  assert.match(captureSource, /boxWidthRatio: preservedBox\?\.boxWidthRatio > 0[\s\S]*preservedBox\.boxWidthRatio/);
+  assert.match(captureSource, /boxHeightRatio: preservedBox\?\.boxHeightRatio > 0[\s\S]*preservedBox\.boxHeightRatio/);
   assert.match(captureSource, /avoidancePath: ""[\s\S]*avoidanceLine: null/);
   assert.match(flowLayoutSource, /const exactPlacement = hasExactNoteFlowPlacement\(currentNoteFlow\)/);
   assert.match(flowLayoutSource, /const selectedAnchor = exactPlacement \? anchor : avoidanceAnchor \|\| anchor/);
@@ -440,6 +444,7 @@ test("selection tool previews and commits exact NoteFlow Markdown insertion targ
   assert.match(reservedRowSource, /this\.draggingStroke \|\| this\.resizingSelection/);
   assert.match(reservedRowSource, /noteFlowStoredRowCanvasY\(noteFlow, candidates, strokeTop\)/);
   assert.match(reservedRowSource, /projectStableNoteFlowBox\([\s\S]*boxLeftRatio:[\s\S]*boxWidthRatio:[\s\S]*boxHeightRatio:/);
+  assert.match(reservedRowSource, /const targetBox = this\.noteFlowOperationPending[\s\S]*x: bounds\.minX,[\s\S]*width: Math\.max\(0\.001, bounds\.maxX - bounds\.minX\)[\s\S]*height: Math\.max\(0\.001, bounds\.maxY - bounds\.minY\)/);
   assert.match(reservedRowSource, /isStableResponsiveCaptureFrame\(canvasWidth, contentFrame\)/);
   assert.match(reservedRowSource, /projectNoteFlowPointsToBox\(stroke\.points, bounds, targetBox/);
   assert.match(reservedRowSource, /linePosition: null[\s\S]*lineOffsetY: 0/);
