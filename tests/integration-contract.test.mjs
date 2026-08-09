@@ -86,14 +86,14 @@ test("deleting a vault file clears NoteDraw controllers, DOM presentation, cache
   assert.match(source, /collectDeletedVaultFiles\(deletedFile\)/);
 });
 
-test("3.4.30 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
+test("3.4.31 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
   const [source, manifestText] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(manifestUrl, "utf8")
   ]);
   const manifest = JSON.parse(manifestText);
 
-  assert.equal(manifest.version, "3.4.30");
+  assert.equal(manifest.version, "3.4.31");
   assert.match(source, /version: "3\.4\.19"/);
   assert.match(source, /this\.readingVirtualStyleState = \/\* @__PURE__ \*\/ new Map\(\)/);
   assert.match(source, /shouldClearStaleReadingVirtualMinHeight\(\{/);
@@ -375,7 +375,7 @@ test("draw mode defers blank-selection clearing until tap or stroke movement is 
   assert.match(source, /selectedDrawGesture === SELECTED_DRAW_GESTURE_MANIPULATE[\s\S]*this\.startSelectedStrokeDrag\(event, point, hitStrokeIndex\)/);
   assert.match(source, /selectedDrawGesture !== SELECTED_DRAW_GESTURE_DRAW_OR_DESELECT[\s\S]*this\.clearSelectedStrokes\(\)/);
   assert.match(source, /if \(this\.didMove && !wasDrawing\) \{\s*this\.endTextEdit\(\);\s*this\.clearSelectedStrokes\(\)/);
-  assert.match(source, /if \(!this\.didMove \|\| movedDistance <= this\.tapDistancePx\(\)[\s\S]*this\.isNoteFlowPenActive\(\)[\s\S]*this\.clearSelectedStrokes\(\)[\s\S]*this\.setSelectedStrokes\(this\.findStrokeAt\(point\)\)/);
+  assert.match(source, /if \(!this\.didMove \|\| movedDistance <= this\.tapDistancePx\(\)[\s\S]*this\.isNoteFlowPenActive\(\)[\s\S]*this\.clearSelectedStrokes\(\)[\s\S]*this\.setSelectedStrokes\(this\.findStrokeAt\(point, \{ x: event\.clientX, y: event\.clientY \}\)\)/);
 });
 
 test("note pen ignores element selection and selection-only gestures preserve Markdown flow", async () => {
@@ -390,7 +390,7 @@ test("note pen ignores element selection and selection-only gestures preserve Ma
   const selectionStateSource = source.slice(selectionStateStart, source.indexOf("  copySelectedElements(", selectionStateStart));
 
   assert.match(source, /isNoteFlowPenActive\(\) \{[\s\S]*this\.toolMode === TOOL_DRAW[\s\S]*this\.brushMode === BRUSH_PEN[\s\S]*this\.currentBrushVariant\(\) === PEN_VARIANT_NOTE/);
-  assert.match(pointerSource, /const noteFlowPenActive = this\.isNoteFlowPenActive\(\)[\s\S]*this\.clearSelectedStrokes\(\)[\s\S]*let hitStrokeIndex = noteFlowPenActive \? -1 : this\.findStrokeAt\(point\)[\s\S]*let resizeHandle = noteFlowPenActive \? null/);
+  assert.match(pointerSource, /const noteFlowPenActive = this\.isNoteFlowPenActive\(\)[\s\S]*this\.clearSelectedStrokes\(\)[\s\S]*let hitStrokeIndex = noteFlowPenActive \? -1 : this\.findStrokeAt\(point, clientPoint\)[\s\S]*let resizeHandle = noteFlowPenActive \? null/);
   assert.doesNotMatch(pointerSource, /noteFlowOperationPending|scheduleMarkdownAnnotationRefresh/);
   assert.match(drawingMoveSource, /if \(this\.didMove && !wasDrawing\) \{[\s\S]*this\.currentStroke\.noteFlow\?\.enabled[\s\S]*this\.noteFlowOperationPending = true[\s\S]*this\.scheduleMarkdownAnnotationRefresh\(\{ layout: false \}\)/);
   assert.doesNotMatch(startSource, /prepareReadingBottomExtentForDrag|clearNoteFlowLayout|scheduleNoteFlowLayout/);

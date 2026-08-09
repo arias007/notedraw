@@ -3,13 +3,15 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
+  clientPointInRect,
   markdownBlockPresentationMinHeight,
   normalizeMarkdownBlockMinHeight,
   normalizeMarkdownFloatBox,
   resizeMarkdownBlockMinHeight,
   resolveDragDropHorizontalIntent,
   resolveSelectionResizeScales,
-  resolveVerticalMarkdownDropTarget
+  resolveVerticalMarkdownDropTarget,
+  trimMarkdownClientRect
 } from "../src/markdown-block-layout.mjs";
 
 const sourceUrl = new URL("../src/notedraw-plugin.js", import.meta.url);
@@ -56,6 +58,31 @@ test("vertical Markdown drag inserts before, between, and after document blocks"
   assert.deepEqual(resolveVerticalMarkdownDropTarget({ ...input, clientY: 195 }), { element: "second", side: "before" });
   assert.deepEqual(resolveVerticalMarkdownDropTarget({ ...input, clientY: 320 }), { element: "second", side: "after" });
   assert.equal(resolveVerticalMarkdownDropTarget({ ...input, clientX: 800, clientY: 320 }), null);
+});
+
+test("NoteFlow padding is excluded from the visible Markdown hit rectangle", () => {
+  const rect = trimMarkdownClientRect({
+    left: 100,
+    right: 500,
+    top: 40,
+    bottom: 440
+  }, {
+    insetTop: 140,
+    insetBottom: 20,
+    scale: 2
+  });
+
+  assert.deepEqual(rect, {
+    left: 100,
+    right: 500,
+    top: 320,
+    bottom: 400,
+    width: 400,
+    height: 80
+  });
+  assert.equal(clientPointInRect(rect, { x: 200, y: 200 }), false);
+  assert.equal(clientPointInRect(rect, { x: 200, y: 360 }), true);
+  assert.equal(trimMarkdownClientRect({ left: 0, right: 100, top: 0, bottom: 40 }, { insetTop: 40 }), null);
 });
 
 test("floating Markdown positions stay independent from their saved size", () => {
@@ -157,7 +184,7 @@ test("Markdown blocks use pointer sorting, logical-coordinate floating, and rema
 test("selecting Markdown blocks does not trigger a whole-note responsive reflow", async () => {
   const source = await readFile(sourceUrl, "utf8");
 
-  assert.match(source, /const markdownSelectionCandidate = this\.toolMode === TOOL_SELECT \? this\.markdownBlockElementForTarget\(target\) : null;/);
+  assert.match(source, /const markdownSelectionCandidate = this\.toolMode === TOOL_SELECT \? this\.markdownBlockElementForTarget\(target, clientPoint\) : null;/);
   assert.match(source, /const marked = target\.closest\?\.\("\.notedraw-md-block"\);/);
   assert.match(source, /const blockElement = element\?\.closest\?\.\("\.notedraw-md-block"\) \|\| element;/);
   assert.doesNotMatch(source, /this\.toolMode === TOOL_SELECT && this\.markdownBlockRecords\(\)\.length > 0/);
@@ -315,7 +342,7 @@ test("NoteFlow release commits the exact candidate and boundary shown by the blu
   assert.match(dragFinishSource, /boundary: this\.dragNoteFlowPlacement\.boundary/);
   assert.match(dragFinishSource, /candidate: this\.dragNoteFlowPlacement\.candidate/);
   assert.match(dragFinishSource, /if \(!this\.dragNoteFlowPlacement\) \{\s*this\.updateDraggedNoteFlowPlacement/);
-  assert.match(dragFinishSource, /const visibleDrop = this\.dragMarkdownDropTarget\?\.isConnected[\s\S]*this\.dragMarkdownLastValidDrop = visibleDrop/);
+  assert.match(dragFinishSource, /const visibleDrop = this\.dragMarkdownDropTarget\?\.isConnected[\s\S]*captureMarkdownBlockDropTarget/);
   assert.match(placementSource, /placement\.side === "before"[\s\S]*flowBounds\.maxY[\s\S]*flowBounds\.minY/);
   assert.match(placementSource, /const exactCandidate = placement\?\.candidate/);
   assert.match(placementSource, /\? exactCandidate\s+: null/);
@@ -377,7 +404,29 @@ test("blank-space selection resolves its NoteDraw owner before the pushed Markdo
   assert.match(source, /const surfaceRect = \(this\.layoutMeasureEl\?\.isConnected \? this\.layoutMeasureEl : this\.previewEl\)/);
   assert.match(source, /ownerStrokeIndex: this\.findNoteFlowOwnerStrokeIndex\(record\)/);
   assert.match(source, /ownerId: strokeElementId\(item\.stroke\)/);
+  const ownerSource = source.slice(source.indexOf("  findNoteFlowOwnerStrokeIndex("), source.indexOf("  readingBottomOwnerStrokeIndex("));
+  assert.doesNotMatch(ownerSource, /fallbacks/);
   assert.match(styles, /\.notedraw-reading-bottom-spacer \{[\s\S]*width: 100%;[\s\S]*max-width: 100%;/);
+});
+
+test("Markdown editing and drop commits use the same visible target snapshot", async () => {
+  const [source, styles] = await Promise.all([
+    readFile(sourceUrl, "utf8"),
+    readFile(stylesUrl, "utf8")
+  ]);
+  const dropSource = source.slice(source.indexOf("  captureMarkdownBlockDropTarget("), source.indexOf("  updateDraggedElementGroupMembership("));
+  const editSource = source.slice(source.indexOf("  applyTextEditingFlowClip("), source.indexOf("  focusSourceEditorAt("));
+
+  assert.match(source, /markdownElementVisibleClientRect\(element\)[\s\S]*trimMarkdownClientRect/);
+  assert.match(source, /markdownElementContainsClientPoint\(element, clientPoint/);
+  assert.match(source, /findStrokeAt\(point, clientPoint = null\)[\s\S]*clientPointInRect\(domRect, clientPoint\)/);
+  assert.match(dropSource, /lockedTargetPromise[\s\S]*resolveSourceDropTarget/);
+  assert.match(dropSource, /drop\.row \|\| this\.markdownDropRowMetrics/);
+  assert.match(dropSource, /lockedTarget,[\s\S]*strictTarget: true,[\s\S]*targetText: drop\.targetText/);
+  assert.doesNotMatch(dropSource, /targetInfo: getSourceInfo\(target\)/);
+  assert.match(editSource, /--notedraw-editing-flow-top/);
+  assert.match(editSource, /--notedraw-editing-flow-bottom/);
+  assert.match(styles, /\.notedraw-editing\.notedraw-editing-flow-clipped[\s\S]*clip-path: inset/);
 });
 
 test("Markdown selection and NoteFlow layout use concrete blocks instead of embed parents or visual lines", async () => {

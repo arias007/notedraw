@@ -587,6 +587,16 @@
   outline-offset: -1px;
 }
 
+.notedraw-shell .notedraw-editing.notedraw-editing-flow-clipped {
+  clip-path: inset(
+    var(--notedraw-editing-flow-top, 0px)
+    0
+    var(--notedraw-editing-flow-bottom, 0px)
+    0
+    round 4px
+  );
+}
+
 .notedraw-text-sort-target-before {
   box-shadow: inset 0 2px 0 var(--interactive-accent);
 }

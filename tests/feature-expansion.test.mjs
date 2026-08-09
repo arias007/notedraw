@@ -203,7 +203,7 @@ test("selection frames freeze between operations and drag drops retain the last 
   assert.match(frameSource, /if \(!force && this\.selectionFrameSnapshot\?\.key === key\)/);
   assert.match(frameSource, /this\.selectionFrameSnapshot = \{ key, rect \}/);
   assert.match(source, /if \(this\.draggingStroke \|\| this\.resizingSelection\)[\s\S]*const bounds = this\.getSelectedStrokeBounds\(\)[\s\S]*return this\.captureSelectionFrameSnapshot\(\) \|\| null/);
-  assert.match(source, /this\.dragMarkdownLastValidDrop = \{ element: target, side \}/);
+  assert.match(source, /this\.dragMarkdownLastValidDrop = drop/);
   assert.match(dragSource, /if \(!target\) \{\s*return this\.dragMarkdownLastValidDrop \? \{ \.\.\.this\.dragMarkdownLastValidDrop \} : null;/);
   assert.match(finishSource, /const lastDrop = this\.dragMarkdownLastValidDrop\?\.element\?\.isConnected/);
   assert.match(finishSource, /const markdownDrop = lastDrop \? \{/);

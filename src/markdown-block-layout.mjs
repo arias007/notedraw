@@ -38,6 +38,46 @@ export function markdownBlockPresentationMinHeight(block) {
   return block?.floating ? 0 : normalizeMarkdownBlockMinHeight(block?.minHeight);
 }
 
+export function trimMarkdownClientRect(rect, {
+  insetTop = 0,
+  insetBottom = 0,
+  scale = 1
+} = {}) {
+  const left = Number(rect?.left);
+  const right = Number(rect?.right);
+  const top = Number(rect?.top);
+  const bottom = Number(rect?.bottom);
+  if (![left, right, top, bottom].every(Number.isFinite) || right <= left || bottom <= top) {
+    return null;
+  }
+  const visualScale = Math.max(0, Number(scale) || 0);
+  const visibleTop = top + Math.max(0, Number(insetTop) || 0) * visualScale;
+  const visibleBottom = bottom - Math.max(0, Number(insetBottom) || 0) * visualScale;
+  if (visibleBottom <= visibleTop) {
+    return null;
+  }
+  return {
+    left,
+    right,
+    top: visibleTop,
+    bottom: visibleBottom,
+    width: right - left,
+    height: visibleBottom - visibleTop
+  };
+}
+
+export function clientPointInRect(rect, clientPoint = {}) {
+  const x = Number(clientPoint?.x);
+  const y = Number(clientPoint?.y);
+  return Boolean(rect)
+    && Number.isFinite(x)
+    && Number.isFinite(y)
+    && x >= rect.left
+    && x <= rect.right
+    && y >= rect.top
+    && y <= rect.bottom;
+}
+
 export function resolveDragDropHorizontalIntent({
   clientX,
   targetLeft,
