@@ -86,14 +86,14 @@ test("deleting a vault file clears NoteDraw controllers, DOM presentation, cache
   assert.match(source, /collectDeletedVaultFiles\(deletedFile\)/);
 });
 
-test("3.4.33 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
+test("3.4.34 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
   const [source, manifestText] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(manifestUrl, "utf8")
   ]);
   const manifest = JSON.parse(manifestText);
 
-  assert.equal(manifest.version, "3.4.33");
+  assert.equal(manifest.version, "3.4.34");
   assert.match(source, /version: "3\.4\.19"/);
   assert.match(source, /this\.readingVirtualStyleState = \/\* @__PURE__ \*\/ new Map\(\)/);
   assert.match(source, /shouldClearStaleReadingVirtualMinHeight\(\{/);
@@ -114,6 +114,7 @@ test("3.4.33 preserves reading content and cross-view frames without hidden-surf
   assert.match(source, /projectElementPoints\(stroke\.points, layout, box/);
   assert.doesNotMatch(source, /stabilizeElementRelations\(projected, layoutsById\)/);
   assert.match(source, /const transitionProjected = \[\.\.\.projected\];/);
+  assert.match(source, /const projectedById = new Map\(projected\.map\(\(box\) =>/);
   assert.match(source, /controller\.drawingData = normalizeDrawingData\(data, file\);\s*controller\.rebuildElementRelations\(\);/);
   assert.match(source, /elementLayoutNeedsRepair\(existingLayout\)/);
   assert.match(source, /function normalizeDrawingDataForStorage\(data, file\)/);
@@ -407,7 +408,10 @@ test("selection tool previews and commits exact NoteFlow Markdown insertion targ
   ]);
   const dragSource = source.slice(source.indexOf("  startSelectedStrokeDrag("), source.indexOf("  startSelectedStrokeResize("));
   const dropSource = source.slice(source.indexOf("  draggedNoteFlowIndexes("), source.indexOf("  captureNoteFlowAnchor("));
+  const captureSource = source.slice(source.indexOf("  captureNoteFlowAnchor("), source.indexOf("  toggleSelectedFlowMode("));
   const finishSource = dragSource.slice(dragSource.indexOf("  finishSelectedStrokeDrag("), dragSource.indexOf("  cancelSelectedStrokeDrag("));
+  const flowLayoutSource = source.slice(source.indexOf("  applyNoteFlowLayout()"), source.indexOf("  markNoteFlowLayoutMutation()"));
+  const projectionSource = source.slice(source.indexOf("  initializeAndProjectResponsivePoints("), source.indexOf("  resizeCanvas(options = {})"));
 
   assert.match(source, /selectNoteFlowDropPlacement/);
   assert.match(dropSource, /this\.toolMode === TOOL_SELECT[\s\S]*queueDraggedNoteFlowPlacement\(clientX, clientY\)[\s\S]*window\.requestAnimationFrame/);
@@ -420,6 +424,15 @@ test("selection tool previews and commits exact NoteFlow Markdown insertion targ
   assert.match(dragSource, /this\.usesDraggedNoteFlowPlacement\(\)[\s\S]*this\.queueDraggedNoteFlowPlacement\(event\.clientX, event\.clientY\)[\s\S]*this\.queueDraggedNoteFlowRefresh/);
   assert.match(finishSource, /requestedDropPlacement[\s\S]*this\.clearNoteFlowLayout\(\)[\s\S]*this\.resolveDraggedNoteFlowPlacement[\s\S]*this\.snapDraggedSelectionToNoteFlowPlacement/);
   assert.match(finishSource, /placement: droppedNoteFlowIndexes\.has\(index\) \? resolvedDropPlacement : null/);
+  assert.match(captureSource, /selectExactNoteFlowPositionAnchor\(candidates, \{ candidate: anchor, side, line \}\)/);
+  assert.match(captureSource, /placementVersion:[\s\S]*\? 1/);
+  assert.match(captureSource, /avoidancePath: ""[\s\S]*avoidanceLine: null/);
+  assert.match(flowLayoutSource, /const exactPlacement = hasExactNoteFlowPlacement\(currentNoteFlow\)/);
+  assert.match(flowLayoutSource, /const selectedAnchor = exactPlacement \? anchor : avoidanceAnchor \|\| anchor/);
+  assert.match(flowLayoutSource, /const side = exactPlacement \? currentNoteFlow\.side/);
+  assert.match(projectionSource, /const noteFlowProjectedById = new Map\(\)/);
+  assert.match(projectionSource, /noteFlowProjectedById\.set\(transitionId, projectedBox\)/);
+  assert.match(projectionSource, /projectElementPoints\(stroke\.points, layout, box/);
   assert.match(finishSource, /else if \(affectsNoteFlow\)[\s\S]*dragStrokeOriginalPoints[\s\S]*originalPoints\.map/);
   assert.doesNotMatch(dropSource.slice(dropSource.indexOf("  resolveDraggedNoteFlowPlacement("), dropSource.indexOf("  snapDraggedSelectionToNoteFlowPlacement(")), /dragDropGeometrySnapshot|selectStoredNoteFlowAnchorCandidate/);
   assert.doesNotMatch(dropSource, /vault\.modify|reorderTextBlock/);

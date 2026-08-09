@@ -254,7 +254,7 @@ test("reading-only note pen and selected elements can reserve Markdown flow spac
   assert.match(flowLayout, /if \(!editingNoteFlow \|\| this\.isReadingZoomInteractionActive\(\)\) \{\s*return false;/);
   assert.match(flowLayout, /const hasStoredAnchor = hasStableNoteFlowAnchor\(currentNoteFlow\)/);
   assert.match(flowLayout, /const strokeNearViewport = strokeTop >= previewRect\.top - 64 && strokeTop <= previewRect\.bottom \+ 64/);
-  assert.match(flowLayout, /const staleStoredAnchor = canRepairStoredAnchors[\s\S]*&& strokeNearViewport;[\s\S]*if \(!anchor && \(!hasStoredAnchor \|\| staleStoredAnchor\)\)/);
+  assert.match(flowLayout, /const staleStoredAnchor = canRepairStoredAnchors[\s\S]*&& strokeNearViewport;[\s\S]*if \(!anchor && !exactPlacement && \(!hasStoredAnchor \|\| staleStoredAnchor\)\)/);
   assert.match(flowLayout, /const canRepairStoredAnchors = this\.noteFlowAnchorRepairReady[\s\S]*Date\.now\(\) - this\.lastScrollAt > 480/);
   assert.match(flowLayout, /this\.noteFlowAvoidanceAnchors\.get\(avoidanceKey\)/);
   assert.match(flowLayout, /noteFlowAvoidanceReference\(currentNoteFlow, this\.file\?\.path\)/);
@@ -270,7 +270,7 @@ test("reading-only note pen and selected elements can reserve Markdown flow spac
   assert.match(source, /noteFlowVisualLineCandidates\(sourceElement, path, start, end\)[\s\S]*const layoutElement = this\.noteFlowLayoutElement\(sourceElement\)/);
   assert.match(source, /cls: "notedraw-note-flow-line-spacer"/);
   assert.match(source, /NOTEDRAW_OWNED_MUTATION_SELECTOR = \[[\s\S]*"\.notedraw-note-flow-line-spacer"/);
-  assert.match(flowLayout, /const selectedAnchor = avoidanceAnchor \|\| anchor;[\s\S]*const element = this\.noteFlowTargetElement\(selectedAnchor, side\)/);
+  assert.match(flowLayout, /const selectedAnchor = exactPlacement \? anchor : avoidanceAnchor \|\| anchor;[\s\S]*const element = this\.noteFlowTargetElement\(selectedAnchor, side\)/);
   assert.match(source, /for \(const spacer of this\.noteFlowLineSpacers\?\.values\?\.\(\) \|\| \[\]\)/);
   assert.match(source, /scheduleNoteFlowAnchorRepair\(\)[\s\S]*this\.noteFlowAnchorRepairReady = true[\s\S]*this\.scheduleNoteFlowLayout\(\)[\s\S]*}, 700\)/);
   assert.match(source, /window\.clearTimeout\(this\.noteFlowAnchorRepairTimer\)/);

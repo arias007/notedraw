@@ -67,6 +67,35 @@ test("stroke points stay inside the projected floating element box", () => {
   }
 });
 
+test("box projection preserves NoteFlow ink geometry when the target lane reaches the left edge", () => {
+  const layout = makeLayout("note-flow-ink", 100, 300, 240, 160);
+  const points = projectElementPoints([
+    { x: 100 / 500, y: 300 / 2000, anchor: { x: 60 / 420, y: 300 / 2000 } },
+    { x: 220 / 500, y: 380 / 2000, anchor: { x: 180 / 420, y: 380 / 2000 } },
+    { x: 340 / 500, y: 460 / 2000, anchor: { x: 300 / 420, y: 460 / 2000 } }
+  ], layout, {
+    x: 0,
+    y: 520,
+    width: 180,
+    height: 120
+  }, { canvasWidth: 360, canvasHeight: 2400 });
+
+  const xs = points.map((point) => point.x * 360);
+  const ys = points.map((point) => point.y * 2400);
+  const repeated = projectElementPoints(points, layout, {
+    x: 0,
+    y: 520,
+    width: 180,
+    height: 120
+  }, { canvasWidth: 360, canvasHeight: 2400 });
+  assert.deepEqual(xs, [0, 90, 180]);
+  assert.deepEqual(ys, [520, 580, 640]);
+  assert.deepEqual(repeated.map((point) => point.x * 360), xs);
+  assert.deepEqual(repeated.map((point) => point.y * 2400), ys);
+  assert.equal((xs[1] - xs[0]) / (xs[2] - xs[0]), 0.5);
+  assert.equal((ys[1] - ys[0]) / (ys[2] - ys[0]), 0.5);
+});
+
 test("nearby floating elements preserve their relationship after reprojection", () => {
   const first = makeLayout("first", 100, 400, 160, 100);
   const second = makeLayout("second", 270, 410, 150, 90);

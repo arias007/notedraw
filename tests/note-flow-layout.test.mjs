@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   frozenNoteFlowLayoutSignature,
+  hasExactNoteFlowPlacement,
   hasStableNoteFlowAnchor,
   noteFlowAvoidanceReference,
   noteFlowRequiredOffset,
@@ -17,6 +18,7 @@ import {
   selectNoteFlowAnchorPlacement,
   selectNoteFlowAvoidanceCandidate,
   selectNoteFlowDropPlacement,
+  selectExactNoteFlowPositionAnchor,
   selectNoteFlowInsertionPlacement,
   selectNoteFlowPositionAnchor,
   selectStoredNoteFlowAnchorCandidate,
@@ -369,6 +371,50 @@ test("note-flow position stays before the Markdown block being pushed", () => {
 
   assert.equal(position?.candidate.id, "stable-above");
   assert.equal(position?.line, 4);
+});
+
+test("exact after placement stays anchored to the blue-bar target line", () => {
+  const target = { id: "hello", top: 150, bottom: 184, start: 9, end: 9, order: 2 };
+  const position = selectExactNoteFlowPositionAnchor([
+    { id: "above", top: 90, bottom: 126, start: 4, end: 4, order: 1 },
+    target,
+    { id: "covered-below", top: 210, bottom: 244, start: 19, end: 19, order: 3 }
+  ], { candidate: target, side: "after", line: 9 });
+
+  assert.equal(position?.candidate.id, "hello");
+  assert.equal(position?.line, 9);
+});
+
+test("exact before placement uses only the stable Markdown anchor above its target", () => {
+  const target = { id: "target", top: 150, bottom: 184, start: 9, end: 9, order: 2 };
+  const position = selectExactNoteFlowPositionAnchor([
+    { id: "above", top: 90, bottom: 126, start: 4, end: 4, order: 1 },
+    target,
+    { id: "below", top: 210, bottom: 244, start: 19, end: 19, order: 3 }
+  ], { candidate: target, side: "before", line: 9 });
+
+  assert.equal(position?.candidate.id, "above");
+  assert.equal(position?.line, 4);
+});
+
+test("stored v1 NoteFlow anchors migrate to exact placement without avoidance", () => {
+  const legacyExact = {
+    enabled: true,
+    path: "Notes/example.md",
+    line: 9,
+    side: "after",
+    positionBasis: "above",
+    positionLine: 9,
+    positionVersion: 1,
+    avoidancePath: "Notes/example.md",
+    avoidanceLine: 19
+  };
+
+  assert.equal(hasExactNoteFlowPlacement(legacyExact), true);
+  assert.equal(noteFlowAvoidanceReference(legacyExact), null);
+  assert.equal(noteFlowNeedsActivationRepair([
+    { noteFlow: legacyExact }
+  ], { version: 1, offsets: [{ path: "Notes/example.md", line: 19, property: "padding-top", offset: 120 }] }), true);
 });
 
 test("duplicate stored line anchors resolve to the block beside the ink", () => {

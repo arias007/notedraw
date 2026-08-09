@@ -218,6 +218,28 @@ export function selectNoteFlowPositionAnchor(candidates, {
   return { candidate: above[0], line: above[0].end };
 }
 
+export function selectExactNoteFlowPositionAnchor(candidates, {
+  candidate,
+  side,
+  line
+} = {}) {
+  if (!candidate || !["before", "after"].includes(side)) {
+    return null;
+  }
+  if (side === "after") {
+    const targetLine = Number.isFinite(Number(line)) ? Number(line) : Number(candidate.end);
+    return Number.isFinite(targetLine) ? { candidate, line: targetLine } : null;
+  }
+  const ordered = Array.isArray(candidates) ? candidates : [];
+  const candidateOrder = Number.isFinite(Number(candidate.order))
+    ? Number(candidate.order)
+    : ordered.indexOf(candidate);
+  return selectNoteFlowPositionAnchor(ordered, {
+    strokeTop: finite(candidate.top, Number.NaN) - 0.001,
+    maxOrderExclusive: candidateOrder >= 0 ? candidateOrder : Number.POSITIVE_INFINITY
+  });
+}
+
 export function selectStoredNoteFlowAnchorCandidate(candidates, {
   side,
   strokeTop,
@@ -398,7 +420,16 @@ export function hasStableNoteFlowAnchor(noteFlow) {
     && Number(noteFlow?.positionVersion) >= 1;
 }
 
+export function hasExactNoteFlowPlacement(noteFlow) {
+  const version = noteFlow?.placementVersion;
+  return hasStableNoteFlowAnchor(noteFlow)
+    && (Number(version) >= 1 || version === null || version === undefined || version === "");
+}
+
 export function noteFlowAvoidanceReference(noteFlow, fallbackPath = "") {
+  if (hasExactNoteFlowPlacement(noteFlow)) {
+    return null;
+  }
   const rawLine = noteFlow?.avoidanceLine;
   if (rawLine === null || rawLine === undefined || rawLine === "") {
     return null;
@@ -428,6 +459,11 @@ export function noteFlowNeedsActivationRepair(strokes, frozenLayout) {
     return path && Number.isFinite(line) ? `${path}\0${Math.floor(line)}` : "";
   }).filter(Boolean));
   return flows.some((stroke) => {
+    if (hasExactNoteFlowPlacement(stroke.noteFlow)) {
+      const path = String(stroke.noteFlow?.path || "").replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+      const line = Number(stroke.noteFlow?.line);
+      return !path || !Number.isFinite(line) || !frozenKeys.has(`${path}\0${Math.floor(line)}`);
+    }
     const avoidance = noteFlowAvoidanceReference(stroke.noteFlow);
     return !avoidance
       || !frozenKeys.has(`${avoidance.path}\0${Math.floor(avoidance.line)}`);

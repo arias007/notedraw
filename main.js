@@ -1750,6 +1750,25 @@ function selectNoteFlowPositionAnchor(candidates, {
   }
   return { candidate: above[0], line: above[0].end };
 }
+function selectExactNoteFlowPositionAnchor(candidates, {
+  candidate,
+  side,
+  line
+} = {}) {
+  if (!candidate || !["before", "after"].includes(side)) {
+    return null;
+  }
+  if (side === "after") {
+    const targetLine = Number.isFinite(Number(line)) ? Number(line) : Number(candidate.end);
+    return Number.isFinite(targetLine) ? { candidate, line: targetLine } : null;
+  }
+  const ordered = Array.isArray(candidates) ? candidates : [];
+  const candidateOrder = Number.isFinite(Number(candidate.order)) ? Number(candidate.order) : ordered.indexOf(candidate);
+  return selectNoteFlowPositionAnchor(ordered, {
+    strokeTop: finite4(candidate.top, Number.NaN) - 1e-3,
+    maxOrderExclusive: candidateOrder >= 0 ? candidateOrder : Number.POSITIVE_INFINITY
+  });
+}
 function selectStoredNoteFlowAnchorCandidate(candidates, {
   side,
   strokeTop,
@@ -1896,7 +1915,14 @@ function hasStableNoteFlowAnchor(noteFlow) {
   const line = noteFlow?.line;
   return line !== null && line !== void 0 && line !== "" && Number.isFinite(Number(line)) && ["before", "after"].includes(noteFlow?.side) && Boolean(noteFlow?.positionBasis) && Number(noteFlow?.positionVersion) >= 1;
 }
+function hasExactNoteFlowPlacement(noteFlow) {
+  const version = noteFlow?.placementVersion;
+  return hasStableNoteFlowAnchor(noteFlow) && (Number(version) >= 1 || version === null || version === void 0 || version === "");
+}
 function noteFlowAvoidanceReference(noteFlow, fallbackPath = "") {
+  if (hasExactNoteFlowPlacement(noteFlow)) {
+    return null;
+  }
   const rawLine = noteFlow?.avoidanceLine;
   if (rawLine === null || rawLine === void 0 || rawLine === "") {
     return null;
@@ -1923,6 +1949,11 @@ function noteFlowNeedsActivationRepair(strokes, frozenLayout) {
     return path && Number.isFinite(line) ? `${path}\0${Math.floor(line)}` : "";
   }).filter(Boolean));
   return flows.some((stroke) => {
+    if (hasExactNoteFlowPlacement(stroke.noteFlow)) {
+      const path = String(stroke.noteFlow?.path || "").replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+      const line = Number(stroke.noteFlow?.line);
+      return !path || !Number.isFinite(line) || !frozenKeys.has(`${path}\0${Math.floor(line)}`);
+    }
     const avoidance = noteFlowAvoidanceReference(stroke.noteFlow);
     return !avoidance || !frozenKeys.has(`${avoidance.path}\0${Math.floor(avoidance.line)}`);
   });
@@ -11479,6 +11510,7 @@ var PreviewDrawingController = class {
       }
     }
     const transitionProjected = [...projected];
+    const noteFlowProjectedById = /* @__PURE__ */ new Map();
     for (const [index, stroke] of (this.drawingData?.strokes || []).entries()) {
       const noteFlow = normalizeNoteFlow(stroke?.noteFlow);
       if (!noteFlow || isConnectorStroke(stroke)) {
@@ -11486,6 +11518,7 @@ var PreviewDrawingController = class {
       }
       const transitionId = `note-flow:${strokeElementId(stroke) || index}`;
       const previousBounds = getStrokeBounds(stroke, previousCanvasWidth, previousCanvasHeight);
+      const layout = normalizeElementLayout(stroke.layout);
       const projectedPoints = (stroke.points || []).map((point) => {
         const projectedPoint = projectResponsivePoint(point, {
           canvasWidth: this.canvasWidth(),
@@ -11496,14 +11529,33 @@ var PreviewDrawingController = class {
         return noteFlow.positionBasis === "document" && noteFlow.positionVersion >= 1 ? projectNoteFlowDocumentPoint(point, projectedPoint, { canvasHeight: this.canvasHeight() }) : projectedPoint;
       });
       const projectedBounds = getStrokeBounds({ ...stroke, points: projectedPoints }, this.canvasWidth(), this.canvasHeight());
-      if (previousBounds && projectedBounds) {
-        currentBoundsById.set(transitionId, previousBounds);
-        transitionProjected.push({
-          id: transitionId,
+      const layoutBox = projectElementLayout(layout, {
+        canvasWidth: this.canvasWidth(),
+        canvasHeight: this.canvasHeight(),
+        frame: context.frame,
+        viewportHeight: context.viewportHeight,
+        lineToCanvasY,
+        preferDocumentFlow: isMobileRuntime()
+      });
+      const projectedBox = layoutBox && projectedBounds ? {
+        ...layoutBox,
+        y: clamp10(projectedBounds.minY, 0, Math.max(0, this.canvasHeight() - layoutBox.height)),
+        anchorY: clamp10(projectedBounds.minY, 0, Math.max(0, this.canvasHeight() - layoutBox.height))
+      } : null;
+      if (projectedBox) {
+        noteFlowProjectedById.set(transitionId, projectedBox);
+      }
+      if (previousBounds && (projectedBox || projectedBounds)) {
+        const transitionBox2 = projectedBox || {
           x: projectedBounds.minX,
           y: projectedBounds.minY,
           width: projectedBounds.maxX - projectedBounds.minX,
           height: projectedBounds.maxY - projectedBounds.minY
+        };
+        currentBoundsById.set(transitionId, previousBounds);
+        transitionProjected.push({
+          ...transitionBox2,
+          id: transitionId
         });
       }
     }
@@ -11526,7 +11578,7 @@ var PreviewDrawingController = class {
     } else {
       this.responsiveProjectionPending = null;
     }
-    const projectedById = new Map(relationProjected.map((box) => {
+    const projectedById = new Map(projected.map((box) => {
       const stabilized = stabilizeProjectedElementBox(box, currentBoundsById.get(box.id));
       return [box.id, {
         ...stabilized,
@@ -11534,7 +11586,7 @@ var PreviewDrawingController = class {
         y: clamp10(stabilized.y, 0, Math.max(0, this.canvasHeight() - stabilized.height))
       }];
     }));
-    for (const stroke of this.drawingData?.strokes || []) {
+    for (const [index, stroke] of (this.drawingData?.strokes || []).entries()) {
       if (isConnectorStroke(stroke)) {
         continue;
       }
@@ -11549,6 +11601,21 @@ var PreviewDrawingController = class {
           continue;
         }
         const noteFlow = normalizeNoteFlow(stroke.noteFlow);
+        const layout2 = normalizeElementLayout(stroke.layout);
+        const transitionId = `note-flow:${strokeElementId(stroke) || index}`;
+        const projectedBox = noteFlowProjectedById.get(transitionId);
+        const box2 = projectedBox ? stabilizeProjectedElementBox(projectedBox, currentBoundsById.get(transitionId)) : null;
+        if (layout2 && box2) {
+          stroke.points = projectElementPoints(stroke.points, layout2, box2, {
+            canvasWidth: this.canvasWidth(),
+            canvasHeight: this.canvasHeight()
+          });
+          const metrics = scaleElementMetrics(layout2.metrics, box2);
+          if (metrics.width) {
+            stroke.width = metrics.width;
+          }
+          continue;
+        }
         const previousPoints = stroke.points;
         const projectedPoints = stroke.points.map((point) => {
           const projectedPoint = projectResponsivePoint(point, {
@@ -17771,6 +17838,7 @@ var PreviewDrawingController = class {
         positionPath: this.file?.path || "",
         positionLine: null,
         positionVersion: 0,
+        placementVersion: 0,
         placementMode: "row",
         inlineSide: null,
         leftSnap: false,
@@ -17781,7 +17849,8 @@ var PreviewDrawingController = class {
     const strokeTop = canvasRect.top + (bounds.minY - this.canvasWindowTop) * scaleY;
     const strokeBottom = canvasRect.top + (bounds.maxY - this.canvasWindowTop) * scaleY;
     const candidates = this.noteFlowCandidates();
-    const placement = options.placement?.candidate ? options.placement : selectNoteFlowInsertionPlacement(candidates, { strokeTop, strokeBottom });
+    const explicitPlacement = Boolean(options.placement?.candidate);
+    const placement = explicitPlacement ? options.placement : selectNoteFlowInsertionPlacement(candidates, { strokeTop, strokeBottom });
     const previousAnchor = options.preservePlacement === true && Number.isFinite(previous?.line) && ["before", "after"].includes(previous?.side) ? candidates.filter((candidate) => {
       return candidate.path === previous.path && previous.line >= candidate.start && previous.line <= candidate.end;
     }).sort((a, b) => a.bottom - a.top - (b.bottom - b.top) || a.order - b.order)[0] || null : null;
@@ -17789,7 +17858,8 @@ var PreviewDrawingController = class {
     const anchor = preservePlacement ? previousAnchor : placement?.candidate;
     const side = preservePlacement ? previous.side : placement?.side || previous?.side || null;
     const line = preservePlacement ? previous.line : Number.isFinite(placement?.line) ? placement.line : previous?.line ?? null;
-    const position = selectNoteFlowPositionAnchor(candidates, {
+    const exactPlacement = explicitPlacement || preservePlacement && hasExactNoteFlowPlacement(previous);
+    const position = exactPlacement ? selectExactNoteFlowPositionAnchor(candidates, { candidate: anchor, side, line }) : selectNoteFlowPositionAnchor(candidates, {
       strokeTop,
       maxOrderExclusive: side === "before" && anchor ? anchor.order : Number.POSITIVE_INFINITY
     });
@@ -17805,9 +17875,12 @@ var PreviewDrawingController = class {
       positionPath: positionAnchor?.path || previous?.positionPath || this.file?.path || "",
       positionLine: positionAnchor && Number.isFinite(position?.line) ? position.line : candidatesReady ? null : previous?.positionLine ?? null,
       positionVersion: 1,
+      placementVersion: anchor && Number.isFinite(Number(line)) && ["before", "after"].includes(side) ? 1 : previous?.placementVersion || 0,
       placementMode,
       inlineSide: placementMode === "inline" ? options.placement?.horizontalSide || previous?.inlineSide || "right" : null,
       leftSnap: placementMode === "row" ? options.placement?.leftSnap === true || !options.placement && previous?.leftSnap === true : false,
+      avoidancePath: "",
+      avoidanceLine: null,
       gap: clamp10(Number(stroke?.noteFlow?.gap) || 12, 4, 64)
     };
   }
@@ -18485,9 +18558,10 @@ var PreviewDrawingController = class {
           item.stroke.noteFlow = currentNoteFlow;
         }
       }
+      const exactPlacement = hasExactNoteFlowPlacement(currentNoteFlow);
       const strokeTop = canvasRect.top + (item.bounds.minY - this.canvasWindowTop) * scaleY;
       const strokeBottom = canvasRect.top + (item.bounds.maxY - this.canvasWindowTop) * scaleY;
-      let anchor = this.noteFlowAnchorElement(currentNoteFlow, candidates, strokeTop);
+      let anchor = this.noteFlowAnchorElement(currentNoteFlow, candidates, exactPlacement ? Number.NaN : strokeTop);
       const previewRect = this.previewEl.getBoundingClientRect();
       const strokeNearViewport = strokeTop >= previewRect.top - 64 && strokeTop <= previewRect.bottom + 64;
       if (!hasStoredAnchor && anchor && currentNoteFlow?.side === "before" && anchor.top < strokeTop - 4) {
@@ -18506,7 +18580,7 @@ var PreviewDrawingController = class {
       const renderedStart = Math.min(...samePathCandidates.map((candidate) => candidate.start));
       const renderedEnd = Math.max(...samePathCandidates.map((candidate) => candidate.end));
       const staleStoredAnchor = canRepairStoredAnchors && hasStoredAnchor && samePathCandidates.length > 1 && Number.isFinite(storedLine) && (storedLine < renderedStart || storedLine > renderedEnd) && strokeNearViewport;
-      if (!anchor && (!hasStoredAnchor || staleStoredAnchor)) {
+      if (!anchor && !exactPlacement && (!hasStoredAnchor || staleStoredAnchor)) {
         const recaptured = this.captureNoteFlowAnchor(item.stroke);
         anchor = this.noteFlowAnchorElement(recaptured, candidates, strokeTop);
         if (anchor && recaptured?.positionBasis) {
@@ -18517,7 +18591,19 @@ var PreviewDrawingController = class {
         }
       }
       const avoidanceKey = strokeElementId(item.stroke) || String(item.index);
-      let avoidanceReference = noteFlowAvoidanceReference(currentNoteFlow, this.file?.path) || this.noteFlowAvoidanceAnchors.get(avoidanceKey) || null;
+      if (exactPlacement) {
+        this.noteFlowAvoidanceAnchors.delete(avoidanceKey);
+        if (currentNoteFlow.avoidancePath || Number.isFinite(currentNoteFlow.avoidanceLine)) {
+          item.stroke.noteFlow = {
+            ...currentNoteFlow,
+            avoidancePath: "",
+            avoidanceLine: null
+          };
+          currentNoteFlow = item.stroke.noteFlow;
+          updatedNoteFlowMetadata = true;
+        }
+      }
+      let avoidanceReference = exactPlacement ? null : noteFlowAvoidanceReference(currentNoteFlow, this.file?.path) || this.noteFlowAvoidanceAnchors.get(avoidanceKey) || null;
       let avoidanceAnchor = avoidanceReference ? this.noteFlowAnchorElement({
         path: avoidanceReference.path,
         line: avoidanceReference.line,
@@ -18535,7 +18621,7 @@ var PreviewDrawingController = class {
         currentNoteFlow = item.stroke.noteFlow;
         updatedNoteFlowMetadata = true;
       }
-      if (!avoidanceReference) {
+      if (!exactPlacement && !avoidanceReference) {
         avoidanceAnchor = selectNoteFlowAvoidanceCandidate(candidates, { strokeTop, strokeBottom });
         if (avoidanceAnchor) {
           avoidanceReference = { path: avoidanceAnchor.path, line: avoidanceAnchor.start };
@@ -18553,8 +18639,8 @@ var PreviewDrawingController = class {
         missingStableAnchor = true;
         continue;
       }
-      const selectedAnchor = avoidanceAnchor || anchor;
-      const side = avoidanceAnchor ? "before" : currentNoteFlow.side;
+      const selectedAnchor = exactPlacement ? anchor : avoidanceAnchor || anchor;
+      const side = exactPlacement ? currentNoteFlow.side : avoidanceAnchor ? "before" : currentNoteFlow.side;
       const element = this.noteFlowTargetElement(selectedAnchor, side);
       if (!element) {
         missingStableAnchor = true;
@@ -18610,7 +18696,7 @@ var PreviewDrawingController = class {
         }
         descriptors.set(property, {
           path: normalizeVaultPath(selectedAnchor?.path || currentNoteFlow?.path || this.file?.path || ""),
-          line: side === "after" ? selectedAnchor?.end : selectedAnchor?.start,
+          line: exactPlacement ? currentNoteFlow.line : side === "after" ? selectedAnchor?.end : selectedAnchor?.start,
           side,
           property,
           ownerId: strokeElementId(item.stroke),
@@ -21890,6 +21976,7 @@ function normalizeNoteFlow(value) {
   const avoidanceLine = value.avoidanceLine === null || value.avoidanceLine === void 0 || value.avoidanceLine === "" ? NaN : Number(value.avoidanceLine);
   const positionBasis = value.positionBasis === "document" ? "document" : value.positionBasis === "above" && Number.isFinite(positionLine) && positionLine >= 0 ? "above" : null;
   const placementMode = value.placementMode === "inline" ? "inline" : "row";
+  const hasStoredPlacement = Number.isFinite(line) && line >= 0 && ["before", "after"].includes(value.side) && Number(value.positionVersion) >= 1;
   return {
     enabled: true,
     path: normalizeVaultPath(value.path || ""),
@@ -21899,6 +21986,7 @@ function normalizeNoteFlow(value) {
     positionPath: normalizeVaultPath(value.positionPath || value.path || ""),
     positionLine: positionBasis === "above" ? positionLine : null,
     positionVersion: Number(value.positionVersion) >= 1 ? 1 : 0,
+    placementVersion: Number(value.placementVersion) >= 1 || hasStoredPlacement ? 1 : 0,
     placementMode,
     inlineSide: placementMode === "inline" && value.inlineSide === "right" ? "right" : null,
     leftSnap: placementMode === "row" && value.leftSnap === true,
