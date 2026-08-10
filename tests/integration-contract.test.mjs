@@ -86,14 +86,14 @@ test("deleting a vault file clears NoteDraw controllers, DOM presentation, cache
   assert.match(source, /collectDeletedVaultFiles\(deletedFile\)/);
 });
 
-test("3.4.53 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
+test("3.4.54 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
   const [source, manifestText] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(manifestUrl, "utf8")
   ]);
   const manifest = JSON.parse(manifestText);
 
-  assert.equal(manifest.version, "3.4.53");
+  assert.equal(manifest.version, "3.4.54");
   assert.match(source, /version: "3\.4\.19"/);
   assert.match(source, /this\.readingVirtualStyleState = \/\* @__PURE__ \*\/ new Map\(\)/);
   assert.match(source, /shouldClearStaleReadingVirtualMinHeight\(\{/);
@@ -458,6 +458,10 @@ test("selection tool previews and commits exact NoteFlow Markdown insertion targ
   assert.match(reservedRowSource, /noteFlowStoredRowCanvasY\(noteFlow, candidates, strokeTop\)/);
   assert.match(reservedRowSource, /projectStableNoteFlowBox\([\s\S]*boxLeftRatio:[\s\S]*boxWidthRatio:[\s\S]*boxHeightRatio:/);
   assert.match(reservedRowSource, /packNoteFlowInlineRectangles\([\s\S]*anchor: anchorBounds,[\s\S]*blockers,[\s\S]*laneLeft:[\s\S]*laneRight:/);
+  assert.match(reservedRowSource, /reflowNoteFlowRectangles\(rowTargets\.map\([\s\S]*allowOverlap: true[\s\S]*\}\);/);
+  assert.doesNotMatch(reservedRowSource, /allowOverlap: true, blockers: markdownBlockers/);
+  const afterDragSource = source.slice(source.indexOf("  reflowNoteFlowElementsAfterDrag("), source.indexOf("  queueDraggedNoteFlowRefresh(", source.indexOf("  reflowNoteFlowElementsAfterDrag(")));
+  assert.match(afterDragSource, /reflowNoteFlowRectangles\(rowItems, \{ gap: 6, allowOverlap: true \}\)/);
   assert.match(reservedRowSource, /candidateCanvasBounds\(anchor, "inline"\)/);
   assert.match(reservedRowSource, /candidateCanvasBounds\(candidate, "inline"\)/);
   assert.match(reservedRowSource, /const targetBox = this\.noteFlowOperationPending[\s\S]*x: bounds\.minX,[\s\S]*width: Math\.max\(0\.001, bounds\.maxX - bounds\.minX\)[\s\S]*height: Math\.max\(0\.001, bounds\.maxY - bounds\.minY\)/);

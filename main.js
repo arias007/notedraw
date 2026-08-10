@@ -19436,19 +19436,6 @@ var PreviewDrawingController = class {
       const maxY = this.canvasWindowTop + (Number(rect?.bottom) - canvasRect.top) / Math.max(1e-4, scaleY);
       return [minX, maxX, minY, maxY].every(Number.isFinite) ? { minX, maxX, minY, maxY } : null;
     };
-    const blockerKeys = /* @__PURE__ */ new Set();
-    const markdownBlockers = candidates.flatMap((candidate) => {
-      const blockKey = candidate.blockKey || noteFlowBlockKey(candidate, this.file?.path || "");
-      if (!blockKey || blockerKeys.has(blockKey)) {
-        return [];
-      }
-      const bounds = candidateCanvasBounds(candidate, "row");
-      if (!bounds) {
-        return [];
-      }
-      blockerKeys.add(blockKey);
-      return [{ ...bounds, blockKey }];
-    });
     const rowTargets = targets.filter((target) => target.placementMode !== "inline").map((target) => ({
       ...target,
       anchorCanvasBounds: candidateCanvasBounds(target.anchor, "row")
@@ -19468,7 +19455,14 @@ var PreviewDrawingController = class {
       anchorMinY: target.anchorCanvasBounds?.minY,
       anchorMaxY: target.anchorCanvasBounds?.maxY,
       gap: Math.min(8, target.noteFlow.gap)
-    })), { gap: 6, allowOverlap: true, blockers: markdownBlockers });
+    })), {
+      gap: 6,
+      // Row NoteFlow elements are inserted at the blue-bar row. Markdown
+      // owns the flow clearance and is pushed by the reservation below; using
+      // the current Markdown DOM rectangles as blockers here moves the ink
+      // instead and accumulates a blank band after every drag.
+      allowOverlap: true
+    });
     const inlineGroups = /* @__PURE__ */ new Map();
     for (const target of targets.filter((item) => item.placementMode === "inline")) {
       const group = inlineGroups.get(target.rowKey) || [];
@@ -19483,11 +19477,11 @@ var PreviewDrawingController = class {
         continue;
       }
       const anchorBlockKey = anchor.blockKey || noteFlowBlockKey(anchor, this.file?.path || "");
-      const blockerKeys2 = /* @__PURE__ */ new Set();
+      const blockerKeys = /* @__PURE__ */ new Set();
       const blockers = candidates.flatMap((candidate) => {
         const blockKey = candidate.blockKey || noteFlowBlockKey(candidate, this.file?.path || "");
         const candidateRect = this.noteFlowCandidateRect(candidate, "inline");
-        const sharesRow = candidate !== anchor && blockKey && blockKey !== anchorBlockKey && !blockerKeys2.has(blockKey) && candidateRect && anchorRect && Math.min(candidateRect.bottom, anchorRect.bottom) - Math.max(candidateRect.top, anchorRect.top) > 0.5;
+        const sharesRow = candidate !== anchor && blockKey && blockKey !== anchorBlockKey && !blockerKeys.has(blockKey) && candidateRect && anchorRect && Math.min(candidateRect.bottom, anchorRect.bottom) - Math.max(candidateRect.top, anchorRect.top) > 0.5;
         if (!sharesRow) {
           return [];
         }
@@ -19495,7 +19489,7 @@ var PreviewDrawingController = class {
         if (!blocker) {
           return [];
         }
-        blockerKeys2.add(blockKey);
+        blockerKeys.add(blockKey);
         return [blocker];
       });
       const packed = packNoteFlowInlineRectangles(group.map((target) => ({
@@ -20514,7 +20508,10 @@ var PreviewDrawingController = class {
     const rowItems = items.filter((item) => item.placementMode !== "inline");
     const inlineItems = items.filter((item) => item.placementMode === "inline");
     const placements = [
-      ...reflowNoteFlowRectangles(rowItems),
+      // Inserted elements are one collision domain: overlapping inserted
+      // frames stay together. Markdown/non-NoteFlow clearance is settled by
+      // the reservation pass after the drop, not by stacking the ink here.
+      ...reflowNoteFlowRectangles(rowItems, { gap: 6, allowOverlap: true }),
       ...inlineItems.map((item) => ({
         id: item.id,
         index: item.index,

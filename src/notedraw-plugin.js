@@ -16129,19 +16129,6 @@ var PreviewDrawingController = class {
         ? { minX, maxX, minY, maxY }
         : null;
     };
-    const blockerKeys = new Set();
-    const markdownBlockers = candidates.flatMap((candidate) => {
-      const blockKey = candidate.blockKey || noteFlowBlockKey(candidate, this.file?.path || "");
-      if (!blockKey || blockerKeys.has(blockKey)) {
-        return [];
-      }
-      const bounds = candidateCanvasBounds(candidate, "row");
-      if (!bounds) {
-        return [];
-      }
-      blockerKeys.add(blockKey);
-      return [{ ...bounds, blockKey }];
-    });
     const rowTargets = targets.filter((target) => target.placementMode !== "inline").map((target) => ({
       ...target,
       anchorCanvasBounds: candidateCanvasBounds(target.anchor, "row")
@@ -16161,7 +16148,14 @@ var PreviewDrawingController = class {
       anchorMinY: target.anchorCanvasBounds?.minY,
       anchorMaxY: target.anchorCanvasBounds?.maxY,
       gap: Math.min(8, target.noteFlow.gap)
-    })), { gap: 6, allowOverlap: true, blockers: markdownBlockers });
+    })), {
+      gap: 6,
+      // Row NoteFlow elements are inserted at the blue-bar row. Markdown
+      // owns the flow clearance and is pushed by the reservation below; using
+      // the current Markdown DOM rectangles as blockers here moves the ink
+      // instead and accumulates a blank band after every drag.
+      allowOverlap: true
+    });
     const inlineGroups = new Map();
     for (const target of targets.filter((item) => item.placementMode === "inline")) {
       const group = inlineGroups.get(target.rowKey) || [];
@@ -17287,7 +17281,10 @@ var PreviewDrawingController = class {
     const rowItems = items.filter((item) => item.placementMode !== "inline");
     const inlineItems = items.filter((item) => item.placementMode === "inline");
     const placements = [
-      ...reflowNoteFlowRectangles(rowItems),
+      // Inserted elements are one collision domain: overlapping inserted
+      // frames stay together. Markdown/non-NoteFlow clearance is settled by
+      // the reservation pass after the drop, not by stacking the ink here.
+      ...reflowNoteFlowRectangles(rowItems, { gap: 6, allowOverlap: true }),
       ...inlineItems.map((item) => ({
         id: item.id,
         index: item.index,
