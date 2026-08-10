@@ -341,7 +341,7 @@ test("NoteFlow spacing targets the complete Markdown block and restores after re
   assert.match(source, /resolveRenderedMarkdownSourceTarget\(source, renderedText, sourceInfo, sourceIndex\)/);
   assert.match(source, /matchRenderedTextToMarkdown\(source, renderedText, sourceIndex\)/);
   assert.match(source, /this\.prepareFrozenNoteFlowLayout\(\)\.catch[\s\S]*this\.resizeCanvas\(\{ layout: false, measure: true \}\)/);
-  assert.match(source, /this\.resizeCanvas\(\{ layout: false, measure: true \}\);[\s\S]{0,240}if \(!this\.active && this\.hasNoteFlowElements\(\)\) \{\s*this\.scheduleFrozenNoteFlowLayoutRestoreAfterMeasurement\(\)/);
+  assert.match(source, /this\.resizeCanvas\(\{ layout: false, measure: true \}\);[\s\S]{0,320}if \(!this\.active && this\.hasNoteFlowElements\(\)\) \{\s*this\.restoreFrozenNoteFlowLayout\(\);\s*this\.scheduleFrozenNoteFlowLayoutRestoreAfterMeasurement\(\)/);
   assert.match(prepareSource, /scheduleFrozenNoteFlowLayoutRestoreAfterMeasurement\(\)[\s\S]*const preparation = this\.frozenNoteFlowPreparation;[\s\S]*preparation\.then\(schedule, schedule\)/);
   assert.match(source, /const side = ownerNoteFlow\?\.side \|\| record\.side;[\s\S]*const property = side === "after" \? "padding-bottom" : "padding-top";[\s\S]*noteFlowTargetElement\(anchor, side, ownerNoteFlow\?\.placementMode \|\| "row"\)/);
   assert.match(source, /const hasSettledMeasurement = this\.noteFlowSettledRowExtents\.has\(rowKey\);[\s\S]*const effectiveOffset = hasSettledMeasurement \? settledOffset : record\.offset;/);
@@ -378,7 +378,7 @@ test("dragged inserted note elements use stable drop placement or frame-batched 
   const moveSource = dragSource.slice(dragSource.indexOf("  moveSelectedStroke("), dragSource.indexOf("  finishSelectedStrokeDrag("));
 
   assert.match(dragSource, /this\.dragStrokeOriginalNoteFlows = new Map/);
-  assert.match(moveSource, /if \(this\.usesDraggedNoteFlowPlacement\(\)\) \{\s*this\.queueDraggedNoteFlowPlacement\(event\.clientX, event\.clientY\);\s*} else \{\s*this\.queueDraggedNoteFlowRefresh\(strokeIndexes\)/);
+  assert.match(moveSource, /if \(this\.usesDraggedNoteFlowPlacement\(\)\) \{\s*this\.queueDraggedNoteFlowPlacement\(event\.clientX, event\.clientY\);\s*} else \{[\s\S]*this\.queueDraggedNoteFlowRefresh\(strokeIndexes\)/);
   assert.doesNotMatch(moveSource, /captureNoteFlowAnchor|scheduleDrawingSave/);
   assert.match(refreshSource, /this\.pendingDraggedNoteFlowIndexes\.add\(index\)/);
   assert.match(refreshSource, /refreshDraggedNoteFlowAnchors\(\)/);

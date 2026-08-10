@@ -86,14 +86,14 @@ test("deleting a vault file clears NoteDraw controllers, DOM presentation, cache
   assert.match(source, /collectDeletedVaultFiles\(deletedFile\)/);
 });
 
-test("3.4.51 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
+test("3.4.52 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
   const [source, manifestText] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(manifestUrl, "utf8")
   ]);
   const manifest = JSON.parse(manifestText);
 
-  assert.equal(manifest.version, "3.4.51");
+  assert.equal(manifest.version, "3.4.52");
   assert.match(source, /version: "3\.4\.19"/);
   assert.match(source, /this\.readingVirtualStyleState = \/\* @__PURE__ \*\/ new Map\(\)/);
   assert.match(source, /shouldClearStaleReadingVirtualMinHeight\(\{/);
@@ -148,9 +148,9 @@ test("3.4.51 preserves reading content and cross-view frames without hidden-surf
   assert.match(source, /const primaryDocumentSurface = preview\.classList\?\.contains\("mwv-note-browser-document"\)[\s\S]*otherBodyBlocks\.length === 0/);
   assert.match(source, /surfaceWidth >= previewWidth \* 0\.8[\s\S]*surfaceHeight >= previewHeight \* 0\.8 \|\| primaryDocumentSurface/);
   assert.match(source, /if \(!previewVisible\) \{\s*if \(alternateSurfaceVisible\)[\s\S]*controller\.destroy\(\)/);
-  assert.match(source, /this\.prepareFrozenNoteFlowLayout\(\)\.catch\(\(error\) => \{\s*void error;\s*}\);\s*this\.resizeCanvas\(\{ layout: false, measure: true \}\);[\s\S]{0,240}if \(!this\.active && this\.hasNoteFlowElements\(\)\) \{\s*this\.scheduleFrozenNoteFlowLayoutRestoreAfterMeasurement\(\);\s*}\s*this\.render\(\)/);
+  assert.match(source, /await this\.prepareFrozenNoteFlowLayout\(\)\.catch\(\(error\) => \{\s*void error;\s*return false;\s*}\);\s*if \(this\.destroyed \|\| generation !== this\.drawingLoadGeneration \|\| this\.file\?\.path !== file\?\.path\) \{\s*return;\s*}\s*this\.syncMarkdownBlockPresentation\(\);\s*this\.resizeCanvas\(\{ layout: false, measure: true \}\);\s*if \(!this\.active && this\.hasNoteFlowElements\(\)\) \{\s*this\.restoreFrozenNoteFlowLayout\(\);\s*this\.scheduleFrozenNoteFlowLayoutRestoreAfterMeasurement\(\);\s*}\s*this\.render\(\)/);
   const scheduledResize = source.slice(source.indexOf("  flushScheduledResize()"), source.indexOf("  cancelResizeFrame()", source.indexOf("  flushScheduledResize()")));
-  assert.match(scheduledResize, /const canvasChanged = this\.resizeCanvas[\s\S]*canvasChanged && !this\.active && this\.hasNoteFlowElements\(\)[\s\S]*this\.scheduleFrozenNoteFlowLayoutRestoreAfterMeasurement\(\)/);
+  assert.match(scheduledResize, /const canvasChanged = this\.resizeCanvas[\s\S]*\(canvasChanged \|\| measure\) && !this\.active && this\.hasNoteFlowElements\(\)[\s\S]*this\.scheduleFrozenNoteFlowLayoutRestoreAfterMeasurement\(\)/);
   assert.match(source, /const refreshLayout = options\.layout === true && !interactionActive/);
   const activeState = source.slice(source.indexOf("  applyActiveState(active, options = {})"), source.indexOf("  controlsShouldBeVisible()", source.indexOf("  applyActiveState(active, options = {})")));
   assert.doesNotMatch(activeState, /scheduleLayoutRefresh/);
@@ -426,7 +426,7 @@ test("selection tool previews and commits exact NoteFlow Markdown insertion targ
   assert.match(dropSource, /this\.toolMode === TOOL_SELECT[\s\S]*queueDraggedNoteFlowPlacement\(clientX, clientY\)[\s\S]*window\.requestAnimationFrame/);
   assert.match(dropSource, /notedraw-text-sort-target-before[\s\S]*notedraw-text-sort-target-after[\s\S]*notedraw-text-sort-target-left[\s\S]*notedraw-text-sort-target-right/);
   assert.match(dropSource, /noteDrawDropSide[\s\S]*noteDrawDropLine/);
-  assert.match(dropSource, /const horizontalRoom = Number\.isFinite\(draggedClientWidth\)[\s\S]*proposedInlineRect\.right <= laneRect\.right[\s\S]*markdownCandidates/);
+  assert.match(dropSource, /const horizontalRoom = movingLaneCount > 0[\s\S]*Number\.isFinite\(draggedClientWidth\)[\s\S]*proposedInlineRect\.right <= laneRect\.right[\s\S]*markdownCandidates/);
   assert.match(dropSource, /noteFlowCandidateRect\(placement\.candidate, "inline"\)/);
   assert.match(dropSource, /noteFlowCandidateRect\([\s\S]*horizontalSide \? "inline" : "row"/);
   assert.match(dropSource, /const intent = resolveDragDropHorizontalIntent\([\s\S]*horizontalRoom[\s\S]*\);[\s\S]*const horizontalSide = intent === "inline-right" \? "right" : null[\s\S]*const leftSnap = intent === "line-start"/);

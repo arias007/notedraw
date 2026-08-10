@@ -79,7 +79,8 @@ test("laid-out embedded Markdown loads its own editable drawings without scannin
   assert.match(source, /scheduleEmbeddedMarkdownSync\(\)[\s\S]*this\.syncEmbeddedMarkdownControllers\(\)/);
   assert.match(source, /querySelectorAll\("\.markdown-embed-content"\)/);
   assert.match(source, /surfaceType: "embedded",\s*embeddedSurface: true/);
-  assert.match(source, /this\.prepareFrozenNoteFlowLayout\(\)\.catch\(\(error\) => \{\s*void error;\s*}\);\s*this\.resizeCanvas\(\{ layout: false, measure: true \}\);[\s\S]{0,400}this\.render\(\)/);
+  assert.match(source, /await this\.prepareInitialReadingLayout\(\);\s*}\s*if \(this\.destroyed \|\| generation !== this\.drawingLoadGeneration \|\| this\.file\?\.path !== file\?\.path\) \{\s*return;\s*}/);
+  assert.match(source, /await this\.prepareFrozenNoteFlowLayout\(\)\.catch\(\(error\) => \{\s*void error;\s*return false;\s*}\);\s*if \(this\.destroyed \|\| generation !== this\.drawingLoadGeneration \|\| this\.file\?\.path !== file\?\.path\) \{\s*return;\s*}\s*this\.syncMarkdownBlockPresentation\(\);\s*this\.resizeCanvas\(\{ layout: false, measure: true \}\);[\s\S]{0,500}this\.render\(\)/);
   assert.doesNotMatch(source, /await this\.ensureDrawingsLoaded\(\);\s*this\.resizeCanvas\(\);\s*this\.render\(\)/);
   assert.match(source, /if \(!isElementNearViewport\(surface\)\) \{\s*continue;\s*}\s*activeSurfaces\.add\(surface\)/);
   assert.match(source, /this\.plugin\.scheduleEmbeddedMarkdownSync\(\)/);

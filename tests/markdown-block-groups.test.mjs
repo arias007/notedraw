@@ -35,6 +35,25 @@ test("horizontal drag intent reserves the left edge for magnetic line insertion"
   assert.equal(resolveDragDropHorizontalIntent({ ...target, clientX: 640, horizontalRoom: false }), "vertical");
 });
 
+test("Markdown blocks and inserted ink share the real NoteFlow row contract", async () => {
+  const [source, styles] = await Promise.all([
+    readFile(sourceUrl, "utf8"),
+    readFile(stylesUrl, "utf8")
+  ]);
+  const presentation = source.slice(source.indexOf("  markdownBlockFlowElement("), source.indexOf("  selectMarkdownBlock("));
+  const drop = source.slice(source.indexOf("  draggedNoteFlowIndexes("), source.indexOf("  captureNoteFlowAnchor("));
+
+  assert.match(presentation, /findNoteFlowMarkdownBlockElement\(element, this\.previewEl\)/);
+  assert.match(presentation, /flowElement\.style\.gridColumn = `span/);
+  assert.match(presentation, /markdownBlockGridContainer\(element\)/);
+  assert.match(styles, /\.notedraw-md-grid > \.notedraw-md-grid-item/);
+  assert.doesNotMatch(styles, /@container \(max-width: 520px\)[\s\S]*grid-column: 1 \/ -1 !important/);
+  assert.match(drop, /this\.draggedNoteFlowIndexes\(\)\.length > 0 \|\| this\.draggedNoteFlowMarkdownStates\(\)\.length > 0/);
+  assert.match(drop, /syncMarkdownDropFromNoteFlowPlacement\(this\.dragNoteFlowPlacement\)/);
+  assert.match(drop, /prepareMarkdownAnchorForInlineNoteFlow\(placement\)/);
+  assert.match(source, /const itemCount = movingCount \+ movingStrokeCount \+ 1/);
+});
+
 test("legacy floating overlap repair requires a real two-dimensional collision", () => {
   const first = { left: 10, right: 210, top: 100, bottom: 150 };
 

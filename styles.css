@@ -626,6 +626,10 @@
   min-width: 0;
 }
 
+.notedraw-md-grid > .notedraw-md-grid-item {
+  min-width: 0;
+}
+
 .notedraw-md-block {
   position: relative;
   min-width: 0;
@@ -666,16 +670,17 @@
   opacity: 0.84;
 }
 
+.notedraw-md-grid-item.is-notedraw-md-dragging {
+  z-index: 9;
+  transform: translate(var(--notedraw-md-drag-x, 0px), var(--notedraw-md-drag-y, 0px));
+  pointer-events: none;
+  opacity: 0.84;
+}
+
 .notedraw-clear-md-background {
   width: 28px;
   height: 28px;
   padding: 5px;
-}
-
-@container (max-width: 520px) {
-  .notedraw-md-block {
-    grid-column: 1 / -1 !important;
-  }
 }
 
 .notedraw-note-flow-drop-indicator {
