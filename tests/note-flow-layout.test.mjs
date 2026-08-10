@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  canonicalNoteFlowGapPlacement,
   frozenNoteFlowLayoutSignature,
   hasExactNoteFlowPlacement,
   hasStableNoteFlowAnchor,
@@ -14,6 +15,7 @@ import {
   noteFlowNeedsActivationRepair,
   noteFlowSurfaceRepairLimits,
   normalizeFrozenNoteFlowLayout,
+  packNoteFlowInlineRectangles,
   preserveAbsoluteNoteFlowPoints,
   projectNoteFlowDocumentPoint,
   projectNoteFlowPointsToBox,
@@ -35,6 +37,65 @@ import {
   stabilizeNoteFlowBounds,
   translateNoteFlowPointsToRow
 } from "../src/note-flow-layout.mjs";
+
+test("inline NoteFlow rows stay distinct from the gap below the same Markdown block", () => {
+  const base = {
+    path: "note.md",
+    line: 4,
+    side: "after",
+    blockStart: 4,
+    blockEnd: 4
+  };
+
+  assert.equal(noteFlowPlacementRowKey(base), "note.md\0" + "4\0" + "4\0after");
+  assert.equal(noteFlowPlacementRowKey({ ...base, placementMode: "inline" }), "note.md\0" + "4\0" + "4\0after\0inline");
+});
+
+test("inline NoteFlow packs beside a Markdown block without overlap", () => {
+  const placed = packNoteFlowInlineRectangles([
+    { id: "ink-a", index: 0, order: 0, minX: 0, maxX: 60, minY: 0, maxY: 30 },
+    { id: "ink-b", index: 1, order: 1, minX: 0, maxX: 50, minY: 0, maxY: 24 }
+  ], {
+    anchor: { minX: 0, maxX: 120, minY: 10, maxY: 50 },
+    laneLeft: 0,
+    laneRight: 300,
+    gap: 8
+  });
+
+  assert.deepEqual(placed.map(({ id, minX, maxX, minY }) => ({ id, minX, maxX, minY })), [
+    { id: "ink-a", minX: 128, maxX: 188, minY: 10 },
+    { id: "ink-b", minX: 196, maxX: 246, minY: 10 }
+  ]);
+});
+
+test("inline NoteFlow wraps below a full Markdown row and remains compact", () => {
+  const anchor = { minX: 0, maxX: 120, minY: 10, maxY: 50 };
+  const blocker = { minX: 128, maxX: 300, minY: 10, maxY: 50 };
+  const placed = packNoteFlowInlineRectangles([
+    { id: "ink-a", index: 0, order: 0, minX: 0, maxX: 90, minY: 0, maxY: 40 },
+    { id: "ink-b", index: 1, order: 1, minX: 0, maxX: 80, minY: 0, maxY: 30 }
+  ], {
+    anchor,
+    blockers: [blocker],
+    laneLeft: 0,
+    laneRight: 300,
+    gap: 8
+  });
+
+  assert.deepEqual(placed.map(({ id, minX, maxX, minY, maxY }) => ({ id, minX, maxX, minY, maxY })), [
+    { id: "ink-a", minX: 0, maxX: 90, minY: 58, maxY: 98 },
+    { id: "ink-b", minX: 98, maxX: 178, minY: 58, maxY: 88 }
+  ]);
+  for (let index = 0; index < placed.length; index += 1) {
+    for (let otherIndex = index + 1; otherIndex < placed.length; otherIndex += 1) {
+      const first = placed[index];
+      const second = placed[otherIndex];
+      const overlapX = Math.min(first.maxX, second.maxX) - Math.max(first.minX, second.minX);
+      const overlapY = Math.min(first.maxY, second.maxY) - Math.max(first.minY, second.minY);
+      assert.ok(overlapX <= 0.5 || overlapY <= 0.5);
+    }
+  }
+});
 
 test("owned NoteFlow blank bands select the element that created the whitespace", () => {
   const candidates = [
@@ -615,10 +676,10 @@ test("NoteFlow row reservation is idempotent and never depends on previously app
   }
 });
 
-test("a lower NoteFlow row reserves its cumulative displacement below an upper row", () => {
+test("stacked NoteFlow rows in one canonical gap reserve their cumulative extent", () => {
   const placements = reflowNoteFlowRectangles([
-    { id: "upper", index: 0, rowKey: "line-15-after", minX: 40, maxX: 100, minY: 100, maxY: 250, baseMinY: 100, originalMinY: 100, gap: 8 },
-    { id: "lower", index: 1, rowKey: "line-21-before", minX: 40, maxX: 100, minY: 120, maxY: 280, baseMinY: 120, originalMinY: 120, gap: 8 }
+    { id: "upper", index: 0, rowKey: "gap-15-21", minX: 40, maxX: 100, minY: 100, maxY: 250, baseMinY: 100, originalMinY: 100, gap: 8 },
+    { id: "lower", index: 1, rowKey: "gap-15-21", minX: 40, maxX: 100, minY: 120, maxY: 280, baseMinY: 100, originalMinY: 120, gap: 8 }
   ], { gap: 6 });
   const lower = placements.find((item) => item.id === "lower");
   const settledExtent = lower.maxY - 120;
@@ -629,6 +690,33 @@ test("a lower NoteFlow row reserves its cumulative displacement below an upper r
   ]);
   assert.equal(settledExtent, 298);
   assert.equal(noteFlowRowReservation({ rowOffset: 15, boxHeight: settledExtent, gap: 12 }), 325);
+});
+
+test("separate Markdown gaps never inherit each other's NoteFlow displacement", () => {
+  const placements = reflowNoteFlowRectangles([
+    { id: "upper", index: 0, rowKey: "gap-15-21", minX: 40, maxX: 100, minY: 100, maxY: 250, baseMinY: 100, originalMinY: 100, gap: 8 },
+    { id: "lower", index: 1, rowKey: "gap-21-25", minX: 40, maxX: 100, minY: 120, maxY: 280, baseMinY: 120, originalMinY: 120, gap: 8 }
+  ], { gap: 6 });
+
+  assert.deepEqual(placements.map(({ id, minY, maxY }) => ({ id, minY, maxY })), [
+    { id: "upper", minY: 100, maxY: 250 },
+    { id: "lower", minY: 120, maxY: 280 }
+  ]);
+});
+
+test("before the next Markdown block canonicalizes to after the previous block", () => {
+  const first = { path: "note.md", start: 15, end: 15, blockStart: 15, blockEnd: 15, order: 0 };
+  const second = { path: "note.md", start: 21, end: 21, blockStart: 21, blockEnd: 21, order: 1 };
+  first.blockKey = noteFlowBlockKey(first);
+  second.blockKey = noteFlowBlockKey(second);
+
+  const afterFirst = canonicalNoteFlowGapPlacement([first, second], { anchor: first, side: "after" });
+  const beforeSecond = canonicalNoteFlowGapPlacement([first, second], { anchor: second, side: "before" });
+
+  assert.deepEqual(beforeSecond, afterFirst);
+  assert.equal(beforeSecond.anchor, first);
+  assert.equal(beforeSecond.line, 15);
+  assert.equal(beforeSecond.side, "after");
 });
 
 test("resizing NoteFlow geometry expands and contracts its Markdown reservation", () => {
@@ -850,12 +938,12 @@ test("NoteFlow recomputes from stable row bases instead of accumulating old disp
   assert.deepEqual(first.map(({ id, minY, maxY }) => ({ id, minY, maxY })), [
     { id: "tall", minY: 100, maxY: 180 },
     { id: "short", minY: 140, maxY: 180 },
-    { id: "next", minY: 186, maxY: 226 }
+    { id: "next", minY: 140, maxY: 180 }
   ]);
   assert.deepEqual(replay.map(({ id, minY, maxY }) => ({ id, minY, maxY })), first.map(({ id, minY, maxY }) => ({ id, minY, maxY })));
 });
 
-test("NoteFlow row-key insertion reserves one exclusive row even when elements do not overlap horizontally", () => {
+test("a later Markdown gap is independent while one gap keeps side-by-side elements in one row", () => {
   const placements = reflowNoteFlowRectangles([
     { id: "left", index: 0, rowKey: "line-1\0after", minX: 0, maxX: 60, minY: 100, maxY: 150, baseMinY: 100, originalMinY: 100 },
     { id: "right", index: 1, rowKey: "line-1\0after", minX: 240, maxX: 300, minY: 110, maxY: 130, baseMinY: 100, originalMinY: 110 },
@@ -865,19 +953,31 @@ test("NoteFlow row-key insertion reserves one exclusive row even when elements d
   assert.deepEqual(placements.map(({ id, minY, maxY }) => ({ id, minY, maxY })), [
     { id: "left", minY: 100, maxY: 150 },
     { id: "right", minY: 100, maxY: 120 },
-    { id: "next", minY: 156, maxY: 196 }
+    { id: "next", minY: 130, maxY: 170 }
   ]);
 });
 
 test("a blue-bar row top cannot rise through an upper NoteFlow row", () => {
   const placements = reflowNoteFlowRectangles([
-    { id: "upper", index: 0, rowKey: "line-1", minX: 0, maxX: 100, minY: 100, maxY: 160, baseMinY: 100, originalMinY: 100 },
-    { id: "dropped", index: 1, rowKey: "line-2", minX: 20, maxX: 80, minY: 130, maxY: 170, baseMinY: 130, originalMinY: 130, moved: true }
+    { id: "upper", index: 0, rowKey: "gap-1", minX: 0, maxX: 100, minY: 100, maxY: 160, baseMinY: 100, originalMinY: 100 },
+    { id: "dropped", index: 1, rowKey: "gap-1", minX: 20, maxX: 80, minY: 130, maxY: 170, baseMinY: 100, originalMinY: 130, moved: true }
   ], { gap: 6 });
 
   assert.deepEqual(placements.map(({ id, minY, maxY }) => ({ id, minY, maxY })), [
     { id: "upper", minY: 100, maxY: 160 },
     { id: "dropped", minY: 166, maxY: 206 }
+  ]);
+});
+
+test("flow order swaps vertically connected elements inside one Markdown gap", () => {
+  const placements = reflowNoteFlowRectangles([
+    { id: "first", index: 0, order: 1, rowKey: "gap-1", minX: 0, maxX: 100, minY: 100, maxY: 150, baseMinY: 100, originalMinY: 100 },
+    { id: "second", index: 1, order: 0, rowKey: "gap-1", minX: 0, maxX: 100, minY: 156, maxY: 196, baseMinY: 100, originalMinY: 156 }
+  ], { gap: 6 });
+
+  assert.deepEqual(placements.map(({ id, minY, maxY }) => ({ id, minY, maxY })), [
+    { id: "first", minY: 146, maxY: 196 },
+    { id: "second", minY: 100, maxY: 140 }
   ]);
 });
 

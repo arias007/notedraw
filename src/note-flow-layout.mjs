@@ -178,7 +178,9 @@ export function selectNoteFlowDropPlacementFromIndex(index, { dropY } = {}) {
     candidate: placement.candidate,
     side: placement.side,
     line: placement.line,
-    boundary: placement.boundary
+    boundary: placement.boundary,
+    flowOrder: Number.isFinite(Number(placement.flowOrder)) ? Number(placement.flowOrder) : null,
+    noteFlowBoundary: placement.noteFlowBoundary === true
   } : null;
 }
 
@@ -446,9 +448,53 @@ export function noteFlowBlockKey(noteFlow, fallbackPath = "") {
 export function noteFlowPlacementRowKey(noteFlow, fallbackPath = "") {
   const side = noteFlow?.side;
   const blockKey = noteFlowBlockKey(noteFlow, fallbackPath);
+  const placementMode = noteFlow?.placementMode === "inline" ? "inline" : "row";
   return blockKey && ["before", "after"].includes(side)
-    ? `${blockKey}\0${side}`
+    ? `${blockKey}\0${side}${placementMode === "inline" ? "\0inline" : ""}`
     : "";
+}
+
+export function canonicalNoteFlowGapPlacement(candidates, { anchor, side } = {}) {
+  if (!anchor || !["before", "after"].includes(side)) {
+    return null;
+  }
+  const path = normalizeNoteFlowPath(anchor.path || "");
+  const blockKey = anchor.blockKey || noteFlowBlockKey(anchor, path);
+  const ordered = [];
+  const seen = new Set();
+  for (const candidate of (Array.isArray(candidates) ? candidates : []).filter((item) => (
+    normalizeNoteFlowPath(item?.path || "") === path
+  )).sort((a, b) => (
+    finite(a?.order, Number.POSITIVE_INFINITY) - finite(b?.order, Number.POSITIVE_INFINITY)
+    || finite(a?.top) - finite(b?.top)
+  ))) {
+    const key = candidate.blockKey || noteFlowBlockKey(candidate, path);
+    if (!key || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    ordered.push(candidate);
+  }
+  const anchorIndex = ordered.findIndex((candidate) => (
+    candidate === anchor
+    || (candidate.blockKey || noteFlowBlockKey(candidate, path)) === blockKey
+  ));
+  const canonicalAnchor = side === "before" && anchorIndex > 0
+    ? ordered[anchorIndex - 1]
+    : anchor;
+  const canonicalSide = canonicalAnchor === anchor ? side : "after";
+  const line = canonicalSide === "after"
+    ? finite(canonicalAnchor.end, canonicalAnchor.start)
+    : finite(canonicalAnchor.start, canonicalAnchor.end);
+  return Number.isFinite(line) ? {
+    anchor: canonicalAnchor,
+    path: normalizeNoteFlowPath(canonicalAnchor.path || path),
+    line,
+    side: canonicalSide,
+    blockStart: finite(canonicalAnchor.blockStart, canonicalAnchor.start),
+    blockEnd: finite(canonicalAnchor.blockEnd, canonicalAnchor.end),
+    blockKey: canonicalAnchor.blockKey || noteFlowBlockKey(canonicalAnchor, path)
+  } : null;
 }
 
 export function hasExactNoteFlowPlacement(noteFlow) {
@@ -829,8 +875,8 @@ export function reflowNoteFlowRectangles(items, { gap = 6 } = {}) {
   const rows = [];
   const ordered = normalized.slice().sort((a, b) => (
     a.baseMinY - b.baseMinY
-    || Number(b.moved) - Number(a.moved)
     || a.order - b.order
+    || Number(b.moved) - Number(a.moved)
   ));
   for (const item of ordered) {
     const row = rows.find((candidate) => {
@@ -859,8 +905,8 @@ export function reflowNoteFlowRectangles(items, { gap = 6 } = {}) {
 
   rows.sort((a, b) => (
     a.baseMinY - b.baseMinY
-    || Number(b.moved) - Number(a.moved)
     || a.order - b.order
+    || Number(b.moved) - Number(a.moved)
   ));
   const settledRows = [];
   for (const row of rows) {
@@ -869,8 +915,12 @@ export function reflowNoteFlowRectangles(items, { gap = 6 } = {}) {
     while (changed) {
       changed = false;
       for (const blocker of settledRows) {
-        const sameFlow = row.rowKey && blocker.rowKey && row.rowKey !== blocker.rowKey;
-        const overlapsLane = sameFlow || row.items.some((item) => blocker.items.some((other) => horizontallyOverlaps(item, other)));
+        const differentLogicalGaps = row.rowKey && blocker.rowKey && row.rowKey !== blocker.rowKey;
+        if (differentLogicalGaps) {
+          continue;
+        }
+        const sameLogicalGap = row.rowKey && blocker.rowKey && row.rowKey === blocker.rowKey;
+        const overlapsLane = sameLogicalGap || row.items.some((item) => blocker.items.some((other) => horizontallyOverlaps(item, other)));
         if (!overlapsLane) {
           continue;
         }
@@ -898,6 +948,96 @@ export function reflowNoteFlowRectangles(items, { gap = 6 } = {}) {
     maxX: item.maxX,
     minY: item.minY,
     maxY: item.maxY,
+    rowKey: item.rowKey,
+    deltaY: item.minY - item.originalMinY
+  }));
+}
+
+export function packNoteFlowInlineRectangles(items, {
+  anchor,
+  blockers = [],
+  laneLeft = 0,
+  laneRight,
+  gap = 6
+} = {}) {
+  const left = finite(laneLeft, 0);
+  const right = Math.max(left, finite(laneRight, left));
+  const clearance = Math.max(0, finite(gap, 6));
+  const normalizeRect = (rect, index = -1) => {
+    const minX = finite(rect?.minX, Number.NaN);
+    const maxX = finite(rect?.maxX, Number.NaN);
+    const minY = finite(rect?.minY, Number.NaN);
+    const maxY = finite(rect?.maxY, Number.NaN);
+    return [minX, maxX, minY, maxY].every(Number.isFinite) && maxX >= minX && maxY >= minY
+      ? { ...rect, index, minX, maxX, minY, maxY }
+      : null;
+  };
+  const fixedAnchor = normalizeRect(anchor);
+  if (!fixedAnchor) {
+    return [];
+  }
+  const fixed = [
+    fixedAnchor,
+    ...(Array.isArray(blockers) ? blockers : []).map((rect, index) => normalizeRect(rect, index)).filter(Boolean)
+  ];
+  const normalized = (Array.isArray(items) ? items : []).map((item, order) => {
+    const rect = normalizeRect(item, Number.isFinite(Number(item?.index)) ? Number(item.index) : order);
+    return rect ? {
+      ...rect,
+      id: item?.id,
+      order: Number.isFinite(Number(item?.order)) ? Number(item.order) : order,
+      width: Math.max(0, rect.maxX - rect.minX),
+      height: Math.max(0, rect.maxY - rect.minY),
+      originalMinX: rect.minX,
+      originalMinY: rect.minY
+    } : null;
+  }).filter(Boolean).sort((a, b) => a.order - b.order || a.originalMinX - b.originalMinX || a.index - b.index);
+  const placed = [];
+  const verticalOverlap = (rect, y, height) => Math.min(rect.maxY, y + height) - Math.max(rect.minY, y) > 0.5;
+  const firstRowLeft = Math.min(right, Math.max(left, fixedAnchor.maxX + clearance));
+
+  for (const item of normalized) {
+    let y = fixedAnchor.minY;
+    let firstRow = true;
+    let placement = null;
+    const limit = fixed.length + placed.length + 8;
+    for (let attempt = 0; attempt < limit; attempt += 1) {
+      const occupied = [...fixed, ...placed].filter((rect) => verticalOverlap(rect, y, item.height)).sort((a, b) => a.minX - b.minX || a.maxX - b.maxX);
+      let x = firstRow ? firstRowLeft : left;
+      for (const rect of occupied) {
+        if (x + item.width <= rect.minX - clearance) {
+          break;
+        }
+        if (x < rect.maxX + clearance && x + item.width > rect.minX - clearance) {
+          x = rect.maxX + clearance;
+        }
+      }
+      if (x + item.width <= right + 0.5 || !occupied.length) {
+        placement = { ...item, minX: x, maxX: x + item.width, minY: y, maxY: y + item.height };
+        break;
+      }
+      const nextY = Math.min(...occupied.map((rect) => rect.maxY + clearance).filter((value) => value > y + 0.5));
+      y = Number.isFinite(nextY) ? nextY : y + Math.max(item.height, clearance);
+      firstRow = false;
+    }
+    placement ||= {
+      ...item,
+      minX: left,
+      maxX: left + item.width,
+      minY: y,
+      maxY: y + item.height
+    };
+    placed.push(placement);
+  }
+
+  return placed.map((item) => ({
+    id: item.id,
+    index: item.index,
+    minX: item.minX,
+    maxX: item.maxX,
+    minY: item.minY,
+    maxY: item.maxY,
+    deltaX: item.minX - item.originalMinX,
     deltaY: item.minY - item.originalMinY
   }));
 }
