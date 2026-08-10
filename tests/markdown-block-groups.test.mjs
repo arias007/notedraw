@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
+  calculateMarkdownRowLayout,
   clientPointInRect,
   markdownClientRectsOverlap,
   markdownBlockPresentationMinHeight,
@@ -45,13 +46,48 @@ test("Markdown blocks and inserted ink share the real NoteFlow row contract", as
 
   assert.match(presentation, /findNoteFlowMarkdownBlockElement\(element, this\.previewEl\)/);
   assert.match(presentation, /flowElement\.style\.gridColumn = `span/);
-  assert.match(presentation, /markdownBlockGridContainer\(element\)/);
+  assert.match(presentation, /flowElement\?\.closest\?\.\("\.markdown-preview-section, \.markdown-preview-sizer, \.markdown-rendered"\)/);
   assert.match(styles, /\.notedraw-md-grid > \.notedraw-md-grid-item/);
+  assert.match(styles, /\.notedraw-md-grid > :where\(\.el-ul, \.el-ol, \.el-div\)[\s\S]*display: contents/);
   assert.doesNotMatch(styles, /@container \(max-width: 520px\)[\s\S]*grid-column: 1 \/ -1 !important/);
   assert.match(drop, /this\.draggedNoteFlowIndexes\(\)\.length > 0 \|\| this\.draggedNoteFlowMarkdownStates\(\)\.length > 0/);
   assert.match(drop, /syncMarkdownDropFromNoteFlowPlacement\(this\.dragNoteFlowPlacement\)/);
   assert.match(drop, /prepareMarkdownAnchorForInlineNoteFlow\(placement\)/);
-  assert.match(source, /const itemCount = movingCount \+ movingStrokeCount \+ 1/);
+  assert.match(source, /calculateMarkdownRowLayout\(\{/);
+  assert.match(source, /movingStrokeWidth/);
+  assert.doesNotMatch(source, /totalCount <= 4/);
+  assert.doesNotMatch(source, /row\.totalCount \* 120/);
+});
+
+test("Markdown row fit uses real widths and does not double-count inserted ink", () => {
+  const thirdMarkdownBlock = calculateMarkdownRowLayout({
+    laneWidth: 320,
+    existingWidths: [100],
+    movingMarkdownCount: 1,
+    gap: 6,
+    minimumBlockWidth: 36
+  });
+  assert.equal(thirdMarkdownBlock.canFit, true);
+  assert.equal(thirdMarkdownBlock.totalCount, 3);
+
+  const insertedInk = calculateMarkdownRowLayout({
+    laneWidth: 300,
+    movingMarkdownCount: 0,
+    movingStrokeWidth: 80,
+    gap: 6,
+    minimumBlockWidth: 36
+  });
+  assert.equal(insertedInk.canFit, true);
+  assert.equal(insertedInk.totalCount, 2);
+  assert.equal(insertedInk.movingStrokeWidth, 80);
+
+  const tooWide = calculateMarkdownRowLayout({
+    laneWidth: 300,
+    movingStrokeWidth: 260,
+    gap: 6,
+    minimumBlockWidth: 36
+  });
+  assert.equal(tooWide.canFit, false);
 });
 
 test("legacy floating overlap repair requires a real two-dimensional collision", () => {

@@ -630,6 +630,12 @@
   min-width: 0;
 }
 
+/* Promote list/callout wrappers so every rendered Markdown block shares one grid. */
+.notedraw-md-grid > :where(.el-ul, .el-ol, .el-div),
+.notedraw-md-grid > :where(.el-ul, .el-ol) > :where(ul, ol) {
+  display: contents !important;
+}
+
 .notedraw-md-block {
   position: relative;
   min-width: 0;

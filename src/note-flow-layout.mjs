@@ -842,7 +842,11 @@ export function reflowNoteFlowIntervals(items, { gap = 12 } = {}) {
   });
 }
 
-export function reflowNoteFlowRectangles(items, { gap = 6 } = {}) {
+export function reflowNoteFlowRectangles(items, {
+  gap = 6,
+  allowOverlap = false,
+  blockers = []
+} = {}) {
   const defaultGap = Math.max(0, finite(gap, 6));
   const normalized = (Array.isArray(items) ? items : []).map((item, order) => {
     const minX = finite(item?.minX, Number.NaN);
@@ -871,6 +875,75 @@ export function reflowNoteFlowRectangles(items, { gap = 6 } = {}) {
   const horizontallyOverlaps = (first, second) => (
     Math.min(first.maxX, second.maxX) - Math.max(first.minX, second.minX) > 0.5
   );
+
+  if (allowOverlap) {
+    const fixedBlockers = (Array.isArray(blockers) ? blockers : []).map((blocker) => {
+      const minX = finite(blocker?.minX, Number.NaN);
+      const maxX = finite(blocker?.maxX, Number.NaN);
+      const minY = finite(blocker?.minY, Number.NaN);
+      const maxY = finite(blocker?.maxY, Number.NaN);
+      return [minX, maxX, minY, maxY].every(Number.isFinite) && maxX >= minX && maxY >= minY
+        ? { ...blocker, minX, maxX, minY, maxY }
+        : null;
+    }).filter(Boolean);
+    const grouped = new Map();
+    for (const item of normalized) {
+      const key = item.rowKey || `item:${item.order}`;
+      const group = grouped.get(key) || [];
+      group.push(item);
+      grouped.set(key, group);
+    }
+    const groupOffsets = new Map();
+    for (const [key, group] of grouped) {
+      let offset = 0;
+      let changed = true;
+      let attempts = 0;
+      while (changed && attempts < fixedBlockers.length + 2) {
+        changed = false;
+        attempts += 1;
+        for (const item of group) {
+          const shifted = {
+            ...item,
+            minY: item.baseMinY + offset,
+            maxY: item.baseMinY + offset + item.height
+          };
+          for (const blocker of fixedBlockers) {
+            if (blocker.blockKey && blocker.blockKey === item.anchorBlockKey) {
+              continue;
+            }
+            const anchorMinY = Number(item.anchorMinY);
+            const anchorMaxY = Number(item.anchorMaxY);
+            const sharesAnchorRow = !Number.isFinite(anchorMinY) || !Number.isFinite(anchorMaxY)
+              || Math.min(anchorMaxY, blocker.maxY) - Math.max(anchorMinY, blocker.minY) > 0.5;
+            if (!sharesAnchorRow) {
+              continue;
+            }
+            const overlaps = horizontallyOverlaps(shifted, blocker)
+              && Math.min(shifted.maxY, blocker.maxY) - Math.max(shifted.minY, blocker.minY) > 0.5;
+            if (!overlaps) {
+              continue;
+            }
+            const nextOffset = blocker.maxY + Math.max(defaultGap, item.gap) - item.baseMinY;
+            if (nextOffset > offset + 0.5) {
+              offset = nextOffset;
+              changed = true;
+            }
+          }
+        }
+      }
+      groupOffsets.set(key, Math.max(0, offset));
+    }
+    return normalized.map((item) => ({
+      id: item.id,
+      index: item.index,
+      minX: item.minX,
+      maxX: item.maxX,
+      minY: item.baseMinY + (groupOffsets.get(item.rowKey || `item:${item.order}`) || 0),
+      maxY: item.baseMinY + (groupOffsets.get(item.rowKey || `item:${item.order}`) || 0) + item.height,
+      rowKey: item.rowKey,
+      deltaY: item.baseMinY + (groupOffsets.get(item.rowKey || `item:${item.order}`) || 0) - item.originalMinY
+    }));
+  }
 
   const rows = [];
   const ordered = normalized.slice().sort((a, b) => (
@@ -958,7 +1031,8 @@ export function packNoteFlowInlineRectangles(items, {
   blockers = [],
   laneLeft = 0,
   laneRight,
-  gap = 6
+  gap = 6,
+  allowItemOverlap = false
 } = {}) {
   const left = finite(laneLeft, 0);
   const right = Math.max(left, finite(laneRight, left));
@@ -997,13 +1071,20 @@ export function packNoteFlowInlineRectangles(items, {
   const firstRowLeft = Math.min(right, Math.max(left, fixedAnchor.maxX + clearance));
 
   for (const item of normalized) {
-    let y = fixedAnchor.minY;
+    let y = allowItemOverlap
+      ? Math.max(fixedAnchor.minY, item.originalMinY)
+      : fixedAnchor.minY;
     let firstRow = true;
     let placement = null;
     const limit = fixed.length + placed.length + 8;
     for (let attempt = 0; attempt < limit; attempt += 1) {
-      const occupied = [...fixed, ...placed].filter((rect) => verticalOverlap(rect, y, item.height)).sort((a, b) => a.minX - b.minX || a.maxX - b.maxX);
-      let x = firstRow ? firstRowLeft : left;
+      const occupied = [...fixed, ...(allowItemOverlap ? [] : placed)]
+        .filter((rect) => verticalOverlap(rect, y, item.height))
+        .sort((a, b) => a.minX - b.minX || a.maxX - b.maxX);
+      const preferredLeft = allowItemOverlap
+        ? Math.max(firstRowLeft, Math.min(right - item.width, item.originalMinX))
+        : firstRow ? firstRowLeft : left;
+      let x = Math.max(left, preferredLeft);
       for (const rect of occupied) {
         if (x + item.width <= rect.minX - clearance) {
           break;

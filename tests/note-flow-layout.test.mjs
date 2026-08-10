@@ -97,6 +97,25 @@ test("inline NoteFlow wraps below a full Markdown row and remains compact", () =
   }
 });
 
+test("inline inserted elements may overlap each other while avoiding Markdown blockers", () => {
+  const placed = packNoteFlowInlineRectangles([
+    { id: "ink-a", index: 0, order: 0, minX: 0, maxX: 60, minY: 0, maxY: 30 },
+    { id: "ink-b", index: 1, order: 1, minX: 0, maxX: 50, minY: 0, maxY: 24 }
+  ], {
+    anchor: { minX: 0, maxX: 120, minY: 10, maxY: 50 },
+    laneLeft: 0,
+    laneRight: 300,
+    gap: 8,
+    allowItemOverlap: true
+  });
+
+  assert.equal(placed.length, 2);
+  assert.equal(placed[0].minX, 128);
+  assert.equal(placed[1].minX, 128);
+  assert.ok(Math.min(placed[0].maxX, placed[1].maxX) > Math.max(placed[0].minX, placed[1].minX));
+  assert.ok(Math.min(placed[0].maxY, placed[1].maxY) > Math.max(placed[0].minY, placed[1].minY));
+});
+
 test("owned NoteFlow blank bands select the element that created the whitespace", () => {
   const candidates = [
     {
@@ -996,4 +1015,62 @@ test("overlapping NoteFlow boxes in one logical row stack tightly and never inte
   const left = placements[0];
   const overlap = placements[1];
   assert.equal(overlap.minY - left.maxY, 6);
+});
+
+test("NoteFlow layout can preserve overlapping inserted frames without moving peers", () => {
+  const placements = reflowNoteFlowRectangles([
+    { id: "first", index: 0, rowKey: "line-8", minX: 0, maxX: 120, minY: 100, maxY: 150, baseMinY: 100, originalMinY: 100 },
+    { id: "second", index: 1, rowKey: "line-8", minX: 80, maxX: 180, minY: 100, maxY: 140, baseMinY: 100, originalMinY: 100 }
+  ], { gap: 6, allowOverlap: true });
+
+  assert.deepEqual(placements.map(({ id, minY, maxY }) => ({ id, minY, maxY })), [
+    { id: "first", minY: 100, maxY: 150 },
+    { id: "second", minY: 100, maxY: 140 }
+  ]);
+});
+
+test("overlapping inserted frames move together below a Markdown row blocker", () => {
+  const placements = reflowNoteFlowRectangles([
+    {
+      id: "first",
+      index: 0,
+      rowKey: "line-8",
+      anchorBlockKey: "anchor",
+      anchorMinY: 0,
+      anchorMaxY: 50,
+      minX: 0,
+      maxX: 120,
+      minY: 50,
+      maxY: 100,
+      baseMinY: 50,
+      originalMinY: 50
+    },
+    {
+      id: "second",
+      index: 1,
+      rowKey: "line-8",
+      anchorBlockKey: "anchor",
+      anchorMinY: 0,
+      anchorMaxY: 50,
+      minX: 80,
+      maxX: 180,
+      minY: 50,
+      maxY: 90,
+      baseMinY: 50,
+      originalMinY: 50
+    }
+  ], {
+    gap: 6,
+    allowOverlap: true,
+    blockers: [
+      { blockKey: "anchor", minX: 0, maxX: 100, minY: 0, maxY: 50 },
+      { blockKey: "peer", minX: 100, maxX: 220, minY: 0, maxY: 80 }
+    ]
+  });
+
+  assert.deepEqual(placements.map(({ id, minY, maxY }) => ({ id, minY, maxY })), [
+    { id: "first", minY: 86, maxY: 136 },
+    { id: "second", minY: 86, maxY: 126 }
+  ]);
+  assert.ok(Math.min(placements[0].maxY, placements[1].maxY) > Math.max(placements[0].minY, placements[1].minY));
 });

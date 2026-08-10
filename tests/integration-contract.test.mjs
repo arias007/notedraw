@@ -86,14 +86,14 @@ test("deleting a vault file clears NoteDraw controllers, DOM presentation, cache
   assert.match(source, /collectDeletedVaultFiles\(deletedFile\)/);
 });
 
-test("3.4.52 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
+test("3.4.53 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
   const [source, manifestText] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(manifestUrl, "utf8")
   ]);
   const manifest = JSON.parse(manifestText);
 
-  assert.equal(manifest.version, "3.4.52");
+  assert.equal(manifest.version, "3.4.53");
   assert.match(source, /version: "3\.4\.19"/);
   assert.match(source, /this\.readingVirtualStyleState = \/\* @__PURE__ \*\/ new Map\(\)/);
   assert.match(source, /shouldClearStaleReadingVirtualMinHeight\(\{/);
@@ -426,7 +426,8 @@ test("selection tool previews and commits exact NoteFlow Markdown insertion targ
   assert.match(dropSource, /this\.toolMode === TOOL_SELECT[\s\S]*queueDraggedNoteFlowPlacement\(clientX, clientY\)[\s\S]*window\.requestAnimationFrame/);
   assert.match(dropSource, /notedraw-text-sort-target-before[\s\S]*notedraw-text-sort-target-after[\s\S]*notedraw-text-sort-target-left[\s\S]*notedraw-text-sort-target-right/);
   assert.match(dropSource, /noteDrawDropSide[\s\S]*noteDrawDropLine/);
-  assert.match(dropSource, /const horizontalRoom = movingLaneCount > 0[\s\S]*Number\.isFinite\(draggedClientWidth\)[\s\S]*proposedInlineRect\.right <= laneRect\.right[\s\S]*markdownCandidates/);
+  assert.match(dropSource, /const markdownRow = movingLaneCount > 0[\s\S]*const targetSpan = clamp[\s\S]*const horizontalRoom = movingLaneCount > 0 && Boolean\(markdownRow\?\.canFit\)/);
+  assert.match(dropSource, /rowSpan: horizontalSide \? targetSpan : null[\s\S]*prepareMarkdownAnchorForInlineNoteFlow[\s\S]*placement\?\.rowSpan/);
   assert.match(dropSource, /noteFlowCandidateRect\(placement\.candidate, "inline"\)/);
   assert.match(dropSource, /noteFlowCandidateRect\([\s\S]*horizontalSide \? "inline" : "row"/);
   assert.match(dropSource, /const intent = resolveDragDropHorizontalIntent\([\s\S]*horizontalRoom[\s\S]*\);[\s\S]*const horizontalSide = intent === "inline-right" \? "right" : null[\s\S]*const leftSnap = intent === "line-start"/);
@@ -466,7 +467,9 @@ test("selection tool previews and commits exact NoteFlow Markdown insertion targ
   assert.match(reservedRowSource, /createElementLayout\([\s\S]*bounds:[\s\S]*targetBox\.x[\s\S]*relations: \[\]/);
   assert.match(frozenRestoreSource, /const effectiveOffset = hasSettledMeasurement \? settledOffset : record\.offset/);
   assert.match(frozenRestoreSource, /alignNoteFlowStrokesToReservedRows\(\)/);
-  assert.match(frozenRestoreSource, /alignNoteFlowStrokesToReservedRows\(candidates, \{ measureOnly: true \}\)[\s\S]*const settledExtent = this\.noteFlowSettledRowExtents\.get\(rowKey\) \|\| 0;[\s\S]*ownerNoteFlow\?\.placementMode === "inline"[\s\S]*noteFlowRowReservation\(\{[\s\S]*rowOffset: ownerNoteFlow\?\.rowOffset[\s\S]*boxHeight: settledExtent/);
+  assert.match(frozenRestoreSource, /alignNoteFlowStrokesToReservedRows\(candidates, \{ measureOnly: true \}\)[\s\S]*const hasSettledMeasurement = this\.noteFlowSettledRowExtents\.has\(rowKey\)[\s\S]*const settledOffset = hasSettledMeasurement[\s\S]*settledExtent \+ ownerGap/);
+  assert.match(reservedRowSource, /allowOverlap: true/);
+  assert.match(reservedRowSource, /allowItemOverlap: true/);
   assert.match(flowLayoutSource, /const settledRowExtentsChanged = this\.alignNoteFlowStrokesToReservedRows\(candidates, \{ measureOnly: true \}\)/);
   assert.match(flowLayoutSource, /alignNoteFlowStrokesToReservedRows\(\)/);
   assert.match(finishSource, /if \(!affectsNoteFlow\) \{[\s\S]*scheduleDrawingSave/);
@@ -540,5 +543,5 @@ test("NoteFlow resize updates stable geometry and remeasures row reservations be
   assert.match(finishSource, /alignNoteFlowStrokesToReservedRows\(null, \{ measureOnly: true \}\);\s*this\.scheduleNoteFlowLayout\(\{ operation: true \}\)/);
   assert.match(cancelSource, /stroke\.noteFlow = original\.noteFlow \? \{ \.\.\.original\.noteFlow \} : null/);
   assert.match(alignSource, /const measureOnly = options\.measureOnly === true[\s\S]*if \(measureOnly\) \{\s*return extentsChanged;/);
-  assert.match(flowSource, /alignNoteFlowStrokesToReservedRows\(candidates, \{ measureOnly: true \}\)[\s\S]*boxHeight: settledHeight/);
+  assert.match(flowSource, /alignNoteFlowStrokesToReservedRows\(candidates, \{ measureOnly: true \}\)[\s\S]*const fallbackExtent = Math\.max\(0, Number\(currentNoteFlow\.rowOffset\) \|\| 0\) \+ stableHeight[\s\S]*const required = settledHeight > 0 \? settledHeight \+ currentNoteFlow\.gap : 0/);
 });

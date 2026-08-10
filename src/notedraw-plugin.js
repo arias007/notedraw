@@ -53,6 +53,7 @@ import {
   resolveRenderedMarkdownSourceTarget
 } from "./markdown-anchors.mjs";
 import {
+  calculateMarkdownRowLayout,
   clientPointInRect,
   markdownClientRectsOverlap,
   markdownBlockPresentationMinHeight,
@@ -109,7 +110,6 @@ import {
   noteFlowAvoidanceReference,
   noteFlowBlockKey,
   noteFlowPlacementRowKey,
-  noteFlowRowReservation,
   noteFlowReservedRowTop,
   noteFlowSurfaceRepairLimits,
   normalizeFrozenNoteFlowLayout,
@@ -11574,8 +11574,7 @@ var PreviewDrawingController = class {
         ? clientY - nearest.rect.bottom
         : 0;
     const row = this.markdownDropRowMetrics(nearest.element, movingElements);
-    const horizontalRoom = row.canFit
-      && Number(this.markdownBlockGridContainer(nearest.element)?.clientWidth || nearest.rect.width) >= Math.max(300, row.totalCount * 120);
+    const horizontalRoom = row.canFit;
     const intent = resolveDragDropHorizontalIntent({
       clientX,
       targetLeft: nearest.rect.left,
@@ -11696,8 +11695,7 @@ var PreviewDrawingController = class {
       return this.dragMarkdownLastValidDrop ? { ...this.dragMarkdownLastValidDrop } : null;
     }
     const row = this.markdownDropRowMetrics(target, movingElements);
-    const horizontalRoom = row.canFit
-      && Number(this.markdownBlockGridContainer(target)?.clientWidth || rect.width) >= Math.max(300, row.totalCount * 120);
+    const horizontalRoom = row.canFit;
     const intent = forcedIntent || resolveDragDropHorizontalIntent({
       clientX,
       targetLeft: rect.left,
@@ -11732,18 +11730,31 @@ var PreviewDrawingController = class {
     if (cached) {
       return cached;
     }
-    const movingCount = Math.max(1, movingElements.size || this.dragMarkdownOriginalElements?.size || 1);
-    const targetRect = geometry?.markdownCandidateByElement?.get(target)?.rect || target?.getBoundingClientRect?.();
+    const movingMarkdownCount = Math.max(0, movingElements.size || this.dragMarkdownOriginalElements?.size || 0);
+    const targetFlow = this.markdownBlockFlowElement(target) || target;
+    const targetRect = geometry?.markdownCandidateByElement?.get(targetFlow)?.rect
+      || this.markdownElementVisibleClientRect(targetFlow)
+      || targetFlow?.getBoundingClientRect?.();
     const parent = this.markdownBlockGridContainer(target);
-    let baseUsed = 0;
-    let existingCount = 0;
+    const parentRect = parent?.getBoundingClientRect?.();
+    const computedParent = parent ? window.getComputedStyle(parent) : null;
+    const laneWidth = Math.max(1, Number(parentRect?.width) || Number(parent?.clientWidth) || Number(targetRect?.width) || 1);
+    const gap = Math.max(0, Number.parseFloat(computedParent?.columnGap || computedParent?.gap || "") || 6);
+    const existingRects = [];
     if (parent && targetRect?.height > 0) {
       const blockRecords = geometry?.markdownBlockRecords || new Map(this.markdownBlockRecords().map((item) => [item.id, item]));
       for (const [id, element] of this.markdownBlockElements.entries()) {
-        if (!element?.isConnected || element === target || movingElements.has(element) || this.markdownBlockGridContainer(element) !== parent) {
+        const flowElement = this.markdownBlockFlowElement(element) || element;
+        if (!element?.isConnected
+          || flowElement === targetFlow
+          || movingElements.has(element)
+          || movingElements.has(flowElement)
+          || this.markdownBlockGridContainer(element) !== parent) {
           continue;
         }
-        const rect = geometry?.markdownCandidateByElement?.get(element)?.rect || element.getBoundingClientRect();
+        const rect = geometry?.markdownCandidateByElement?.get(flowElement)?.rect
+          || this.markdownElementVisibleClientRect(flowElement)
+          || flowElement.getBoundingClientRect();
         if (Math.abs(rect.top - targetRect.top) > Math.max(3, Math.min(rect.height, targetRect.height) * 0.2)) {
           continue;
         }
@@ -11751,20 +11762,26 @@ var PreviewDrawingController = class {
         if (!block || block.floating) {
           continue;
         }
-        baseUsed += clamp(Math.round(Number(block.span) || 12), 2, 12);
-        existingCount += 1;
+        existingRects.push(rect);
       }
     }
-    const movingStrokeCount = this.draggedNoteFlowIndexes().length ? 1 : 0;
-    const itemCount = movingCount + movingStrokeCount + 1;
-    const available = Math.max(0, 12 - baseUsed);
-    const totalCount = existingCount + itemCount;
-    const canFit = totalCount <= 4 && available >= itemCount * 2;
-    const result = {
-      canFit,
-      span: canFit ? Math.max(2, Math.floor(available / itemCount)) : 12,
-      totalCount
-    };
+    const movingStrokeBounds = this.getStrokeIndexesBounds(this.draggedNoteFlowIndexes());
+    const movingStrokeCanvas = this.noteFlowCanvasRect();
+    const movingStrokeWidth = movingStrokeBounds && movingStrokeCanvas?.width > 1
+      ? Math.max(0, movingStrokeBounds.maxX - movingStrokeBounds.minX)
+        * movingStrokeCanvas.width / Math.max(1, this.canvasWidth())
+      : 0;
+    const minimumBlockWidth = Math.max(36, laneWidth * 2 / 12);
+    const result = calculateMarkdownRowLayout({
+      laneWidth,
+      existingWidths: existingRects.map((rect) => Math.max(0, Number(rect.width) || 0)),
+      movingMarkdownCount,
+      movingStrokeWidth,
+      gap,
+      minimumBlockWidth,
+      columns: 12,
+      minimumSpan: 2
+    });
     geometry?.rowMetrics?.set(target, result);
     return result;
   }
@@ -12222,6 +12239,7 @@ var PreviewDrawingController = class {
         leftSnap: this.dragNoteFlowPlacement.leftSnap,
         boundary: this.dragNoteFlowPlacement.boundary,
         inlineBoundary: this.dragNoteFlowPlacement.inlineBoundary,
+        rowSpan: this.dragNoteFlowPlacement.rowSpan,
         flowOrder: this.dragNoteFlowPlacement.flowOrder,
         noteFlowBoundary: this.dragNoteFlowPlacement.noteFlowBoundary,
         candidate: this.dragNoteFlowPlacement.candidate
@@ -14181,7 +14199,8 @@ var PreviewDrawingController = class {
   }
   markdownBlockGridContainer(element) {
     const flowElement = this.markdownBlockFlowElement(element);
-    const container = flowElement?.parentElement;
+    const container = flowElement?.closest?.(".markdown-preview-section, .markdown-preview-sizer, .markdown-rendered")
+      || flowElement?.parentElement;
     return container && this.previewEl?.contains?.(container) ? container : null;
   }
   applyMarkdownBlockFlowPresentation(block, element) {
@@ -15045,7 +15064,6 @@ var PreviewDrawingController = class {
       return null;
     }
     const laneRect = geometry?.laneRect || targetRect;
-    const draggedClientBounds = this.draggedNoteFlowClientBounds();
     const draggedBounds = this.getStrokeIndexesBounds(this.draggedNoteFlowIndexes());
     const canvasRect = this.noteFlowCanvasRect();
     const draggedStrokeClientWidth = draggedBounds && canvasRect?.width > 1
@@ -15053,42 +15071,19 @@ var PreviewDrawingController = class {
       : 0;
     const draggedMarkdownCount = this.draggedNoteFlowMarkdownStates().length;
     const movingLaneCount = draggedMarkdownCount + (draggedStrokeClientWidth > 0 ? 1 : 0);
+    const movingMarkdownElements = new Set(this.dragMarkdownOriginalElements
+      ? Array.from(this.dragMarkdownOriginalElements.values()).map((state) => state.element)
+      : []);
+    const markdownRow = movingLaneCount > 0
+      ? this.markdownDropRowMetrics(target, movingMarkdownElements)
+      : null;
     const laneWidth = Math.max(1, laneRect.right - laneRect.left);
-    const equalLaneWidth = Math.max(80, (laneWidth - Math.max(1, movingLaneCount) * 10) / Math.max(2, movingLaneCount + 1));
-    const draggedClientWidth = Math.min(
-      laneWidth,
-      draggedStrokeClientWidth
-        + draggedMarkdownCount * equalLaneWidth
-        + Math.max(0, movingLaneCount - 1) * 10
-    );
-    const draggedClientHeight = draggedClientBounds
-      ? Math.max(1, draggedClientBounds.bottom - draggedClientBounds.top)
-      : targetRect.height;
-    const minimumTargetWidth = Math.min(120, laneWidth * 0.45);
-    const projectedTargetRight = Math.max(
-      targetRect.left + minimumTargetWidth,
-      Math.min(targetRect.right, laneRect.right - draggedClientWidth - 10)
-    );
-    const proposedInlineRect = {
-      left: projectedTargetRight + 10,
-      right: projectedTargetRight + 10 + draggedClientWidth,
-      top: targetRect.top,
-      bottom: targetRect.top + draggedClientHeight
-    };
-    const horizontalRoom = movingLaneCount > 0
-      && Number.isFinite(draggedClientWidth)
-      && proposedInlineRect.right <= laneRect.right + 0.5
-      && !(geometry?.markdownCandidates || []).some((entry) => {
-        const element = entry?.element;
-        const sameTarget = element === target || element?.contains?.(target) || target?.contains?.(element);
-        if (sameTarget) {
-          return false;
-        }
-        const rect = entry?.rect;
-        return rect
-          && Math.min(proposedInlineRect.right, rect.right) - Math.max(proposedInlineRect.left, rect.left) > 2
-          && Math.min(proposedInlineRect.bottom, rect.bottom) - Math.max(proposedInlineRect.top, rect.top) > 2;
-      });
+    const rowGap = Math.max(0, Number(markdownRow?.gap) || 6);
+    const gridColumnWidth = Math.max(1, (laneWidth - 11 * rowGap) / 12);
+    const targetSpan = clamp(Math.round(Number(markdownRow?.span) || 12), 2, 12);
+    const targetInlineWidth = targetSpan * gridColumnWidth + Math.max(0, targetSpan - 1) * rowGap;
+    const projectedTargetRight = Math.min(laneRect.right, targetRect.left + targetInlineWidth);
+    const horizontalRoom = movingLaneCount > 0 && Boolean(markdownRow?.canFit);
     const intent = resolveDragDropHorizontalIntent({
       clientX,
       targetLeft: targetRect.left,
@@ -15224,6 +15219,7 @@ var PreviewDrawingController = class {
       inlineBoundary: Number.isFinite(Number(inlineBoundary)) ? Number(inlineBoundary) : null,
       flowOrder,
       noteFlowBoundary,
+      rowSpan: horizontalSide ? targetSpan : null,
       candidate: { ...flowCandidate }
     };
     this.syncMarkdownDropFromNoteFlowPlacement(this.dragNoteFlowPlacement);
@@ -15275,8 +15271,10 @@ var PreviewDrawingController = class {
     if (!block || !(laneWidth > 1) || !Number.isFinite(boundary)) {
       return false;
     }
-    const targetWidth = Math.max(1, boundary - Number(lane.left) - 10);
-    const span = clamp(Math.floor(targetWidth / laneWidth * 12), 2, 10);
+    const boundaryWidth = Math.max(1, boundary - Number(lane.left) - 10);
+    const span = Number.isFinite(Number(placement?.rowSpan))
+      ? clamp(Math.round(Number(placement.rowSpan)), 2, 10)
+      : clamp(Math.floor(boundaryWidth / laneWidth * 12), 2, 10);
     const changed = block.span !== span || block.widthScale !== 1 || block.noteFlowAutoSpan !== true;
     block.span = span;
     block.widthScale = 1;
@@ -15338,6 +15336,7 @@ var PreviewDrawingController = class {
       leftSnap: placement?.leftSnap === true,
       boundary: Number.isFinite(Number(placement?.boundary)) ? Number(placement.boundary) : null,
       inlineBoundary: Number.isFinite(Number(placement?.inlineBoundary)) ? Number(placement.inlineBoundary) : null,
+      rowSpan: Number.isFinite(Number(placement?.rowSpan)) ? Number(placement.rowSpan) : null,
       flowOrder: Number.isFinite(Number(placement?.flowOrder)) ? Number(placement.flowOrder) : null,
       noteFlowBoundary: placement?.noteFlowBoundary === true
     } : null;
@@ -16120,7 +16119,33 @@ var PreviewDrawingController = class {
         rowKey: noteFlowPlacementRowKey(noteFlow, this.file?.path || "")
       });
     }
-    const rowTargets = targets.filter((target) => target.placementMode !== "inline");
+    const candidateCanvasBounds = (candidate, placementMode = "row") => {
+      const rect = this.noteFlowCandidateRect(candidate, placementMode);
+      const minX = (Number(rect?.left) - canvasRect.left) / Math.max(0.0001, scaleX);
+      const maxX = (Number(rect?.right) - canvasRect.left) / Math.max(0.0001, scaleX);
+      const minY = this.canvasWindowTop + (Number(rect?.top) - canvasRect.top) / Math.max(0.0001, scaleY);
+      const maxY = this.canvasWindowTop + (Number(rect?.bottom) - canvasRect.top) / Math.max(0.0001, scaleY);
+      return [minX, maxX, minY, maxY].every(Number.isFinite)
+        ? { minX, maxX, minY, maxY }
+        : null;
+    };
+    const blockerKeys = new Set();
+    const markdownBlockers = candidates.flatMap((candidate) => {
+      const blockKey = candidate.blockKey || noteFlowBlockKey(candidate, this.file?.path || "");
+      if (!blockKey || blockerKeys.has(blockKey)) {
+        return [];
+      }
+      const bounds = candidateCanvasBounds(candidate, "row");
+      if (!bounds) {
+        return [];
+      }
+      blockerKeys.add(blockKey);
+      return [{ ...bounds, blockKey }];
+    });
+    const rowTargets = targets.filter((target) => target.placementMode !== "inline").map((target) => ({
+      ...target,
+      anchorCanvasBounds: candidateCanvasBounds(target.anchor, "row")
+    }));
     const placements = reflowNoteFlowRectangles(rowTargets.map((target) => ({
       id: strokeElementId(target.stroke) || String(target.index),
       index: target.index,
@@ -16132,18 +16157,11 @@ var PreviewDrawingController = class {
       baseMinY: target.targetBox.y,
       originalMinY: target.targetBox.y,
       rowKey: target.rowKey,
+      anchorBlockKey: target.anchor?.blockKey || noteFlowBlockKey(target.anchor, this.file?.path || ""),
+      anchorMinY: target.anchorCanvasBounds?.minY,
+      anchorMaxY: target.anchorCanvasBounds?.maxY,
       gap: Math.min(8, target.noteFlow.gap)
-    })), { gap: 6 });
-    const candidateCanvasBounds = (candidate, placementMode = "row") => {
-      const rect = this.noteFlowCandidateRect(candidate, placementMode);
-      const minX = (Number(rect?.left) - canvasRect.left) / Math.max(0.0001, scaleX);
-      const maxX = (Number(rect?.right) - canvasRect.left) / Math.max(0.0001, scaleX);
-      const minY = this.canvasWindowTop + (Number(rect?.top) - canvasRect.top) / Math.max(0.0001, scaleY);
-      const maxY = this.canvasWindowTop + (Number(rect?.bottom) - canvasRect.top) / Math.max(0.0001, scaleY);
-      return [minX, maxX, minY, maxY].every(Number.isFinite)
-        ? { minX, maxX, minY, maxY }
-        : null;
-    };
+    })), { gap: 6, allowOverlap: true, blockers: markdownBlockers });
     const inlineGroups = new Map();
     for (const target of targets.filter((item) => item.placementMode === "inline")) {
       const group = inlineGroups.get(target.rowKey) || [];
@@ -16192,7 +16210,8 @@ var PreviewDrawingController = class {
         blockers,
         laneLeft: Number(contentFrame?.left) || 0,
         laneRight: (Number(contentFrame?.left) || 0) + Math.max(1, Number(contentFrame?.width) || canvasWidth),
-        gap: 8
+        gap: 8,
+        allowItemOverlap: true
       });
       placements.push(...packed.map((placement) => ({ ...placement, rowKey: group[0].rowKey })));
       for (const target of group) {
@@ -16207,7 +16226,9 @@ var PreviewDrawingController = class {
       if (target.rowKey) {
         const extent = target.placementMode === "inline"
           ? Math.max(0, targetY + target.targetBox.height - Number(target.anchorCanvasBounds?.maxY ?? targetY))
-          : targetY + target.targetBox.height - target.targetBox.y;
+          : Math.max(0, targetY + target.targetBox.height - (
+            target.targetBox.y - Math.max(0, Number(target.noteFlow?.rowOffset) || 0)
+          ));
         settledRowExtents.set(target.rowKey, Math.max(
           settledRowExtents.get(target.rowKey) || 0,
           extent
@@ -16563,15 +16584,13 @@ var PreviewDrawingController = class {
       }
       const rowKey = noteFlowPlacementRowKey(ownerNoteFlow || record, record.path);
       const ownerGap = Math.max(0, Number(ownerNoteFlow?.gap) || 0);
-      const settledExtent = this.noteFlowSettledRowExtents.get(rowKey) || 0;
-      const settledOffset = ownerNoteFlow?.placementMode === "inline"
-        ? settledExtent > 0 ? settledExtent + ownerGap : 0
-        : noteFlowRowReservation({
-          rowOffset: ownerNoteFlow?.rowOffset,
-          boxHeight: settledExtent,
-          gap: ownerGap
-        });
       const hasSettledMeasurement = this.noteFlowSettledRowExtents.has(rowKey);
+      const settledExtent = hasSettledMeasurement
+        ? Math.max(0, Number(this.noteFlowSettledRowExtents.get(rowKey)) || 0)
+        : 0;
+      const settledOffset = hasSettledMeasurement
+        ? settledExtent + ownerGap
+        : record.offset;
       const effectiveOffset = hasSettledMeasurement ? settledOffset : record.offset;
       const previousOffset = offsets.get(property) || 0;
       if (effectiveOffset >= previousOffset) {
@@ -16959,18 +16978,15 @@ var PreviewDrawingController = class {
         ? currentNoteFlow.boxHeightRatio * Math.max(1, contentFrame.width)
         : Math.max(0, item.bounds.maxY - item.bounds.minY);
       const settledRowKey = noteFlowPlacementRowKey(currentNoteFlow, this.file?.path || "");
-      const settledExtent = this.noteFlowSettledRowExtents.get(settledRowKey) || 0;
-      const settledHeight = Math.max(stableHeight, settledExtent);
+      const fallbackExtent = Math.max(0, Number(currentNoteFlow.rowOffset) || 0) + stableHeight;
+      const settledExtent = this.noteFlowSettledRowExtents.has(settledRowKey)
+        ? this.noteFlowSettledRowExtents.get(settledRowKey)
+        : fallbackExtent;
+      const settledHeight = Math.max(fallbackExtent, Number(settledExtent) || 0);
       // The reservation belongs to the logical row, like a Markdown block's
       // grid row. It is derived from stable box geometry, never from an anchor
       // that may already contain our padding, so repeated layout is idempotent.
-      const required = currentNoteFlow.placementMode === "inline"
-        ? settledExtent > 0 ? settledExtent + currentNoteFlow.gap : 0
-        : noteFlowRowReservation({
-          rowOffset: currentNoteFlow.rowOffset,
-          boxHeight: settledHeight,
-          gap: currentNoteFlow.gap
-        });
+      const required = settledHeight > 0 ? settledHeight + currentNoteFlow.gap : 0;
       if (!(required > 0)) {
         continue;
       }

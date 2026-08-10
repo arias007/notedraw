@@ -246,9 +246,9 @@ test("reading-only note pen and selected elements can reserve Markdown flow spac
   assert.match(flowLayout, /const nextValue = `\$\{appliedValue\}px`/);
   assert.match(flowLayout, /const property = side === "after" \? "padding-bottom" : "padding-top"/);
   assert.match(flowLayout, /anchor\.top < strokeTop - 4/);
-  assert.match(flowLayout, /const settledExtent = this\.noteFlowSettledRowExtents\.get\(settledRowKey\) \|\| 0;[\s\S]*const settledHeight = Math\.max\(stableHeight, settledExtent\)/);
-  assert.match(flowLayout, /currentNoteFlow\.placementMode === "inline"[\s\S]*settledExtent > 0 \? settledExtent \+ currentNoteFlow\.gap : 0[\s\S]*noteFlowRowReservation/);
-  assert.match(flowLayout, /noteFlowRowReservation\(\{[\s\S]*rowOffset: currentNoteFlow\.rowOffset[\s\S]*boxHeight: settledHeight/);
+  assert.match(flowLayout, /const fallbackExtent = Math\.max\(0, Number\(currentNoteFlow\.rowOffset\) \|\| 0\) \+ stableHeight[\s\S]*const settledHeight = Math\.max\(fallbackExtent, Number\(settledExtent\) \|\| 0\)/);
+  assert.match(flowLayout, /const required = settledHeight > 0 \? settledHeight \+ currentNoteFlow\.gap : 0/);
+  assert.match(source, /reflowNoteFlowRectangles\([\s\S]*allowOverlap: true/);
   assert.match(flowLayout, /state\.applied = Math\.max\(0, appliedValue - state\.base\)/);
   assert.match(flowLayout, /stabilizeNoteFlowBounds\(\{/);
   assert.match(flowLayout, /preferCurrent: Boolean\(normalizeNoteFlow\(stroke\.noteFlow\)\?\.positionBasis\)/);

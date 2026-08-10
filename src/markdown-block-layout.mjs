@@ -2,6 +2,52 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
+export function calculateMarkdownRowLayout({
+  laneWidth,
+  existingWidths = [],
+  movingMarkdownCount = 0,
+  movingStrokeWidth = 0,
+  gap = 6,
+  minimumBlockWidth = 36,
+  columns = 12,
+  minimumSpan = 2
+} = {}) {
+  const width = Math.max(1, Number(laneWidth) || 1);
+  const clearance = Math.max(0, Number(gap) || 0);
+  const columnCount = Math.max(1, Math.floor(Number(columns) || 12));
+  const minSpan = clamp(Math.floor(Number(minimumSpan) || 1), 1, columnCount);
+  const fixedWidths = (Array.isArray(existingWidths) ? existingWidths : [])
+    .map(Number)
+    .filter((value) => Number.isFinite(value) && value > 0);
+  const markdownCount = Math.max(0, Math.floor(Number(movingMarkdownCount) || 0));
+  const flexibleCount = markdownCount + 1;
+  const strokeWidth = Math.max(0, Number(movingStrokeWidth) || 0);
+  const strokeCount = strokeWidth > 0.5 ? 1 : 0;
+  const totalCount = fixedWidths.length + flexibleCount + strokeCount;
+  const occupiedWidth = fixedWidths.reduce((sum, value) => sum + value, 0)
+    + strokeWidth
+    + Math.max(0, totalCount - 1) * clearance;
+  const availableWidth = Math.max(0, width - occupiedWidth);
+  const minWidth = Math.max(1, Number(minimumBlockWidth) || 36);
+  const canFit = availableWidth + 0.5 >= flexibleCount * minWidth;
+  const equalWidth = canFit ? availableWidth / flexibleCount : width;
+  const columnWidth = Math.max(1, (width - Math.max(0, columnCount - 1) * clearance) / columnCount);
+  const span = canFit
+    ? clamp(Math.floor((equalWidth + clearance) / (columnWidth + clearance)), minSpan, columnCount)
+    : columnCount;
+  return {
+    canFit,
+    span,
+    totalCount,
+    laneWidth: width,
+    availableWidth,
+    gap: clearance,
+    minimumBlockWidth: minWidth,
+    movingMarkdownCount: markdownCount,
+    movingStrokeWidth: strokeWidth
+  };
+}
+
 export function resolveSelectionResizeScales({
   scaleX = 1,
   scaleY = 1
