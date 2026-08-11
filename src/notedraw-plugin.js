@@ -14245,7 +14245,7 @@ var PreviewDrawingController = class {
       || null;
   }
   markdownBlockElementForTarget(target, clientPoint = null) {
-    if (this.surfaceType !== "preview" || !target || !this.previewEl?.contains?.(target)) {
+    if ((this.surfaceType !== "preview" && !this.embeddedSurface) || !target || !this.previewEl?.contains?.(target)) {
       return null;
     }
     const marked = target.closest?.(".notedraw-md-block");
@@ -14272,7 +14272,7 @@ var PreviewDrawingController = class {
     return this.markdownElementContainsClientPoint(blockElement, clientPoint) ? blockElement : null;
   }
   ensureMarkdownBlockRecord(element) {
-    if (!element || this.surfaceType !== "preview") {
+    if (!element || (this.surfaceType !== "preview" && !this.embeddedSurface)) {
       return null;
     }
     const blockElement = element.closest?.(".notedraw-md-block") || element;
@@ -18835,12 +18835,25 @@ function findEditableTarget(target, previewEl, clientPoint = null) {
   if (target.closest(BLOCKED_EDIT_SELECTOR)) {
     return null;
   }
-  const editable = target.closest(EDITABLE_SELECTOR);
+  let editable = target.closest(EDITABLE_SELECTOR);
   if (!editable || !previewEl.contains(editable)) {
     return null;
   }
   if (!isConcreteMarkdownBlockElement(editable)) {
-    return null;
+    // The matched block is a container that wraps an embedded surface
+    // (live preview keeps ![[note]] inside its paragraph). Descend into the
+    // embed so the concrete inner markdown text stays editable.
+    const embedRoot = editable.querySelector?.(".markdown-embed-content")
+      || editable.querySelector?.(".markdown-embed")
+      || editable.querySelector?.(".internal-embed");
+    const inner = embedRoot
+      ? Array.from(embedRoot.querySelectorAll?.(MARKDOWN_TEXT_SELECTOR) || [])
+        .find((candidate) => isConcreteMarkdownBlockElement(candidate) && normalizeRenderedText(candidate.innerText))
+      : null;
+    if (!inner) {
+      return null;
+    }
+    editable = inner;
   }
   if (!normalizeRenderedText(editable.innerText)) {
     return null;

@@ -100,7 +100,19 @@ export function selectNoteFlowInsertionPlacement(candidates, {
     return aLine - bLine || a.top - b.top || (a.bottom - a.top) - (b.bottom - b.top) || a.order - b.order;
   })[0];
   if (preciseOverlap) {
-    return { candidate: preciseOverlap, side: "before", line: preciseOverlap.start };
+    // Anchor to the side of the block the stroke actually sits on. Tall
+    // blocks (headings, callouts) previously always resolved to "before",
+    // so two hand-drawn elements near the same tall block could anchor to
+    // different rows (before/after, or a neighbouring block) and never pack
+    // side-by-side.
+    const strokeMid = (top + bottom) / 2;
+    const candidateMid = (preciseOverlap.top + preciseOverlap.bottom) / 2;
+    const side = strokeMid < candidateMid ? "before" : "after";
+    return {
+      candidate: preciseOverlap,
+      side,
+      line: side === "after" ? preciseOverlap.end : preciseOverlap.start
+    };
   }
 
   // Padding a broad paragraph would move text from its first line instead of

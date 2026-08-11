@@ -398,8 +398,31 @@ test("note-flow starts at a precise rendered line crossed by the stroke", () => 
   ], { strokeTop: 166, strokeBottom: 202 });
 
   assert.equal(placement?.candidate.id, "line-5");
-  assert.equal(placement?.side, "before");
+  assert.equal(placement?.side, "after");
   assert.equal(placement?.line, 5);
+});
+
+test("note-flow anchors below a tall block to its after side so elements pack together", () => {
+  const tall = { id: "heading", top: 80, bottom: 130, start: 0, end: 0, order: 0 };
+  const next = { id: "below", top: 140, bottom: 154, start: 1, end: 1, order: 1 };
+  const near = selectNoteFlowInsertionPlacement([tall, next], { strokeTop: 128, strokeBottom: 140 });
+  const slightlyLower = selectNoteFlowInsertionPlacement([tall, next], { strokeTop: 133, strokeBottom: 145 });
+
+  assert.equal(near?.candidate.id, "heading");
+  assert.equal(near?.side, "after");
+  assert.equal(near?.line, 0);
+  assert.equal(slightlyLower?.candidate.id, "heading");
+  assert.equal(slightlyLower?.side, "after");
+  assert.equal(slightlyLower?.line, 0);
+});
+
+test("note-flow anchors above a block to its before side", () => {
+  const block = { id: "block", top: 100, bottom: 124, start: 0, end: 0, order: 0 };
+  const placement = selectNoteFlowInsertionPlacement([block], { strokeTop: 92, strokeBottom: 104 });
+
+  assert.equal(placement?.candidate.id, "block");
+  assert.equal(placement?.side, "before");
+  assert.equal(placement?.line, 0);
 });
 
 test("dragged note-flow elements commit to the nearest visible blue-bar boundary", () => {

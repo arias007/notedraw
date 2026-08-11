@@ -1849,7 +1849,14 @@ function selectNoteFlowInsertionPlacement(candidates, {
     return aLine - bLine || a.top - b.top || a.bottom - a.top - (b.bottom - b.top) || a.order - b.order;
   })[0];
   if (preciseOverlap) {
-    return { candidate: preciseOverlap, side: "before", line: preciseOverlap.start };
+    const strokeMid = (top + bottom) / 2;
+    const candidateMid = (preciseOverlap.top + preciseOverlap.bottom) / 2;
+    const side = strokeMid < candidateMid ? "before" : "after";
+    return {
+      candidate: preciseOverlap,
+      side,
+      line: side === "after" ? preciseOverlap.end : preciseOverlap.start
+    };
   }
   const below = ordered.find((candidate) => candidate.top >= bottom - threshold);
   if (below) {
@@ -17721,7 +17728,7 @@ var PreviewDrawingController = class {
     return candidates.find((block) => Number.isFinite(info.lineStart) && block.lineStart === info.lineStart && (!block.textHint || block.textHint === hint)) || candidates.find((block) => block.textHint && block.textHint === hint) || null;
   }
   markdownBlockElementForTarget(target, clientPoint = null) {
-    if (this.surfaceType !== "preview" || !target || !this.previewEl?.contains?.(target)) {
+    if (this.surfaceType !== "preview" && !this.embeddedSurface || !target || !this.previewEl?.contains?.(target)) {
       return null;
     }
     const marked = target.closest?.(".notedraw-md-block");
@@ -17748,7 +17755,7 @@ var PreviewDrawingController = class {
     return this.markdownElementContainsClientPoint(blockElement, clientPoint) ? blockElement : null;
   }
   ensureMarkdownBlockRecord(element) {
-    if (!element || this.surfaceType !== "preview") {
+    if (!element || this.surfaceType !== "preview" && !this.embeddedSurface) {
       return null;
     }
     const blockElement = element.closest?.(".notedraw-md-block") || element;
@@ -22015,12 +22022,17 @@ function findEditableTarget(target, previewEl, clientPoint = null) {
   if (target.closest(BLOCKED_EDIT_SELECTOR)) {
     return null;
   }
-  const editable = target.closest(EDITABLE_SELECTOR);
+  let editable = target.closest(EDITABLE_SELECTOR);
   if (!editable || !previewEl.contains(editable)) {
     return null;
   }
   if (!isConcreteMarkdownBlockElement(editable)) {
-    return null;
+    const embedRoot = editable.querySelector?.(".markdown-embed-content") || editable.querySelector?.(".markdown-embed") || editable.querySelector?.(".internal-embed");
+    const inner = embedRoot ? Array.from(embedRoot.querySelectorAll?.(MARKDOWN_TEXT_SELECTOR) || []).find((candidate) => isConcreteMarkdownBlockElement(candidate) && normalizeRenderedText2(candidate.innerText)) : null;
+    if (!inner) {
+      return null;
+    }
+    editable = inner;
   }
   if (!normalizeRenderedText2(editable.innerText)) {
     return null;
