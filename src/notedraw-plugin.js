@@ -13836,26 +13836,53 @@ var PreviewDrawingController = class {
     if (!frame) {
       return;
     }
-    const { x, y, width, height } = frame;
+    let { x, y, width, height } = frame;
+    const cw = Math.max(1, typeof this.canvasWidth === "function" ? this.canvasWidth() : (this.canvas ? this.canvas.width : 0));
+    const ch = Math.max(1, typeof this.canvasHeight === "function" ? this.canvasHeight() : (this.canvas ? this.canvas.height : 0));
+    const hh = SELECT_RESIZE_HANDLE_SIZE / 2;
+    const lineHalf = 1;
+    // 左端被挡地方需要完整：将选择框整体钳制在画布可视区域内，
+    // 保证左边框与左上/左下角小方框完整可见，且小方框始终保持在角上。
+    const minX = hh + lineHalf;
+    const minY = hh + lineHalf;
+    const maxX = Math.max(minX + 2, cw - hh - lineHalf);
+    const maxY = Math.max(minY + 2, ch - hh - lineHalf);
+    if (width > maxX - minX) {
+      width = maxX - minX;
+    }
+    if (x < minX) {
+      x = minX;
+    } else if (x + width > maxX) {
+      x = maxX - width;
+    }
+    if (height > maxY - minY) {
+      height = maxY - minY;
+    }
+    if (y < minY) {
+      y = minY;
+    } else if (y + height > maxY) {
+      y = maxY - height;
+    }
     this.ctx.save();
-    this.ctx.strokeStyle = "rgba(255, 193, 7, 0.95)";
-    this.ctx.lineWidth = 2;
-    this.ctx.setLineDash([6, 4]);
-    this.ctx.strokeRect(x, y, width, height);
+    this.ctx.strokeStyle = "rgba(168, 85, 247, 0.95)";
+    this.ctx.lineWidth = 1;
+    this.ctx.setLineDash([3, 2]);
+    roundRect(this.ctx, x, y, width, height, 8);
+    this.ctx.stroke();
     this.ctx.setLineDash([]);
     this.ctx.fillStyle = "#ffffff";
-    this.ctx.strokeStyle = "rgba(255, 193, 7, 0.98)";
-    this.ctx.lineWidth = 2;
+    this.ctx.strokeStyle = "rgba(168, 85, 247, 0.98)";
+    this.ctx.lineWidth = 1;
     for (const handle of getSelectionHandlePointsFromRect({ x, y, width, height })) {
       this.ctx.fillRect(
-        handle.x - SELECT_RESIZE_HANDLE_SIZE / 2,
-        handle.y - SELECT_RESIZE_HANDLE_SIZE / 2,
+        handle.x - hh,
+        handle.y - hh,
         SELECT_RESIZE_HANDLE_SIZE,
         SELECT_RESIZE_HANDLE_SIZE
       );
       this.ctx.strokeRect(
-        handle.x - SELECT_RESIZE_HANDLE_SIZE / 2,
-        handle.y - SELECT_RESIZE_HANDLE_SIZE / 2,
+        handle.x - hh,
+        handle.y - hh,
         SELECT_RESIZE_HANDLE_SIZE,
         SELECT_RESIZE_HANDLE_SIZE
       );
