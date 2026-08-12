@@ -209,6 +209,19 @@ test("Markdown blocks use pointer sorting, logical-coordinate floating, and rema
   assert.match(styles, /\.notedraw-md-block\.is-floating/);
 });
 
+test("Markdown block presentation keeps layout identity after rendered text changes", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const syncStart = source.indexOf("  syncMarkdownBlockPresentation() {");
+  const syncSource = source.slice(syncStart, source.indexOf("  selectMarkdownBlock(", syncStart));
+
+  assert.match(syncSource, /const lineCandidates = .*new Map\(\)/);
+  assert.match(syncSource, /const lineStartCandidates = .*new Map\(\)/);
+  assert.match(syncSource, /queueCandidate\(lineCandidates, `\$\{path\}\\u0000\$\{info\.lineStart\}\\u0000/);
+  assert.match(syncSource, /takeUnused\(lineCandidates\.get\(lineKey\)\)/);
+  assert.match(syncSource, /takeUnused\(lineStartCandidates\.get\(`/);
+  assert.match(syncSource, /this\.applyMarkdownBlockHeightPresentation\(block, element\)/);
+});
+
 test("selecting Markdown blocks does not trigger a whole-note responsive reflow", async () => {
   const source = await readFile(sourceUrl, "utf8");
 

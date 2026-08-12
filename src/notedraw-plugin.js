@@ -5230,6 +5230,8 @@ var PreviewDrawingController = class {
     this.formatColorInput = null;
     this.formatHighlightInput = null;
     this.formatSizeSelect = null;
+    this.sourceFormatToolbarCleanup = null;
+    this.sourceFormatToolbarRetryTimer = null;
     this.brushMode = this.runtimeSettings.lastBrushMode;
     this.brushVariants = {
       [BRUSH_PEN]: this.runtimeSettings.lastPenVariant,
@@ -5649,7 +5651,7 @@ var PreviewDrawingController = class {
     this.createTextPanel();
     this.selectionMenu = createNoteDrawControlElement(this.floatingControlsHost, "notedraw-selection-menu");
     this.createSelectionMenu();
-    if (this.allowTextEdit && this.surfaceType !== "webview") {
+    if (this.surfaceType === "source" || this.allowTextEdit && this.surfaceType !== "webview") {
       this.createFormatToolbar();
     }
     this.colorInput = this.palettePanel.createEl("input", {
@@ -5775,6 +5777,7 @@ var PreviewDrawingController = class {
     activeDocument.addEventListener("pointercancel", this.onDocumentPointerFinish, true);
     activeDocument.addEventListener("selectionchange", this.onDocumentSelectionChange);
     activeDocument.addEventListener("keydown", this.onDocumentKeyDown, true);
+    this.bindSourceFormatToolbarEvents();
     if (typeof ResizeObserver !== "undefined") {
       this.resizeObserver = new ResizeObserver(this.onResize);
       this.resizeObserver.observe(this.previewEl);
@@ -5818,6 +5821,7 @@ var PreviewDrawingController = class {
     this.applyReadingZoom();
     this.applyActiveState(this.active);
     await this.ensureDrawingsLoaded();
+    this.bindSourceFormatToolbarEvents();
     this.repairConnectedReadingSections();
     this.plugin.emitApiEvent("surface-changed", { ...this.plugin.describeController(this), phase: "mounted" });
   }
@@ -6169,6 +6173,12 @@ var PreviewDrawingController = class {
     this.cancelFrozenNoteFlowLayoutRestore();
     this.clearNoteFlowLayout();
     this.stopFormatToolbarDrag();
+    this.sourceFormatToolbarCleanup?.();
+    this.sourceFormatToolbarCleanup = null;
+    if (this.sourceFormatToolbarRetryTimer !== null) {
+      window.clearTimeout(this.sourceFormatToolbarRetryTimer);
+      this.sourceFormatToolbarRetryTimer = null;
+    }
     this.canvas?.removeEventListener("pointerdown", this.onPointerDown);
     this.canvas?.removeEventListener("pointermove", this.onPointerMove);
     this.canvas?.removeEventListener("pointerup", this.onPointerUp);
@@ -6900,6 +6910,10 @@ var PreviewDrawingController = class {
     this.setTextPanelOpen(false);
     this.endFloatingTextInput(true);
     this.endTextEdit();
+    if (this.surfaceType === "source") {
+      this.formatToolbar?.addClass("is-visible");
+      this.scheduleFloatingControlsPosition();
+    }
     this.cancelCurrentStroke();
     this.cancelSelectionDrag(true);
     this.updateToolButtons();
@@ -7099,12 +7113,16 @@ var PreviewDrawingController = class {
   updateToolButtons() {
     const penActive = this.toolMode === TOOL_DRAW && this.brushMode === BRUSH_PEN;
     const watercolorActive = this.toolMode === TOOL_DRAW && this.brushMode === BRUSH_WATERCOLOR;
+    const sourceMarkdownEditActive = this.surfaceType === "source" && this.toolMode === TOOL_EDIT_MD;
     this.applyBrushButtonState(this.penButton, this.brushSettings?.[BRUSH_PEN], penActive);
     this.applyBrushButtonState(this.watercolorButton, this.brushSettings?.[BRUSH_WATERCOLOR], watercolorActive);
     this.textButton?.classList.toggle("is-active", this.toolMode === TOOL_TEXT || this.textPanelOpen);
     this.textButton?.toggleAttribute("hidden", false);
     this.selectButton?.classList.toggle("is-active", this.toolMode === TOOL_SELECT);
     this.editMarkdownButton?.classList.toggle("is-active", this.toolMode === TOOL_EDIT_MD);
+    if (this.surfaceType === "source") {
+      this.formatToolbar?.classList.toggle("is-visible", sourceMarkdownEditActive);
+    }
     const selectedElements = this.hasHybridSelection();
     const paletteDisabled = this.toolMode === TOOL_EDIT_MD || this.toolMode === TOOL_SELECT && !selectedElements;
     this.paletteButton?.toggleAttribute("disabled", paletteDisabled);
@@ -7592,7 +7610,150 @@ var PreviewDrawingController = class {
     });
     return button;
   }
+  sourceCodeMirrorView() {
+    return this.surfaceType === "source" ? getCodeMirrorView(this.view, this.previewEl) : null;
+  }
+  bindSourceFormatToolbarEvents() {
+    if (this.surfaceType !== "source") {
+      return;
+    }
+    this.sourceFormatToolbarCleanup?.();
+    this.sourceFormatToolbarCleanup = null;
+    const cmView = this.sourceCodeMirrorView();
+    const dom = cmView?.dom;
+    if (!dom?.addEventListener) {
+      if (this.sourceFormatToolbarRetryTimer === null && !this.destroyed) {
+        this.sourceFormatToolbarRetryTimer = window.setTimeout(() => {
+          this.sourceFormatToolbarRetryTimer = null;
+          this.bindSourceFormatToolbarEvents();
+        }, 120);
+      }
+      return;
+    }
+    if (this.sourceFormatToolbarRetryTimer !== null) {
+      window.clearTimeout(this.sourceFormatToolbarRetryTimer);
+      this.sourceFormatToolbarRetryTimer = null;
+    }
+    const refresh = () => {
+      if (this.toolMode === TOOL_EDIT_MD) {
+        this.formatToolbar?.addClass("is-visible");
+        this.positionFormatToolbar();
+      }
+    };
+    for (const type of ["mouseup", "keyup", "input", "scroll", "focus"]) {
+      dom.addEventListener(type, refresh, true);
+    }
+    this.sourceFormatToolbarCleanup = () => {
+      for (const type of ["mouseup", "keyup", "input", "scroll", "focus"]) {
+        dom.removeEventListener(type, refresh, true);
+      }
+    };
+  }
+  sourceSelectionRange() {
+    const cmView = this.sourceCodeMirrorView();
+    const selection = cmView?.state?.selection?.main;
+    if (!cmView || !selection || !Number.isFinite(selection.from) || !Number.isFinite(selection.to)) {
+      return null;
+    }
+    return { cmView, from: selection.from, to: selection.to };
+  }
+  dispatchSourceSelection(changes, selection = null) {
+    const range = this.sourceSelectionRange();
+    if (!range || !Array.isArray(changes) || !changes.length) {
+      return false;
+    }
+    const nextSelection = selection || {
+      anchor: range.from,
+      head: range.from
+    };
+    range.cmView.focus?.();
+    range.cmView.dispatch({
+      changes,
+      selection: nextSelection,
+      scrollIntoView: false
+    });
+    this.formatToolbar?.addClass("is-visible");
+    this.positionFormatToolbar();
+    return true;
+  }
+  applySourceTextInlineFormat(tagName, styles = {}) {
+    const range = this.sourceSelectionRange();
+    if (!range || range.from === range.to) {
+      return false;
+    }
+    const selected = range.cmView.state.sliceDoc(range.from, range.to);
+    let prefix = "";
+    let suffix = "";
+    if (tagName === "strong") {
+      prefix = suffix = "**";
+    } else if (tagName === "em") {
+      prefix = suffix = "*";
+    } else if (tagName === "code") {
+      prefix = suffix = "`";
+    } else if (tagName === "kbd") {
+      prefix = "<kbd>";
+      suffix = "</kbd>";
+    } else if (tagName === "sup" || tagName === "sub" || tagName === "u") {
+      prefix = `<${tagName}>`;
+      suffix = `</${tagName}>`;
+    } else if (tagName === "mark") {
+      prefix = styles.backgroundColor ? `<mark style="background-color: ${styles.backgroundColor};">` : "==";
+      suffix = styles.backgroundColor ? "</mark>" : "==";
+    } else if (tagName === "span") {
+      const css = Object.entries(styles).filter(([key, value]) => value && isSafeCssSize(value) || key === "color" && isCssColor(value)).map(([key, value]) => `${key.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}: ${value}`).join("; ");
+      prefix = css ? `<span style="${css}">` : "";
+      suffix = css ? "</span>" : "";
+    }
+    if (!prefix && !suffix) {
+      return false;
+    }
+    return this.dispatchSourceSelection([
+      { from: range.from, to: range.to, insert: `${prefix}${selected}${suffix}` }
+    ], {
+      anchor: range.from + prefix.length,
+      head: range.from + prefix.length + selected.length
+    });
+  }
+  applySourceTextBlockFormat(kind) {
+    const range = this.sourceSelectionRange();
+    if (!range || kind !== "code") {
+      return false;
+    }
+    const selected = range.cmView.state.sliceDoc(range.from, range.to);
+    const insert = `\n\`\`\`\n${selected}\n\`\`\`\n`;
+    return this.dispatchSourceSelection([{ from: range.from, to: range.to, insert }], {
+      anchor: range.from + 5,
+      head: range.from + 5 + selected.length
+    });
+  }
+  insertSourceTextBreak() {
+    const range = this.sourceSelectionRange();
+    if (!range) {
+      return false;
+    }
+    return this.dispatchSourceSelection([{ from: range.from, to: range.to, insert: "\n" }], {
+      anchor: range.from + 1,
+      head: range.from + 1
+    });
+  }
+  clearSourceTextFormat() {
+    const range = this.sourceSelectionRange();
+    if (!range || range.from === range.to) {
+      return false;
+    }
+    const selected = range.cmView.state.sliceDoc(range.from, range.to)
+      .replace(/\*\*|__|~~|`|==/g, "")
+      .replace(/<\/?(?:u|kbd|sup|sub|mark|span)(?:\s[^>]*)?>/gi, "");
+    return this.dispatchSourceSelection([{ from: range.from, to: range.to, insert: selected }], {
+      anchor: range.from,
+      head: range.from + selected.length
+    });
+  }
   onDocumentSelectionChange() {
+    if (this.surfaceType === "source" && this.toolMode === TOOL_EDIT_MD) {
+      this.positionFormatToolbar();
+      return;
+    }
     if (!this.currentEditor || !this.formatToolbar) {
       return;
     }
@@ -7608,7 +7769,44 @@ var PreviewDrawingController = class {
     this.positionFormatToolbar();
   }
   positionFormatToolbar() {
-    if (!this.formatToolbar || !this.currentEditor) {
+    if (!this.formatToolbar) {
+      return;
+    }
+    if (this.surfaceType === "source" && this.toolMode === TOOL_EDIT_MD) {
+      const cmView = getCodeMirrorView(this.view, this.previewEl);
+      const selection = cmView?.state?.selection?.main;
+      const from = Number.isFinite(selection?.from) ? cmView.coordsAtPos(selection.from) : null;
+      const to = Number.isFinite(selection?.to) ? cmView.coordsAtPos(selection.to) : from;
+      const sourceRect = from && to ? {
+        left: Math.min(from.left, to.left),
+        right: Math.max(from.right ?? from.left, to.right ?? to.left),
+        top: Math.min(from.top, to.top),
+        bottom: Math.max(from.bottom, to.bottom),
+        width: Math.max(1, Math.abs((to.left ?? from.left) - from.left)),
+        height: Math.max(1, Math.abs((to.bottom ?? from.bottom) - from.top))
+      } : this.previewEl.getBoundingClientRect?.();
+      if (!sourceRect) {
+        return;
+      }
+      const toolbarRect = this.formatToolbar.getBoundingClientRect();
+      const width = Math.max(180, toolbarRect.width || 280);
+      const height = Math.max(34, toolbarRect.height || 34);
+      const viewport = window.visualViewport;
+      const viewportTop = viewport?.offsetTop || 0;
+      const viewportLeft = viewport?.offsetLeft || 0;
+      const viewportHeight = Math.max(120, viewport?.height || window.innerHeight || 120);
+      const viewportWidth = Math.max(160, viewport?.width || window.innerWidth || 160);
+      const minTop = viewportTop + 8;
+      const maxTop = Math.max(minTop, viewportTop + viewportHeight - height - 8);
+      const left = clamp(Math.round((sourceRect.left + sourceRect.right - width) / 2), viewportLeft + 8, Math.max(viewportLeft + 8, viewportLeft + viewportWidth - width - 8));
+      const top = clamp(Math.round(sourceRect.bottom + 14), minTop, maxTop);
+      setNoteDrawCssProps(this.formatToolbar, {
+        "--notedraw-format-top": `${top}px`,
+        "--notedraw-format-left": `${left}px`
+      });
+      return;
+    }
+    if (!this.currentEditor) {
       return;
     }
     const selection = window.getSelection?.();
@@ -7723,6 +7921,9 @@ var PreviewDrawingController = class {
     return true;
   }
   applyTextInlineFormat(tagName, styles = {}) {
+    if (this.surfaceType === "source" && this.toolMode === TOOL_EDIT_MD) {
+      return this.applySourceTextInlineFormat(tagName, styles);
+    }
     if (!this.currentEditor || !this.restoreTextRange()) {
       return;
     }
@@ -7745,6 +7946,9 @@ var PreviewDrawingController = class {
     this.positionFormatToolbar();
   }
   applyTextBlockFormat(kind) {
+    if (this.surfaceType === "source" && this.toolMode === TOOL_EDIT_MD) {
+      return this.applySourceTextBlockFormat(kind);
+    }
     if (!this.currentEditor || !this.restoreTextRange()) {
       return;
     }
@@ -7771,6 +7975,9 @@ var PreviewDrawingController = class {
     }
   }
   insertTextBreak() {
+    if (this.surfaceType === "source" && this.toolMode === TOOL_EDIT_MD) {
+      return this.insertSourceTextBreak();
+    }
     if (!this.currentEditor || !this.restoreTextRange()) {
       return;
     }
@@ -7794,6 +8001,9 @@ var PreviewDrawingController = class {
     this.positionFormatToolbar();
   }
   clearTextFormat() {
+    if (this.surfaceType === "source" && this.toolMode === TOOL_EDIT_MD) {
+      return this.clearSourceTextFormat();
+    }
     if (!this.currentEditor || !this.restoreTextRange()) {
       return;
     }
@@ -11817,7 +12027,6 @@ var PreviewDrawingController = class {
       this.clearMarkdownBlockDropTarget();
       this.dragMarkdownDropTarget = target;
       this.dragMarkdownDropSide = side;
-      target.addClass(`notedraw-text-sort-target-${side}`);
     }
     const previous = this.dragMarkdownLastValidDrop;
     const drop = previous?.element === target && previous?.side === side
@@ -14665,6 +14874,8 @@ var PreviewDrawingController = class {
     const candidateMeta = /* @__PURE__ */ new Map();
     const exactCandidates = /* @__PURE__ */ new Map();
     const hintCandidates = /* @__PURE__ */ new Map();
+    const lineCandidates = /* @__PURE__ */ new Map();
+    const lineStartCandidates = /* @__PURE__ */ new Map();
     const queueCandidate = (map, key, element) => {
       const values = map.get(key) || [];
       values.push(element);
@@ -14677,8 +14888,12 @@ var PreviewDrawingController = class {
       candidateMeta.set(element, { path, info, hint });
       if (Number.isFinite(info.lineStart)) {
         queueCandidate(exactCandidates, `${path}\u0000${info.lineStart}\u0000${hint}`, element);
+        queueCandidate(lineStartCandidates, `${path}\u0000${info.lineStart}`, element);
       }
       queueCandidate(hintCandidates, `${path}\u0000${hint}`, element);
+      if (Number.isFinite(info.lineStart)) {
+        queueCandidate(lineCandidates, `${path}\u0000${info.lineStart}\u0000${info.lineEnd ?? info.lineStart}`, element);
+      }
     }
     const used = /* @__PURE__ */ new Set();
     let markdownMetadataChanged = false;
@@ -14691,7 +14906,13 @@ var PreviewDrawingController = class {
         && previous?.dataset?.noteDrawMarkdownBlockId === block.id;
       const exactKey = `${block.path}\u0000${block.lineStart}\u0000${block.textHint}`;
       const hintKey = `${block.path}\u0000${block.textHint}`;
-      const element = previousMatches ? previous : takeUnused(exactCandidates.get(exactKey)) || takeUnused(hintCandidates.get(hintKey));
+      const lineKey = `${block.path}\u0000${block.lineStart}\u0000${block.lineEnd ?? block.lineStart}`;
+      const element = previousMatches
+        ? previous
+        : takeUnused(exactCandidates.get(exactKey))
+          || takeUnused(hintCandidates.get(hintKey))
+          || takeUnused(lineCandidates.get(lineKey))
+          || takeUnused(lineStartCandidates.get(`${block.path}\u0000${block.lineStart}`));
       if (!element) {
         continue;
       }
@@ -15838,7 +16059,8 @@ var PreviewDrawingController = class {
       }
       noteFlowBoundary = true;
     }
-    const indicator = this.ensureNoteFlowDropIndicator();
+    // The live preview is the placement feedback; keep the computed placement
+    // for commit without drawing a second blue target on top of it.
     const previous = this.dragNoteFlowPlacement;
     const presentationChanged = previous?.candidate?.sourceElement !== flowTarget
       || previous?.candidate?.element !== flowCandidate.element
@@ -15849,31 +16071,8 @@ var PreviewDrawingController = class {
       || previous?.flowOrder !== flowOrder
       || previous?.inlineBoundary !== inlineBoundary
       || previous?.boundary !== flowBoundary;
-    if (presentationChanged || !indicator.classList.contains("is-visible")) {
+    if (presentationChanged || this.dragNoteFlowTargetElement) {
       this.removeDraggedNoteFlowPlacementVisual();
-      this.dragNoteFlowTargetElement = flowTarget;
-      flowTarget.classList.add(`notedraw-text-sort-target-${horizontalSide || flowSide}`);
-      const left = leftSnap ? laneRect.left : targetRect.left;
-      const right = leftSnap ? laneRect.right : targetRect.right;
-      applyElementStyles(indicator, horizontalSide ? {
-        left: `${Math.round(inlineBoundary)}px`,
-        top: `${Math.round(targetRect.top)}px`,
-        width: "4px",
-        height: `${Math.max(16, Math.round(targetRect.height))}px`
-      } : {
-        left: `${Math.round(left)}px`,
-        top: `${Math.round(flowBoundary)}px`,
-        width: `${Math.max(16, Math.round(right - left))}px`,
-        height: "4px"
-      });
-      indicator.dataset.noteDrawDropSide = horizontalSide || flowSide;
-      indicator.dataset.noteDrawDropLine = String(flowLine);
-      if (leftSnap) {
-        indicator.dataset.noteDrawDropMagnet = "left";
-      } else {
-        delete indicator.dataset.noteDrawDropMagnet;
-      }
-      indicator.classList.add("is-notedraw-controls-visible", "is-visible");
     }
     this.dragNoteFlowPlacement = {
       path: normalizeVaultPath(placement.candidate.path || this.file?.path || ""),
@@ -18268,11 +18467,16 @@ var PreviewDrawingController = class {
       this.selectionFrameSnapshot = null;
       return null;
     }
-    const key = this.selectionStateKey();
+    const bounds = this.getSelectedStrokeBounds();
+    const geometryKey = bounds
+      ? [bounds.minX, bounds.minY, bounds.maxX, bounds.maxY]
+        .map((value) => Math.round(Number(value) * 2) / 2)
+        .join(",")
+      : "none";
+    const key = `${this.selectionStateKey()}|${geometryKey}`;
     if (!force && this.selectionFrameSnapshot?.key === key) {
       return this.selectionFrameSnapshot.rect;
     }
-    const bounds = this.getSelectedStrokeBounds();
     if (!bounds) {
       this.selectionFrameSnapshot = null;
       return null;

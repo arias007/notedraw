@@ -92,14 +92,14 @@ test("deleting a vault file clears NoteDraw controllers, DOM presentation, cache
   assert.match(source, /collectDeletedVaultFiles\(deletedFile\)/);
 });
 
-test("3.4.64 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
+test("3.4.65 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
   const [source, manifestText] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(manifestUrl, "utf8")
   ]);
   const manifest = JSON.parse(manifestText);
 
-  assert.equal(manifest.version, "3.4.64");
+  assert.equal(manifest.version, "3.4.65");
   assert.match(source, /version: "3\.4\.19"/);
   assert.match(source, /this\.readingVirtualStyleState = \/\* @__PURE__ \*\/ new Map\(\)/);
   assert.match(source, /shouldClearStaleReadingVirtualMinHeight\(\{/);
@@ -111,7 +111,7 @@ test("3.4.64 preserves reading content and cross-view frames without hidden-surf
   assert.match(source, /flushScheduledResize\(\)[\s\S]*window\.cancelAnimationFrame\(this\.resizeFrameId\)[\s\S]*window\.clearTimeout\(this\.resizeFallbackTimer\)/);
   assert.match(source, /this\.repairConnectedReadingSections\(\);\s*await this\.prepareInitialReadingLayout\(\)/);
   assert.match(source, /new MutationObserver\(\(mutations\) => \{\s*if \(mutations\.some\(\(mutation\) => isMarkdownContentMutation\(mutation\)\)\) \{\s*this\.noteFlowMarkdownAnnotationComplete = false;\s*this\.repairConnectedReadingSections\(\)/);
-  assert.match(source, /await this\.ensureDrawingsLoaded\(\);\s*this\.repairConnectedReadingSections\(\);/);
+  assert.match(source, /await this\.ensureDrawingsLoaded\(\);[\s\S]*?this\.repairConnectedReadingSections\(\);/);
   assert.match(source, /repairConnectedReadingSections\(renderer = this\.readingPreviewRenderer\(\)\)[\s\S]*renderer\.updateVirtualDisplay\?\.\(\);[\s\S]*section\.rendered !== false[\s\S]*section\.render\?\.\(\);[\s\S]*renderer\.measureSection\?\.\(section\);[\s\S]*renderer\.updateVirtualDisplay\?\.\(\)/);
   assert.match(source, /restoreReadingVirtualSections\(\)[\s\S]*this\.repairConnectedReadingSections\(renderer\)/);
   assert.match(source, /const requestFrame = \(\) => new Promise[\s\S]*window\.requestAnimationFrame\(finish\)[\s\S]*window\.setTimeout\(finish, 120\)/);
@@ -431,7 +431,8 @@ test("selection tool previews and commits exact NoteFlow Markdown insertion targ
 
   assert.match(source, /selectNoteFlowDropPlacement/);
   assert.match(dropSource, /this\.toolMode === TOOL_SELECT[\s\S]*queueDraggedNoteFlowPlacement\(clientX, clientY\)[\s\S]*window\.requestAnimationFrame/);
-  assert.match(dropSource, /notedraw-text-sort-target-before[\s\S]*notedraw-text-sort-target-after[\s\S]*notedraw-text-sort-target-left[\s\S]*notedraw-text-sort-target-right/);
+  assert.doesNotMatch(dropSource, /flowTarget\.classList\.add\(`notedraw-text-sort-target-/);
+  assert.doesNotMatch(dropSource, /target\.addClass\(`notedraw-text-sort-target-/);
   assert.match(dropSource, /noteDrawDropSide[\s\S]*noteDrawDropLine/);
   assert.match(dropSource, /const inlineRowHit = Number\(clientY\)[\s\S]*const inlineRow = this\.markdownDropRowMetrics\(inlineTarget, movingElements\)[\s\S]*const horizontalRoom = !this\.markdownDropIncludesHeading\(inlineTarget\)[\s\S]*inlineRowHit[\s\S]*movingLaneCount > 0[\s\S]*inlineRow\.canFit[\s\S]*laneWidth >= Math\.max\(180, inlineRow\.totalCount \* 32\)/);
   assert.match(dropSource, /noteFlowCandidateRect\(placement\.candidate, "inline"\)/);
@@ -439,7 +440,7 @@ test("selection tool previews and commits exact NoteFlow Markdown insertion targ
   assert.match(dropSource, /const intent = resolveDragDropHorizontalIntent\([\s\S]*horizontalRoom[\s\S]*\);[\s\S]*const horizontalSide = intent === "inline-right" \? "right" : null[\s\S]*const leftSnap = intent === "line-start"/);
   assert.match(dropSource, /canonicalNoteFlowGapPlacement\([\s\S]*canonicalRowKey[\s\S]*const peers = \[\][\s\S]*flowOrder = insertionIndex/);
   assert.match(dropSource, /noteFlowBoundary[\s\S]*flowBoundary/);
-  assert.match(dropSource, /applyElementStyles\(indicator, horizontalSide \? \{[\s\S]*width: "4px"[\s\S]*height: `\$\{Math\.max\(16, Math\.round\(targetRect\.height\)\)\}px`/);
+  assert.match(dropSource, /this\.applyDraggedNoteFlowLivePreview\(this\.dragNoteFlowPlacement\)/);
   assert.match(dropSource, /snapDraggedSelectionToNoteFlowPlacement[\s\S]*draggedNoteFlowClientBounds\(\)[\s\S]*const targetClientX = leftSnap[\s\S]*placement\.inlineBoundary[\s\S]*dragNoteFlowPlacementClientDelta/);
   assert.match(dragSource, /this\.usesDraggedNoteFlowPlacement\(\)[\s\S]*this\.queueDraggedNoteFlowPlacement\(event\.clientX, event\.clientY\)[\s\S]*this\.queueDraggedNoteFlowRefresh/);
   assert.match(finishSource, /requestedDropPlacement[\s\S]*this\.resolveDraggedNoteFlowPlacement[\s\S]*this\.snapDraggedSelectionToNoteFlowPlacement[\s\S]*preserveBoxGeometry:[\s\S]*scheduleNoteFlowLayout\(\{ operation: true, defer: true \}\)/);
@@ -495,6 +496,39 @@ test("reading double-click stays in preview and source view exposes the Markdown
   assert.match(source, /this\.previewEl\.addEventListener\("dblclick", this\.onPreviewDoubleClick, true\)/);
   assert.match(source, /onPreviewDoubleClick\(event\)[\s\S]*this\.surfaceType !== "preview"[\s\S]*this\.onCanvasDoubleClick\(event\)[\s\S]*stopImmediatePropagation/);
   assert.match(source, /this\.previewEl\?\.removeEventListener\("dblclick", this\.onPreviewDoubleClick, true\)/);
+});
+
+test("selection geometry follows live element bounds and drag preview owns placement feedback", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const selectionStart = source.indexOf("  captureSelectionFrameSnapshot(");
+  const selectionSource = source.slice(selectionStart, source.indexOf("  noteFlowAppliedVerticalInsets", selectionStart));
+  const dragStart = source.indexOf("  updateDraggedNoteFlowPlacement(");
+  const dragSource = source.slice(dragStart, source.indexOf("  syncMarkdownDropFromNoteFlowPlacement", dragStart));
+  const markdownDropStart = source.indexOf("  updateMarkdownBlockDropTarget(");
+  const markdownDropSource = source.slice(markdownDropStart, source.indexOf("  markdownDropRowMetrics", markdownDropStart));
+
+  assert.match(selectionSource, /const bounds = this\.getSelectedStrokeBounds\(\)/);
+  assert.match(selectionSource, /const geometryKey = bounds/);
+  assert.match(selectionSource, /const key = `\$\{this\.selectionStateKey\(\)\}\|\$\{geometryKey\}`/);
+  assert.match(dragSource, /this\.applyDraggedNoteFlowLivePreview\(this\.dragNoteFlowPlacement\)/);
+  assert.doesNotMatch(dragSource, /flowTarget\.classList\.add\(`notedraw-text-sort-target-/);
+  assert.doesNotMatch(markdownDropSource, /target\.addClass\(`notedraw-text-sort-target-/);
+});
+
+test("source Markdown editing exposes a CodeMirror-backed floating format toolbar", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+
+  assert.match(source, /this\.surfaceType === "source" \|\| this\.allowTextEdit && this\.surfaceType !== "webview"/);
+  assert.match(source, /bindSourceFormatToolbarEvents\(\)/);
+  assert.match(source, /sourceSelectionRange\(\)/);
+  assert.match(source, /cmView\.state\.sliceDoc\(range\.from, range\.to\)/);
+  assert.match(source, /cmView\.dispatch\(\{[\s\S]*changes,[\s\S]*selection: nextSelection/);
+  assert.match(source, /applySourceTextInlineFormat\(tagName, styles\)/);
+  assert.match(source, /applySourceTextBlockFormat\(kind\)/);
+  assert.match(source, /insertSourceTextBreak\(\)/);
+  assert.match(source, /clearSourceTextFormat\(\)/);
+  assert.match(source, /this\.surfaceType === "source" && this\.toolMode === TOOL_EDIT_MD/);
+  assert.match(source, /const sourceMarkdownEditActive = this\.surfaceType === "source" && this\.toolMode === TOOL_EDIT_MD;[\s\S]*this\.formatToolbar\?\.classList\.toggle\("is-visible", sourceMarkdownEditActive\)/);
 });
 
 test("selection requires a completed tap before moving an element and reserves resize for frame corners", async () => {
