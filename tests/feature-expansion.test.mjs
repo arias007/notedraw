@@ -147,7 +147,9 @@ test("structured element clipboard supports long-press actions, commands, and cr
   assert.match(source, /stroke\.layout = null/);
   assert.match(source, /idMap\.get\(stroke\.connector\.fromId\)/);
   assert.match(source, /this\.captureResponsiveAnchorsForIndexes\(indexes\.filter/);
-  assert.match(source, /selectionFramePaddingPx\(\) \{[\s\S]*getSelectedStrokeMaxWidth\(\) \/ 2 \+ 2/);
+  assert.match(source, /elementFramePaddingPx\(strokeIndexes, markdownCount = 0\)[\s\S]*Math\.max\(\.\.\.widths\) \/ 2 \+ 2/);
+  assert.match(source, /selectionFramePaddingPx\(\)[\s\S]*this\.elementFramePaddingPx\(/);
+  assert.match(source, /elementGroupFramePaddingPx\(groupId\)[\s\S]*this\.elementFramePaddingPx\(/);
   assert.match(source, /const hitPadding = this\.selectionHitPaddingPx\(\)/);
   assert.doesNotMatch(source, /getSelectedStrokeMaxWidth\(\) \+ 4/);
   assert.match(source, /\{ icon: "copy", key: "copyElement"/);

@@ -290,6 +290,19 @@ test("selected Markdown text edits on a second tap while a moved tap still drags
   assert.match(editSource, /element\.addEventListener\("blur", onBlur\);\s*return true;/);
 });
 
+test("long press opens the element menu without falling through to edit", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const longPressSource = source.slice(source.indexOf("  startSelectionLongPress("), source.indexOf("  clearSelectionLongPress("));
+  const pointerUpSource = source.slice(source.indexOf("  onPointerUp(event"), source.indexOf("  finishPointerInteraction(", source.indexOf("  onPointerUp(event")));
+
+  assert.match(source, /startPendingSelectionTap\(event, action\)[\s\S]*this\.startSelectionLongPress\(event, \{ pendingAction: action \}\)/);
+  assert.match(longPressSource, /this\.selectionLongPressConsumedPointerId = state\.pointerId/);
+  assert.match(longPressSource, /\["select-stroke", "select-markdown", "select-group"\]\.includes\(state\.pendingAction\.type\)[\s\S]*this\.applyPendingSelectionTap\(state\.pendingAction\)/);
+  assert.match(longPressSource, /this\.pendingSelectionTap = null[\s\S]*this\.showSelectionMenu\(state\.client\)/);
+  assert.match(pointerUpSource, /this\.selectionLongPressConsumedPointerId === event\.pointerId[\s\S]*this\.cancelPendingSelectionTap\(\)[\s\S]*return;/);
+  assert.doesNotMatch(longPressSource, /startTextEdit|editFloatingTextStroke/);
+});
+
 test("Markdown resize keeps continuous horizontal width inside its grid span", async () => {
   const source = await readFile(sourceUrl, "utf8");
 
@@ -319,7 +332,7 @@ test("NoteFlow dragging previews the same snapped and packed placement committed
   assert.match(moveSource, /const previewDx = hasDraggedNoteFlow \? dx : snappedDx/);
   assert.match(moveSource, /const previewDy = hasDraggedNoteFlow \? dy : snappedDy/);
   assert.match(placementSource, /this\.applyDraggedNoteFlowLivePreview\(this\.dragNoteFlowPlacement\)/);
-  assert.match(placementSource, /const inlineEdgeBand = clamp\(targetHeight \* 0\.22, 4, 12\)[\s\S]*const inlineRowHit = Number\(clientY\) > targetRect\.top \+ inlineEdgeBand[\s\S]*Number\(clientY\) < targetRect\.bottom - inlineEdgeBand[\s\S]*const horizontalRoom = inlineRowHit/);
+  assert.match(placementSource, /const inlineEdgeBand = clamp\(targetHeight \* 0\.22, 4, 12\)[\s\S]*const inlineRowHit = Number\(clientY\) > targetRect\.top \+ inlineEdgeBand[\s\S]*Number\(clientY\) < targetRect\.bottom - inlineEdgeBand[\s\S]*const horizontalRoom = !this\.markdownDropIncludesHeading\(inlineTarget\)[\s\S]*inlineRowHit/);
   assert.match(dragSource, /createComment\("notedraw-note-flow-drag-origin"\)[\s\S]*state\.domMarker = marker/);
   assert.match(livePreviewSource, /this\.restoreDraggedNoteFlowLivePreview\(\)[\s\S]*applyDraggedNoteFlowAnchorDomPreview\(resolved, drop\)[\s\S]*applyDraggedMarkdownDomPreview\(drop\)[\s\S]*applyDraggedNoteFlowReservationPreview\(liveResolved, movedIndexes, rowExtent\)/);
   assert.match(livePreviewSource, /const liveResolved = resolved[\s\S]*snapDraggedSelectionToNoteFlowPlacement\(liveResolved, movedIndexes\)[\s\S]*dragDropGeometrySnapshot\(\)\?\.noteFlowCandidates[\s\S]*reflowNoteFlowElementsAfterDrag\(movedIndexes, liveResolved, \{[\s\S]*preview: true/);
@@ -583,21 +596,31 @@ test("inherited section line metadata is remapped before NoteFlow drop targeting
   assert.match(anchorSource, /semanticMatch[\s\S]*inheritedMatch/);
 });
 
-test("boxed groups have two-level selection, drag membership, and a non-obscuring fill layer", async () => {
+test("boxed and locked groups keep member selection, exact frames, and drag membership", async () => {
   const [source, styles] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(stylesUrl, "utf8")
   ]);
 
   assert.match(source, /findBoxedElementGroupAtPoint\(point\)/);
+  assert.match(source, /findLockedElementGroupFrameAtPoint\(point\)[\s\S]*!this\.isElementGroupFullySelected\(lockedGroup\.id\)[\s\S]*type: "select-group"[\s\S]*startSelectedStrokeDrag\(event, point, -1, \{ preserveSelection: true \}\)/);
   assert.match(source, /type: "enter-stroke-group"[\s\S]*groupId: hitGroupId/);
   assert.match(source, /type: "select-group"[\s\S]*groupId: boxedGroup\.id/);
   assert.match(source, /applyPendingSelectionTap\(pending\)[\s\S]*this\.enteredElementGroupIds\.add\(pending\.groupId\)[\s\S]*this\.selectElementGroup\(pending\.groupId\)/);
   assert.match(source, /updateDraggedElementGroupMembership\(event, movedIndexes/);
+  assert.match(source, /filter\(\(group\) => group\.boxed \|\| group\.locked\)[\s\S]*dragElementGroupBounds/);
+  assert.match(source, /filter\(\(item\) => item\.boxed \|\| item\.locked\)/);
   assert.match(source, /item\.groupId = destination\.id/);
   assert.match(source, /item\.groupId = ""/);
   assert.match(source, /drawElementGroupBackgrounds\(\)/);
   assert.match(source, /this\.underlayCtx\.fillStyle = group\.backgroundColor/);
+  assert.match(source, /elementGroupFramePaddingPx\(groupId\)[\s\S]*this\.elementFramePaddingPx\([\s\S]*groupMemberStrokeIndexes\(groupId\)[\s\S]*groupMemberMarkdownBlocks\(groupId\)\.length/);
+  assert.match(source, /selectionFramePaddingPx\(\)[\s\S]*this\.elementFramePaddingPx\([\s\S]*this\.getSelectedStrokeIndexes\(\)[\s\S]*this\.getSelectedMarkdownBlocks\(\)\.length/);
+  assert.match(source, /getElementGroupBounds\(groupId\)[\s\S]*markdownElementCanvasBounds\(this\.markdownBlockElement\(block\), \{ forSelection: true \}\)/);
+  assert.match(source, /expandSelectedGroups\(\)[\s\S]*!this\.elementGroup\(id\)\?\.locked/);
+  assert.match(source, /toggleSelectedStrokeLock\(\)[\s\S]*const groupId = shouldUnlock \|\| itemCount < 2[\s\S]*stroke\.groupId = groupId[\s\S]*block\.groupId = groupId/);
+  assert.match(source, /pruneElementGroups\(\)[\s\S]*!group\.boxed && strokeIndexes\.length \+ blocks\.length < 2[\s\S]*groupId = ""/);
+  assert.match(source, /toggleSelectedElementBox\(\)[\s\S]*!group\.backgroundColor[\s\S]*group\.backgroundColor = [\s\S]*group\.boxed = false/);
   assert.match(styles, /\.notedraw-md-block \{/);
   assert.match(styles, /isolation: isolate/);
   assert.match(styles, /pointer-events: none/);
