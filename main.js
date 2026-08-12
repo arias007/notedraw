@@ -1704,6 +1704,40 @@ function buildVirtualMarkdownSectionAnchors(sections, {
 // src/selection-draw-gesture.mjs
 var SELECTED_DRAW_GESTURE_DRAW_OR_DESELECT = "draw-or-deselect";
 var SELECTED_DRAW_GESTURE_MANIPULATE = "manipulate";
+function fitSelectionFrameToCanvas(frame, {
+  canvasWidth,
+  canvasHeight,
+  inset = 0
+} = {}) {
+  if (!frame) {
+    return null;
+  }
+  const width = Math.max(0, Number(canvasWidth) || 0);
+  const height = Math.max(0, Number(canvasHeight) || 0);
+  const x1 = Math.min(Number(frame.x) || 0, (Number(frame.x) || 0) + (Number(frame.width) || 0));
+  const x2 = Math.max(Number(frame.x) || 0, (Number(frame.x) || 0) + (Number(frame.width) || 0));
+  const y1 = Math.min(Number(frame.y) || 0, (Number(frame.y) || 0) + (Number(frame.height) || 0));
+  const y2 = Math.max(Number(frame.y) || 0, (Number(frame.y) || 0) + (Number(frame.height) || 0));
+  if (!width || !height) {
+    return { x: x1, y: y1, width: x2 - x1, height: y2 - y1 };
+  }
+  const safeInset = Math.max(0, Math.min(Number(inset) || 0, width / 2, height / 2));
+  const minX = safeInset;
+  const maxX = Math.max(minX, width - safeInset);
+  const minY = safeInset;
+  const maxY = Math.max(minY, height - safeInset);
+  const clampTo = (value, min, max) => Math.min(max, Math.max(min, value));
+  const left = clampTo(x1, minX, maxX);
+  const right = clampTo(x2, minX, maxX);
+  const top = clampTo(y1, minY, maxY);
+  const bottom = clampTo(y2, minY, maxY);
+  return {
+    x: left,
+    y: top,
+    width: Math.max(0, right - left),
+    height: Math.max(0, bottom - top)
+  };
+}
 function resolveSelectedDrawGesture({
   toolMode,
   hasSelection,
@@ -3824,8 +3858,11 @@ var LONG_PRESS_MS = 550;
 var SELECT_TAP_DISTANCE = 6;
 var SELECT_STROKE_PADDING = 8;
 var SELECTED_STROKE_ALPHA = 0.38;
-var SELECT_RESIZE_HANDLE_SIZE = 11;
+var SELECT_RESIZE_HANDLE_SIZE = 9;
 var SELECT_RESIZE_HANDLE_HIT_RADIUS = 22;
+var SELECTION_FRAME_COLOR = "rgba(124, 58, 237, 0.96)";
+var SELECTION_FRAME_LINE_WIDTH = 1.5;
+var SELECTION_FRAME_RADIUS = 7;
 var SNAP_GRID_PX = 8;
 var SNAP_THRESHOLD_PX = 7;
 var DRAWING_INTERPOLATION_STEP_PX = 3;
@@ -17207,20 +17244,23 @@ var PreviewDrawingController = class {
     if (!this.hasHybridSelection()) {
       return;
     }
-    const frame = this.getSelectedFrameCanvasRect();
+    const frame = this.getVisibleSelectionFrameCanvasRect();
     if (!frame) {
       return;
     }
     const { x, y, width, height } = frame;
     this.ctx.save();
-    this.ctx.strokeStyle = "rgba(255, 193, 7, 0.95)";
-    this.ctx.lineWidth = 2;
-    this.ctx.setLineDash([6, 4]);
-    this.ctx.strokeRect(x, y, width, height);
+    this.ctx.strokeStyle = SELECTION_FRAME_COLOR;
+    this.ctx.lineWidth = SELECTION_FRAME_LINE_WIDTH;
+    this.ctx.lineCap = "round";
+    this.ctx.lineJoin = "round";
+    this.ctx.setLineDash([3, 2]);
+    roundRect(this.ctx, x, y, width, height, SELECTION_FRAME_RADIUS);
+    this.ctx.stroke();
     this.ctx.setLineDash([]);
-    this.ctx.fillStyle = "#ffffff";
-    this.ctx.strokeStyle = "rgba(255, 193, 7, 0.98)";
-    this.ctx.lineWidth = 2;
+    this.ctx.fillStyle = "rgba(255, 255, 255, 0.96)";
+    this.ctx.strokeStyle = SELECTION_FRAME_COLOR;
+    this.ctx.lineWidth = SELECTION_FRAME_LINE_WIDTH;
     for (const handle of getSelectionHandlePointsFromRect({ x, y, width, height })) {
       this.ctx.fillRect(
         handle.x - SELECT_RESIZE_HANDLE_SIZE / 2,
@@ -21104,12 +21144,19 @@ var PreviewDrawingController = class {
     }
     return this.captureSelectionFrameSnapshot() || null;
   }
+  getVisibleSelectionFrameCanvasRect() {
+    return fitSelectionFrameToCanvas(this.getSelectedFrameCanvasRect(), {
+      canvasWidth: this.canvasWidth(),
+      canvasHeight: this.canvasHeight(),
+      inset: SELECT_RESIZE_HANDLE_SIZE / 2 + SELECTION_FRAME_LINE_WIDTH / 2
+    });
+  }
   findSelectionHandleAt(point) {
     const hasUnlocked = this.getSelectedStrokeIndexes().some((index) => !this.drawingData.strokes[index]?.locked || this.drawingData.strokes[index]?.groupId) || this.getSelectedMarkdownBlocks().some((block) => !block.locked || block.groupId);
     if (!hasUnlocked) {
       return null;
     }
-    const frame = this.getSelectedFrameCanvasRect();
+    const frame = this.getVisibleSelectionFrameCanvasRect();
     if (!frame) {
       return null;
     }
