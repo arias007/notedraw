@@ -90,6 +90,23 @@ test("inline NoteFlow keeps more than four mixed element kinds side by side when
   assert.ok(placed.at(-1).maxX <= 380);
 });
 
+test("a newly inserted inline element shrinks into the remaining row width", () => {
+  const placed = packNoteFlowInlineRectangles([
+    { id: "new", index: 0, order: 0, minX: 0, maxX: 140, minY: 0, maxY: 30, shrinkToFit: true }
+  ], {
+    anchor: { minX: 0, maxX: 170, minY: 10, maxY: 50 },
+    blockers: [{ minX: 250, maxX: 300, minY: 10, maxY: 50 }],
+    laneLeft: 0,
+    laneRight: 300,
+    gap: 8,
+    minItemWidth: 24
+  });
+
+  assert.deepEqual(placed.map(({ id, minX, maxX, minY, scaleX }) => ({ id, minX, maxX, minY, scaleX })), [
+    { id: "new", minX: 178, maxX: 242, minY: 10, scaleX: 64 / 140 }
+  ]);
+});
+
 test("inline NoteFlow wraps below a full Markdown row and remains compact", () => {
   const anchor = { minX: 0, maxX: 120, minY: 10, maxY: 50 };
   const blocker = { minX: 128, maxX: 300, minY: 10, maxY: 50 };

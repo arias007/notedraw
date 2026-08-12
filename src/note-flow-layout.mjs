@@ -958,11 +958,13 @@ export function packNoteFlowInlineRectangles(items, {
   blockers = [],
   laneLeft = 0,
   laneRight,
-  gap = 6
+  gap = 6,
+  minItemWidth = 24
 } = {}) {
   const left = finite(laneLeft, 0);
   const right = Math.max(left, finite(laneRight, left));
   const clearance = Math.max(0, finite(gap, 6));
+  const minimumWidth = Math.max(1, finite(minItemWidth, 24));
   const normalizeRect = (rect, index = -1) => {
     const minX = finite(rect?.minX, Number.NaN);
     const maxX = finite(rect?.maxX, Number.NaN);
@@ -1016,6 +1018,35 @@ export function packNoteFlowInlineRectangles(items, {
         placement = { ...item, minX: x, maxX: x + item.width, minY: y, maxY: y + item.height };
         break;
       }
+      if (firstRow && item.shrinkToFit) {
+        const gaps = [];
+        let gapLeft = firstRowLeft;
+        for (const rect of occupied) {
+          if (rect.maxX <= gapLeft) {
+            continue;
+          }
+          if (rect.minX > gapLeft) {
+            gaps.push({ left: gapLeft, right: Math.min(right, rect.minX - clearance) });
+          }
+          gapLeft = Math.max(gapLeft, rect.maxX + clearance);
+        }
+        if (gapLeft < right) {
+          gaps.push({ left: gapLeft, right });
+        }
+        const availableGap = gaps.sort((a, b) => (b.right - b.left) - (a.right - a.left))[0];
+        const availableWidth = availableGap ? availableGap.right - availableGap.left : 0;
+        if (availableWidth >= minimumWidth) {
+          const width = Math.min(item.width, availableWidth);
+          placement = {
+            ...item,
+            minX: availableGap.left,
+            maxX: availableGap.left + width,
+            minY: y,
+            maxY: y + item.height
+          };
+          break;
+        }
+      }
       const nextY = Math.min(...occupied.map((rect) => rect.maxY + clearance).filter((value) => value > y + 0.5));
       y = Number.isFinite(nextY) ? nextY : y + Math.max(item.height, clearance);
       firstRow = false;
@@ -1038,6 +1069,7 @@ export function packNoteFlowInlineRectangles(items, {
     minY: item.minY,
     maxY: item.maxY,
     deltaX: item.minX - item.originalMinX,
-    deltaY: item.minY - item.originalMinY
+    deltaY: item.minY - item.originalMinY,
+    scaleX: (item.maxX - item.minX) / Math.max(0.001, item.width)
   }));
 }
