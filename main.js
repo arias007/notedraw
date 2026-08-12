@@ -9014,6 +9014,7 @@ var PreviewDrawingController = class {
     this.resizeSelectionPointerGeometry = null;
     this.resizeSelectionClientBounds = null;
     this.resizeSelectionMoved = false;
+    this.resizeNoteFlowFrameId = null;
     this.selectingStrokes = false;
     this.selectionStartPoint = null;
     this.selectionCurrentPoint = null;
@@ -9800,6 +9801,7 @@ var PreviewDrawingController = class {
       this.scrollSettleTimer = null;
     }
     this.cancelMultiTouchFrame();
+    this.cancelSelectedResizeNoteFlowLayout();
     this.resizeObserver?.disconnect();
     this.markdownRenderObserver?.disconnect();
     this.markdownRenderObserver = null;
@@ -16644,12 +16646,43 @@ ${selected}
       this.invalidateStaticCache();
     }
     if (Array.from(this.resizeSelectionOriginalStrokes.keys()).some((index) => this.drawingData.strokes[index]?.noteFlow?.enabled)) {
-      this.alignNoteFlowStrokesToReservedRows(null, { measureOnly: true });
-      this.scheduleNoteFlowLayout({ operation: true });
+      this.queueSelectedResizeNoteFlowLayout();
+    }
+  }
+  queueSelectedResizeNoteFlowLayout() {
+    this.scheduleNoteFlowLayout({ operation: true, defer: true });
+    if (this.resizeNoteFlowFrameId !== null || this.destroyed) {
+      return;
+    }
+    this.resizeNoteFlowFrameId = window.requestAnimationFrame(() => {
+      this.resizeNoteFlowFrameId = null;
+      this.flushSelectedResizeNoteFlowLayout();
+    });
+  }
+  flushSelectedResizeNoteFlowLayout() {
+    if (this.destroyed || !this.resizingSelection) {
+      return false;
+    }
+    this.previewEl?.getBoundingClientRect?.();
+    this.noteFlowSettledRowExtents = /* @__PURE__ */ new Map();
+    const changed = this.applyNoteFlowLayout();
+    const aligned = this.alignNoteFlowStrokesToReservedRows(null, { interaction: true });
+    if (changed || aligned) {
+      this.invalidateSelectionFrameSnapshot();
+      this.requestRender(this.selectionHasDomStrokes() ? "interaction" : false);
+    }
+    return changed || aligned;
+  }
+  cancelSelectedResizeNoteFlowLayout() {
+    if (this.resizeNoteFlowFrameId !== null) {
+      window.cancelAnimationFrame(this.resizeNoteFlowFrameId);
+      this.resizeNoteFlowFrameId = null;
     }
   }
   finishSelectedStrokeResize(event) {
     if (this.resizeSelectionMoved) {
+      this.cancelSelectedResizeNoteFlowLayout();
+      this.flushSelectedResizeNoteFlowLayout();
       const resizedIndexes = Array.from(this.resizeSelectionOriginalStrokes?.keys() || []);
       this.captureResponsiveAnchorsForIndexes(resizedIndexes);
       this.syncBoundConnectors({ elementIds: this.connectorTargetIdsForStrokeIndexes(resizedIndexes) });
@@ -16705,6 +16738,7 @@ ${selected}
   }
   clearSelectedStrokeResizeState() {
     const needsGeometrySettle = this.resizingSelection;
+    this.cancelSelectedResizeNoteFlowLayout();
     this.resizingSelection = false;
     this.resizeSelectionHandle = null;
     this.resizeSelectionStartPoint = null;
@@ -16722,6 +16756,9 @@ ${selected}
     this.previewEl.removeClass("is-resizing-selection");
     this.captureSelectionFrameSnapshot({ force: true });
     if (needsGeometrySettle && !this.destroyed) {
+      if (this.noteFlowOperationPending) {
+        this.scheduleNoteFlowLayout();
+      }
       this.scheduleResize({ layout: false, measure: true });
     }
   }
@@ -19057,15 +19094,15 @@ ${selected}
     const target = isConcreteMarkdownBlockElement(rawTarget) ? rawTarget : findNoteFlowInlineMeasureElement(candidate.element);
     const flowElement = this.markdownBlockFlowElement(target) || target;
     const parent = flowElement?.parentElement;
-    const lane = this.dragContentLaneRect || this.layoutMeasureEl?.getBoundingClientRect?.();
-    const laneWidth = Number(lane?.right) - Number(lane?.left);
-    const boundary = Number(placement.inlineBoundary);
-    if (!target?.isConnected || !parent || !(laneWidth > 1) || !Number.isFinite(boundary)) {
+    if (!target?.isConnected || !parent) {
       return false;
     }
-    const targetWidth = Math.max(1, boundary - Number(lane.left) - 10);
-    const row = drop?.row;
-    const span = row?.canFit ? row.span : clamp10(Math.floor(targetWidth / laneWidth * 12), 1, 10);
+    const movingElements = new Set(this.draggedNoteFlowMarkdownStates().map((state) => state.element));
+    const row = drop?.row || this.markdownDropRowMetrics(target, movingElements);
+    if (!row?.canFit) {
+      return false;
+    }
+    const span = row.span;
     this.setDraggedNoteFlowDomClass(parent, "notedraw-md-grid", true);
     const targetBlock = this.findMarkdownBlockRecordForElement(target);
     const rowMemberIds = new Set([targetBlock?.id, ...row?.memberIds || []].filter(Boolean));
@@ -19421,7 +19458,12 @@ ${selected}
       noteFlowBoundary = true;
     }
     const previous = this.dragNoteFlowPlacement;
-    const presentationChanged = previous?.candidate?.sourceElement !== flowTarget || previous?.candidate?.element !== flowCandidate.element || previous?.side !== flowSide || previous?.line !== Number(flowLine) || previous?.horizontalSide !== horizontalSide || previous?.leftSnap !== leftSnap || previous?.flowOrder !== flowOrder || previous?.inlineBoundary !== inlineBoundary || previous?.boundary !== flowBoundary;
+    const sameSemanticSlot = previous?.candidate?.sourceElement === flowTarget && previous?.candidate?.element === flowCandidate.element && previous?.side === flowSide && previous?.line === Number(flowLine) && previous?.horizontalSide === horizontalSide && previous?.leftSnap === leftSnap && previous?.flowOrder === flowOrder;
+    if (sameSemanticSlot) {
+      flowBoundary = previous.boundary;
+      inlineBoundary = previous.inlineBoundary;
+    }
+    const presentationChanged = previous?.candidate?.sourceElement !== flowTarget || previous?.candidate?.element !== flowCandidate.element || previous?.side !== flowSide || previous?.line !== Number(flowLine) || previous?.horizontalSide !== horizontalSide || previous?.leftSnap !== leftSnap || previous?.flowOrder !== flowOrder;
     if (presentationChanged || this.dragNoteFlowTargetElement) {
       this.removeDraggedNoteFlowPlacementVisual();
     }
@@ -19444,8 +19486,6 @@ ${selected}
       this.dragNoteFlowPlacement.horizontalSide || "row",
       this.dragNoteFlowPlacement.leftSnap ? "left" : "free",
       this.dragNoteFlowPlacement.flowOrder,
-      Math.round(Number(this.dragNoteFlowPlacement.inlineBoundary) || 0),
-      Math.round(Number(this.dragNoteFlowPlacement.boundary) || 0),
       this.dragNoteFlowPlacement.candidate?.blockKey || ""
     ].join(":");
     const preserveDomPreview = previewSignature === this.dragNoteFlowPreviewSignature && Boolean(this.dragNoteFlowDomPreview);
@@ -20253,7 +20293,8 @@ ${selected}
   }
   alignNoteFlowStrokesToReservedRows(allCandidates = null, options = {}) {
     const measureOnly = options.measureOnly === true;
-    if (!measureOnly && (this.draggingStroke || this.resizingSelection) || !this.supportsNoteFlow() || !this.previewEl?.isConnected) {
+    const interaction = options.interaction === true;
+    if (!measureOnly && !interaction && (this.draggingStroke || this.resizingSelection) || !this.supportsNoteFlow() || !this.previewEl?.isConnected) {
       return false;
     }
     const canvasWidth = this.canvasWidth();

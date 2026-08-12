@@ -5355,6 +5355,7 @@ var PreviewDrawingController = class {
     this.resizeSelectionPointerGeometry = null;
     this.resizeSelectionClientBounds = null;
     this.resizeSelectionMoved = false;
+    this.resizeNoteFlowFrameId = null;
     this.selectingStrokes = false;
     this.selectionStartPoint = null;
     this.selectionCurrentPoint = null;
@@ -6153,6 +6154,7 @@ var PreviewDrawingController = class {
       this.scrollSettleTimer = null;
     }
     this.cancelMultiTouchFrame();
+    this.cancelSelectedResizeNoteFlowLayout();
     this.resizeObserver?.disconnect();
     this.markdownRenderObserver?.disconnect();
     this.markdownRenderObserver = null;
@@ -13195,15 +13197,46 @@ var PreviewDrawingController = class {
       this.invalidateStaticCache();
     }
     if (Array.from(this.resizeSelectionOriginalStrokes.keys()).some((index) => this.drawingData.strokes[index]?.noteFlow?.enabled)) {
-      // Markdown width/min-height is already applied above. Measure the new
-      // row geometry in the same interaction frame so the following layout
-      // pass pushes or releases downstream content on the first resize.
-      this.alignNoteFlowStrokesToReservedRows(null, { measureOnly: true });
-      this.scheduleNoteFlowLayout({ operation: true });
+      this.queueSelectedResizeNoteFlowLayout();
+    }
+  }
+  queueSelectedResizeNoteFlowLayout() {
+    this.scheduleNoteFlowLayout({ operation: true, defer: true });
+    if (this.resizeNoteFlowFrameId !== null || this.destroyed) {
+      return;
+    }
+    this.resizeNoteFlowFrameId = window.requestAnimationFrame(() => {
+      this.resizeNoteFlowFrameId = null;
+      this.flushSelectedResizeNoteFlowLayout();
+    });
+  }
+  flushSelectedResizeNoteFlowLayout() {
+    if (this.destroyed || !this.resizingSelection) {
+      return false;
+    }
+    // Read after the resized DOM presentation has been written. This forces
+    // the reservation pass to use this interaction frame instead of the
+    // previous frame's block height.
+    this.previewEl?.getBoundingClientRect?.();
+    this.noteFlowSettledRowExtents = /* @__PURE__ */ new Map();
+    const changed = this.applyNoteFlowLayout();
+    const aligned = this.alignNoteFlowStrokesToReservedRows(null, { interaction: true });
+    if (changed || aligned) {
+      this.invalidateSelectionFrameSnapshot();
+      this.requestRender(this.selectionHasDomStrokes() ? "interaction" : false);
+    }
+    return changed || aligned;
+  }
+  cancelSelectedResizeNoteFlowLayout() {
+    if (this.resizeNoteFlowFrameId !== null) {
+      window.cancelAnimationFrame(this.resizeNoteFlowFrameId);
+      this.resizeNoteFlowFrameId = null;
     }
   }
   finishSelectedStrokeResize(event) {
     if (this.resizeSelectionMoved) {
+      this.cancelSelectedResizeNoteFlowLayout();
+      this.flushSelectedResizeNoteFlowLayout();
       const resizedIndexes = Array.from(this.resizeSelectionOriginalStrokes?.keys() || []);
       this.captureResponsiveAnchorsForIndexes(resizedIndexes);
       this.syncBoundConnectors({ elementIds: this.connectorTargetIdsForStrokeIndexes(resizedIndexes) });
@@ -13259,6 +13292,7 @@ var PreviewDrawingController = class {
   }
   clearSelectedStrokeResizeState() {
     const needsGeometrySettle = this.resizingSelection;
+    this.cancelSelectedResizeNoteFlowLayout();
     this.resizingSelection = false;
     this.resizeSelectionHandle = null;
     this.resizeSelectionStartPoint = null;
@@ -13276,6 +13310,9 @@ var PreviewDrawingController = class {
     this.previewEl.removeClass("is-resizing-selection");
     this.captureSelectionFrameSnapshot({ force: true });
     if (needsGeometrySettle && !this.destroyed) {
+      if (this.noteFlowOperationPending) {
+        this.scheduleNoteFlowLayout();
+      }
       this.scheduleResize({ layout: false, measure: true });
     }
   }
@@ -15674,17 +15711,15 @@ var PreviewDrawingController = class {
       : findNoteFlowInlineMeasureElement(candidate.element);
     const flowElement = this.markdownBlockFlowElement(target) || target;
     const parent = flowElement?.parentElement;
-    const lane = this.dragContentLaneRect || this.layoutMeasureEl?.getBoundingClientRect?.();
-    const laneWidth = Number(lane?.right) - Number(lane?.left);
-    const boundary = Number(placement.inlineBoundary);
-    if (!target?.isConnected || !parent || !(laneWidth > 1) || !Number.isFinite(boundary)) {
+    if (!target?.isConnected || !parent) {
       return false;
     }
-    const targetWidth = Math.max(1, boundary - Number(lane.left) - 10);
-    const row = drop?.row;
-    const span = row?.canFit
-      ? row.span
-      : clamp(Math.floor(targetWidth / laneWidth * 12), 1, 10);
+    const movingElements = new Set(this.draggedNoteFlowMarkdownStates().map((state) => state.element));
+    const row = drop?.row || this.markdownDropRowMetrics(target, movingElements);
+    if (!row?.canFit) {
+      return false;
+    }
+    const span = row.span;
     this.setDraggedNoteFlowDomClass(parent, "notedraw-md-grid", true);
     const targetBlock = this.findMarkdownBlockRecordForElement(target);
     const rowMemberIds = new Set([targetBlock?.id, ...(row?.memberIds || [])].filter(Boolean));
@@ -16081,15 +16116,24 @@ var PreviewDrawingController = class {
     // The live preview is the placement feedback; keep the computed placement
     // for commit without drawing a second blue target on top of it.
     const previous = this.dragNoteFlowPlacement;
+    const sameSemanticSlot = previous?.candidate?.sourceElement === flowTarget
+      && previous?.candidate?.element === flowCandidate.element
+      && previous?.side === flowSide
+      && previous?.line === Number(flowLine)
+      && previous?.horizontalSide === horizontalSide
+      && previous?.leftSnap === leftSnap
+      && previous?.flowOrder === flowOrder;
+    if (sameSemanticSlot) {
+      flowBoundary = previous.boundary;
+      inlineBoundary = previous.inlineBoundary;
+    }
     const presentationChanged = previous?.candidate?.sourceElement !== flowTarget
       || previous?.candidate?.element !== flowCandidate.element
       || previous?.side !== flowSide
       || previous?.line !== Number(flowLine)
       || previous?.horizontalSide !== horizontalSide
       || previous?.leftSnap !== leftSnap
-      || previous?.flowOrder !== flowOrder
-      || previous?.inlineBoundary !== inlineBoundary
-      || previous?.boundary !== flowBoundary;
+      || previous?.flowOrder !== flowOrder;
     if (presentationChanged || this.dragNoteFlowTargetElement) {
       this.removeDraggedNoteFlowPlacementVisual();
     }
@@ -16112,8 +16156,6 @@ var PreviewDrawingController = class {
       this.dragNoteFlowPlacement.horizontalSide || "row",
       this.dragNoteFlowPlacement.leftSnap ? "left" : "free",
       this.dragNoteFlowPlacement.flowOrder,
-      Math.round(Number(this.dragNoteFlowPlacement.inlineBoundary) || 0),
-      Math.round(Number(this.dragNoteFlowPlacement.boundary) || 0),
       this.dragNoteFlowPlacement.candidate?.blockKey || ""
     ].join(":");
     const preserveDomPreview = previewSignature === this.dragNoteFlowPreviewSignature
@@ -17050,7 +17092,8 @@ var PreviewDrawingController = class {
   }
   alignNoteFlowStrokesToReservedRows(allCandidates = null, options = {}) {
     const measureOnly = options.measureOnly === true;
-    if (!measureOnly && (this.draggingStroke || this.resizingSelection) || !this.supportsNoteFlow() || !this.previewEl?.isConnected) {
+    const interaction = options.interaction === true;
+    if (!measureOnly && !interaction && (this.draggingStroke || this.resizingSelection) || !this.supportsNoteFlow() || !this.previewEl?.isConnected) {
       return false;
     }
     const canvasWidth = this.canvasWidth();
