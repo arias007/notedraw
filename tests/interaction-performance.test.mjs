@@ -48,7 +48,7 @@ test("ordinary drags and resizes do not schedule NoteFlow layout work", async ()
   assert.match(queueSource, /let queued = false/);
   assert.match(queueSource, /stroke\?\.noteFlow\?\.enabled[\s\S]*queued = true/);
   assert.match(queueSource, /if \(queued && !this\.draggingStroke\) \{\s*this\.scheduleNoteFlowLayout\(\)/);
-  assert.match(resizeSource, /if \(Array\.from\(this\.resizeSelectionOriginalStrokes\.keys\(\)\)\.some\([\s\S]*noteFlow\?\.enabled\)\) \{\s*this\.scheduleNoteFlowLayout\(\{ operation: true \}\)/);
+  assert.match(resizeSource, /if \(Array\.from\(this\.resizeSelectionOriginalStrokes\.keys\(\)\)\.some\([\s\S]*noteFlow\?\.enabled\)\) \{[\s\S]*this\.alignNoteFlowStrokesToReservedRows\(null, \{ measureOnly: true \}\);\s*this\.scheduleNoteFlowLayout\(\{ operation: true \}\)/);
 });
 
 test("selection filter cycles perform one full presentation pass", async () => {

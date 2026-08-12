@@ -340,14 +340,14 @@ test("NoteFlow dragging previews the same snapped and packed placement committed
   const rowMetricsSource = source.slice(source.indexOf("  markdownDropRowMetrics("), source.indexOf("  async commitDraggedMarkdownBlocks("));
 
   assert.match(dragSource, /this\.dragNoteFlowOriginalBounds = new Map\(movableIndexes\.flatMap/);
-  assert.match(moveSource, /this\.restoreDraggedNoteFlowLivePreview\(\);[\s\S]*this\.captureDraggedNoteFlowRawPreview\(\);/);
+  assert.match(moveSource, /this\.restoreDraggedNoteFlowLivePreview\(\{ preserveDom: true \}\);[\s\S]*this\.captureDraggedNoteFlowRawPreview\(\);/);
   assert.match(moveSource, /const hasDraggedNoteFlow = Boolean\(this\.dragNoteFlowOriginalBounds\?\.size\)/);
   assert.match(moveSource, /const previewDx = hasDraggedNoteFlow \? dx : snappedDx/);
   assert.match(moveSource, /const previewDy = hasDraggedNoteFlow \? dy : snappedDy/);
-  assert.match(placementSource, /this\.applyDraggedNoteFlowLivePreview\(this\.dragNoteFlowPlacement\)/);
+  assert.match(placementSource, /const preserveDomPreview = previewSignature === this\.dragNoteFlowPreviewSignature[\s\S]*this\.applyDraggedNoteFlowLivePreview\(this\.dragNoteFlowPlacement, \{ preserveDom: preserveDomPreview \}\)/);
   assert.match(placementSource, /const inlineEdgeBand = clamp\(targetHeight \* 0\.22, 4, 12\)[\s\S]*const inlineRowHit = Number\(clientY\) > targetRect\.top \+ inlineEdgeBand[\s\S]*Number\(clientY\) < targetRect\.bottom - inlineEdgeBand[\s\S]*const horizontalRoom = !this\.markdownDropIncludesHeading\(inlineTarget\)[\s\S]*inlineRowHit/);
   assert.match(dragSource, /createComment\("notedraw-note-flow-drag-origin"\)[\s\S]*state\.domMarker = marker/);
-  assert.match(livePreviewSource, /this\.restoreDraggedNoteFlowLivePreview\(\)[\s\S]*applyDraggedNoteFlowAnchorDomPreview\(resolved, drop\)[\s\S]*applyDraggedMarkdownDomPreview\(drop\)[\s\S]*applyDraggedNoteFlowReservationPreview\(liveResolved, movedIndexes, rowExtent\)/);
+  assert.match(livePreviewSource, /this\.restoreDraggedNoteFlowLivePreview\(\{ preserveDom: options\.preserveDom === true \}\)[\s\S]*applyDraggedNoteFlowAnchorDomPreview\(resolved, drop\)[\s\S]*applyDraggedMarkdownDomPreview\(drop\)[\s\S]*applyDraggedNoteFlowReservationPreview\(liveResolved, movedIndexes, rowExtent\)/);
   assert.match(livePreviewSource, /const liveResolved = resolved[\s\S]*snapDraggedSelectionToNoteFlowPlacement\(liveResolved, movedIndexes\)[\s\S]*dragDropGeometrySnapshot\(\)\?\.noteFlowCandidates[\s\S]*reflowNoteFlowElementsAfterDrag\(movedIndexes, liveResolved, \{[\s\S]*preview: true/);
   assert.doesNotMatch(livePreviewSource, /refreshDraggedNoteFlowPreviewCandidate\(resolved\.candidate\)/);
   assert.match(livePreviewSource, /rowOffset \+ bounds\.maxY - bounds\.minY[\s\S]*this\.draggedNoteFlowPreviewHeight\(movedIndexes\)/);
@@ -607,6 +607,19 @@ test("inherited section line metadata is remapped before NoteFlow drop targeting
   assert.match(candidateSource, /const inherited = sourceElement\.dataset\.noteDrawDataLineInherited === "true"[\s\S]*if \(inherited\)[\s\S]*blockOwnLine/);
   assert.match(candidateSource, /inheritedStart: parseInteger\(sourceElement\.dataset\.noteDrawInheritedLineStart\)/);
   assert.match(anchorSource, /semanticMatch[\s\S]*inheritedMatch/);
+});
+
+test("inline links select and drag their paragraph-level Markdown block", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const targetSource = source.slice(
+    source.indexOf("function findEditableTarget("),
+    source.indexOf("function findWebviewEditableTarget(")
+  );
+
+  assert.match(targetSource, /const blockedTarget = target\.closest\(BLOCKED_EDIT_SELECTOR\)/);
+  assert.match(targetSource, /blockedTarget && !blockedTarget\.matches\?\.\("a"\)/);
+  assert.match(targetSource, /const editable = target\.closest\(EDITABLE_SELECTOR\)/);
+  assert.match(targetSource, /isConcreteMarkdownBlockElement\(editable\)/);
 });
 
 test("boxed and locked groups keep member selection, exact frames, and drag membership", async () => {

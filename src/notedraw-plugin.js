@@ -5341,6 +5341,7 @@ var PreviewDrawingController = class {
     this.dragNoteFlowDropClientX = null;
     this.dragNoteFlowDropClientY = null;
     this.dragNoteFlowPlacement = null;
+    this.dragNoteFlowPreviewSignature = "";
     this.dragNoteFlowTargetElement = null;
     this.noteFlowDropIndicator = null;
     this.resizingSelection = false;
@@ -5806,6 +5807,10 @@ var PreviewDrawingController = class {
           if (editingLayout) {
             this.scheduleMarkdownAnnotationRefresh({ layout: false });
           } else {
+            // Obsidian can replace rendered Markdown nodes after NoteDraw is
+            // closed. Reapply saved block spans before restoring flow gaps so
+            // side-by-side blocks never flash back to a vertical list.
+            this.syncMarkdownBlockPresentation();
             this.scheduleFrozenNoteFlowLayoutRestore();
             this.scheduleReadingVirtualSectionSync();
             this.scheduleResize({ layout: false, measure: false });
@@ -6334,6 +6339,8 @@ var PreviewDrawingController = class {
       this.cancelSelectedStrokeResize(true);
       this.clearSelectedStrokes();
       this.resetTouchGestureState();
+      this.syncMarkdownBlockPresentation();
+      this.scheduleFrozenNoteFlowLayoutRestore();
       this.render();
     } else if (this.active && eager && (!wasActive || !this.drawingsLoaded)) {
       this.ensureDrawingsLoaded().catch((error) => {
@@ -11652,6 +11659,7 @@ var PreviewDrawingController = class {
     this.dragNoteFlowPreviewElementIds.clear();
     this.dragNoteFlowPlacementClientDelta = null;
     this.dragNoteFlowDomPreview = null;
+    this.dragNoteFlowPreviewSignature = "";
     this.dragDrawingHistoryBefore = this.captureDrawingHistorySnapshot();
     this.dragStrokeOriginalBounds = this.getStrokeIndexesNormalizedBounds(movableIndexes);
     this.dragElementGroupBounds = new Map(this.elementGroupRecords().filter((group) => group.boxed || group.locked).map((group) => [group.id, this.getElementGroupBounds(group.id)]));
@@ -12438,7 +12446,10 @@ var PreviewDrawingController = class {
     }
     this.dragLastPointerEvent = event;
     this.dragLastPointerKey = pointerKey;
-    this.restoreDraggedNoteFlowLivePreview();
+    // Keep the current DOM row preview in place while the next pointer frame
+    // is resolved. Restoring it here paints a vertical frame between every
+    // side-by-side preview update and causes visible flashing.
+    this.restoreDraggedNoteFlowLivePreview({ preserveDom: true });
     const point = this.dragEventToPoint(event);
     const originalPointBounds = this.dragStrokeOriginalPointBounds;
     const minX = originalPointBounds?.minX ?? 0;
@@ -13166,6 +13177,9 @@ var PreviewDrawingController = class {
         });
       }
     }
+    if (originalMarkdownBlocks?.size) {
+      this.refreshMarkdownBlockPresentation(originalMarkdownBlocks.keys());
+    }
     const resizedGroupIds = new Set([
       ...Array.from(originalStrokes.keys()).map((index) => this.drawingData.strokes[index]?.groupId),
       ...Array.from(originalMarkdownBlocks?.values?.() || []).map((state) => state.block?.groupId)
@@ -13181,6 +13195,10 @@ var PreviewDrawingController = class {
       this.invalidateStaticCache();
     }
     if (Array.from(this.resizeSelectionOriginalStrokes.keys()).some((index) => this.drawingData.strokes[index]?.noteFlow?.enabled)) {
+      // Markdown width/min-height is already applied above. Measure the new
+      // row geometry in the same interaction frame so the following layout
+      // pass pushes or releases downstream content on the first resize.
+      this.alignNoteFlowStrokesToReservedRows(null, { measureOnly: true });
       this.scheduleNoteFlowLayout({ operation: true });
     }
   }
@@ -15772,8 +15790,8 @@ var PreviewDrawingController = class {
     }
     return changed || domChanged;
   }
-  applyDraggedNoteFlowLivePreview(placement) {
-    this.restoreDraggedNoteFlowLivePreview();
+  applyDraggedNoteFlowLivePreview(placement, options = {}) {
+    this.restoreDraggedNoteFlowLivePreview({ preserveDom: options.preserveDom === true });
     const movedIndexes = Array.from(this.dragStrokeOriginalPoints?.keys?.() || []);
     const resolved = this.resolveDraggedNoteFlowPlacement(placement, movedIndexes);
     if (!resolved) {
@@ -15883,6 +15901,7 @@ var PreviewDrawingController = class {
     this.dragNoteFlowDropClientX = null;
     this.dragNoteFlowDropClientY = null;
     this.dragNoteFlowPlacement = null;
+    this.dragNoteFlowPreviewSignature = "";
     this.removeDraggedNoteFlowPlacementVisual();
   }
   queueDraggedNoteFlowPlacement(clientX, clientY) {
@@ -16086,8 +16105,22 @@ var PreviewDrawingController = class {
       noteFlowBoundary,
       candidate: { ...flowCandidate }
     };
+    const previewSignature = [
+      this.dragNoteFlowPlacement.path,
+      this.dragNoteFlowPlacement.line,
+      this.dragNoteFlowPlacement.side,
+      this.dragNoteFlowPlacement.horizontalSide || "row",
+      this.dragNoteFlowPlacement.leftSnap ? "left" : "free",
+      this.dragNoteFlowPlacement.flowOrder,
+      Math.round(Number(this.dragNoteFlowPlacement.inlineBoundary) || 0),
+      Math.round(Number(this.dragNoteFlowPlacement.boundary) || 0),
+      this.dragNoteFlowPlacement.candidate?.blockKey || ""
+    ].join(":");
+    const preserveDomPreview = previewSignature === this.dragNoteFlowPreviewSignature
+      && Boolean(this.dragNoteFlowDomPreview);
+    this.dragNoteFlowPreviewSignature = previewSignature;
     this.syncMarkdownDropFromNoteFlowPlacement(this.dragNoteFlowPlacement);
-    this.applyDraggedNoteFlowLivePreview(this.dragNoteFlowPlacement);
+    this.applyDraggedNoteFlowLivePreview(this.dragNoteFlowPlacement, { preserveDom: preserveDomPreview });
     return this.dragNoteFlowPlacement;
   }
   syncMarkdownDropFromNoteFlowPlacement(placement) {
@@ -19864,7 +19897,11 @@ function findEditableTarget(target, previewEl, clientPoint = null) {
   if (controller?.surfaceType === "webview") {
     return findWebviewEditableTarget(target, previewEl);
   }
-  if (target.closest(BLOCKED_EDIT_SELECTOR)) {
+  const blockedTarget = target.closest(BLOCKED_EDIT_SELECTOR);
+  // Links remain part of their paragraph-level Markdown block. Selecting or
+  // dragging the paragraph must not fail merely because the pointer is over
+  // inline link text; the existing tool-mode guards still protect navigation.
+  if (blockedTarget && !blockedTarget.matches?.("a")) {
     return null;
   }
   const embeddedBlock = findMarkdownEmbedBlockElement(target, previewEl);
