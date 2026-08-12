@@ -301,18 +301,40 @@ test("Markdown resize keeps continuous horizontal width inside its grid span", a
   assert.match(source, /const markdownScaleLimits =[\s\S]*state\.maxHeight[\s\S]*scaleY = Math\.min\(scaleY, \.\.\.markdownScaleLimits\)/);
 });
 
-test("inserted element dragging previews the raw pointer position without collision shifts", async () => {
+test("NoteFlow dragging previews the same snapped and packed placement committed on release", async () => {
   const source = await readFile(sourceUrl, "utf8");
   const dragSource = source.slice(source.indexOf("  startSelectedStrokeDrag("), source.indexOf("  startSelectedStrokeResize("));
   const moveSource = dragSource.slice(dragSource.indexOf("  moveSelectedStroke("), dragSource.indexOf("  finishSelectedStrokeDrag("));
+  const finishSource = dragSource.slice(dragSource.indexOf("  finishSelectedStrokeDrag("), dragSource.indexOf("  cancelSelectedStrokeDrag("));
+  const livePreviewSource = source.slice(source.indexOf("  applyDraggedNoteFlowLivePreview("), source.indexOf("  draggedNoteFlowIndexes("));
+  const domPreviewSource = source.slice(source.indexOf("  rememberDraggedNoteFlowDomStyle("), source.indexOf("  applyDraggedNoteFlowLivePreview("));
+  const placementSource = source.slice(source.indexOf("  updateDraggedNoteFlowPlacement("), source.indexOf("  syncMarkdownDropFromNoteFlowPlacement("));
+  const geometrySource = source.slice(source.indexOf("  dragDropGeometrySnapshot("), source.indexOf("  markdownEdgeDropTarget("));
+  const reflowSource = source.slice(source.indexOf("  reflowNoteFlowElementsAfterDrag("), source.indexOf("  queueDraggedNoteFlowRefresh("));
+  const rowMetricsSource = source.slice(source.indexOf("  markdownDropRowMetrics("), source.indexOf("  async commitDraggedMarkdownBlocks("));
 
   assert.match(dragSource, /this\.dragNoteFlowOriginalBounds = new Map\(movableIndexes\.flatMap/);
+  assert.match(moveSource, /this\.restoreDraggedNoteFlowLivePreview\(\);[\s\S]*this\.captureDraggedNoteFlowRawPreview\(\);/);
   assert.match(moveSource, /const hasDraggedNoteFlow = Boolean\(this\.dragNoteFlowOriginalBounds\?\.size\)/);
   assert.match(moveSource, /const previewDx = hasDraggedNoteFlow \? dx : snappedDx/);
   assert.match(moveSource, /const previewDy = hasDraggedNoteFlow \? dy : snappedDy/);
-  assert.match(moveSource, /--notedraw-md-drag-x[\s\S]*Math\.round\(clientDx\)/);
-  assert.match(moveSource, /--notedraw-md-drag-y[\s\S]*Math\.round\(clientDy\)/);
-  assert.doesNotMatch(moveSource, /markdownNoteFlowCollisionShift|collisionDx|collisionDy|markdownDrag/);
+  assert.match(placementSource, /this\.applyDraggedNoteFlowLivePreview\(this\.dragNoteFlowPlacement\)/);
+  assert.match(placementSource, /const inlineEdgeBand = clamp\(targetHeight \* 0\.22, 4, 12\)[\s\S]*const inlineRowHit = Number\(clientY\) > targetRect\.top \+ inlineEdgeBand[\s\S]*Number\(clientY\) < targetRect\.bottom - inlineEdgeBand[\s\S]*const horizontalRoom = inlineRowHit/);
+  assert.match(dragSource, /createComment\("notedraw-note-flow-drag-origin"\)[\s\S]*state\.domMarker = marker/);
+  assert.match(livePreviewSource, /this\.restoreDraggedNoteFlowLivePreview\(\)[\s\S]*applyDraggedNoteFlowAnchorDomPreview\(resolved\)[\s\S]*applyDraggedMarkdownDomPreview\(drop\)[\s\S]*applyDraggedNoteFlowReservationPreview\(liveResolved, movedIndexes, rowExtent\)/);
+  assert.match(livePreviewSource, /const liveResolved = resolved[\s\S]*snapDraggedSelectionToNoteFlowPlacement\(liveResolved, movedIndexes\)[\s\S]*dragDropGeometrySnapshot\(\)\?\.noteFlowCandidates[\s\S]*reflowNoteFlowElementsAfterDrag\(movedIndexes, liveResolved, \{[\s\S]*preview: true/);
+  assert.doesNotMatch(livePreviewSource, /refreshDraggedNoteFlowPreviewCandidate\(resolved\.candidate\)/);
+  assert.match(livePreviewSource, /rowOffset \+ bounds\.maxY - bounds\.minY[\s\S]*this\.draggedNoteFlowPreviewHeight\(movedIndexes\)/);
+  assert.match(geometrySource, /current\.scrollKey === scrollKey[\s\S]*this\.draggingStroke[\s\S]*current\.layoutGeneration === this\.layoutRefreshGeneration/);
+  assert.match(domPreviewSource, /if \(domChanged && !this\.draggingStroke\) \{[\s\S]*this\.resetDragDropGeometry\(\)/);
+  assert.match(domPreviewSource, /marker\.parentNode\.insertBefore\(dragElement, marker\.nextSibling\)/);
+  assert.match(finishSource, /this\.updateDraggedNoteFlowPlacement\(event\.clientX, event\.clientY\);[\s\S]*this\.restoreDraggedNoteFlowLivePreview\(\{ preserveDom: preserveMarkdownDomPreview \}\);[\s\S]*domPreview: committedDomPreview[\s\S]*this\.snapDraggedSelectionToNoteFlowPlacement\(resolvedDropPlacement, movedIndexes\)[\s\S]*this\.reflowNoteFlowElementsAfterDrag\(movedIndexes, resolvedDropPlacement\)/);
+  assert.match(finishSource, /clearSelectedStrokeDragState\(\{ preserveMarkdownDom: Boolean\(markdownDrop\?\.domPreview\) \}\)[\s\S]*commitDraggedMarkdownBlocks\(markdownDrop, drawingHistoryBefore\)\.then\(\(committed\) => \{[\s\S]*settleCommittedMarkdownDomPreview\(markdownDrop, committed\)[\s\S]*\.catch\(\(error\) => \{[\s\S]*settleCommittedMarkdownDomPreview\(markdownDrop, false\)/);
+  assert.match(domPreviewSource, /if \(this\.dragNoteFlowDomPreview === preview\) \{[\s\S]*this\.dragNoteFlowDomPreview = null/);
+  assert.match(reflowSource, /this\.packInlineNoteFlowItems\(inlineItems, candidates/);
+  assert.doesNotMatch(reflowSource, /inlineItems\.map\(\(item\) => \(\{/);
+  assert.match(rowMetricsSource, /const canFit = available >= itemCount \* 2/);
+  assert.doesNotMatch(rowMetricsSource, /totalCount <= 4/);
 });
 
 test("selection handle hit testing stays usable for narrow elements at visual zoom", async () => {
@@ -374,16 +396,16 @@ test("NoteFlow release commits the exact candidate and boundary shown by the blu
 
   assert.match(dragFinishSource, /boundary: this\.dragNoteFlowPlacement\.boundary/);
   assert.match(dragFinishSource, /candidate: this\.dragNoteFlowPlacement\.candidate/);
-  assert.match(dragFinishSource, /if \(!this\.dragNoteFlowPlacement\) \{\s*this\.updateDraggedNoteFlowPlacement/);
+  assert.match(dragFinishSource, /this\.updateDraggedNoteFlowPlacement\(event\.clientX, event\.clientY\);/);
   assert.match(dragFinishSource, /const visibleDrop = this\.dragMarkdownDropTarget\?\.isConnected[\s\S]*captureMarkdownBlockDropTarget/);
-  assert.match(placementSource, /const targetCanvasY =[\s\S]*const sourceCanvasY = flowBounds\.minY/);
-  assert.doesNotMatch(placementSource, /sourceCanvasY[\s\S]*flowBounds\.maxY/);
+  assert.match(placementSource, /const draggedClientBounds = this\.draggedNoteFlowClientBounds\(\)[\s\S]*const requestedClientY = Number\(boundary\) - draggedClientBounds\.top/);
+  assert.match(placementSource, /const requestedClientX = Number\.isFinite\(targetClientX\)[\s\S]*targetClientX - draggedClientBounds\.left/);
   assert.match(source, /const anchorRect = anchor[\s\S]*noteFlowCandidateRect\(anchor, placementMode\)[\s\S]*placementMode === "inline" \? anchorRect\?\.top : side === "after" \? anchor\.bottom : anchor\.top/);
   assert.match(placementSource, /const candidate = placement\?\.candidate;[\s\S]*const exactCandidate = candidate/);
   assert.match(placementSource, /return exactCandidate \? \{[\s\S]*candidate: exactCandidate[\s\S]*\} : null/);
   assert.doesNotMatch(placementSource.slice(placementSource.indexOf("  resolveDraggedNoteFlowPlacement("), placementSource.indexOf("  snapDraggedSelectionToNoteFlowPlacement(")), /dragDropGeometrySnapshot|selectStoredNoteFlowAnchorCandidate/);
-  assert.match(placementSource, /Number\.isFinite\(Number\(placement\?\.boundary\)\)/);
-  assert.match(placementSource, /const boundary = horizontalSide[\s\S]*Number\.isFinite\(Number\(placement\.boundary\)\)/);
+  assert.match(placementSource, /placement\?\.boundary !== null[\s\S]*placement\?\.boundary !== undefined[\s\S]*Number\.isFinite\(Number\(placement\.boundary\)\)/);
+  assert.match(placementSource, /const hasExplicitBoundary = placement\?\.boundary !== null[\s\S]*const boundary = horizontalSide[\s\S]*hasExplicitBoundary/);
 });
 
 test("Markdown drag keeps preview geometry stable and defers layout work until drop", async () => {

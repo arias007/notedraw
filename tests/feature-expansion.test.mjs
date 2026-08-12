@@ -207,7 +207,7 @@ test("selection frames freeze between operations and drag drops retain the last 
   assert.match(dragSource, /if \(!target\) \{\s*return this\.dragMarkdownLastValidDrop \? \{ \.\.\.this\.dragMarkdownLastValidDrop \} : null;/);
   assert.match(finishSource, /const lastDrop = this\.dragMarkdownLastValidDrop\?\.element\?\.isConnected/);
   assert.match(finishSource, /const markdownDrop = lastDrop \? \{/);
-  assert.match(finishSource, /this\.clearSelectedStrokeDragState\(\);[\s\S]*if \(didMove\) \{[\s\S]*this\.invalidateSelectionFrameSnapshot\(\);[\s\S]*this\.captureSelectionFrameSnapshot\(\{ force: true \}\);/);
+  assert.match(finishSource, /this\.clearSelectedStrokeDragState\(\{ preserveMarkdownDom: Boolean\(markdownDrop\?\.domPreview\) \}\);[\s\S]*if \(didMove\) \{[\s\S]*this\.invalidateSelectionFrameSnapshot\(\);[\s\S]*if \(!this\.selectionFrameAwaitingMarkdownSync\) \{[\s\S]*this\.captureSelectionFrameSnapshot\(\{ force: true \}\);/);
   assert.match(heightSource, /const transientGrowth = observedHeight > runawayThreshold/);
   assert.match(heightSource, /const staleGrowth = priorHeight > runawayThreshold/);
   assert.match(heightSource, /sectionHeight \+ Math\.max\(192, Math\.min\(640, sectionHeight \* 0\.35\)\)/);

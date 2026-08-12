@@ -68,6 +68,28 @@ test("inline NoteFlow packs beside a Markdown block without overlap", () => {
   ]);
 });
 
+test("inline NoteFlow keeps more than four mixed element kinds side by side when space allows", () => {
+  const placed = packNoteFlowInlineRectangles([
+    { id: "markdown", kind: "markdown", index: 0, order: 0, minX: 0, maxX: 48, minY: 0, maxY: 30 },
+    { id: "ink", kind: "ink", index: 1, order: 1, minX: 0, maxX: 48, minY: 0, maxY: 26 },
+    { id: "image", kind: "image", index: 2, order: 2, minX: 0, maxX: 48, minY: 0, maxY: 32 },
+    { id: "embed", kind: "embed", index: 3, order: 3, minX: 0, maxX: 48, minY: 0, maxY: 28 },
+    { id: "text", kind: "text", index: 4, order: 4, minX: 0, maxX: 48, minY: 0, maxY: 24 }
+  ], {
+    anchor: { minX: 0, maxX: 80, minY: 10, maxY: 50 },
+    laneLeft: 0,
+    laneRight: 380,
+    gap: 6
+  });
+
+  assert.equal(placed.length, 5);
+  assert.ok(placed.every((item) => item.minY === 10));
+  for (let index = 1; index < placed.length; index += 1) {
+    assert.ok(placed[index].minX >= placed[index - 1].maxX + 6);
+  }
+  assert.ok(placed.at(-1).maxX <= 380);
+});
+
 test("inline NoteFlow wraps below a full Markdown row and remains compact", () => {
   const anchor = { minX: 0, maxX: 120, minY: 10, maxY: 50 };
   const blocker = { minX: 128, maxX: 300, minY: 10, maxY: 50 };
