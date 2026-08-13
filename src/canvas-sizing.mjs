@@ -17,20 +17,17 @@ function measureWithoutFloatingMarkdown(root, measure) {
   }
   const states = elements.map((element) => ({
     element,
-    value: element.style?.getPropertyValue?.("display") || "",
-    priority: element.style?.getPropertyPriority?.("display") || ""
+    alreadyExcluded: element.classList?.contains?.("notedraw-measure-excluded") === true
   }));
   try {
     for (const { element } of states) {
-      element.style?.setProperty?.("display", "none", "important");
+      element.classList?.add?.("notedraw-measure-excluded");
     }
     return measure();
   } finally {
-    for (const { element, value, priority } of states) {
-      if (value) {
-        element.style?.setProperty?.("display", value, priority);
-      } else {
-        element.style?.removeProperty?.("display");
+    for (const { element, alreadyExcluded } of states) {
+      if (!alreadyExcluded) {
+        element.classList?.remove?.("notedraw-measure-excluded");
       }
     }
   }

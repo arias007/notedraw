@@ -49,12 +49,12 @@ It is built as a surface layer: the same drawing and text-edit logic works on Ob
 By default, new drawing files are stored here:
 
 ```text
-<vault>/.obsidian/plugins/notedraw/drawings/
+<vault>/<config-dir>/plugins/notedraw/drawings/
 ```
 
 The **NoteDraw data location** setting provides four choices:
 
-- Plugin config folder (default): `<vault>/.obsidian/plugins/notedraw/drawings/`
+- Plugin config folder (default): `<vault>/<config-dir>/plugins/notedraw/drawings/`
 - Current note folder / `notedraw`: `<note-folder>/notedraw/<note>.notedraw.json`
 - Current note folder: `<note-folder>/<note>.notedraw.json`
 - Current Markdown file: a hidden, compressed NoteDraw block appended to the note
@@ -78,7 +78,7 @@ If an older local prototype folder exists, NoteDraw can read its previous drawin
 Copy these files into:
 
 ```text
-<vault>/.obsidian/plugins/notedraw/
+<vault>/<config-dir>/plugins/notedraw/
 ```
 
 Required files:
@@ -118,8 +118,6 @@ manifest.json
 styles.css
 ```
 
-The source tree keeps `extras/` for support-code images used at build time. Release builds embed those images into `main.js`, so the installed plugin does not require separate image files.
-
 ## Settings
 
 The settings page currently includes:
@@ -133,7 +131,10 @@ The settings page currently includes:
 - Stroke smoothing, input sampling, save compaction, and auto-save delay.
 - Reset buttons for brush defaults and layout/interaction defaults.
 - Debug log toggle for troubleshooting text targeting.
-- Two fixed support QR codes shown from bundled assets with embedded fallback.
+
+## Network use
+
+NoteDraw works locally and does not use telemetry. Network access occurs only when you explicitly run **Share NoteDraw file** and the note or its NoteDraw elements reference HTTP or HTTPS resources. NoteDraw downloads those referenced resources so the generated portable Markdown copy can include them. It does not contact any other remote service during ordinary editing, drawing, storage, or startup.
 
 ## Extension API
 

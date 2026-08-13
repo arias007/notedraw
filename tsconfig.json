@@ -10,6 +10,8 @@
     "noEmit": true
   },
   "include": [
-    "src/**/*.js"
+    "src/**/*.js",
+    "src/**/*.mjs",
+    "tests/**/*.mjs"
   ]
 }

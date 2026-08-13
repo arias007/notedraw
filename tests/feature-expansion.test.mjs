@@ -74,7 +74,8 @@ test("reading zoom preserves wrapping while edit zoom can reflow", async () => {
   assert.match(source, /readingZoomElements\(target = this\.readingZoomTarget\)/);
   assert.match(source, /element\.style\.setProperty\("transform", `scale\(\$\{zoom\}\)/);
   assert.match(source, /element\.style\.setProperty\("transform-origin", `\$\{-origin\.x\}px \$\{-origin\.y\}px`\)/);
-  assert.match(source, /element\.style\.setProperty\("zoom", String\(zoom\)\)/);
+  assert.match(source, /setNoteDrawCssProps\(element, \{ "--notedraw-layout-zoom": String\(zoom\) \}\)/);
+  assert.match(styles, /\.notedraw-layout-zoom-target[\s\S]*zoom: var\(--notedraw-layout-zoom, 1\)/);
   assert.match(source, /updateReadingZoomExtent\(zoom, target\)/);
   assert.match(source, /calculateVisualZoomLogicalWindow\(\{/);
   assert.match(source, /scheduleReadingVirtualSectionSync\(\)/);
@@ -424,7 +425,6 @@ test("mind map import creates editable NoteDraw nodes and magnetically bound con
   assert.match(source, /openSelectedMindMapSource/);
   assert.match(source, /connector: \{\s*fromId: idMap\.get\(edge\.fromId\),\s*toId: idMap\.get\(edge\.toId\)/);
   assert.match(source, /syncBoundConnectors\(\)/);
-  assert.match(source, /buildBoundConnectorPoints\(fromBounds, toBounds/);
   assert.match(source, /drawBoundConnectorOn\(ctx, stroke, alpha\)/);
   assert.match(source, /ctx\.quadraticCurveTo\(points\[1\]\.x, points\[1\]\.y, points\[2\]\.x, points\[2\]\.y\)/);
 });

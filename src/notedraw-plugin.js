@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-return -- NoteDraw is a plain JavaScript Obsidian plugin that validates dynamic DOM, vault, and drawing data at runtime. */
 import {
   FuzzySuggestModal,
   MarkdownRenderer,
@@ -12,8 +11,6 @@ import {
   requestUrl,
   setIcon
 } from "obsidian";
-import SUPPORT_CODE_ALIPAY_DATA_URL from "../extras/code-1.jpg";
-import SUPPORT_CODE_BINANCE_DATA_URL from "../extras/code-2.png";
 import {
   calculateCanvasBackingStore,
   calculateCanvasWindow,
@@ -29,7 +26,6 @@ import {
   createResponsivePoint,
   mapClientPointToCanvas,
   mapResizeClientDeltaToPoint,
-  normalizeContentFrame,
   normalizeResponsiveAnchor,
   projectResponsivePoint
 } from "./layout-coordinates.mjs";
@@ -160,7 +156,6 @@ import {
 } from "./portable-notedraw.mjs";
 const activeDocument = window.activeWindow?.document || window.document;
 var PLUGIN_ID = "notedraw";
-var DRAWING_DIR = `${PLUGIN_ID}/drawings`;
 var ASSET_DIR = `${PLUGIN_ID}/assets`;
 var PORTABLE_RESOURCE_CACHE_LIMIT = 48;
 var PORTABLE_RESOURCE_PREFIX = "notedraw-portable";
@@ -234,10 +229,6 @@ var COMMON_COLORS = [
   "#43a047",
   "#1e88e5",
   "#111827"
-];
-var SETTINGS_EXTRA_CODE_ASSETS = [
-  { path: "extras/code-1.jpg", dataUrl: SUPPORT_CODE_ALIPAY_DATA_URL, labelKey: "supportCodeAlipay" },
-  { path: "extras/code-2.png", dataUrl: SUPPORT_CODE_BINANCE_DATA_URL, labelKey: "supportCodeBinance" }
 ];
 var LANGUAGE_AUTO = "auto";
 var LANGUAGE_OPTIONS = [
@@ -347,7 +338,6 @@ var I18N = {
     settingsSectionLayout: "Layout",
     settingsSectionStorage: "Data storage and sharing",
     settingsSectionDiagnostics: "Diagnostics",
-    settingsSectionSupport: "Support",
     settingsLanguage: "Language",
     settingsLanguageDesc: "Plugin UI language. Auto follows Obsidian when possible.",
     languageAuto: "Auto",
@@ -399,10 +389,6 @@ var I18N = {
     reset: "Reset",
     debugLog: "Debug log",
     debugLogDesc: "Write text-save diagnostics to the plugin folder only while troubleshooting.",
-    supportTitle: "Support NoteDraw",
-    supportSubtitle: "Scan with Alipay or Binance to support ongoing maintenance.",
-    supportCodeAlipay: "Alipay",
-    supportCodeBinance: "Binance",
     bringToFront: "Bring to front",
     sendToBack: "Send to back",
     selectRelatedElements: "Select related",
@@ -519,7 +505,6 @@ var I18N = {
     settingsSectionLayout: "布局",
     settingsSectionStorage: "数据存储与分享",
     settingsSectionDiagnostics: "诊断",
-    settingsSectionSupport: "支持作者",
     settingsLanguage: "语言",
     settingsLanguageDesc: "插件界面语言。自动模式会尽量跟随 Obsidian。",
     languageAuto: "自动",
@@ -571,10 +556,6 @@ var I18N = {
     reset: "重置",
     debugLog: "调试日志",
     debugLogDesc: "仅排查问题时，把文字保存诊断写入插件文件夹。",
-    supportTitle: "支持 NoteDraw / 双码",
-    supportSubtitle: "可用支付宝或币安扫码支持后续维护。",
-    supportCodeAlipay: "支付宝",
-    supportCodeBinance: "币安",
     bringToFront: "置顶",
     sendToBack: "置底",
     selectRelatedElements: "选择关联元素",
@@ -682,7 +663,6 @@ var I18N = {
     settingsSectionLayout: "佈局",
     settingsSectionStorage: "資料儲存與分享",
     settingsSectionDiagnostics: "診斷",
-    settingsSectionSupport: "支持作者",
     settingsLanguage: "語言",
     settingsLanguageDesc: "插件介面語言。自動模式會盡量跟隨 Obsidian。",
     languageAuto: "自動",
@@ -734,10 +714,6 @@ var I18N = {
     reset: "重置",
     debugLog: "除錯日誌",
     debugLogDesc: "僅排查問題時，將文字儲存診斷寫入插件資料夾。",
-    supportTitle: "支持 NoteDraw / 雙碼",
-    supportSubtitle: "可用支付寶或幣安掃碼支持後續維護。",
-    supportCodeAlipay: "支付寶",
-    supportCodeBinance: "幣安",
     bringToFront: "置頂",
     sendToBack: "置底",
     moveForward: "上移一層",
@@ -829,10 +805,6 @@ var I18N = {
     toolbarTopOffsetDesc: "Obsidian باش قىسمىدىن قوشۇمچە پىكسېل.",
     debugLog: "سازلاش خاتىرىسى",
     debugLogDesc: "پەقەت مەسىلە تەكشۈرگەندە تېكىست ساقلاش دىئاگنوزىنى قىستۇرما قىسقۇچىغا يازىدۇ.",
-    supportTitle: "NoteDraw نى قوللاش",
-    supportSubtitle: "Alipay ياكى Binance ئارقىلىق كودنى سىكانىرلاپ قوللىسىڭىز بولىدۇ.",
-    supportCodeAlipay: "Alipay",
-    supportCodeBinance: "Binance",
     bringToFront: "ئەڭ ئۈستىگە",
     sendToBack: "ئەڭ ئاستىغا",
     moveForward: "ئۈستىگە يۆتكە",
@@ -924,10 +896,6 @@ var I18N = {
     toolbarTopOffsetDesc: "Дополнительные пиксели ниже заголовка Obsidian.",
     debugLog: "Журнал отладки",
     debugLogDesc: "Записывать диагностику сохранения текста в папку плагина только при отладке.",
-    supportTitle: "Поддержать NoteDraw",
-    supportSubtitle: "Сканируйте через Alipay или Binance, чтобы поддержать разработку.",
-    supportCodeAlipay: "Alipay",
-    supportCodeBinance: "Binance",
     bringToFront: "На передний план",
     sendToBack: "На задний план",
     moveForward: "Выше",
@@ -973,10 +941,6 @@ Object.assign(I18N, {
     movePanel: "تحريك اللوحة",
     settingsLanguage: "اللغة",
     languageAuto: "تلقائي",
-    supportTitle: "دعم NoteDraw",
-    supportSubtitle: "امسح عبر Alipay أو Binance لدعم الصيانة.",
-    supportCodeAlipay: "Alipay",
-    supportCodeBinance: "Binance"
   }),
   es: Object.assign({}, I18N.en, {
     toggleCommand: "Cambiar edición de vista previa y dibujo",
@@ -1011,10 +975,6 @@ Object.assign(I18N, {
     movePanel: "Mover panel",
     settingsLanguage: "Idioma",
     languageAuto: "Auto",
-    supportTitle: "Apoyar NoteDraw",
-    supportSubtitle: "Escanea con Alipay o Binance para apoyar el mantenimiento.",
-    supportCodeAlipay: "Alipay",
-    supportCodeBinance: "Binance"
   }),
   fr: Object.assign({}, I18N.en, {
     toggleCommand: "Basculer édition de l'aperçu et dessin",
@@ -1049,10 +1009,6 @@ Object.assign(I18N, {
     movePanel: "Déplacer le panneau",
     settingsLanguage: "Langue",
     languageAuto: "Auto",
-    supportTitle: "Soutenir NoteDraw",
-    supportSubtitle: "Scannez avec Alipay ou Binance pour soutenir la maintenance.",
-    supportCodeAlipay: "Alipay",
-    supportCodeBinance: "Binance"
   }),
   de: Object.assign({}, I18N.en, {
     toggleCommand: "Vorschau-Bearbeitung und Zeichnen umschalten",
@@ -1087,10 +1043,6 @@ Object.assign(I18N, {
     movePanel: "Panel verschieben",
     settingsLanguage: "Sprache",
     languageAuto: "Auto",
-    supportTitle: "NoteDraw unterstützen",
-    supportSubtitle: "Mit Alipay oder Binance scannen, um die Wartung zu unterstützen.",
-    supportCodeAlipay: "Alipay",
-    supportCodeBinance: "Binance"
   }),
   ja: Object.assign({}, I18N.en, {
     toggleCommand: "プレビュー編集と描画モードを切り替え",
@@ -1125,10 +1077,6 @@ Object.assign(I18N, {
     movePanel: "パネルを移動",
     settingsLanguage: "言語",
     languageAuto: "自動",
-    supportTitle: "NoteDraw を支援",
-    supportSubtitle: "Alipay または Binance でスキャンして保守を支援できます。",
-    supportCodeAlipay: "Alipay",
-    supportCodeBinance: "Binance"
   }),
   ko: Object.assign({}, I18N.en, {
     toggleCommand: "미리보기 편집 및 그리기 모드 전환",
@@ -1163,10 +1111,6 @@ Object.assign(I18N, {
     movePanel: "패널 이동",
     settingsLanguage: "언어",
     languageAuto: "자동",
-    supportTitle: "NoteDraw 지원",
-    supportSubtitle: "Alipay 또는 Binance로 스캔하여 유지 관리를 지원할 수 있습니다.",
-    supportCodeAlipay: "Alipay",
-    supportCodeBinance: "Binance"
   }),
   tr: Object.assign({}, I18N.en, {
     toggleCommand: "Önizleme düzenleme ve çizim modunu değiştir",
@@ -1201,10 +1145,6 @@ Object.assign(I18N, {
     movePanel: "Paneli taşı",
     settingsLanguage: "Dil",
     languageAuto: "Otomatik",
-    supportTitle: "NoteDraw'u destekle",
-    supportSubtitle: "Bakımı desteklemek için Alipay veya Binance ile tarayın.",
-    supportCodeAlipay: "Alipay",
-    supportCodeBinance: "Binance"
   })
 });
 var DEFAULT_SETTINGS = {
@@ -1510,7 +1450,7 @@ var NoteDrawPlugin = class extends Plugin {
       }
     });
     this.addCommand({
-      id: "share-notedraw-file",
+      id: "share-file",
       name: this.t("shareNoteDrawFile"),
       checkCallback: (checking) => {
         const file = this.app.workspace.getActiveFile?.();
@@ -1912,47 +1852,47 @@ var NoteDrawPlugin = class extends Plugin {
     return handle;
   }
   createRegisteredSurfaceHandle(record, controller, ready) {
-    const plugin = this;
-    const withSurface = (options = {}) => plugin.mergeRegisteredSurfaceOptions(record, options);
+    const withSurface = (options = {}) => this.mergeRegisteredSurfaceOptions(record, options);
+    const describeSurface = () => this.describeController(controller);
     return {
       apiVersion: "1.0",
       ready: Promise.resolve(ready).then(() => void 0),
       capabilities: { ...record.capabilities },
       get surface() {
-        return plugin.describeController(controller);
+        return describeSurface();
       },
       activate: async (toolOrOptions = {}) => {
         const options = typeof toolOrOptions === "string" ? { tool: toolOrOptions } : toolOrOptions || {};
-        return plugin.activateApi(withSurface(options));
+        return this.activateApi(withSurface(options));
       },
-      deactivate: () => plugin.deactivateApi(withSurface()),
-      toggle: async (options = {}) => plugin.toggleApi(withSurface(options)),
-      getState: async (options = {}) => plugin.getApiState(withSurface(options)),
-      setVisibility: async (visible, options = {}) => plugin.setApiVisibility(visible, withSurface(options)),
-      setTool: (tool, options = {}) => plugin.setApiTool(tool, withSurface(options)),
-      setBrush: (options = {}) => plugin.setApiBrush(withSurface(options)),
-      setTextPreset: (preset, options = {}) => plugin.setApiTextPreset(preset, withSurface(options)),
-      getZoom: () => plugin.describeController(controller)?.zoom ?? 1,
-      setZoom: (zoom, options = {}) => plugin.setApiZoom(zoom, withSurface(options)),
-      execute: async (actions, options = {}) => plugin.executeApiAction(actions, withSurface(options)),
-      getElements: async (options = {}) => plugin.getApiElements(withSurface(options)),
-      selectElements: async (options = {}) => plugin.selectApiElements(withSurface(options)),
-      updateElements: async (options = {}) => plugin.updateApiElements(withSurface(options)),
-      deleteElements: async (options = {}) => plugin.deleteApiElements(withSurface(options)),
-      reorderElements: async (options = {}) => plugin.reorderApiElements(withSurface(options)),
-      setElementsLocked: async (options = {}) => plugin.setApiElementsLocked(withSurface(options)),
-      setElementsNoteFlow: async (options = {}) => plugin.setApiElementsNoteFlow(withSurface(options)),
-      undo: async (options = {}) => plugin.runApiHistory("undo", withSurface(options)),
-      redo: async (options = {}) => plugin.runApiHistory("redo", withSurface(options)),
-      copyElements: (options = {}) => plugin.copyElementsApi(withSurface(options)),
+      deactivate: () => this.deactivateApi(withSurface()),
+      toggle: async (options = {}) => this.toggleApi(withSurface(options)),
+      getState: async (options = {}) => this.getApiState(withSurface(options)),
+      setVisibility: async (visible, options = {}) => this.setApiVisibility(visible, withSurface(options)),
+      setTool: (tool, options = {}) => this.setApiTool(tool, withSurface(options)),
+      setBrush: (options = {}) => this.setApiBrush(withSurface(options)),
+      setTextPreset: (preset, options = {}) => this.setApiTextPreset(preset, withSurface(options)),
+      getZoom: () => describeSurface()?.zoom ?? 1,
+      setZoom: (zoom, options = {}) => this.setApiZoom(zoom, withSurface(options)),
+      execute: async (actions, options = {}) => this.executeApiAction(actions, withSurface(options)),
+      getElements: async (options = {}) => this.getApiElements(withSurface(options)),
+      selectElements: async (options = {}) => this.selectApiElements(withSurface(options)),
+      updateElements: async (options = {}) => this.updateApiElements(withSurface(options)),
+      deleteElements: async (options = {}) => this.deleteApiElements(withSurface(options)),
+      reorderElements: async (options = {}) => this.reorderApiElements(withSurface(options)),
+      setElementsLocked: async (options = {}) => this.setApiElementsLocked(withSurface(options)),
+      setElementsNoteFlow: async (options = {}) => this.setApiElementsNoteFlow(withSurface(options)),
+      undo: async (options = {}) => this.runApiHistory("undo", withSurface(options)),
+      redo: async (options = {}) => this.runApiHistory("redo", withSurface(options)),
+      copyElements: (options = {}) => this.copyElementsApi(withSurface(options)),
       copyElementLink: (options = {}) => controller.copySelectedElementLink({ quiet: Boolean(options.quiet) }),
-      pasteElements: (options = {}) => plugin.pasteElementsApi(withSurface(options)),
-      insertMindMap: async (options = {}) => plugin.insertMindMapApi(withSurface(options)),
+      pasteElements: (options = {}) => this.pasteElementsApi(withSurface(options)),
+      insertMindMap: async (options = {}) => this.insertMindMapApi(withSurface(options)),
       refresh: async () => {
-        const data = await plugin.readDrawings(record.file);
-        return { ok: true, refreshed: plugin.refreshControllersForFile(record.file, data) };
+        const data = await this.readDrawings(record.file);
+        return { ok: true, refreshed: this.refreshControllersForFile(record.file, data) };
       },
-      on: (eventName, listener) => plugin.onApiEvent(eventName, (detail) => {
+      on: (eventName, listener) => this.onApiEvent(eventName, (detail) => {
         if (typeof listener !== "function") {
           return;
         }
@@ -1960,7 +1900,7 @@ var NoteDrawPlugin = class extends Plugin {
           listener(detail);
         }
       }),
-      destroy: () => plugin.destroyRegisteredSurface(record.key)
+      destroy: () => this.destroyRegisteredSurface(record.key)
     };
   }
   bindRegisteredSurfaceViewport(controller, viewport = {}) {
@@ -4742,7 +4682,7 @@ var NoteDrawPlugin = class extends Plugin {
     container.appendChild(layer);
     let drewImage = false;
     for (const stroke of imageStrokes) {
-      drewImage = await this.drawExportImageStrokeOn(layer, stroke, width, height) || drewImage;
+      drewImage = await this.drawExportImageStrokeOn(layer, stroke, width, height, file) || drewImage;
     }
     if (!drewImage) {
       layer.remove();
@@ -4753,7 +4693,7 @@ var NoteDrawPlugin = class extends Plugin {
     }, 3e4);
     return layer;
   }
-  async drawExportImageStrokeOn(layer, stroke, width, height) {
+  async drawExportImageStrokeOn(layer, stroke, width, height, file) {
     const bounds = getStrokeBounds(stroke, width, height);
     if (!bounds) {
       return false;
@@ -6115,7 +6055,8 @@ var PreviewDrawingController = class {
       image.onerror = null;
       try {
         image.removeAttribute?.("src");
-      } catch {
+      } catch (error) {
+        void error;
       }
     }
     this.canvasImageCache?.clear?.();
@@ -6358,7 +6299,7 @@ var PreviewDrawingController = class {
     if (this.embeddedSurface || !this.active || this.destroyed || !this.previewEl?.isConnected || isBlockingObsidianOverlayOpen(activeDocument)) {
       return false;
     }
-    const activeLeaf = this.plugin.app.workspace?.activeLeaf;
+    const activeLeaf = this.plugin.app.workspace.getMostRecentLeaf?.();
     const ownerLeaf = this.view?.leaf || findOwningLeaf(this.plugin.app, this.view?.containerEl || this.previewEl);
     if (activeLeaf && ownerLeaf && activeLeaf !== ownerLeaf) {
       return false;
@@ -7070,7 +7011,6 @@ var PreviewDrawingController = class {
     this.penCount = settings.count;
   }
   syncPaletteInputs() {
-    const settings = this.currentBrushSettings();
     if (this.colorInput) {
       this.colorInput.value = this.currentPaletteColor();
     }
@@ -10957,7 +10897,7 @@ var PreviewDrawingController = class {
     if (!element || this.readingZoomStyleState.has(element)) {
       return;
     }
-    const properties = ["zoom", "transform", "transform-origin", "margin-bottom"];
+    const properties = ["zoom", "transform", "transform-origin", "margin-bottom", "--notedraw-layout-zoom"];
     const computedStyle = window.getComputedStyle(element);
     this.readingZoomStyleState.set(element, Object.fromEntries(properties.map((property) => [property, {
       value: element.style.getPropertyValue(property),
@@ -10967,6 +10907,7 @@ var PreviewDrawingController = class {
   }
   restoreReadingZoomStyles() {
     for (const [element, properties] of this.readingZoomStyleState) {
+      element.removeClass?.("notedraw-layout-zoom-target");
       for (const [property, state] of Object.entries(properties)) {
         if (state.value) {
           element.style.setProperty(property, state.value, state.priority || "");
@@ -11109,8 +11050,8 @@ var PreviewDrawingController = class {
       } else {
         for (const element of elements) {
           this.rememberReadingZoomStyles(element);
-          element.style.setProperty("zoom", String(zoom));
-          element.style.setProperty("transform-origin", "top left");
+          element.addClass?.("notedraw-layout-zoom-target");
+          setNoteDrawCssProps(element, { "--notedraw-layout-zoom": String(zoom) });
         }
       }
       this.previewEl.toggleClass("is-reading-zoomed", this.usesVisualReadingZoom());
@@ -15993,7 +15934,6 @@ var PreviewDrawingController = class {
       return null;
     }
     const laneRect = geometry?.laneRect || targetRect;
-    const draggedClientBounds = this.draggedNoteFlowClientBounds();
     const draggedBounds = this.getStrokeIndexesBounds(this.draggedNoteFlowIndexes());
     const canvasRect = this.noteFlowCanvasRect();
     const draggedStrokeClientWidth = draggedBounds && canvasRect?.width > 1
@@ -16009,20 +15949,11 @@ var PreviewDrawingController = class {
         + draggedMarkdownCount * equalLaneWidth
         + Math.max(0, movingLaneCount - 1) * 10
     );
-    const draggedClientHeight = draggedClientBounds
-      ? Math.max(1, draggedClientBounds.bottom - draggedClientBounds.top)
-      : targetRect.height;
     const minimumTargetWidth = Math.min(120, laneWidth * 0.45);
     const projectedTargetRight = Math.max(
       targetRect.left + minimumTargetWidth,
       Math.min(targetRect.right, laneRect.right - draggedClientWidth - 10)
     );
-    const proposedInlineRect = {
-      left: projectedTargetRight + 10,
-      right: projectedTargetRight + 10 + draggedClientWidth,
-      top: targetRect.top,
-      bottom: targetRect.top + draggedClientHeight
-    };
     const targetHeight = Math.max(1, targetRect.bottom - targetRect.top);
     const inlineEdgeBand = clamp(targetHeight * 0.22, 4, 12);
     const inlineRowHit = Number(clientY) > targetRect.top + inlineEdgeBand
@@ -17994,7 +17925,6 @@ var PreviewDrawingController = class {
           ownerRecord: null
         });
       }
-      const state = states.get(property);
       const stableHeight = currentNoteFlow.boxHeightRatio > 0
         ? currentNoteFlow.boxHeightRatio * Math.max(1, contentFrame.width)
         : Math.max(0, item.bounds.maxY - item.bounds.minY);
@@ -19486,7 +19416,7 @@ var NoteDrawSettingTab = class extends PluginSettingTab {
     super(app, plugin);
     this.plugin = plugin;
   }
-  [["dis", "play"].join("")]() {
+  display() {
     const { containerEl } = this;
     containerEl.empty();
     for (const definition of this.getSettingDefinitions()) {
@@ -19495,10 +19425,7 @@ var NoteDrawSettingTab = class extends PluginSettingTab {
     }
   }
   refreshSettingsView() {
-    const render = this[["dis", "play"].join("")];
-    if (typeof render === "function") {
-      render.call(this);
-    }
+    this.display();
   }
   getSettingDefinitions() {
     const settings = sanitizeSettings(this.plugin.noteDrawSettings);
@@ -19754,9 +19681,7 @@ var NoteDrawSettingTab = class extends PluginSettingTab {
           this.plugin.noteDrawSettings.enableDebugLog = value;
           await this.plugin.saveSettings();
         }));
-      }),
-      this.createSectionDefinition("settingsSectionSupport"),
-      this.createCodesDefinition()
+      })
     ];
   }
   addSliderWithValue(setting, options) {
@@ -19793,55 +19718,6 @@ var NoteDrawSettingTab = class extends PluginSettingTab {
         renderControl(setting);
       }
     };
-  }
-  createCodesDefinition() {
-    return {
-      name: this.plugin.t("supportTitle"),
-      desc: this.plugin.t("supportSubtitle"),
-      render: (setting) => {
-        setting.settingEl.empty();
-        const codesContainer = setting.settingEl.createDiv({ cls: "notedraw-settings-codes" });
-        void this.renderExtraCodes(codesContainer);
-      }
-    };
-  }
-  async renderExtraCodes(containerEl) {
-    const codeItems = (await Promise.all(
-      SETTINGS_EXTRA_CODE_ASSETS.map(async (asset) => {
-        const src = await this.plugin.getOptionalAssetResourcePath(asset.path) || asset.dataUrl;
-        return src ? { ...asset, src } : null;
-      })
-    )).filter(Boolean);
-    if (!codeItems.length) {
-      containerEl.remove();
-      return;
-    }
-    containerEl.createDiv({
-      cls: "notedraw-settings-codes-title",
-      text: this.plugin.t("supportTitle")
-    });
-    containerEl.createDiv({
-      cls: "notedraw-settings-codes-subtitle",
-      text: this.plugin.t("supportSubtitle")
-    });
-    const gridEl = containerEl.createDiv({ cls: "notedraw-settings-codes-grid" });
-    for (const item of codeItems) {
-      const label = this.plugin.t(item.labelKey);
-      const codeEl = gridEl.createDiv({ cls: "notedraw-settings-code" });
-      const imageEl = codeEl.createEl("img", {
-        cls: "notedraw-settings-code-image",
-        attr: {
-          alt: label,
-          loading: "lazy",
-          src: item.src
-        }
-      });
-      imageEl.src = item.src;
-      codeEl.createDiv({
-        cls: "notedraw-settings-code-label",
-        text: label
-      });
-    }
   }
 };
 function isConcreteMarkdownBlockElement(element) {
@@ -22086,7 +21962,8 @@ function portableReferenceKeys(values) {
     }
     try {
       text = decodeURIComponent(text);
-    } catch {
+    } catch (error) {
+      void error;
     }
     text = unwrapWikiLink(text.replace(/^!/, "")).split("|")[0].trim();
     const withoutFragment = text.replace(/[?#].*$/, "").replace(/\\/g, "/").replace(/^\/+/, "");
@@ -22099,7 +21976,8 @@ function portableReferenceKeys(values) {
     if (/^[a-z]+:\/\//i.test(text)) {
       try {
         name = decodeURIComponent(new URL(text).pathname.split("/").pop() || name);
-      } catch {
+      } catch (error) {
+        void error;
       }
     }
     if (name) {
@@ -22285,14 +22163,12 @@ async function writeTextToClipboard(text) {
       await navigator.clipboard.writeText(value);
       return true;
     }
-  } catch {
+  } catch (error) {
+    void error;
   }
-  const textarea = activeDocument.createElement("textarea");
+  const textarea = activeDocument.body.createEl("textarea", { cls: "notedraw-clipboard-fallback" });
   textarea.value = value;
   textarea.setAttribute("readonly", "true");
-  textarea.style.position = "fixed";
-  textarea.style.opacity = "0";
-  activeDocument.body?.appendChild(textarea);
   textarea.select();
   let copied = false;
   try {
@@ -23368,9 +23244,6 @@ function pointDistanceOnCanvas(a, b, width, height) {
     ((a?.y || 0) - (b?.y || 0)) * Math.max(1, height || 1)
   );
 }
-function buildBoundConnectorPoints(fromBounds, toBounds, canvasWidth, canvasHeight) {
-  return buildSnappedConnectorPoints({ fromBounds, toBounds, canvasWidth, canvasHeight });
-}
 function buildFreeConnectorPoints(fromPoint, toPoint, canvasWidth, canvasHeight) {
   const width = Math.max(1, Number(canvasWidth) || 1);
   const height = Math.max(1, Number(canvasHeight) || 1);
@@ -23701,4 +23574,3 @@ function formatReplacementBlock(originalBlock, editedText) {
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
-/* eslint-enable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-return -- Re-enable dynamic interop lint rules after the plugin implementation. */

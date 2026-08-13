@@ -4,6 +4,7 @@ debug-log.jsonl
 *.zip
 work/
 backups/
+reports/
 node_modules/
 .DS_Store
 Thumbs.db

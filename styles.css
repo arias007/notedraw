@@ -39,6 +39,21 @@
   overscroll-behavior: contain;
 }
 
+.notedraw-layout-zoom-target {
+  zoom: var(--notedraw-layout-zoom, 1);
+  transform-origin: top left;
+}
+
+.notedraw-measure-excluded {
+  display: none !important;
+}
+
+.notedraw-clipboard-fallback {
+  position: fixed;
+  opacity: 0;
+  pointer-events: none;
+}
+
 .notedraw-reading-zoom-extent {
   position: absolute;
   z-index: 0;
@@ -1164,51 +1179,6 @@
   color: var(--text-muted);
   font-size: var(--font-ui-smaller);
   text-align: right;
-}
-
-.notedraw-settings-codes {
-  width: 100%;
-}
-
-.notedraw-settings-codes-title {
-  margin-bottom: 4px;
-  color: var(--text-normal);
-  font-size: var(--font-ui-medium);
-  font-weight: 600;
-}
-
-.notedraw-settings-codes-subtitle {
-  margin-bottom: 12px;
-  color: var(--text-muted);
-  font-size: var(--font-ui-small);
-  line-height: 1.35;
-}
-
-.notedraw-settings-codes-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 14px;
-}
-
-.notedraw-settings-code {
-  width: 128px;
-}
-
-.notedraw-settings-code-image {
-  display: block;
-  width: 128px;
-  height: 128px;
-  object-fit: contain;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 8px;
-  background: #fff;
-}
-
-.notedraw-settings-code-label {
-  margin-top: 6px;
-  color: var(--text-muted);
-  font-size: var(--font-ui-smaller);
-  text-align: center;
 }
 
 @media (max-width: 640px) {

@@ -10,30 +10,22 @@ import {
   shouldClearStaleReadingVirtualMinHeight
 } from "../src/canvas-sizing.mjs";
 
-function createStyleState() {
-  const values = new Map();
-  const priorities = new Map();
+function createClassList() {
+  const values = new Set();
   return {
-    getPropertyValue: (name) => values.get(name) || "",
-    getPropertyPriority: (name) => priorities.get(name) || "",
-    setProperty: (name, value, priority = "") => {
-      values.set(name, value);
-      priorities.set(name, priority);
-    },
-    removeProperty: (name) => {
-      values.delete(name);
-      priorities.delete(name);
-    }
+    add: (name) => values.add(name),
+    contains: (name) => values.has(name),
+    remove: (name) => values.delete(name)
   };
 }
 
 test("floating Markdown overflow cannot expand the logical canvas width", () => {
-  const floatingStyle = createStyleState();
-  const floating = { style: floatingStyle };
+  const floatingClassList = createClassList();
+  const floating = { classList: floatingClassList };
   const measureEl = {
     querySelectorAll: () => [floating],
     get scrollWidth() {
-      return floatingStyle.getPropertyValue("display") === "none" ? 500 : 134_095;
+      return floatingClassList.contains("notedraw-measure-excluded") ? 500 : 134_095;
     },
     scrollHeight: 900,
     offsetWidth: 500,
@@ -49,7 +41,7 @@ test("floating Markdown overflow cannot expand the logical canvas width", () => 
   };
 
   assert.equal(measureCanvasExtent(previewEl, measureEl).width, 516);
-  assert.equal(floatingStyle.getPropertyValue("display"), "");
+  assert.equal(floatingClassList.contains("notedraw-measure-excluded"), false);
 });
 
 test("stale virtual min-height is removed only when it dwarfs real sections", () => {

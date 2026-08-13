@@ -21,7 +21,7 @@ export function normalizeDrawingStorageMode(value) {
 
 export function resolveDrawingStoragePath({
   filePath,
-  configDir = ".obsidian",
+  configDir = "",
   pluginId = "notedraw",
   encodedName = "",
   mode = DRAWING_STORAGE_CONFIG
@@ -30,6 +30,9 @@ export function resolveDrawingStoragePath({
   const normalizedMode = normalizeDrawingStorageMode(mode);
   const fallbackEncoded = `${normalizedPath.replace(/[^a-zA-Z0-9._/-]/g, "_").replace(/\//g, "__")}.json`;
   if (normalizedMode === DRAWING_STORAGE_CONFIG) {
+    if (!String(configDir || "").trim()) {
+      throw new Error("configDir is required for plugin config storage");
+    }
     return `${normalizePath(configDir)}/plugins/${normalizePath(pluginId)}/drawings/${encodedName || fallbackEncoded}`;
   }
   if (normalizedMode === DRAWING_STORAGE_EMBEDDED) {
