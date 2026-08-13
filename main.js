@@ -3949,6 +3949,7 @@ var COMMON_COLORS = [
   "#1e88e5",
   "#111827"
 ];
+var NO_COLOR = "transparent";
 var SETTINGS_EXTRA_CODE_ASSETS = [
   { path: "extras/code-1.jpg", dataUrl: code_1_default, labelKey: "supportCodeAlipay" },
   { path: "extras/code-2.png", dataUrl: code_2_default, labelKey: "supportCodeBinance" }
@@ -3994,6 +3995,7 @@ var I18N = {
     deleteSelectedDrawing: "Delete selected drawing",
     penSettings: "Pen settings",
     advancedColor: "Advanced color",
+    noColor: "No color",
     blockBackground: "Box background",
     clearBlockBackground: "Clear box background",
     moveMarkdownBlock: "Move or arrange Markdown block",
@@ -4004,6 +4006,8 @@ var I18N = {
     floatMarkdownBlock: "Make Markdown block floating",
     penWidth: "Pen width",
     penOpacity: "Pen opacity",
+    elementSize: "Size",
+    elementOpacity: "Opacity",
     textGroup: "Text and links",
     buttonGroup: "Buttons and connectors",
     textPlain: "Text",
@@ -4166,6 +4170,7 @@ var I18N = {
     deleteSelectedDrawing: "\u5220\u9664\u9009\u4E2D\u5143\u7D20",
     penSettings: "\u753B\u7B14\u8BBE\u7F6E",
     advancedColor: "\u9AD8\u7EA7\u989C\u8272",
+    noColor: "\u65E0\u8272",
     blockBackground: "\u76D2\u5B50\u5E95\u8272",
     clearBlockBackground: "\u6E05\u9664\u76D2\u5B50\u5E95\u8272",
     moveMarkdownBlock: "\u79FB\u52A8\u6216\u6392\u5217 Markdown \u5757",
@@ -4176,6 +4181,8 @@ var I18N = {
     floatMarkdownBlock: "\u8BBE\u4E3A\u60AC\u6D6E Markdown \u5757",
     penWidth: "\u7B14\u5BBD",
     penOpacity: "\u7B14\u900F\u660E\u5EA6",
+    elementSize: "\u5927\u5C0F",
+    elementOpacity: "\u900F\u660E\u5EA6",
     textGroup: "\u6587\u5B57\u94FE\u63A5",
     buttonGroup: "\u6309\u94AE/\u8FDE\u63A5",
     textPlain: "\u666E\u901A\u6587\u5B57",
@@ -4338,6 +4345,7 @@ var I18N = {
     deleteSelectedDrawing: "\u522A\u9664\u9078\u53D6\u5143\u7D20",
     penSettings: "\u756B\u7B46\u8A2D\u5B9A",
     advancedColor: "\u9032\u968E\u984F\u8272",
+    noColor: "\u7121\u8272",
     blockBackground: "\u76D2\u5B50\u5E95\u8272",
     clearBlockBackground: "\u6E05\u9664\u76D2\u5B50\u5E95\u8272",
     moveMarkdownBlock: "\u79FB\u52D5\u6216\u6392\u5217 Markdown \u5340\u584A",
@@ -4348,6 +4356,8 @@ var I18N = {
     floatMarkdownBlock: "\u8A2D\u70BA\u6D6E\u52D5 Markdown \u5340\u584A",
     penWidth: "\u7B46\u5BEC",
     penOpacity: "\u7B46\u900F\u660E\u5EA6",
+    elementSize: "\u5927\u5C0F",
+    elementOpacity: "\u900F\u660E\u5EA6",
     textGroup: "\u6587\u5B57\u9023\u7D50",
     buttonGroup: "\u6309\u9215/\u9023\u63A5",
     textPlain: "\u666E\u901A\u6587\u5B57",
@@ -4477,8 +4487,11 @@ var I18N = {
     deleteSelectedDrawing: "\u062A\u0627\u0644\u0644\u0627\u0646\u063A\u0627\u0646\u0646\u0649 \u0626\u06C6\u0686\u06C8\u0631\u06C8\u0634",
     penSettings: "\u0642\u06D5\u0644\u06D5\u0645 \u062A\u06D5\u06AD\u0634\u0649\u0643\u0649",
     advancedColor: "\u062A\u06D5\u067E\u0633\u0649\u0644\u0649\u064A \u0631\u06D5\u06AD",
+    noColor: "\u0631\u06D5\u06AD\u0633\u0649\u0632",
     penWidth: "\u0642\u06D5\u0644\u06D5\u0645 \u0643\u06D5\u06AD\u0644\u0649\u0643\u0649",
     penOpacity: "\u0642\u06D5\u0644\u06D5\u0645 \u0633\u06C8\u0632\u06C8\u0643\u0644\u06C8\u0643\u0649",
+    elementSize: "\u0686\u0648\u06AD\u0644\u06C7\u0642\u0649",
+    elementOpacity: "\u0633\u06C8\u0632\u06C8\u0643\u0644\u06C8\u0643\u0649",
     textGroup: "\u062A\u06D0\u0643\u0649\u0633\u062A \u06CB\u06D5 \u0626\u06C7\u0644\u0627\u0646\u0645\u0649\u0644\u0627\u0631",
     buttonGroup: "\u0643\u06C7\u0646\u06C7\u067E\u0643\u0627/\u064A\u06C6\u0646\u0649\u0644\u0649\u0634",
     textPlain: "\u062A\u06D0\u0643\u0649\u0633\u062A",
@@ -4572,8 +4585,11 @@ var I18N = {
     deleteSelectedDrawing: "\u0423\u0434\u0430\u043B\u0438\u0442\u044C \u0432\u044B\u0431\u0440\u0430\u043D\u043D\u043E\u0435",
     penSettings: "\u041D\u0430\u0441\u0442\u0440\u043E\u0439\u043A\u0438 \u043F\u0435\u0440\u0430",
     advancedColor: "\u0420\u0430\u0441\u0448\u0438\u0440\u0435\u043D\u043D\u044B\u0439 \u0446\u0432\u0435\u0442",
+    noColor: "\u0411\u0435\u0437 \u0446\u0432\u0435\u0442\u0430",
     penWidth: "\u0422\u043E\u043B\u0449\u0438\u043D\u0430 \u043F\u0435\u0440\u0430",
     penOpacity: "\u041F\u0440\u043E\u0437\u0440\u0430\u0447\u043D\u043E\u0441\u0442\u044C \u043F\u0435\u0440\u0430",
+    elementSize: "\u0420\u0430\u0437\u043C\u0435\u0440",
+    elementOpacity: "\u041F\u0440\u043E\u0437\u0440\u0430\u0447\u043D\u043E\u0441\u0442\u044C",
     textGroup: "\u0422\u0435\u043A\u0441\u0442 \u0438 \u0441\u0441\u044B\u043B\u043A\u0438",
     buttonGroup: "\u041A\u043D\u043E\u043F\u043A\u0438/\u0441\u0442\u0440\u0435\u043B\u043A\u0438",
     textPlain: "\u0422\u0435\u043A\u0441\u0442",
@@ -4710,6 +4726,9 @@ Object.assign(I18N, {
     deleteSelectedDrawing: "Eliminar seleccionado",
     penSettings: "Ajustes de pluma",
     advancedColor: "Color avanzado",
+    noColor: "Sin color",
+    elementSize: "Tama\xF1o",
+    elementOpacity: "Opacidad",
     textGroup: "Texto y enlaces",
     importGroup: "Importar",
     previewGroup: "Vista previa",
@@ -4748,6 +4767,9 @@ Object.assign(I18N, {
     deleteSelectedDrawing: "Supprimer la s\xE9lection",
     penSettings: "R\xE9glages du stylo",
     advancedColor: "Couleur avanc\xE9e",
+    noColor: "Sans couleur",
+    elementSize: "Taille",
+    elementOpacity: "Opacit\xE9",
     textGroup: "Texte et liens",
     importGroup: "Importer",
     previewGroup: "Aper\xE7u",
@@ -4786,6 +4808,9 @@ Object.assign(I18N, {
     deleteSelectedDrawing: "Auswahl l\xF6schen",
     penSettings: "Stifteinstellungen",
     advancedColor: "Erweiterte Farbe",
+    noColor: "Keine Farbe",
+    elementSize: "Gr\xF6\xDFe",
+    elementOpacity: "Deckkraft",
     textGroup: "Text und Links",
     importGroup: "Import",
     previewGroup: "Vorschau",
@@ -4824,6 +4849,9 @@ Object.assign(I18N, {
     deleteSelectedDrawing: "\u9078\u629E\u3092\u524A\u9664",
     penSettings: "\u30DA\u30F3\u8A2D\u5B9A",
     advancedColor: "\u8A73\u7D30\u30AB\u30E9\u30FC",
+    noColor: "\u8272\u306A\u3057",
+    elementSize: "\u30B5\u30A4\u30BA",
+    elementOpacity: "\u4E0D\u900F\u660E\u5EA6",
     textGroup: "\u30C6\u30AD\u30B9\u30C8\u3068\u30EA\u30F3\u30AF",
     importGroup: "\u30A4\u30F3\u30DD\u30FC\u30C8",
     previewGroup: "\u30D7\u30EC\u30D3\u30E5\u30FC",
@@ -4862,6 +4890,9 @@ Object.assign(I18N, {
     deleteSelectedDrawing: "\uC120\uD0DD \uC0AD\uC81C",
     penSettings: "\uD39C \uC124\uC815",
     advancedColor: "\uACE0\uAE09 \uC0C9\uC0C1",
+    noColor: "\uC0C9\uC0C1 \uC5C6\uC74C",
+    elementSize: "\uD06C\uAE30",
+    elementOpacity: "\uBD88\uD22C\uBA85\uB3C4",
     textGroup: "\uD14D\uC2A4\uD2B8 \uBC0F \uB9C1\uD06C",
     importGroup: "\uAC00\uC838\uC624\uAE30",
     previewGroup: "\uBBF8\uB9AC\uBCF4\uAE30",
@@ -4900,6 +4931,9 @@ Object.assign(I18N, {
     deleteSelectedDrawing: "Se\xE7ileni sil",
     penSettings: "Kalem ayarlar\u0131",
     advancedColor: "Geli\u015Fmi\u015F renk",
+    noColor: "Renksiz",
+    elementSize: "Boyut",
+    elementOpacity: "Opakl\u0131k",
     textGroup: "Metin ve ba\u011Flant\u0131lar",
     importGroup: "\u0130\xE7e aktar",
     previewGroup: "\xD6nizleme",
@@ -4938,6 +4972,7 @@ var DEFAULT_SETTINGS = {
   lastReadingZoom: 1,
   mindMapAffectsSource: true,
   toolbarTopOffset: 6,
+  toolbarPosition: null,
   longPressMs: LONG_PRESS_MS,
   selectTapDistance: SELECT_TAP_DISTANCE,
   selectStrokePadding: SELECT_STROKE_PADDING,
@@ -8894,6 +8929,8 @@ var PreviewDrawingController = class {
     this.formatToolbar = null;
     this.formatToolbarManualPosition = null;
     this.formatToolbarDrag = null;
+    this.toolbarManualPosition = null;
+    this.toolbarDrag = null;
     this.formatColorInput = null;
     this.formatHighlightInput = null;
     this.formatSizeSelect = null;
@@ -9186,6 +9223,9 @@ var PreviewDrawingController = class {
     this.onDocumentPointerFinish = this.onDocumentPointerFinish.bind(this);
     this.onDocumentSelectionChange = this.onDocumentSelectionChange.bind(this);
     this.onDocumentKeyDown = this.onDocumentKeyDown.bind(this);
+    this.onToolbarPointerDown = this.onToolbarPointerDown.bind(this);
+    this.onToolbarDragMove = this.onToolbarDragMove.bind(this);
+    this.onToolbarDragEnd = this.onToolbarDragEnd.bind(this);
     this.onFormatToolbarDragMove = this.onFormatToolbarDragMove.bind(this);
     this.onFormatToolbarDragEnd = this.onFormatToolbarDragEnd.bind(this);
   }
@@ -9250,6 +9290,7 @@ var PreviewDrawingController = class {
     this.button = this.createHeaderButton();
     this.toolbar = createNoteDrawControlElement(this.floatingControlsHost, "notedraw-toolbar");
     this.toolbar._noteDrawController = this;
+    this.toolbar.addEventListener("pointerdown", this.onToolbarPointerDown);
     this.selectButton = this.toolbar.createEl("button", {
       attr: { type: "button", title: this.plugin.t("selectDrawings") }
     });
@@ -9374,12 +9415,12 @@ var PreviewDrawingController = class {
       min: "0",
       max: "1000",
       step: "1",
-      title: this.plugin.t("penWidth")
+      title: this.plugin.t("elementSize")
     });
     this.widthInput.addEventListener("input", () => {
       const width = paletteSliderToBrushWidth(this.widthInput.value);
       this.currentBrushSettings().width = width;
-      this.applySizeToSelectedStrokes(width);
+      this.applySizeToSelectedElements(width);
       this.syncCurrentBrushFields();
       this.updateToolButtons();
       this.persistCurrentBrushSettings();
@@ -9391,12 +9432,12 @@ var PreviewDrawingController = class {
       min: "0",
       max: "1000",
       step: "1",
-      title: this.plugin.t("penOpacity")
+      title: this.plugin.t("elementOpacity")
     });
     this.opacityInput.addEventListener("input", () => {
       const opacity = paletteSliderToOpacity(this.opacityInput.value);
       this.currentBrushSettings().opacity = opacity;
-      this.applyOpacityToSelectedStrokes(opacity);
+      this.applyOpacityToSelectedElements(opacity);
       this.syncCurrentBrushFields();
       this.updateToolButtons();
       this.persistCurrentBrushSettings();
@@ -9566,6 +9607,7 @@ var PreviewDrawingController = class {
     this.plugin.setAccessibleLabel(this.paletteButton, "penSettings");
     this.plugin.setAccessibleLabel(this.colorInput, "advancedColor");
     this.plugin.setAccessibleLabel(this.advancedColorButton, "advancedColor");
+    this.plugin.setAccessibleLabel(this.noColorButton, "noColor");
     this.plugin.setAccessibleLabel(this.markdownBackgroundInput, "blockBackground");
     this.plugin.setAccessibleLabel(this.clearMarkdownBackgroundButton, "clearBlockBackground");
     this.colorSwatchButtons?.forEach((button, index) => {
@@ -9574,8 +9616,10 @@ var PreviewDrawingController = class {
         button.setAttribute("aria-label", this.plugin.t("useColor", { color }));
       }
     });
-    this.widthInput?.setAttribute("title", this.plugin.t("penWidth"));
-    this.opacityInput?.setAttribute("title", this.plugin.t("penOpacity"));
+    this.widthInput?.setAttribute("title", this.plugin.t("elementSize"));
+    this.widthInput?.setAttribute("aria-label", this.plugin.t("elementSize"));
+    this.opacityInput?.setAttribute("title", this.plugin.t("elementOpacity"));
+    this.opacityInput?.setAttribute("aria-label", this.plugin.t("elementOpacity"));
     if (this.brushPanel) {
       const wasOpen = this.brushPanelOpen;
       this.brushPanel.empty();
@@ -9834,6 +9878,7 @@ var PreviewDrawingController = class {
     this.cancelFrozenNoteFlowLayoutRestore();
     this.clearNoteFlowLayout();
     this.stopFormatToolbarDrag();
+    this.stopToolbarDrag();
     this.sourceFormatToolbarCleanup?.();
     this.sourceFormatToolbarCleanup = null;
     if (this.sourceFormatToolbarRetryTimer !== null) {
@@ -10410,12 +10455,24 @@ var PreviewDrawingController = class {
       headerBottom
     );
     const compactViewport = isMobileRuntime() || viewportWidth < 640;
-    const right = compactViewport ? "auto" : clamp10(viewportRight - anchorRight + 10, 8, Math.max(8, viewportWidth - 48));
-    const left = compactViewport ? viewportLeft + 8 : "auto";
+    let right = compactViewport ? "auto" : clamp10(viewportRight - anchorRight + 10, 8, Math.max(8, viewportWidth - 48));
+    let left = compactViewport ? viewportLeft + 8 : "auto";
     const minTop = Math.max(viewportTop + 8, headerBottom + 6);
     const maxTop = Math.max(minTop, viewportTop + viewportHeight - toolbarHeight - 8);
     const topOffset = sanitizeSettings(this.plugin?.noteDrawSettings || {}).toolbarTopOffset;
-    const top = clamp10(anchorBottom + topOffset, minTop, maxTop);
+    let top = clamp10(anchorBottom + topOffset, minTop, maxTop);
+    const savedPosition = normalizeToolbarPosition(this.runtimeSettings?.toolbarPosition);
+    const availableWidth = Math.max(0, viewportWidth - this.toolbar.getBoundingClientRect().width - 16);
+    const availableHeight = Math.max(0, viewportHeight - toolbarHeight - 16);
+    if (this.toolbarManualPosition) {
+      left = clamp10(this.toolbarManualPosition.left, viewportLeft + 8, viewportLeft + 8 + availableWidth);
+      top = clamp10(this.toolbarManualPosition.top, viewportTop + 8, viewportTop + 8 + availableHeight);
+      right = "auto";
+    } else if (savedPosition) {
+      left = viewportLeft + 8 + availableWidth * savedPosition.xRatio;
+      top = viewportTop + 8 + availableHeight * savedPosition.yRatio;
+      right = "auto";
+    }
     const panelTop = top + toolbarHeight + 6;
     const panelLeft = (button, panel, fallbackWidth) => {
       const buttonBounds = button?.getBoundingClientRect?.();
@@ -10445,6 +10502,76 @@ var PreviewDrawingController = class {
         setNoteDrawCssProps(element, props);
       }
     }
+  }
+  onToolbarPointerDown(event) {
+    if (!this.toolbar || event.button !== 0 || event.target?.closest?.("button, input, select, textarea, a, [contenteditable='true']")) {
+      return;
+    }
+    const rect = this.toolbar.getBoundingClientRect();
+    this.toolbarDrag = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      startTop: rect.top,
+      startLeft: rect.left
+    };
+    this.toolbarManualPosition = { top: rect.top, left: rect.left };
+    this.toolbar.addClass("is-moving");
+    activeDocument.addEventListener("pointermove", this.onToolbarDragMove, true);
+    activeDocument.addEventListener("pointerup", this.onToolbarDragEnd, true);
+    activeDocument.addEventListener("pointercancel", this.onToolbarDragEnd, true);
+    event.preventDefault();
+    event.stopPropagation();
+  }
+  onToolbarDragMove(event) {
+    if (!this.toolbarDrag || !this.toolbar || event.pointerId !== this.toolbarDrag.pointerId) {
+      return;
+    }
+    const rect = this.toolbar.getBoundingClientRect();
+    const viewport = window.visualViewport;
+    const viewportLeft = viewport?.offsetLeft || 0;
+    const viewportTop = viewport?.offsetTop || 0;
+    const viewportWidth = Math.max(160, viewport?.width || window.innerWidth || 160);
+    const viewportHeight = Math.max(120, viewport?.height || window.innerHeight || 120);
+    this.toolbarManualPosition = {
+      left: clamp10(this.toolbarDrag.startLeft + event.clientX - this.toolbarDrag.startX, viewportLeft + 8, Math.max(viewportLeft + 8, viewportLeft + viewportWidth - rect.width - 8)),
+      top: clamp10(this.toolbarDrag.startTop + event.clientY - this.toolbarDrag.startY, viewportTop + 8, Math.max(viewportTop + 8, viewportTop + viewportHeight - rect.height - 8))
+    };
+    this.updateFloatingControlsPosition();
+    event.preventDefault();
+    event.stopPropagation();
+  }
+  onToolbarDragEnd(event) {
+    if (!this.toolbarDrag || event?.pointerId !== this.toolbarDrag.pointerId) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    const viewport = window.visualViewport;
+    const viewportLeft = viewport?.offsetLeft || 0;
+    const viewportTop = viewport?.offsetTop || 0;
+    const viewportWidth = Math.max(160, viewport?.width || window.innerWidth || 160);
+    const viewportHeight = Math.max(120, viewport?.height || window.innerHeight || 120);
+    const rect = this.toolbar?.getBoundingClientRect?.();
+    const availableWidth = Math.max(0, viewportWidth - (rect?.width || 0) - 16);
+    const availableHeight = Math.max(0, viewportHeight - (rect?.height || 0) - 16);
+    const position = this.toolbarManualPosition || { left: rect?.left || viewportLeft + 8, top: rect?.top || viewportTop + 8 };
+    this.plugin.noteDrawSettings.toolbarPosition = {
+      xRatio: availableWidth > 0 ? clamp10((position.left - viewportLeft - 8) / availableWidth, 0, 1) : 0,
+      yRatio: availableHeight > 0 ? clamp10((position.top - viewportTop - 8) / availableHeight, 0, 1) : 0
+    };
+    this.runtimeSettings.toolbarPosition = this.plugin.noteDrawSettings.toolbarPosition;
+    this.toolbarManualPosition = null;
+    this.stopToolbarDrag();
+    this.updateFloatingControlsPosition();
+    this.plugin.scheduleSettingsSave();
+  }
+  stopToolbarDrag() {
+    this.toolbarDrag = null;
+    this.toolbar?.removeClass("is-moving");
+    activeDocument.removeEventListener("pointermove", this.onToolbarDragMove, true);
+    activeDocument.removeEventListener("pointerup", this.onToolbarDragEnd, true);
+    activeDocument.removeEventListener("pointercancel", this.onToolbarDragEnd, true);
   }
   onBrushButtonClick(mode, event) {
     event?.preventDefault?.();
@@ -11728,6 +11855,16 @@ ${selected}
       });
       return button;
     });
+    this.noColorButton = this.colorSwatchGrid.createEl("button", {
+      cls: "notedraw-color-swatch notedraw-color-none",
+      attr: {
+        type: "button",
+        title: this.plugin.t("noColor"),
+        "aria-label": this.plugin.t("noColor")
+      }
+    });
+    (0, import_obsidian.setIcon)(this.noColorButton, "ban");
+    bindNoteDrawControlTap(this.noColorButton, () => this.setCurrentBrushColor(NO_COLOR));
     this.advancedColorButton = this.colorSwatchGrid.createEl("button", {
       cls: "notedraw-color-advanced",
       attr: {
@@ -11742,11 +11879,18 @@ ${selected}
     });
   }
   setCurrentBrushColor(color) {
-    if (!isCssColor(color)) {
+    if (!isPaletteColor(color)) {
+      return;
+    }
+    if (color === NO_COLOR) {
+      if (this.toolMode === TOOL_SELECT && this.hasHybridSelection()) {
+        this.applyColorToSelectedElements(color);
+        this.syncPaletteInputs();
+      }
       return;
     }
     this.currentBrushSettings().color = color;
-    this.applyColorToSelectedStrokes(color);
+    this.applyColorToSelectedElements(color);
     this.syncCurrentBrushFields();
     this.syncPaletteInputs();
     this.updateToolButtons();
@@ -11755,17 +11899,17 @@ ${selected}
   }
   currentPaletteColor() {
     if (this.toolMode === TOOL_SELECT) {
-      const selectedGroupColor = this.selectedWholeElementGroups().filter((group) => group.boxed).map((group) => group.backgroundColor || group.borderColor).find((color) => isCssColor(color));
+      const selectedGroupColor = this.selectedWholeElementGroups().filter((group) => group.boxed).map((group) => group.backgroundColor || group.borderColor).find((color) => isPaletteColor(color));
       if (selectedGroupColor) {
         return selectedGroupColor;
       }
-      const selectedColor = this.getSelectedStrokeIndexes().map((index) => this.drawingData.strokes[index]?.color).find((color) => isCssColor(color));
+      const selectedColor = this.getSelectedStrokeIndexes().map((index) => this.drawingData.strokes[index]?.color).find((color) => isPaletteColor(color));
       if (selectedColor) {
         return selectedColor;
       }
-      const selectedBorder = this.getSelectedMarkdownBlocks().map((block) => block.borderColor).find((color) => isCssColor(color));
-      if (selectedBorder) {
-        return selectedBorder;
+      const selectedBlockColor = this.getSelectedMarkdownBlocks().map((block) => block.contentColor || block.borderColor).find((color) => isPaletteColor(color));
+      if (selectedBlockColor) {
+        return selectedBlockColor;
       }
     }
     return this.currentBrushSettings().color;
@@ -11776,6 +11920,10 @@ ${selected}
       if (Number.isFinite(Number(selectedWidth))) {
         return clamp10(Number(selectedWidth), MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH);
       }
+      const blockSize = this.getSelectedMarkdownBlocks().map((block) => block.contentScale).find((size) => Number.isFinite(Number(size)));
+      if (Number.isFinite(Number(blockSize))) {
+        return elementScaleToPaletteBrushWidth(blockSize);
+      }
     }
     return this.currentBrushSettings().width;
   }
@@ -11785,10 +11933,14 @@ ${selected}
       if (Number.isFinite(Number(selectedOpacity))) {
         return clamp10(Number(selectedOpacity), 0, 1);
       }
+      const blockOpacity = this.getSelectedMarkdownBlocks().map((block) => block.contentOpacity).find((opacity) => Number.isFinite(Number(opacity)));
+      if (Number.isFinite(Number(blockOpacity))) {
+        return clamp10(Number(blockOpacity), 0, 1);
+      }
     }
     return this.currentBrushSettings().opacity;
   }
-  applyColorToSelectedStrokes(color) {
+  applyColorToSelectedElements(color) {
     const indexes = this.getSelectedStrokeIndexes();
     const boxedGroups = this.selectedWholeElementGroups().filter((group) => group.boxed);
     const boxedGroupIds = new Set(boxedGroups.map((group) => group.id));
@@ -11796,7 +11948,7 @@ ${selected}
       const stroke = this.drawingData.strokes[index];
       return stroke && !boxedGroupIds.has(stroke.groupId) && stroke.color !== color;
     });
-    const changedBlocks = this.getSelectedMarkdownBlocks().filter((block) => !boxedGroupIds.has(block.groupId) && block.borderColor !== color);
+    const changedBlocks = this.getSelectedMarkdownBlocks().filter((block) => !boxedGroupIds.has(block.groupId) && (block.contentColor !== color || block.borderColor && block.borderColor !== color));
     const changedGroups = boxedGroups.filter((group) => group.borderColor !== color || isCssColor(group.backgroundColor) && group.backgroundColor !== color);
     if (!changed.length && !changedBlocks.length && !changedGroups.length) {
       return false;
@@ -11806,11 +11958,14 @@ ${selected}
       this.drawingData.strokes[index].color = color;
     }
     for (const block of changedBlocks) {
-      block.borderColor = color;
+      block.contentColor = color;
+      if (block.borderColor) {
+        block.borderColor = color;
+      }
     }
     for (const group of changedGroups) {
       group.borderColor = color;
-      if (isCssColor(group.backgroundColor)) {
+      if (group.backgroundColor) {
         group.backgroundColor = color;
       }
     }
@@ -11818,6 +11973,7 @@ ${selected}
     this.invalidateStaticCache();
     this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
     this.recordDrawingHistory(historyBefore);
+    this.refreshMarkdownBlockPresentation(changedBlocks.map((block) => block.id));
     this.render();
     return true;
   }
@@ -11843,35 +11999,46 @@ ${selected}
     this.render();
     return true;
   }
-  applyOpacityToSelectedStrokes(opacity) {
+  applyOpacityToSelectedElements(opacity) {
     const nextOpacity = clamp10(Number(opacity), 0, 1);
     const indexes = this.getSelectedStrokeIndexes();
     const changed = indexes.filter((index) => {
       const stroke = this.drawingData.strokes[index];
       return stroke && Math.abs(clamp10(Number(stroke.opacity ?? 1), 0, 1) - nextOpacity) >= 1e-3;
     });
-    if (!changed.length) {
+    const changedBlocks = this.getSelectedMarkdownBlocks().filter((block) => Math.abs(clamp10(Number(block.contentOpacity ?? 1), 0, 1) - nextOpacity) >= 1e-3);
+    const changedGroups = this.selectedWholeElementGroups().filter((group) => Math.abs(clamp10(Number(group.opacity ?? 1), 0, 1) - nextOpacity) >= 1e-3);
+    if (!changed.length && !changedBlocks.length && !changedGroups.length) {
       return false;
     }
     const historyBefore = this.captureDrawingHistorySnapshot();
     for (const index of changed) {
       this.drawingData.strokes[index].opacity = nextOpacity;
     }
+    for (const block of changedBlocks) {
+      block.contentOpacity = nextOpacity;
+    }
+    for (const group of changedGroups) {
+      group.opacity = nextOpacity;
+    }
     this.redoStack = [];
     this.invalidateStaticCache();
     this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
     this.recordDrawingHistory(historyBefore);
+    this.refreshMarkdownBlockPresentation(changedBlocks.map((block) => block.id));
     this.render();
     return true;
   }
-  applySizeToSelectedStrokes(width) {
+  applySizeToSelectedElements(width) {
     const nextWidth = clamp10(Number(width), MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH);
     const indexes = this.getSelectedStrokeIndexes();
     const changed = indexes.filter((index) => {
       const stroke = this.drawingData.strokes[index];
       return stroke && Math.abs(clamp10(Number(stroke.width || this.penWidth), MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH) - nextWidth) >= 0.01;
     });
-    if (!changed.length) {
+    const nextContentScale = paletteBrushWidthToElementScale(nextWidth);
+    const changedBlocks = this.getSelectedMarkdownBlocks().filter((block) => Math.abs(clamp10(Number(block.contentScale ?? 1), 0.5, 3) - nextContentScale) >= 1e-3);
+    if (!changed.length && !changedBlocks.length) {
       return false;
     }
     const historyBefore = this.captureDrawingHistorySnapshot();
@@ -11894,10 +12061,18 @@ ${selected}
         stroke.width = nextWidth;
       }
     }
+    for (const block of changedBlocks) {
+      block.contentScale = nextContentScale;
+    }
     this.redoStack = [];
     this.invalidateStaticCache();
     this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
     this.recordDrawingHistory(historyBefore);
+    this.refreshMarkdownBlockPresentation(changedBlocks.map((block) => block.id));
+    if (changedBlocks.length) {
+      this.scheduleResize({ layout: false, measure: true });
+      this.scheduleNoteFlowLayout({ operation: true });
+    }
     this.render();
     return true;
   }
@@ -11910,9 +12085,11 @@ ${selected}
       const color = COMMON_COLORS[index].toLowerCase();
       button.classList.toggle("is-active", color === currentColor);
     });
+    this.noColorButton?.classList.toggle("is-active", currentColor === NO_COLOR);
+    this.noColorButton?.toggleAttribute("disabled", !(this.toolMode === TOOL_SELECT && this.hasHybridSelection()));
     this.advancedColorButton?.classList.toggle(
       "is-active",
-      Boolean(currentColor) && !COMMON_COLORS.some((color) => color.toLowerCase() === currentColor)
+      Boolean(currentColor) && currentColor !== NO_COLOR && !COMMON_COLORS.some((color) => color.toLowerCase() === currentColor)
     );
   }
   applyBrushButtonState(button, settings, active) {
@@ -17195,10 +17372,10 @@ ${selected}
         height: `${Math.max(28, Math.round(bounds.maxY - bounds.minY))}px`,
         opacity: String(clamp10(Number(stroke.opacity ?? 1), 0, 1))
       };
-      const geometryToken = `${geometry.left}|${geometry.top}|${geometry.width}|${geometry.height}|${geometry.opacity}|${stroke.color || "#64748b"}`;
+      const geometryToken = `${geometry.left}|${geometry.top}|${geometry.width}|${geometry.height}|${geometry.opacity}|${strokePaletteColor(stroke, "#64748b")}`;
       if (this.embedGeometryTokens.get(key) !== geometryToken) {
         this.embedGeometryTokens.set(key, geometryToken);
-        setNoteDrawCssProps(node, { "--notedraw-node-color": stroke.color || "#64748b" });
+        setNoteDrawCssProps(node, { "--notedraw-node-color": strokePaletteColor(stroke, "#64748b") });
         applyElementStyles(node, geometry);
       }
       this.renderEmbedNode(node, stroke, index);
@@ -17360,7 +17537,7 @@ ${selected}
     ctx.globalAlpha = alpha * opacity;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
-    ctx.strokeStyle = stroke.color || this.penColor;
+    ctx.strokeStyle = strokePaletteColor(stroke, this.penColor);
     ctx.lineWidth = stroke.width || this.penWidth;
     for (const offset of offsets) {
       ctx.beginPath();
@@ -17442,8 +17619,8 @@ ${selected}
     const points = stroke.points.map((point) => this.pointToCanvas(point));
     ctx.save();
     ctx.globalAlpha = alpha * opacity;
-    ctx.strokeStyle = stroke.color || "#64748b";
-    ctx.fillStyle = stroke.color || "#64748b";
+    ctx.strokeStyle = strokePaletteColor(stroke, "#64748b");
+    ctx.fillStyle = strokePaletteColor(stroke, "#64748b");
     ctx.lineWidth = width;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
@@ -17485,7 +17662,7 @@ ${selected}
     }
     ctx.save();
     ctx.globalAlpha = alpha * segments[0].opacity;
-    ctx.fillStyle = stroke.color || this.penColor;
+    ctx.fillStyle = strokePaletteColor(stroke, this.penColor);
     const centers = [segments[0].from, ...segments.map((segment) => segment.to)].map((point) => this.pointToCanvas(point));
     const widths = [segments[0].fromWidth, ...segments.map((segment) => segment.toWidth)];
     const left = [];
@@ -17540,7 +17717,7 @@ ${selected}
     }
     ctx.closePath();
     ctx.fill();
-    ctx.strokeStyle = stroke.color || this.penColor;
+    ctx.strokeStyle = strokePaletteColor(stroke, this.penColor);
     ctx.lineWidth = Math.max(0.7, Math.min(1.05, Number(stroke.width || this.penWidth) * 0.13));
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
@@ -17634,18 +17811,18 @@ ${selected}
     ctx.globalAlpha = alpha * opacity;
     ctx.font = `${stroke.bold ? "700 " : ""}${fontSize}px ${stroke.code ? "monospace" : "sans-serif"}`;
     ctx.textBaseline = "top";
-    ctx.fillStyle = stroke.color || this.penColor;
+    ctx.fillStyle = strokePaletteColor(stroke, this.penColor);
     const layout = getTextStrokeLayout(stroke, this.canvasWidth(), (value) => ctx.measureText(value).width);
     if (layout.paddingX || layout.paddingY) {
       const style = normalizeButtonStyle(stroke.buttonStyle);
       if (style === "solid") {
-        ctx.fillStyle = stroke.color || this.penColor;
+        ctx.fillStyle = strokePaletteColor(stroke, this.penColor);
       } else if (style === "outline") {
         ctx.fillStyle = "rgba(255, 255, 255, 0.82)";
       } else {
         ctx.fillStyle = stroke.code ? "rgba(127, 127, 127, 0.14)" : "rgba(255, 255, 255, 0.74)";
       }
-      ctx.strokeStyle = stroke.color || this.penColor;
+      ctx.strokeStyle = strokePaletteColor(stroke, this.penColor);
       ctx.lineWidth = 1.25;
       if (style === "circle") {
         ctx.beginPath();
@@ -17657,7 +17834,7 @@ ${selected}
       ctx.fill();
       ctx.stroke();
     }
-    ctx.fillStyle = normalizeButtonStyle(stroke.buttonStyle) === "solid" ? "#ffffff" : stroke.color || this.penColor;
+    ctx.fillStyle = normalizeButtonStyle(stroke.buttonStyle) === "solid" ? "#ffffff" : strokePaletteColor(stroke, this.penColor);
     layout.lines.forEach((line, index) => {
       ctx.fillText(line, point.x, point.y + index * layout.lineHeight);
     });
@@ -17676,7 +17853,7 @@ ${selected}
     ctx.globalAlpha = alpha * opacity;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
-    ctx.strokeStyle = stroke.color || this.penColor;
+    ctx.strokeStyle = strokePaletteColor(stroke, this.penColor);
     ctx.lineWidth = width;
     ctx.beginPath();
     const first = this.pointToCanvas(stroke.points[0]);
@@ -17697,7 +17874,7 @@ ${selected}
     this.ctx.save();
     this.ctx.lineCap = "round";
     this.ctx.lineJoin = "round";
-    this.ctx.strokeStyle = stroke.color || this.penColor;
+    this.ctx.strokeStyle = strokePaletteColor(stroke, this.penColor);
     this.ctx.lineWidth = stroke.width || this.penWidth;
     this.ctx.beginPath();
     this.ctx.moveTo(from.x, from.y);
@@ -17754,7 +17931,7 @@ ${selected}
       const width = bounds.maxX - bounds.minX + padding * 2;
       const height = bounds.maxY - bounds.minY + padding * 2;
       this.ctx.save();
-      this.ctx.globalAlpha = group.boxed ? 0.92 : 0.58;
+      this.ctx.globalAlpha = (group.boxed ? 0.92 : 0.58) * clamp10(Number(group.opacity ?? 1), 0, 1);
       this.ctx.strokeStyle = group.boxed ? group.borderColor || SELECTION_FRAME_COLOR : "#8b8b96";
       this.ctx.lineWidth = group.boxed ? SELECTION_FRAME_LINE_WIDTH : 1.25;
       this.ctx.setLineDash(group.boxed ? [3, 2] : [4, 3]);
@@ -17774,7 +17951,7 @@ ${selected}
       }
       const padding = this.elementGroupFramePaddingPx(group.id);
       this.underlayCtx.save();
-      this.underlayCtx.globalAlpha = 0.14;
+      this.underlayCtx.globalAlpha = 0.14 * clamp10(Number(group.opacity ?? 1), 0, 1);
       this.underlayCtx.fillStyle = group.backgroundColor;
       roundRect(
         this.underlayCtx,
@@ -18322,7 +18499,10 @@ ${selected}
       this.applyMarkdownBlockWidthPresentation(block, element);
       setNoteDrawCssProps(element, {
         "--notedraw-md-border": block.borderColor || "transparent",
-        "--notedraw-md-background": block.backgroundColor || "transparent"
+        "--notedraw-md-background": block.backgroundColor || "transparent",
+        "--notedraw-md-content-color": block.contentColor || "inherit",
+        "--notedraw-md-content-opacity": String(block.contentOpacity ?? 1),
+        "--notedraw-md-content-scale": String(block.contentScale ?? 1)
       });
       this.applyMarkdownBlockHeightPresentation(block, element);
       if (block.floating && block.floatBox) {
@@ -18466,7 +18646,10 @@ ${selected}
       this.applyMarkdownBlockWidthPresentation(block, element);
       setNoteDrawCssProps(element, {
         "--notedraw-md-border": block.borderColor || "transparent",
-        "--notedraw-md-background": block.backgroundColor || "transparent"
+        "--notedraw-md-background": block.backgroundColor || "transparent",
+        "--notedraw-md-content-color": block.contentColor || "inherit",
+        "--notedraw-md-content-opacity": String(block.contentOpacity ?? 1),
+        "--notedraw-md-content-scale": String(block.contentScale ?? 1)
       });
       this.applyMarkdownBlockHeightPresentation(block, element);
       if (block.floating && block.floatBox) {
@@ -23236,6 +23419,7 @@ function sanitizeSettings(settings) {
     lastReadingZoom: clamp10(Number(input.lastReadingZoom ?? DEFAULT_SETTINGS.lastReadingZoom), MIN_READING_ZOOM, MAX_READING_ZOOM),
     mindMapAffectsSource: input.mindMapAffectsSource !== false,
     toolbarTopOffset: clamp10(Number(input.toolbarTopOffset ?? DEFAULT_SETTINGS.toolbarTopOffset), 0, 48),
+    toolbarPosition: normalizeToolbarPosition(input.toolbarPosition),
     longPressMs: clamp10(Number(input.longPressMs ?? DEFAULT_SETTINGS.longPressMs), MIN_LONG_PRESS_MS, MAX_LONG_PRESS_MS),
     selectTapDistance: clamp10(Number(input.selectTapDistance ?? DEFAULT_SETTINGS.selectTapDistance), MIN_SELECT_TAP_DISTANCE, MAX_SELECT_TAP_DISTANCE),
     selectStrokePadding: clamp10(Number(input.selectStrokePadding ?? DEFAULT_SETTINGS.selectStrokePadding), MIN_SELECT_STROKE_PADDING, MAX_SELECT_STROKE_PADDING),
@@ -23245,6 +23429,15 @@ function sanitizeSettings(settings) {
     drawingCompactDistance: clamp10(Number(input.drawingCompactDistance ?? DEFAULT_SETTINGS.drawingCompactDistance), MIN_DRAWING_COMPACT_DISTANCE_PX, MAX_DRAWING_COMPACT_DISTANCE_PX),
     autoSaveDelayMs: clamp10(Number(input.autoSaveDelayMs ?? DEFAULT_SETTINGS.autoSaveDelayMs), MIN_AUTO_SAVE_DELAY_MS, MAX_AUTO_SAVE_DELAY_MS),
     enableDebugLog: Boolean(input.enableDebugLog)
+  };
+}
+function normalizeToolbarPosition(value) {
+  if (!value || !Number.isFinite(Number(value.xRatio)) || !Number.isFinite(Number(value.yRatio))) {
+    return null;
+  }
+  return {
+    xRatio: clamp10(Number(value.xRatio), 0, 1),
+    yRatio: clamp10(Number(value.yRatio), 0, 1)
   };
 }
 function translateNoteDraw(plugin, key, vars = {}) {
@@ -23403,6 +23596,12 @@ function setAccessibleLabel(element, label) {
 function isCssColor(value) {
   return typeof value === "string" && /^#[0-9a-fA-F]{6}$/.test(value);
 }
+function isPaletteColor(value) {
+  return value === NO_COLOR || isCssColor(value);
+}
+function strokePaletteColor(stroke, fallback) {
+  return stroke?.color === NO_COLOR ? NO_COLOR : stroke?.color || fallback;
+}
 function contrastTextColor(hexColor) {
   if (!isCssColor(hexColor)) {
     return "#111827";
@@ -23422,6 +23621,17 @@ function paletteSliderToBrushWidth(value) {
   const ratio = clamp10(Number(value) / 1e3, 0, 1);
   const width = MIN_BRUSH_WIDTH * Math.pow(MAX_BRUSH_WIDTH / MIN_BRUSH_WIDTH, ratio);
   return Math.round(width * 100) / 100;
+}
+function paletteBrushWidthToElementScale(width) {
+  const ratio = brushWidthToPaletteSlider(width) / 1e3;
+  const defaultRatio = brushWidthToPaletteSlider(DEFAULT_SETTINGS.defaultPenWidth) / 1e3;
+  return ratio <= defaultRatio ? clamp10(0.5 + 0.5 * ratio / Math.max(1e-3, defaultRatio), 0.5, 1) : clamp10(1 + 2 * (ratio - defaultRatio) / Math.max(1e-3, 1 - defaultRatio), 1, 3);
+}
+function elementScaleToPaletteBrushWidth(scale) {
+  const nextScale = clamp10(Number(scale), 0.5, 3);
+  const defaultRatio = brushWidthToPaletteSlider(DEFAULT_SETTINGS.defaultPenWidth) / 1e3;
+  const ratio = nextScale <= 1 ? (nextScale - 0.5) / 0.5 * defaultRatio : defaultRatio + (nextScale - 1) / 2 * (1 - defaultRatio);
+  return paletteSliderToBrushWidth(clamp10(ratio, 0, 1) * 1e3);
 }
 function opacityToPaletteSlider(value) {
   return Math.round(Math.sqrt(clamp10(Number(value), 0, 1)) * 1e3);
@@ -25519,8 +25729,11 @@ function normalizeMarkdownBlocks(value, file2) {
       noteFlowAutoSpan: Boolean(block?.noteFlowAutoSpan),
       widthScale: normalizeMarkdownBlockWidthScale(block?.widthScale),
       minHeight: normalizeMarkdownBlockMinHeight(block?.minHeight),
-      borderColor: isCssColor(block?.borderColor) ? block.borderColor : "",
-      backgroundColor: isCssColor(block?.backgroundColor) ? block.backgroundColor : "",
+      borderColor: isPaletteColor(block?.borderColor) ? block.borderColor : "",
+      backgroundColor: isPaletteColor(block?.backgroundColor) ? block.backgroundColor : "",
+      contentColor: isPaletteColor(block?.contentColor) ? block.contentColor : "",
+      contentOpacity: clamp10(Number(block?.contentOpacity ?? 1), 0, 1),
+      contentScale: clamp10(Number(block?.contentScale ?? 1), 0.5, 3),
       floating: Boolean(block?.floating && floatBox),
       floatingExplicit: Boolean(block?.floatingExplicit),
       floatBox,
@@ -25556,8 +25769,9 @@ function normalizeElementGroups(value) {
     boxed: Boolean(group?.boxed),
     locked: group?.locked !== false,
     boxOwnedLock: group?.boxOwnedLock === void 0 ? Boolean(group?.boxed) : Boolean(group.boxOwnedLock),
-    borderColor: isCssColor(group?.borderColor) ? group.borderColor : "#64748b",
-    backgroundColor: isCssColor(group?.backgroundColor) ? group.backgroundColor : ""
+    borderColor: isPaletteColor(group?.borderColor) ? group.borderColor : "#64748b",
+    backgroundColor: isPaletteColor(group?.backgroundColor) ? group.backgroundColor : "",
+    opacity: clamp10(Number(group?.opacity ?? 1), 0, 1)
   })).filter((group) => group.id && !seen.has(group.id) && seen.add(group.id));
 }
 function normalizeDrawingDataForStorage(data, file2) {

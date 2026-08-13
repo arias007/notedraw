@@ -446,7 +446,13 @@
   overflow-x: auto;
   overflow-y: hidden;
   overscroll-behavior-x: contain;
-  touch-action: pan-x;
+  touch-action: none;
+  cursor: grab;
+}
+
+.notedraw-toolbar.is-moving {
+  cursor: grabbing;
+  user-select: none;
 }
 
 .notedraw-shell.is-drawing-active.is-notedraw-controls-visible > .notedraw-toolbar {
@@ -493,8 +499,8 @@
   border-radius: 999px;
   color: var(--text-muted);
   background: transparent;
-  cursor: pointer;
   touch-action: manipulation;
+  cursor: pointer;
 }
 
 .notedraw-toolbar button.is-active {
@@ -637,6 +643,13 @@
   box-sizing: border-box;
   isolation: isolate;
   transition: outline-color 100ms ease;
+  opacity: var(--notedraw-md-content-opacity, 1);
+  zoom: var(--notedraw-md-content-scale, 1);
+}
+
+.notedraw-md-block,
+.notedraw-md-block :where(a, span, strong, em, code, mark, del, small) {
+  color: var(--notedraw-md-content-color, inherit);
 }
 
 .notedraw-md-block[data-note-draw-resized-height] {
@@ -1080,7 +1093,7 @@
 
 .notedraw-color-grid {
   display: grid;
-  grid-template-columns: repeat(6, 24px);
+  grid-template-columns: repeat(7, 24px);
   gap: 6px;
   align-items: center;
 }
@@ -1101,6 +1114,20 @@
   background:
     linear-gradient(var(--notedraw-swatch-color), var(--notedraw-swatch-color)),
     repeating-conic-gradient(#ddd 0% 25%, #fff 0% 50%) 50% / 8px 8px;
+}
+
+.notedraw-color-none {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  background: repeating-conic-gradient(#ddd 0% 25%, #fff 0% 50%) 50% / 8px 8px;
+}
+
+.notedraw-color-none svg,
+.notedraw-color-none .svg-icon {
+  width: 16px;
+  height: 16px;
 }
 
 .notedraw-color-swatch.is-active,

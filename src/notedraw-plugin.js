@@ -235,6 +235,7 @@ var COMMON_COLORS = [
   "#1e88e5",
   "#111827"
 ];
+var NO_COLOR = "transparent";
 var SETTINGS_EXTRA_CODE_ASSETS = [
   { path: "extras/code-1.jpg", dataUrl: SUPPORT_CODE_ALIPAY_DATA_URL, labelKey: "supportCodeAlipay" },
   { path: "extras/code-2.png", dataUrl: SUPPORT_CODE_BINANCE_DATA_URL, labelKey: "supportCodeBinance" }
@@ -280,6 +281,7 @@ var I18N = {
     deleteSelectedDrawing: "Delete selected drawing",
     penSettings: "Pen settings",
     advancedColor: "Advanced color",
+    noColor: "No color",
     blockBackground: "Box background",
     clearBlockBackground: "Clear box background",
     moveMarkdownBlock: "Move or arrange Markdown block",
@@ -290,6 +292,8 @@ var I18N = {
     floatMarkdownBlock: "Make Markdown block floating",
     penWidth: "Pen width",
     penOpacity: "Pen opacity",
+    elementSize: "Size",
+    elementOpacity: "Opacity",
     textGroup: "Text and links",
     buttonGroup: "Buttons and connectors",
     textPlain: "Text",
@@ -452,6 +456,7 @@ var I18N = {
     deleteSelectedDrawing: "删除选中元素",
     penSettings: "画笔设置",
     advancedColor: "高级颜色",
+    noColor: "无色",
     blockBackground: "盒子底色",
     clearBlockBackground: "清除盒子底色",
     moveMarkdownBlock: "移动或排列 Markdown 块",
@@ -462,6 +467,8 @@ var I18N = {
     floatMarkdownBlock: "设为悬浮 Markdown 块",
     penWidth: "笔宽",
     penOpacity: "笔透明度",
+    elementSize: "大小",
+    elementOpacity: "透明度",
     textGroup: "文字链接",
     buttonGroup: "按钮/连接",
     textPlain: "普通文字",
@@ -624,6 +631,7 @@ var I18N = {
     deleteSelectedDrawing: "刪除選取元素",
     penSettings: "畫筆設定",
     advancedColor: "進階顏色",
+    noColor: "無色",
     blockBackground: "盒子底色",
     clearBlockBackground: "清除盒子底色",
     moveMarkdownBlock: "移動或排列 Markdown 區塊",
@@ -634,6 +642,8 @@ var I18N = {
     floatMarkdownBlock: "設為浮動 Markdown 區塊",
     penWidth: "筆寬",
     penOpacity: "筆透明度",
+    elementSize: "大小",
+    elementOpacity: "透明度",
     textGroup: "文字連結",
     buttonGroup: "按鈕/連接",
     textPlain: "普通文字",
@@ -763,8 +773,11 @@ var I18N = {
     deleteSelectedDrawing: "تاللانغاننى ئۆچۈرۈش",
     penSettings: "قەلەم تەڭشىكى",
     advancedColor: "تەپسىلىي رەڭ",
+    noColor: "رەڭسىز",
     penWidth: "قەلەم كەڭلىكى",
     penOpacity: "قەلەم سۈزۈكلۈكى",
+    elementSize: "چوڭلۇقى",
+    elementOpacity: "سۈزۈكلۈكى",
     textGroup: "تېكىست ۋە ئۇلانمىلار",
     buttonGroup: "كۇنۇپكا/يۆنىلىش",
     textPlain: "تېكىست",
@@ -858,8 +871,11 @@ var I18N = {
     deleteSelectedDrawing: "Удалить выбранное",
     penSettings: "Настройки пера",
     advancedColor: "Расширенный цвет",
+    noColor: "Без цвета",
     penWidth: "Толщина пера",
     penOpacity: "Прозрачность пера",
+    elementSize: "Размер",
+    elementOpacity: "Прозрачность",
     textGroup: "Текст и ссылки",
     buttonGroup: "Кнопки/стрелки",
     textPlain: "Текст",
@@ -996,6 +1012,9 @@ Object.assign(I18N, {
     deleteSelectedDrawing: "Eliminar seleccionado",
     penSettings: "Ajustes de pluma",
     advancedColor: "Color avanzado",
+    noColor: "Sin color",
+    elementSize: "Tamaño",
+    elementOpacity: "Opacidad",
     textGroup: "Texto y enlaces",
     importGroup: "Importar",
     previewGroup: "Vista previa",
@@ -1034,6 +1053,9 @@ Object.assign(I18N, {
     deleteSelectedDrawing: "Supprimer la sélection",
     penSettings: "Réglages du stylo",
     advancedColor: "Couleur avancée",
+    noColor: "Sans couleur",
+    elementSize: "Taille",
+    elementOpacity: "Opacité",
     textGroup: "Texte et liens",
     importGroup: "Importer",
     previewGroup: "Aperçu",
@@ -1072,6 +1094,9 @@ Object.assign(I18N, {
     deleteSelectedDrawing: "Auswahl löschen",
     penSettings: "Stifteinstellungen",
     advancedColor: "Erweiterte Farbe",
+    noColor: "Keine Farbe",
+    elementSize: "Größe",
+    elementOpacity: "Deckkraft",
     textGroup: "Text und Links",
     importGroup: "Import",
     previewGroup: "Vorschau",
@@ -1110,6 +1135,9 @@ Object.assign(I18N, {
     deleteSelectedDrawing: "選択を削除",
     penSettings: "ペン設定",
     advancedColor: "詳細カラー",
+    noColor: "色なし",
+    elementSize: "サイズ",
+    elementOpacity: "不透明度",
     textGroup: "テキストとリンク",
     importGroup: "インポート",
     previewGroup: "プレビュー",
@@ -1148,6 +1176,9 @@ Object.assign(I18N, {
     deleteSelectedDrawing: "선택 삭제",
     penSettings: "펜 설정",
     advancedColor: "고급 색상",
+    noColor: "색상 없음",
+    elementSize: "크기",
+    elementOpacity: "불투명도",
     textGroup: "텍스트 및 링크",
     importGroup: "가져오기",
     previewGroup: "미리보기",
@@ -1186,6 +1217,9 @@ Object.assign(I18N, {
     deleteSelectedDrawing: "Seçileni sil",
     penSettings: "Kalem ayarları",
     advancedColor: "Gelişmiş renk",
+    noColor: "Renksiz",
+    elementSize: "Boyut",
+    elementOpacity: "Opaklık",
     textGroup: "Metin ve bağlantılar",
     importGroup: "İçe aktar",
     previewGroup: "Önizleme",
@@ -1224,6 +1258,7 @@ var DEFAULT_SETTINGS = {
   lastReadingZoom: 1,
   mindMapAffectsSource: true,
   toolbarTopOffset: 6,
+  toolbarPosition: null,
   longPressMs: LONG_PRESS_MS,
   selectTapDistance: SELECT_TAP_DISTANCE,
   selectStrokePadding: SELECT_STROKE_PADDING,
@@ -5235,6 +5270,8 @@ var PreviewDrawingController = class {
     this.formatToolbar = null;
     this.formatToolbarManualPosition = null;
     this.formatToolbarDrag = null;
+    this.toolbarManualPosition = null;
+    this.toolbarDrag = null;
     this.formatColorInput = null;
     this.formatHighlightInput = null;
     this.formatSizeSelect = null;
@@ -5527,6 +5564,9 @@ var PreviewDrawingController = class {
     this.onDocumentPointerFinish = this.onDocumentPointerFinish.bind(this);
     this.onDocumentSelectionChange = this.onDocumentSelectionChange.bind(this);
     this.onDocumentKeyDown = this.onDocumentKeyDown.bind(this);
+    this.onToolbarPointerDown = this.onToolbarPointerDown.bind(this);
+    this.onToolbarDragMove = this.onToolbarDragMove.bind(this);
+    this.onToolbarDragEnd = this.onToolbarDragEnd.bind(this);
     this.onFormatToolbarDragMove = this.onFormatToolbarDragMove.bind(this);
     this.onFormatToolbarDragEnd = this.onFormatToolbarDragEnd.bind(this);
   }
@@ -5593,6 +5633,7 @@ var PreviewDrawingController = class {
     this.button = this.createHeaderButton();
     this.toolbar = createNoteDrawControlElement(this.floatingControlsHost, "notedraw-toolbar");
     this.toolbar._noteDrawController = this;
+    this.toolbar.addEventListener("pointerdown", this.onToolbarPointerDown);
     this.selectButton = this.toolbar.createEl("button", {
       attr: { type: "button", title: this.plugin.t("selectDrawings") }
     });
@@ -5719,12 +5760,12 @@ var PreviewDrawingController = class {
       min: "0",
       max: "1000",
       step: "1",
-      title: this.plugin.t("penWidth")
+      title: this.plugin.t("elementSize")
     });
     this.widthInput.addEventListener("input", () => {
       const width = paletteSliderToBrushWidth(this.widthInput.value);
       this.currentBrushSettings().width = width;
-      this.applySizeToSelectedStrokes(width);
+      this.applySizeToSelectedElements(width);
       this.syncCurrentBrushFields();
       this.updateToolButtons();
       this.persistCurrentBrushSettings();
@@ -5736,12 +5777,12 @@ var PreviewDrawingController = class {
       min: "0",
       max: "1000",
       step: "1",
-      title: this.plugin.t("penOpacity")
+      title: this.plugin.t("elementOpacity")
     });
     this.opacityInput.addEventListener("input", () => {
       const opacity = paletteSliderToOpacity(this.opacityInput.value);
       this.currentBrushSettings().opacity = opacity;
-      this.applyOpacityToSelectedStrokes(opacity);
+      this.applyOpacityToSelectedElements(opacity);
       this.syncCurrentBrushFields();
       this.updateToolButtons();
       this.persistCurrentBrushSettings();
@@ -5916,6 +5957,7 @@ var PreviewDrawingController = class {
     this.plugin.setAccessibleLabel(this.paletteButton, "penSettings");
     this.plugin.setAccessibleLabel(this.colorInput, "advancedColor");
     this.plugin.setAccessibleLabel(this.advancedColorButton, "advancedColor");
+    this.plugin.setAccessibleLabel(this.noColorButton, "noColor");
     this.plugin.setAccessibleLabel(this.markdownBackgroundInput, "blockBackground");
     this.plugin.setAccessibleLabel(this.clearMarkdownBackgroundButton, "clearBlockBackground");
     this.colorSwatchButtons?.forEach((button, index) => {
@@ -5924,8 +5966,10 @@ var PreviewDrawingController = class {
         button.setAttribute("aria-label", this.plugin.t("useColor", { color }));
       }
     });
-    this.widthInput?.setAttribute("title", this.plugin.t("penWidth"));
-    this.opacityInput?.setAttribute("title", this.plugin.t("penOpacity"));
+    this.widthInput?.setAttribute("title", this.plugin.t("elementSize"));
+    this.widthInput?.setAttribute("aria-label", this.plugin.t("elementSize"));
+    this.opacityInput?.setAttribute("title", this.plugin.t("elementOpacity"));
+    this.opacityInput?.setAttribute("aria-label", this.plugin.t("elementOpacity"));
     if (this.brushPanel) {
       const wasOpen = this.brushPanelOpen;
       this.brushPanel.empty();
@@ -6184,6 +6228,7 @@ var PreviewDrawingController = class {
     this.cancelFrozenNoteFlowLayoutRestore();
     this.clearNoteFlowLayout();
     this.stopFormatToolbarDrag();
+    this.stopToolbarDrag();
     this.sourceFormatToolbarCleanup?.();
     this.sourceFormatToolbarCleanup = null;
     if (this.sourceFormatToolbarRetryTimer !== null) {
@@ -6779,12 +6824,24 @@ var PreviewDrawingController = class {
       headerBottom
     );
     const compactViewport = isMobileRuntime() || viewportWidth < 640;
-    const right = compactViewport ? "auto" : clamp(viewportRight - anchorRight + 10, 8, Math.max(8, viewportWidth - 48));
-    const left = compactViewport ? viewportLeft + 8 : "auto";
+    let right = compactViewport ? "auto" : clamp(viewportRight - anchorRight + 10, 8, Math.max(8, viewportWidth - 48));
+    let left = compactViewport ? viewportLeft + 8 : "auto";
     const minTop = Math.max(viewportTop + 8, headerBottom + 6);
     const maxTop = Math.max(minTop, viewportTop + viewportHeight - toolbarHeight - 8);
     const topOffset = sanitizeSettings(this.plugin?.noteDrawSettings || {}).toolbarTopOffset;
-    const top = clamp(anchorBottom + topOffset, minTop, maxTop);
+    let top = clamp(anchorBottom + topOffset, minTop, maxTop);
+    const savedPosition = normalizeToolbarPosition(this.runtimeSettings?.toolbarPosition);
+    const availableWidth = Math.max(0, viewportWidth - this.toolbar.getBoundingClientRect().width - 16);
+    const availableHeight = Math.max(0, viewportHeight - toolbarHeight - 16);
+    if (this.toolbarManualPosition) {
+      left = clamp(this.toolbarManualPosition.left, viewportLeft + 8, viewportLeft + 8 + availableWidth);
+      top = clamp(this.toolbarManualPosition.top, viewportTop + 8, viewportTop + 8 + availableHeight);
+      right = "auto";
+    } else if (savedPosition) {
+      left = viewportLeft + 8 + availableWidth * savedPosition.xRatio;
+      top = viewportTop + 8 + availableHeight * savedPosition.yRatio;
+      right = "auto";
+    }
     const panelTop = top + toolbarHeight + 6;
     const panelLeft = (button, panel, fallbackWidth) => {
       const buttonBounds = button?.getBoundingClientRect?.();
@@ -6814,6 +6871,76 @@ var PreviewDrawingController = class {
         setNoteDrawCssProps(element, props);
       }
     }
+  }
+  onToolbarPointerDown(event) {
+    if (!this.toolbar || event.button !== 0 || event.target?.closest?.("button, input, select, textarea, a, [contenteditable='true']")) {
+      return;
+    }
+    const rect = this.toolbar.getBoundingClientRect();
+    this.toolbarDrag = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      startTop: rect.top,
+      startLeft: rect.left
+    };
+    this.toolbarManualPosition = { top: rect.top, left: rect.left };
+    this.toolbar.addClass("is-moving");
+    activeDocument.addEventListener("pointermove", this.onToolbarDragMove, true);
+    activeDocument.addEventListener("pointerup", this.onToolbarDragEnd, true);
+    activeDocument.addEventListener("pointercancel", this.onToolbarDragEnd, true);
+    event.preventDefault();
+    event.stopPropagation();
+  }
+  onToolbarDragMove(event) {
+    if (!this.toolbarDrag || !this.toolbar || event.pointerId !== this.toolbarDrag.pointerId) {
+      return;
+    }
+    const rect = this.toolbar.getBoundingClientRect();
+    const viewport = window.visualViewport;
+    const viewportLeft = viewport?.offsetLeft || 0;
+    const viewportTop = viewport?.offsetTop || 0;
+    const viewportWidth = Math.max(160, viewport?.width || window.innerWidth || 160);
+    const viewportHeight = Math.max(120, viewport?.height || window.innerHeight || 120);
+    this.toolbarManualPosition = {
+      left: clamp(this.toolbarDrag.startLeft + event.clientX - this.toolbarDrag.startX, viewportLeft + 8, Math.max(viewportLeft + 8, viewportLeft + viewportWidth - rect.width - 8)),
+      top: clamp(this.toolbarDrag.startTop + event.clientY - this.toolbarDrag.startY, viewportTop + 8, Math.max(viewportTop + 8, viewportTop + viewportHeight - rect.height - 8))
+    };
+    this.updateFloatingControlsPosition();
+    event.preventDefault();
+    event.stopPropagation();
+  }
+  onToolbarDragEnd(event) {
+    if (!this.toolbarDrag || event?.pointerId !== this.toolbarDrag.pointerId) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    const viewport = window.visualViewport;
+    const viewportLeft = viewport?.offsetLeft || 0;
+    const viewportTop = viewport?.offsetTop || 0;
+    const viewportWidth = Math.max(160, viewport?.width || window.innerWidth || 160);
+    const viewportHeight = Math.max(120, viewport?.height || window.innerHeight || 120);
+    const rect = this.toolbar?.getBoundingClientRect?.();
+    const availableWidth = Math.max(0, viewportWidth - (rect?.width || 0) - 16);
+    const availableHeight = Math.max(0, viewportHeight - (rect?.height || 0) - 16);
+    const position = this.toolbarManualPosition || { left: rect?.left || viewportLeft + 8, top: rect?.top || viewportTop + 8 };
+    this.plugin.noteDrawSettings.toolbarPosition = {
+      xRatio: availableWidth > 0 ? clamp((position.left - viewportLeft - 8) / availableWidth, 0, 1) : 0,
+      yRatio: availableHeight > 0 ? clamp((position.top - viewportTop - 8) / availableHeight, 0, 1) : 0
+    };
+    this.runtimeSettings.toolbarPosition = this.plugin.noteDrawSettings.toolbarPosition;
+    this.toolbarManualPosition = null;
+    this.stopToolbarDrag();
+    this.updateFloatingControlsPosition();
+    this.plugin.scheduleSettingsSave();
+  }
+  stopToolbarDrag() {
+    this.toolbarDrag = null;
+    this.toolbar?.removeClass("is-moving");
+    activeDocument.removeEventListener("pointermove", this.onToolbarDragMove, true);
+    activeDocument.removeEventListener("pointerup", this.onToolbarDragEnd, true);
+    activeDocument.removeEventListener("pointercancel", this.onToolbarDragEnd, true);
   }
   onBrushButtonClick(mode, event) {
     event?.preventDefault?.();
@@ -8117,6 +8244,16 @@ var PreviewDrawingController = class {
       });
       return button;
     });
+    this.noColorButton = this.colorSwatchGrid.createEl("button", {
+      cls: "notedraw-color-swatch notedraw-color-none",
+      attr: {
+        type: "button",
+        title: this.plugin.t("noColor"),
+        "aria-label": this.plugin.t("noColor")
+      }
+    });
+    setIcon(this.noColorButton, "ban");
+    bindNoteDrawControlTap(this.noColorButton, () => this.setCurrentBrushColor(NO_COLOR));
     this.advancedColorButton = this.colorSwatchGrid.createEl("button", {
       cls: "notedraw-color-advanced",
       attr: {
@@ -8131,11 +8268,18 @@ var PreviewDrawingController = class {
     });
   }
   setCurrentBrushColor(color) {
-    if (!isCssColor(color)) {
+    if (!isPaletteColor(color)) {
+      return;
+    }
+    if (color === NO_COLOR) {
+      if (this.toolMode === TOOL_SELECT && this.hasHybridSelection()) {
+        this.applyColorToSelectedElements(color);
+        this.syncPaletteInputs();
+      }
       return;
     }
     this.currentBrushSettings().color = color;
-    this.applyColorToSelectedStrokes(color);
+    this.applyColorToSelectedElements(color);
     this.syncCurrentBrushFields();
     this.syncPaletteInputs();
     this.updateToolButtons();
@@ -8144,17 +8288,17 @@ var PreviewDrawingController = class {
   }
   currentPaletteColor() {
     if (this.toolMode === TOOL_SELECT) {
-      const selectedGroupColor = this.selectedWholeElementGroups().filter((group) => group.boxed).map((group) => group.backgroundColor || group.borderColor).find((color) => isCssColor(color));
+      const selectedGroupColor = this.selectedWholeElementGroups().filter((group) => group.boxed).map((group) => group.backgroundColor || group.borderColor).find((color) => isPaletteColor(color));
       if (selectedGroupColor) {
         return selectedGroupColor;
       }
-      const selectedColor = this.getSelectedStrokeIndexes().map((index) => this.drawingData.strokes[index]?.color).find((color) => isCssColor(color));
+      const selectedColor = this.getSelectedStrokeIndexes().map((index) => this.drawingData.strokes[index]?.color).find((color) => isPaletteColor(color));
       if (selectedColor) {
         return selectedColor;
       }
-      const selectedBorder = this.getSelectedMarkdownBlocks().map((block) => block.borderColor).find((color) => isCssColor(color));
-      if (selectedBorder) {
-        return selectedBorder;
+      const selectedBlockColor = this.getSelectedMarkdownBlocks().map((block) => block.contentColor || block.borderColor).find((color) => isPaletteColor(color));
+      if (selectedBlockColor) {
+        return selectedBlockColor;
       }
     }
     return this.currentBrushSettings().color;
@@ -8165,6 +8309,10 @@ var PreviewDrawingController = class {
       if (Number.isFinite(Number(selectedWidth))) {
         return clamp(Number(selectedWidth), MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH);
       }
+      const blockSize = this.getSelectedMarkdownBlocks().map((block) => block.contentScale).find((size) => Number.isFinite(Number(size)));
+      if (Number.isFinite(Number(blockSize))) {
+        return elementScaleToPaletteBrushWidth(blockSize);
+      }
     }
     return this.currentBrushSettings().width;
   }
@@ -8174,10 +8322,14 @@ var PreviewDrawingController = class {
       if (Number.isFinite(Number(selectedOpacity))) {
         return clamp(Number(selectedOpacity), 0, 1);
       }
+      const blockOpacity = this.getSelectedMarkdownBlocks().map((block) => block.contentOpacity).find((opacity) => Number.isFinite(Number(opacity)));
+      if (Number.isFinite(Number(blockOpacity))) {
+        return clamp(Number(blockOpacity), 0, 1);
+      }
     }
     return this.currentBrushSettings().opacity;
   }
-  applyColorToSelectedStrokes(color) {
+  applyColorToSelectedElements(color) {
     const indexes = this.getSelectedStrokeIndexes();
     const boxedGroups = this.selectedWholeElementGroups().filter((group) => group.boxed);
     const boxedGroupIds = new Set(boxedGroups.map((group) => group.id));
@@ -8185,7 +8337,7 @@ var PreviewDrawingController = class {
       const stroke = this.drawingData.strokes[index];
       return stroke && !boxedGroupIds.has(stroke.groupId) && stroke.color !== color;
     });
-    const changedBlocks = this.getSelectedMarkdownBlocks().filter((block) => !boxedGroupIds.has(block.groupId) && block.borderColor !== color);
+    const changedBlocks = this.getSelectedMarkdownBlocks().filter((block) => !boxedGroupIds.has(block.groupId) && (block.contentColor !== color || block.borderColor && block.borderColor !== color));
     const changedGroups = boxedGroups.filter((group) => group.borderColor !== color
       || isCssColor(group.backgroundColor) && group.backgroundColor !== color);
     if (!changed.length && !changedBlocks.length && !changedGroups.length) {
@@ -8196,13 +8348,16 @@ var PreviewDrawingController = class {
       this.drawingData.strokes[index].color = color;
     }
     for (const block of changedBlocks) {
-      block.borderColor = color;
+      block.contentColor = color;
+      if (block.borderColor) {
+        block.borderColor = color;
+      }
     }
     for (const group of changedGroups) {
       group.borderColor = color;
       // A filled box uses the same palette color for its fill and outline.
       // Keep outline-only boxes transparent until the fill control is used.
-      if (isCssColor(group.backgroundColor)) {
+      if (group.backgroundColor) {
         group.backgroundColor = color;
       }
     }
@@ -8210,6 +8365,7 @@ var PreviewDrawingController = class {
     this.invalidateStaticCache();
     this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
     this.recordDrawingHistory(historyBefore);
+    this.refreshMarkdownBlockPresentation(changedBlocks.map((block) => block.id));
     this.render();
     return true;
   }
@@ -8235,35 +8391,46 @@ var PreviewDrawingController = class {
     this.render();
     return true;
   }
-  applyOpacityToSelectedStrokes(opacity) {
+  applyOpacityToSelectedElements(opacity) {
     const nextOpacity = clamp(Number(opacity), 0, 1);
     const indexes = this.getSelectedStrokeIndexes();
     const changed = indexes.filter((index) => {
       const stroke = this.drawingData.strokes[index];
       return stroke && Math.abs(clamp(Number(stroke.opacity ?? 1), 0, 1) - nextOpacity) >= 0.001;
     });
-    if (!changed.length) {
+    const changedBlocks = this.getSelectedMarkdownBlocks().filter((block) => Math.abs(clamp(Number(block.contentOpacity ?? 1), 0, 1) - nextOpacity) >= 0.001);
+    const changedGroups = this.selectedWholeElementGroups().filter((group) => Math.abs(clamp(Number(group.opacity ?? 1), 0, 1) - nextOpacity) >= 0.001);
+    if (!changed.length && !changedBlocks.length && !changedGroups.length) {
       return false;
     }
     const historyBefore = this.captureDrawingHistorySnapshot();
     for (const index of changed) {
       this.drawingData.strokes[index].opacity = nextOpacity;
     }
+    for (const block of changedBlocks) {
+      block.contentOpacity = nextOpacity;
+    }
+    for (const group of changedGroups) {
+      group.opacity = nextOpacity;
+    }
     this.redoStack = [];
     this.invalidateStaticCache();
     this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
     this.recordDrawingHistory(historyBefore);
+    this.refreshMarkdownBlockPresentation(changedBlocks.map((block) => block.id));
     this.render();
     return true;
   }
-  applySizeToSelectedStrokes(width) {
+  applySizeToSelectedElements(width) {
     const nextWidth = clamp(Number(width), MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH);
     const indexes = this.getSelectedStrokeIndexes();
     const changed = indexes.filter((index) => {
       const stroke = this.drawingData.strokes[index];
       return stroke && Math.abs(clamp(Number(stroke.width || this.penWidth), MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH) - nextWidth) >= 0.01;
     });
-    if (!changed.length) {
+    const nextContentScale = paletteBrushWidthToElementScale(nextWidth);
+    const changedBlocks = this.getSelectedMarkdownBlocks().filter((block) => Math.abs(clamp(Number(block.contentScale ?? 1), 0.5, 3) - nextContentScale) >= 0.001);
+    if (!changed.length && !changedBlocks.length) {
       return false;
     }
     const historyBefore = this.captureDrawingHistorySnapshot();
@@ -8286,10 +8453,18 @@ var PreviewDrawingController = class {
         stroke.width = nextWidth;
       }
     }
+    for (const block of changedBlocks) {
+      block.contentScale = nextContentScale;
+    }
     this.redoStack = [];
     this.invalidateStaticCache();
     this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
     this.recordDrawingHistory(historyBefore);
+    this.refreshMarkdownBlockPresentation(changedBlocks.map((block) => block.id));
+    if (changedBlocks.length) {
+      this.scheduleResize({ layout: false, measure: true });
+      this.scheduleNoteFlowLayout({ operation: true });
+    }
     this.render();
     return true;
   }
@@ -8302,9 +8477,11 @@ var PreviewDrawingController = class {
       const color = COMMON_COLORS[index].toLowerCase();
       button.classList.toggle("is-active", color === currentColor);
     });
+    this.noColorButton?.classList.toggle("is-active", currentColor === NO_COLOR);
+    this.noColorButton?.toggleAttribute("disabled", !(this.toolMode === TOOL_SELECT && this.hasHybridSelection()));
     this.advancedColorButton?.classList.toggle(
       "is-active",
-      Boolean(currentColor) && !COMMON_COLORS.some((color) => color.toLowerCase() === currentColor)
+      Boolean(currentColor) && currentColor !== NO_COLOR && !COMMON_COLORS.some((color) => color.toLowerCase() === currentColor)
     );
   }
   applyBrushButtonState(button, settings, active) {
@@ -13774,10 +13951,10 @@ var PreviewDrawingController = class {
         height: `${Math.max(28, Math.round(bounds.maxY - bounds.minY))}px`,
         opacity: String(clamp(Number(stroke.opacity ?? 1), 0, 1))
       };
-      const geometryToken = `${geometry.left}|${geometry.top}|${geometry.width}|${geometry.height}|${geometry.opacity}|${stroke.color || "#64748b"}`;
+      const geometryToken = `${geometry.left}|${geometry.top}|${geometry.width}|${geometry.height}|${geometry.opacity}|${strokePaletteColor(stroke, "#64748b")}`;
       if (this.embedGeometryTokens.get(key) !== geometryToken) {
         this.embedGeometryTokens.set(key, geometryToken);
-        setNoteDrawCssProps(node, { "--notedraw-node-color": stroke.color || "#64748b" });
+        setNoteDrawCssProps(node, { "--notedraw-node-color": strokePaletteColor(stroke, "#64748b") });
         applyElementStyles(node, geometry);
       }
       this.renderEmbedNode(node, stroke, index);
@@ -13939,7 +14116,7 @@ var PreviewDrawingController = class {
     ctx.globalAlpha = alpha * opacity;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
-    ctx.strokeStyle = stroke.color || this.penColor;
+    ctx.strokeStyle = strokePaletteColor(stroke, this.penColor);
     ctx.lineWidth = stroke.width || this.penWidth;
     for (const offset of offsets) {
       ctx.beginPath();
@@ -14029,8 +14206,8 @@ var PreviewDrawingController = class {
     const points = stroke.points.map((point) => this.pointToCanvas(point));
     ctx.save();
     ctx.globalAlpha = alpha * opacity;
-    ctx.strokeStyle = stroke.color || "#64748b";
-    ctx.fillStyle = stroke.color || "#64748b";
+    ctx.strokeStyle = strokePaletteColor(stroke, "#64748b");
+    ctx.fillStyle = strokePaletteColor(stroke, "#64748b");
     ctx.lineWidth = width;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
@@ -14072,7 +14249,7 @@ var PreviewDrawingController = class {
     }
     ctx.save();
     ctx.globalAlpha = alpha * segments[0].opacity;
-    ctx.fillStyle = stroke.color || this.penColor;
+    ctx.fillStyle = strokePaletteColor(stroke, this.penColor);
     const centers = [segments[0].from, ...segments.map((segment) => segment.to)].map((point) => this.pointToCanvas(point));
     const widths = [segments[0].fromWidth, ...segments.map((segment) => segment.toWidth)];
     const left = [];
@@ -14127,7 +14304,7 @@ var PreviewDrawingController = class {
     }
     ctx.closePath();
     ctx.fill();
-    ctx.strokeStyle = stroke.color || this.penColor;
+    ctx.strokeStyle = strokePaletteColor(stroke, this.penColor);
     ctx.lineWidth = Math.max(0.7, Math.min(1.05, Number(stroke.width || this.penWidth) * 0.13));
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
@@ -14221,18 +14398,18 @@ var PreviewDrawingController = class {
     ctx.globalAlpha = alpha * opacity;
     ctx.font = `${stroke.bold ? "700 " : ""}${fontSize}px ${stroke.code ? "monospace" : "sans-serif"}`;
     ctx.textBaseline = "top";
-    ctx.fillStyle = stroke.color || this.penColor;
+    ctx.fillStyle = strokePaletteColor(stroke, this.penColor);
     const layout = getTextStrokeLayout(stroke, this.canvasWidth(), (value) => ctx.measureText(value).width);
     if (layout.paddingX || layout.paddingY) {
       const style = normalizeButtonStyle(stroke.buttonStyle);
       if (style === "solid") {
-        ctx.fillStyle = stroke.color || this.penColor;
+        ctx.fillStyle = strokePaletteColor(stroke, this.penColor);
       } else if (style === "outline") {
         ctx.fillStyle = "rgba(255, 255, 255, 0.82)";
       } else {
         ctx.fillStyle = stroke.code ? "rgba(127, 127, 127, 0.14)" : "rgba(255, 255, 255, 0.74)";
       }
-      ctx.strokeStyle = stroke.color || this.penColor;
+      ctx.strokeStyle = strokePaletteColor(stroke, this.penColor);
       ctx.lineWidth = 1.25;
       if (style === "circle") {
         ctx.beginPath();
@@ -14244,7 +14421,7 @@ var PreviewDrawingController = class {
       ctx.fill();
       ctx.stroke();
     }
-    ctx.fillStyle = normalizeButtonStyle(stroke.buttonStyle) === "solid" ? "#ffffff" : stroke.color || this.penColor;
+    ctx.fillStyle = normalizeButtonStyle(stroke.buttonStyle) === "solid" ? "#ffffff" : strokePaletteColor(stroke, this.penColor);
     layout.lines.forEach((line, index) => {
       ctx.fillText(line, point.x, point.y + index * layout.lineHeight);
     });
@@ -14263,7 +14440,7 @@ var PreviewDrawingController = class {
     ctx.globalAlpha = alpha * opacity;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
-    ctx.strokeStyle = stroke.color || this.penColor;
+    ctx.strokeStyle = strokePaletteColor(stroke, this.penColor);
     ctx.lineWidth = width;
     ctx.beginPath();
     const first = this.pointToCanvas(stroke.points[0]);
@@ -14284,7 +14461,7 @@ var PreviewDrawingController = class {
     this.ctx.save();
     this.ctx.lineCap = "round";
     this.ctx.lineJoin = "round";
-    this.ctx.strokeStyle = stroke.color || this.penColor;
+    this.ctx.strokeStyle = strokePaletteColor(stroke, this.penColor);
     this.ctx.lineWidth = stroke.width || this.penWidth;
     this.ctx.beginPath();
     this.ctx.moveTo(from.x, from.y);
@@ -14341,7 +14518,7 @@ var PreviewDrawingController = class {
       const width = bounds.maxX - bounds.minX + padding * 2;
       const height = bounds.maxY - bounds.minY + padding * 2;
       this.ctx.save();
-      this.ctx.globalAlpha = group.boxed ? 0.92 : 0.58;
+      this.ctx.globalAlpha = (group.boxed ? 0.92 : 0.58) * clamp(Number(group.opacity ?? 1), 0, 1);
       this.ctx.strokeStyle = group.boxed ? group.borderColor || SELECTION_FRAME_COLOR : "#8b8b96";
       this.ctx.lineWidth = group.boxed ? SELECTION_FRAME_LINE_WIDTH : 1.25;
       this.ctx.setLineDash(group.boxed ? [3, 2] : [4, 3]);
@@ -14361,7 +14538,7 @@ var PreviewDrawingController = class {
       }
       const padding = this.elementGroupFramePaddingPx(group.id);
       this.underlayCtx.save();
-      this.underlayCtx.globalAlpha = 0.14;
+      this.underlayCtx.globalAlpha = 0.14 * clamp(Number(group.opacity ?? 1), 0, 1);
       this.underlayCtx.fillStyle = group.backgroundColor;
       roundRect(
         this.underlayCtx,
@@ -14925,7 +15102,10 @@ var PreviewDrawingController = class {
       this.applyMarkdownBlockWidthPresentation(block, element);
       setNoteDrawCssProps(element, {
         "--notedraw-md-border": block.borderColor || "transparent",
-        "--notedraw-md-background": block.backgroundColor || "transparent"
+        "--notedraw-md-background": block.backgroundColor || "transparent",
+        "--notedraw-md-content-color": block.contentColor || "inherit",
+        "--notedraw-md-content-opacity": String(block.contentOpacity ?? 1),
+        "--notedraw-md-content-scale": String(block.contentScale ?? 1)
       });
       this.applyMarkdownBlockHeightPresentation(block, element);
       if (block.floating && block.floatBox) {
@@ -15091,7 +15271,10 @@ var PreviewDrawingController = class {
       this.applyMarkdownBlockWidthPresentation(block, element);
       setNoteDrawCssProps(element, {
         "--notedraw-md-border": block.borderColor || "transparent",
-        "--notedraw-md-background": block.backgroundColor || "transparent"
+        "--notedraw-md-background": block.backgroundColor || "transparent",
+        "--notedraw-md-content-color": block.contentColor || "inherit",
+        "--notedraw-md-content-opacity": String(block.contentOpacity ?? 1),
+        "--notedraw-md-content-scale": String(block.contentScale ?? 1)
       });
       this.applyMarkdownBlockHeightPresentation(block, element);
       if (block.floating && block.floatBox) {
@@ -20261,6 +20444,7 @@ function sanitizeSettings(settings) {
     lastReadingZoom: clamp(Number(input.lastReadingZoom ?? DEFAULT_SETTINGS.lastReadingZoom), MIN_READING_ZOOM, MAX_READING_ZOOM),
     mindMapAffectsSource: input.mindMapAffectsSource !== false,
     toolbarTopOffset: clamp(Number(input.toolbarTopOffset ?? DEFAULT_SETTINGS.toolbarTopOffset), 0, 48),
+    toolbarPosition: normalizeToolbarPosition(input.toolbarPosition),
     longPressMs: clamp(Number(input.longPressMs ?? DEFAULT_SETTINGS.longPressMs), MIN_LONG_PRESS_MS, MAX_LONG_PRESS_MS),
     selectTapDistance: clamp(Number(input.selectTapDistance ?? DEFAULT_SETTINGS.selectTapDistance), MIN_SELECT_TAP_DISTANCE, MAX_SELECT_TAP_DISTANCE),
     selectStrokePadding: clamp(Number(input.selectStrokePadding ?? DEFAULT_SETTINGS.selectStrokePadding), MIN_SELECT_STROKE_PADDING, MAX_SELECT_STROKE_PADDING),
@@ -20270,6 +20454,15 @@ function sanitizeSettings(settings) {
     drawingCompactDistance: clamp(Number(input.drawingCompactDistance ?? DEFAULT_SETTINGS.drawingCompactDistance), MIN_DRAWING_COMPACT_DISTANCE_PX, MAX_DRAWING_COMPACT_DISTANCE_PX),
     autoSaveDelayMs: clamp(Number(input.autoSaveDelayMs ?? DEFAULT_SETTINGS.autoSaveDelayMs), MIN_AUTO_SAVE_DELAY_MS, MAX_AUTO_SAVE_DELAY_MS),
     enableDebugLog: Boolean(input.enableDebugLog)
+  };
+}
+function normalizeToolbarPosition(value) {
+  if (!value || !Number.isFinite(Number(value.xRatio)) || !Number.isFinite(Number(value.yRatio))) {
+    return null;
+  }
+  return {
+    xRatio: clamp(Number(value.xRatio), 0, 1),
+    yRatio: clamp(Number(value.yRatio), 0, 1)
   };
 }
 function translateNoteDraw(plugin, key, vars = {}) {
@@ -20428,6 +20621,12 @@ function setAccessibleLabel(element, label) {
 function isCssColor(value) {
   return typeof value === "string" && /^#[0-9a-fA-F]{6}$/.test(value);
 }
+function isPaletteColor(value) {
+  return value === NO_COLOR || isCssColor(value);
+}
+function strokePaletteColor(stroke, fallback) {
+  return stroke?.color === NO_COLOR ? NO_COLOR : stroke?.color || fallback;
+}
 function contrastTextColor(hexColor) {
   if (!isCssColor(hexColor)) {
     return "#111827";
@@ -20447,6 +20646,21 @@ function paletteSliderToBrushWidth(value) {
   const ratio = clamp(Number(value) / 1000, 0, 1);
   const width = MIN_BRUSH_WIDTH * Math.pow(MAX_BRUSH_WIDTH / MIN_BRUSH_WIDTH, ratio);
   return Math.round(width * 100) / 100;
+}
+function paletteBrushWidthToElementScale(width) {
+  const ratio = brushWidthToPaletteSlider(width) / 1000;
+  const defaultRatio = brushWidthToPaletteSlider(DEFAULT_SETTINGS.defaultPenWidth) / 1000;
+  return ratio <= defaultRatio
+    ? clamp(0.5 + 0.5 * ratio / Math.max(0.001, defaultRatio), 0.5, 1)
+    : clamp(1 + 2 * (ratio - defaultRatio) / Math.max(0.001, 1 - defaultRatio), 1, 3);
+}
+function elementScaleToPaletteBrushWidth(scale) {
+  const nextScale = clamp(Number(scale), 0.5, 3);
+  const defaultRatio = brushWidthToPaletteSlider(DEFAULT_SETTINGS.defaultPenWidth) / 1000;
+  const ratio = nextScale <= 1
+    ? (nextScale - 0.5) / 0.5 * defaultRatio
+    : defaultRatio + (nextScale - 1) / 2 * (1 - defaultRatio);
+  return paletteSliderToBrushWidth(clamp(ratio, 0, 1) * 1000);
 }
 function opacityToPaletteSlider(value) {
   return Math.round(Math.sqrt(clamp(Number(value), 0, 1)) * 1000);
@@ -22569,8 +22783,11 @@ function normalizeMarkdownBlocks(value, file) {
       noteFlowAutoSpan: Boolean(block?.noteFlowAutoSpan),
       widthScale: normalizeMarkdownBlockWidthScale(block?.widthScale),
       minHeight: normalizeMarkdownBlockMinHeight(block?.minHeight),
-      borderColor: isCssColor(block?.borderColor) ? block.borderColor : "",
-      backgroundColor: isCssColor(block?.backgroundColor) ? block.backgroundColor : "",
+      borderColor: isPaletteColor(block?.borderColor) ? block.borderColor : "",
+      backgroundColor: isPaletteColor(block?.backgroundColor) ? block.backgroundColor : "",
+      contentColor: isPaletteColor(block?.contentColor) ? block.contentColor : "",
+      contentOpacity: clamp(Number(block?.contentOpacity ?? 1), 0, 1),
+      contentScale: clamp(Number(block?.contentScale ?? 1), 0.5, 3),
       floating: Boolean(block?.floating && floatBox),
       floatingExplicit: Boolean(block?.floatingExplicit),
       floatBox,
@@ -22606,8 +22823,9 @@ function normalizeElementGroups(value) {
     boxed: Boolean(group?.boxed),
     locked: group?.locked !== false,
     boxOwnedLock: group?.boxOwnedLock === void 0 ? Boolean(group?.boxed) : Boolean(group.boxOwnedLock),
-    borderColor: isCssColor(group?.borderColor) ? group.borderColor : "#64748b",
-    backgroundColor: isCssColor(group?.backgroundColor) ? group.backgroundColor : ""
+    borderColor: isPaletteColor(group?.borderColor) ? group.borderColor : "#64748b",
+    backgroundColor: isPaletteColor(group?.backgroundColor) ? group.backgroundColor : "",
+    opacity: clamp(Number(group?.opacity ?? 1), 0, 1)
   })).filter((group) => group.id && !seen.has(group.id) && seen.add(group.id));
 }
 function normalizeDrawingDataForStorage(data, file) {

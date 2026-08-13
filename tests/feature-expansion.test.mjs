@@ -118,16 +118,22 @@ test("only the active note surface can expose a toolbar", async () => {
   assert.match(source, /if \(!ownedToolbars\.has\(toolbar\)\) \{\s*toolbar\.remove\(\)/);
   assert.match(styles, /\.notedraw-shell\.is-drawing-active\.is-notedraw-controls-visible > \.notedraw-toolbar/);
   assert.doesNotMatch(styles, /\.notedraw-shell\.is-drawing-active\.is-notedraw-controls-visible \.notedraw-toolbar/);
-  assert.match(source, /const right = compactViewport \? "auto"/);
+  assert.match(source, /let right = compactViewport \? "auto"/);
+  assert.match(source, /onToolbarPointerDown\(event\)[\s\S]*event\.target\?\.closest\?\.\("button, input, select, textarea, a, \[contenteditable='true'\]"\)/);
+  assert.match(source, /toolbarPosition: normalizeToolbarPosition\(input\.toolbarPosition\)/);
   assert.match(styles, /\.notedraw-toolbar \{[\s\S]*width: max-content;[\s\S]*min-width: 0;/);
 });
 
 test("palette changes update the selected NoteDraw elements", async () => {
   const source = await readFile(sourceUrl, "utf8");
 
-  assert.match(source, /setCurrentBrushColor\(color\)[\s\S]*this\.applyColorToSelectedStrokes\(color\)/);
+  assert.match(source, /setCurrentBrushColor\(color\)[\s\S]*this\.applyColorToSelectedElements\(color\)/);
   assert.match(source, /currentPaletteColor\(\)[\s\S]*group\.backgroundColor \|\| group\.borderColor/);
-  assert.match(source, /applyColorToSelectedStrokes\(color\)[\s\S]*this\.drawingData\.strokes\[index\]\.color = color/);
+  assert.match(source, /applyColorToSelectedElements\(color\)[\s\S]*this\.drawingData\.strokes\[index\]\.color = color/);
+  assert.match(source, /block\.contentColor = color/);
+  assert.match(source, /applyOpacityToSelectedElements\(opacity\)[\s\S]*block\.contentOpacity = nextOpacity/);
+  assert.match(source, /applySizeToSelectedElements\(width\)[\s\S]*block\.contentScale = nextContentScale/);
+  assert.match(source, /NO_COLOR = "transparent"[\s\S]*strokePaletteColor/);
   assert.match(source, /group\.backgroundColor = color/);
   assert.match(source, /recordDrawingHistory\(historyBefore\)/);
   assert.match(source, /const selectedElements = this\.hasHybridSelection\(\)/);
