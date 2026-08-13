@@ -618,6 +618,7 @@
   display: grid !important;
   grid-template-columns: repeat(12, minmax(0, 1fr));
   gap: 6px;
+  align-items: start;
   container-type: inline-size;
 }
 
@@ -638,7 +639,7 @@
   transition: outline-color 100ms ease;
 }
 
-.notedraw-md-block[data-note-draw-resized-height="true"] {
+.notedraw-md-block[data-note-draw-resized-height] {
   min-height: var(--notedraw-md-min-height);
 }
 

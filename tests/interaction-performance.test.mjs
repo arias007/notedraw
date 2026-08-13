@@ -60,8 +60,16 @@ test("ordinary drags stay light while NoteFlow resize reflows once per animation
   assert.match(resizeSource, /this\.applyNoteFlowLayout\(\)/);
   assert.match(resizeSource, /alignNoteFlowStrokesToReservedRows\(null, \{ interaction: true \}\)/);
   assert.match(resizeSource, /if \(this\.noteFlowFrameId !== null\) \{[\s\S]*window\.cancelAnimationFrame\(this\.noteFlowFrameId\)/);
-  assert.match(resizeSource, /for \(let pass = 0; pass < 3; pass \+= 1\)/);
+  assert.match(resizeSource, /this\.flushSelectedResizeNoteFlowLayout\(\{ immediate: true \}\)/);
+  assert.match(resizeSource, /const maxPasses = 3/);
+  assert.match(resizeSource, /pass \+ 1 < maxPasses[\s\S]*this\.previewEl\?\.getBoundingClientRect\?\.\(\)/);
   assert.match(resizeSource, /const passChanged = layoutChanged \|\| aligned;[\s\S]*if \(!passChanged\) \{/);
+  const flowStart = source.indexOf("  applyNoteFlowLayout() {");
+  const flowSource = source.slice(flowStart, source.indexOf("  markNoteFlowLayoutMutation", flowStart));
+  assert.match(flowSource, /const liveBounds = this\.resizingSelection[\s\S]*getStrokeBounds\(item\.stroke/);
+  assert.match(flowSource, /const liveHeight = Math\.max\([\s\S]*\(liveBounds \|\| item\.bounds\)\.maxY[\s\S]*const stableHeight = this\.resizingSelection[\s\S]*liveHeight/);
+  assert.match(flowSource, /if \(this\.resizingSelection\) \{[\s\S]*this\.noteFlowSettledRowExtents = \/\* @__PURE__ \*\/ new Map\(\)/);
+  assert.match(flowSource, /preferCurrent: Boolean\(normalizeNoteFlow\(stroke\.noteFlow\)\?\.positionBasis\)[\s\S]*this\.resizingSelection/);
   assert.match(resizeSource, /window\.cancelAnimationFrame\(this\.resizeNoteFlowFrameId\)/);
   assert.match(finishSource, /this\.cancelSelectedResizeNoteFlowLayout\(\);\s*this\.flushSelectedResizeNoteFlowLayout\(\)/);
   assert.match(finishSource, /const resizedMarkdownBlocks = Boolean\(this\.resizeSelectionOriginalMarkdownBlocks\?\.size\)/);

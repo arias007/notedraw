@@ -1567,6 +1567,7 @@ function resolveDragDropHorizontalIntent({
   laneRight = targetRight,
   draggedLeft,
   leftContactTolerance = 8,
+  rightIntentRatio = 0.82,
   horizontalRoom = true
 } = {}) {
   const x = Number(clientX);
@@ -1585,7 +1586,7 @@ function resolveDragDropHorizontalIntent({
     return "line-start";
   }
   const rightThreshold = Math.min(
-    left + targetWidth * 0.82,
+    left + targetWidth * clamp4(Number(rightIntentRatio) || 0.82, 0.5, 0.92),
     surfaceRight - clamp4(laneWidth * 0.08, 32, 64)
   );
   return horizontalRoom && x >= rightThreshold ? "inline-right" : "vertical";
@@ -4949,7 +4950,6 @@ var DEFAULT_SETTINGS = {
 };
 var MARKDOWN_TEXT_SELECTOR = "h1,h2,h3,h4,h5,h6,p,li,blockquote,td,th,.callout-content";
 var MARKDOWN_EMBED_SELECTOR = ".internal-embed,.markdown-embed,.markdown-embed-content";
-var MARKDOWN_HEADING_SELECTOR = "h1,h2,h3,h4,h5,h6,.el-h1,.el-h2,.el-h3,.el-h4,.el-h5,.el-h6";
 var NOTE_FLOW_RENDERED_OWNER_SELECTOR = [
   ".el-p",
   ".el-h1",
@@ -4970,7 +4970,11 @@ var NOTE_FLOW_RENDERED_OWNER_SELECTOR = [
   "blockquote",
   "pre",
   "table",
-  "hr"
+  "hr",
+  "img",
+  "video",
+  "audio",
+  "iframe"
 ].join(",");
 var NOTE_FLOW_RENDERED_BLOCK_SELECTOR = [
   ".el-p",
@@ -4995,7 +4999,11 @@ var NOTE_FLOW_RENDERED_BLOCK_SELECTOR = [
   "figure",
   ".callout",
   ".internal-embed",
-  ".math-block"
+  ".math-block",
+  "img",
+  "video",
+  "audio",
+  "iframe"
 ].join(",");
 var EDITABLE_SELECTOR = [
   ".markdown-preview-view",
@@ -11747,7 +11755,7 @@ ${selected}
   }
   currentPaletteColor() {
     if (this.toolMode === TOOL_SELECT) {
-      const selectedGroupColor = this.selectedWholeElementGroups().filter((group) => group.boxed).map((group) => group.borderColor).find((color) => isCssColor(color));
+      const selectedGroupColor = this.selectedWholeElementGroups().filter((group) => group.boxed).map((group) => group.backgroundColor || group.borderColor).find((color) => isCssColor(color));
       if (selectedGroupColor) {
         return selectedGroupColor;
       }
@@ -11789,7 +11797,7 @@ ${selected}
       return stroke && !boxedGroupIds.has(stroke.groupId) && stroke.color !== color;
     });
     const changedBlocks = this.getSelectedMarkdownBlocks().filter((block) => !boxedGroupIds.has(block.groupId) && block.borderColor !== color);
-    const changedGroups = boxedGroups.filter((group) => group.borderColor !== color);
+    const changedGroups = boxedGroups.filter((group) => group.borderColor !== color || isCssColor(group.backgroundColor) && group.backgroundColor !== color);
     if (!changed.length && !changedBlocks.length && !changedGroups.length) {
       return false;
     }
@@ -11802,6 +11810,9 @@ ${selected}
     }
     for (const group of changedGroups) {
       group.borderColor = color;
+      if (isCssColor(group.backgroundColor)) {
+        group.backgroundColor = color;
+      }
     }
     this.redoStack = [];
     this.invalidateStaticCache();
@@ -15586,10 +15597,9 @@ ${selected}
     return result;
   }
   markdownDropIncludesHeading(target, moving = null) {
-    const movingStates = Array.isArray(moving) ? moving : this.draggedNoteFlowMarkdownStates();
-    return isMarkdownHeadingElement(target) || movingStates.some((state) => {
-      return isMarkdownHeadingElement(state.dragElement || state.element);
-    });
+    void target;
+    void moving;
+    return false;
   }
   async commitDraggedMarkdownBlocks(drop, drawingHistoryBefore) {
     const moving = Array.isArray(drop?.moving) ? drop.moving.filter((state) => state?.element && state?.block) : [];
@@ -16650,6 +16660,7 @@ ${selected}
       this.invalidateStaticCache();
     }
     if (this.selectedResizeAffectsNoteFlowLayout()) {
+      this.flushSelectedResizeNoteFlowLayout({ immediate: true });
       this.queueSelectedResizeNoteFlowLayout();
     }
   }
@@ -16674,14 +16685,15 @@ ${selected}
       this.flushSelectedResizeNoteFlowLayout();
     });
   }
-  flushSelectedResizeNoteFlowLayout() {
+  flushSelectedResizeNoteFlowLayout(options = {}) {
     if (this.destroyed || !this.resizingSelection) {
       return false;
     }
     this.previewEl?.getBoundingClientRect?.();
     let changed = false;
     let aligned = false;
-    for (let pass = 0; pass < 3; pass += 1) {
+    const maxPasses = 3;
+    for (let pass = 0; pass < maxPasses; pass += 1) {
       this.noteFlowSettledRowExtents = /* @__PURE__ */ new Map();
       const layoutChanged = this.applyNoteFlowLayout();
       aligned = this.alignNoteFlowStrokesToReservedRows(null, { interaction: true });
@@ -16689,6 +16701,9 @@ ${selected}
       changed = changed || passChanged;
       if (!passChanged) {
         break;
+      }
+      if (pass + 1 < maxPasses) {
+        this.previewEl?.getBoundingClientRect?.();
       }
     }
     if (changed || aligned) {
@@ -17932,15 +17947,9 @@ ${selected}
     const selection = normalizeCanvasRect(this.pointToCanvas(startPoint), this.pointToCanvas(endPoint));
     const ids = [];
     const seen = /* @__PURE__ */ new Set();
-    const candidates = /* @__PURE__ */ new Set([
-      ...this.previewEl.querySelectorAll(EDITABLE_SELECTOR),
-      ...this.previewEl.querySelectorAll(MARKDOWN_EMBED_SELECTOR)
-    ]);
+    const candidates = markdownBlockCandidateElements(this.previewEl);
     for (const candidate of candidates) {
-      const element = findMarkdownEmbedBlockElement(candidate, this.previewEl) || candidate;
-      if (element.closest(BLOCKED_EDIT_SELECTOR)) {
-        continue;
-      }
+      const element = candidate;
       const bounds = this.markdownElementCanvasBounds(element, { forSelection: true });
       if (!bounds || !rectsIntersect(selection, bounds)) {
         continue;
@@ -18141,7 +18150,7 @@ ${selected}
     }
     const path = normalizeVaultPath(blockElement.dataset.noteDrawSourcePath || this.file?.path || "");
     const info = getSourceInfo(blockElement);
-    const hint = normalizeRenderedText2(blockElement.innerText || blockElement.textContent || "").slice(0, 240);
+    const hint = normalizeRenderedText2(renderedMarkdownIdentityText(blockElement)).slice(0, 240);
     const candidates = this.markdownBlockRecords().filter((block) => block.path === path);
     return candidates.find((block) => Number.isFinite(info.lineStart) && block.lineStart === info.lineStart && (!block.textHint || block.textHint === hint)) || candidates.find((block) => Number.isFinite(info.lineStart) && block.lineStart === info.lineStart) || candidates.find((block) => block.textHint && block.textHint === hint) || null;
   }
@@ -18152,6 +18161,10 @@ ${selected}
     const embeddedBlock = findMarkdownEmbedBlockElement(target, this.previewEl);
     if (embeddedBlock) {
       return this.markdownElementContainsClientPoint(embeddedBlock, clientPoint) ? embeddedBlock : null;
+    }
+    const renderedBlock = markdownBlockCandidateElementForTarget(target, this.previewEl);
+    if (renderedBlock && this.markdownElementContainsClientPoint(renderedBlock, clientPoint)) {
+      return renderedBlock;
     }
     const marked = target.closest?.(".notedraw-md-block");
     if (marked && this.previewEl.contains(marked) && isConcreteMarkdownBlockElement(marked)) {
@@ -18187,7 +18200,7 @@ ${selected}
     }
     const info = getSourceInfo(blockElement);
     const path = normalizeVaultPath(blockElement.dataset.noteDrawSourcePath || this.file?.path || "");
-    const textHint = normalizeRenderedText2(blockElement.innerText || blockElement.textContent || "").slice(0, 240);
+    const textHint = normalizeRenderedText2(renderedMarkdownIdentityText(blockElement)).slice(0, 240);
     if (!path || !textHint) {
       return null;
     }
@@ -18363,13 +18376,9 @@ ${selected}
       element?.parentElement,
       this.markdownBlockGridContainer(element)
     ]).filter(Boolean));
-    const candidates = Array.from(/* @__PURE__ */ new Set([
-      ...this.previewEl.querySelectorAll(EDITABLE_SELECTOR),
-      ...this.previewEl.querySelectorAll(MARKDOWN_EMBED_SELECTOR)
-    ])).filter((element) => {
-      return isConcreteMarkdownBlockElement(element) && !element.closest(BLOCKED_EDIT_SELECTOR) && normalizeRenderedText2(renderedMarkdownIdentityText(element));
-    });
+    const candidates = markdownBlockCandidateElements(this.previewEl);
     const candidateMeta = /* @__PURE__ */ new Map();
+    const idCandidates = /* @__PURE__ */ new Map();
     const exactCandidates = /* @__PURE__ */ new Map();
     const lineCandidates = /* @__PURE__ */ new Map();
     const hintCandidates = /* @__PURE__ */ new Map();
@@ -18378,11 +18387,15 @@ ${selected}
       values.push(element);
       map.set(key, values);
     };
-    for (const element of candidates) {
+    for (const [candidateOrder, element] of candidates.entries()) {
       const path = normalizeVaultPath(element.dataset.noteDrawSourcePath || this.file?.path || "");
       const info = getSourceInfo(element);
       const hint = normalizeRenderedText2(renderedMarkdownIdentityText(element)).slice(0, 240);
-      candidateMeta.set(element, { path, info, hint });
+      candidateMeta.set(element, { path, info, hint, order: candidateOrder });
+      const mappedId = element.dataset.noteDrawMarkdownBlockId;
+      if (mappedId) {
+        queueCandidate(idCandidates, mappedId, element);
+      }
       if (Number.isFinite(info.lineStart)) {
         queueCandidate(exactCandidates, `${path}\0${info.lineStart}\0${hint}`, element);
         queueCandidate(lineCandidates, `${path}\0${info.lineStart}`, element);
@@ -18400,13 +18413,40 @@ ${selected}
       const exactKey = `${block.path}\0${block.lineStart}\0${block.textHint}`;
       const lineKey = `${block.path}\0${block.lineStart}`;
       const hintKey = `${block.path}\0${block.textHint}`;
-      const element = previousMatches ? previous : takeUnused(exactCandidates.get(exactKey)) || takeUnused(lineCandidates.get(lineKey)) || takeUnused(hintCandidates.get(hintKey));
+      let element = previousMatches ? previous : takeUnused(idCandidates.get(block.id)) || takeUnused(exactCandidates.get(exactKey)) || takeUnused(lineCandidates.get(lineKey)) || takeUnused(hintCandidates.get(hintKey));
+      if (!element) {
+        const blockHint = normalizeRenderedText2(block.textHint);
+        const blockLine = Number(block.lineStart);
+        const scored = candidates.map((candidate, candidateOrder) => {
+          if (used.has(candidate)) {
+            return null;
+          }
+          const meta2 = candidateMeta.get(candidate);
+          if (!meta2 || meta2.path !== block.path) {
+            return null;
+          }
+          const candidateLine = Number(meta2.info?.lineStart);
+          const candidateHint = normalizeRenderedText2(meta2.hint);
+          const lineExact = Number.isFinite(blockLine) && Number.isFinite(candidateLine) && blockLine === candidateLine;
+          const hintExact = Boolean(blockHint && candidateHint && blockHint === candidateHint);
+          const hintRelated = Boolean(blockHint && candidateHint && (blockHint.includes(candidateHint) || candidateHint.includes(blockHint)));
+          const lineDistance = Number.isFinite(blockLine) && Number.isFinite(candidateLine) ? Math.abs(blockLine - candidateLine) : Number.POSITIVE_INFINITY;
+          const score = (lineExact ? 1e3 : 0) + (hintExact ? 700 : hintRelated ? 220 : 0) + (Number.isFinite(lineDistance) ? Math.max(0, 80 - Math.min(80, lineDistance)) : 0) + Math.max(0, 20 - Math.abs(candidateOrder - this.markdownBlockRecords().indexOf(block)));
+          return { candidate, score };
+        }).filter(Boolean).sort((left, right) => right.score - left.score)[0];
+        if (scored && scored.score >= 220) {
+          element = scored.candidate;
+        }
+      }
+      if (!element && previous?.isConnected && !used.has(previous) && previous?.dataset?.noteDrawMarkdownBlockId === block.id && (!candidateMeta.has(previous) || candidateMeta.get(previous)?.path === block.path)) {
+        element = previous;
+      }
       if (!element) {
         continue;
       }
       used.add(element);
       next.set(block.id, element);
-      const meta = candidateMeta.get(element) || { info: getSourceInfo(element), hint: normalizeRenderedText2(element.innerText || element.textContent || "").slice(0, 240) };
+      const meta = candidateMeta.get(element) || { info: getSourceInfo(element), hint: normalizeRenderedText2(renderedMarkdownIdentityText(element)).slice(0, 240) };
       const info = meta.info;
       if (Number.isFinite(info.lineStart)) {
         markdownMetadataChanged = markdownMetadataChanged || block.lineStart !== info.lineStart || block.lineEnd !== (info.lineEnd ?? info.lineStart);
@@ -19367,7 +19407,26 @@ ${selected}
       return null;
     }
     const geometry = this.dragDropGeometrySnapshot();
-    const placement = selectNoteFlowDropPlacementFromIndex(geometry?.noteFlowDropIndex, { dropY: Number(clientY) });
+    const previousPlacement = this.dragNoteFlowPlacement;
+    let placement = selectNoteFlowDropPlacementFromIndex(geometry?.noteFlowDropIndex, { dropY: Number(clientY) });
+    if (previousPlacement?.horizontalSide && previousPlacement.candidate) {
+      const previousCandidate = this.refreshDraggedNoteFlowPreviewCandidate(previousPlacement.candidate);
+      const previousRect = previousCandidate ? this.noteFlowCandidateRect(previousCandidate, "inline") : null;
+      const previousHeight = previousRect ? Math.max(1, previousRect.bottom - previousRect.top) : 0;
+      const verticalTolerance = Math.max(32, previousHeight * 0.75);
+      const lane = geometry?.laneRect;
+      const remainsInLane = !lane || Number(clientX) >= Number(lane.left) - 24 && Number(clientX) <= Number(lane.right) + 24;
+      if (previousRect && remainsInLane && Number(clientY) >= previousRect.top - verticalTolerance && Number(clientY) <= previousRect.bottom + verticalTolerance) {
+        placement = {
+          candidate: previousCandidate,
+          side: previousPlacement.side,
+          line: previousPlacement.line,
+          boundary: previousRect.top,
+          flowOrder: previousPlacement.flowOrder,
+          noteFlowBoundary: previousPlacement.noteFlowBoundary
+        };
+      }
+    }
     const target = placement?.candidate?.sourceElement || placement?.candidate?.element || null;
     const targetRect = placement?.candidate ? this.noteFlowCandidateRect(placement.candidate, "inline") : null;
     if (!placement || !target || !targetRect || targetRect.width <= 1 || targetRect.height <= 1) {
@@ -19403,8 +19462,10 @@ ${selected}
       bottom: targetRect.top + draggedClientHeight
     };
     const targetHeight = Math.max(1, targetRect.bottom - targetRect.top);
-    const inlineEdgeBand = clamp10(targetHeight * 0.22, 4, 12);
-    const inlineRowHit = Number(clientY) > targetRect.top + inlineEdgeBand && Number(clientY) < targetRect.bottom - inlineEdgeBand;
+    const inlineEdgeBand = clamp10(targetHeight * 0.14, 3, 9);
+    const inlineCaptureBand = clamp10(targetHeight * 0.55, 18, 44);
+    const sameInlineCandidate = Boolean(previousPlacement?.horizontalSide && previousPlacement.candidate && placement?.candidate && (previousPlacement.candidate.blockKey || noteFlowBlockKey(previousPlacement.candidate, this.file?.path || "")) === (placement.candidate.blockKey || noteFlowBlockKey(placement.candidate, this.file?.path || "")));
+    const inlineRowHit = sameInlineCandidate ? Number(clientY) >= targetRect.top - inlineCaptureBand && Number(clientY) <= targetRect.bottom + inlineCaptureBand : Number(clientY) >= targetRect.top + inlineEdgeBand && Number(clientY) <= targetRect.bottom - inlineEdgeBand;
     const inlineTarget = isConcreteMarkdownBlockElement(target) ? target : findNoteFlowInlineMeasureElement(target);
     const movingElements = new Set(this.draggedNoteFlowMarkdownStates().map((state) => state.element));
     const inlineRow = this.markdownDropRowMetrics(inlineTarget, movingElements);
@@ -19416,7 +19477,8 @@ ${selected}
       laneLeft: laneRect.left,
       laneRight: laneRect.right,
       draggedLeft: this.draggedSelectionClientLeft(),
-      horizontalRoom
+      horizontalRoom,
+      rightIntentRatio: 0.68
     });
     const horizontalSide = intent === "inline-right" ? "right" : null;
     const leftSnap = intent === "line-start";
@@ -19485,7 +19547,7 @@ ${selected}
     }
     const indicator = this.ensureNoteFlowDropIndicator();
     const previous = this.dragNoteFlowPlacement;
-    const presentationChanged = previous?.candidate?.sourceElement !== flowTarget || previous?.candidate?.element !== flowCandidate.element || previous?.side !== flowSide || previous?.line !== Number(flowLine) || previous?.horizontalSide !== horizontalSide || previous?.leftSnap !== leftSnap || previous?.flowOrder !== flowOrder || previous?.inlineBoundary !== inlineBoundary || previous?.boundary !== flowBoundary;
+    const presentationChanged = previous?.candidate?.sourceElement !== flowTarget || previous?.candidate?.element !== flowCandidate.element || previous?.side !== flowSide || previous?.line !== Number(flowLine) || previous?.horizontalSide !== horizontalSide || previous?.leftSnap !== leftSnap || previous?.flowOrder !== flowOrder || (Number.isFinite(Number(previous?.inlineBoundary)) && Number.isFinite(Number(inlineBoundary)) ? Math.abs(Number(previous.inlineBoundary) - Number(inlineBoundary)) > 2 : previous?.inlineBoundary !== inlineBoundary) || (Number.isFinite(Number(previous?.boundary)) && Number.isFinite(Number(flowBoundary)) ? Math.abs(Number(previous.boundary) - Number(flowBoundary)) > 2 : previous?.boundary !== flowBoundary);
     if (presentationChanged || !indicator.classList.contains("is-visible")) {
       this.removeDraggedNoteFlowPlacementVisual();
       this.dragNoteFlowTargetElement = flowTarget;
@@ -19596,6 +19658,10 @@ ${selected}
     let changed = false;
     for (const block of this.markdownBlockRecords()) {
       if (!block.noteFlowAutoSpan) {
+        continue;
+      }
+      if (Number(block.span) > 0 && Number(block.span) < 12) {
+        block.noteFlowAutoSpan = false;
         continue;
       }
       const blockKey = noteFlowBlockKey({
@@ -20992,11 +21058,15 @@ ${selected}
         layout: normalizeElementLayout(stroke.layout),
         contentWidth: contentFrame.width,
         viewportHeight,
-        preferCurrent: Boolean(normalizeNoteFlow(stroke.noteFlow)?.positionBasis)
+        preferCurrent: Boolean(normalizeNoteFlow(stroke.noteFlow)?.positionBasis) || this.resizingSelection
       });
       return { stroke, index, ...stabilized };
     }).filter(Boolean).sort((a, b) => a.bounds.minY - b.bounds.minY);
-    if (this.noteFlowOperationPending && flows.length && !this.noteFlowMarkdownAnnotationComplete) {
+    const canLayoutDuringResize = this.resizingSelection && flows.some((item) => {
+      const noteFlow = normalizeNoteFlow(item.stroke?.noteFlow);
+      return hasStableNoteFlowAnchor(noteFlow) || Number.isFinite(Number(noteFlow?.line));
+    });
+    if (this.noteFlowOperationPending && flows.length && !this.noteFlowMarkdownAnnotationComplete && !canLayoutDuringResize) {
       this.noteFlowLayoutIncomplete = true;
       this.scheduleMarkdownAnnotationRefresh({ layout: false, delay: 0, force: true });
       return false;
@@ -21023,6 +21093,9 @@ ${selected}
     }
     const scaleY = canvasRect.height > 0 ? canvasRect.height / Math.max(1, this.canvasRenderHeight) : 1;
     const candidates = this.noteFlowCandidates();
+    if (this.resizingSelection) {
+      this.noteFlowSettledRowExtents = /* @__PURE__ */ new Map();
+    }
     const settledRowExtentsChanged = this.alignNoteFlowStrokesToReservedRows(candidates, { measureOnly: true });
     let missingStableAnchor = candidates.length === 0;
     const canRepairStoredAnchors = this.noteFlowAnchorRepairReady && !this.noteFlowAnchorRepairComplete && Date.now() - this.lastScrollAt > 480;
@@ -21167,7 +21240,12 @@ ${selected}
         });
       }
       const state = states.get(property);
-      const stableHeight = currentNoteFlow.boxHeightRatio > 0 ? currentNoteFlow.boxHeightRatio * Math.max(1, contentFrame.width) : Math.max(0, item.bounds.maxY - item.bounds.minY);
+      const liveBounds = this.resizingSelection ? getStrokeBounds(item.stroke, this.canvasWidth(), this.canvasHeight()) : null;
+      const liveHeight = Math.max(
+        0,
+        (liveBounds || item.bounds).maxY - (liveBounds || item.bounds).minY
+      );
+      const stableHeight = this.resizingSelection ? liveHeight : currentNoteFlow.boxHeightRatio > 0 ? currentNoteFlow.boxHeightRatio * Math.max(1, contentFrame.width) : liveHeight;
       const settledRowKey = noteFlowPlacementRowKey(currentNoteFlow, this.file?.path || "");
       const settledExtent = this.noteFlowSettledRowExtents.get(settledRowKey) || 0;
       const settledHeight = Math.max(stableHeight, settledExtent);
@@ -22956,6 +23034,61 @@ function isConcreteMarkdownBlockElement(element) {
   }
   return !element.querySelector?.(MARKDOWN_TEXT_SELECTOR);
 }
+function isMarkdownBlockCandidateElement(element) {
+  if (!element || element.closest?.(NOTEDRAW_OWNED_MUTATION_SELECTOR) || element.closest?.(".frontmatter,.metadata-container")) {
+    return false;
+  }
+  if (isConcreteMarkdownBlockElement(element)) {
+    return true;
+  }
+  return Boolean(
+    element.matches?.(NOTE_FLOW_RENDERED_OWNER_SELECTOR) || element.matches?.(NOTE_FLOW_RENDERED_BLOCK_SELECTOR) || element.matches?.("img,video,audio,iframe,hr,figure,table,pre,blockquote,.math-block,.el-img,.el-hr")
+  );
+}
+function markdownBlockCandidateElements(root) {
+  if (!root) {
+    return [];
+  }
+  const candidates = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const element of collectNoteFlowMarkdownOwners(root)) {
+    if (!isMarkdownBlockCandidateElement(element) || seen.has(element)) {
+      continue;
+    }
+    seen.add(element);
+    candidates.push(element);
+  }
+  for (const element of [
+    ...Array.from(root.querySelectorAll?.(EDITABLE_SELECTOR) || []),
+    ...Array.from(root.querySelectorAll?.(MARKDOWN_EMBED_SELECTOR) || []),
+    ...Array.from(root.querySelectorAll?.(NOTE_FLOW_RENDERED_BLOCK_SELECTOR) || [])
+  ]) {
+    const owner = findNoteFlowMarkdownBlockElement(element, root) || element;
+    if (!isMarkdownBlockCandidateElement(owner) || seen.has(owner)) {
+      continue;
+    }
+    seen.add(owner);
+    candidates.push(owner);
+  }
+  return candidates;
+}
+function markdownBlockCandidateElementForTarget(target, root) {
+  if (!target || !root?.contains?.(target)) {
+    return null;
+  }
+  const preciselyMapped = target.closest?.("[data-note-draw-line-mapped='true']");
+  if (preciselyMapped && root.contains(preciselyMapped) && isMarkdownBlockCandidateElement(preciselyMapped)) {
+    return preciselyMapped;
+  }
+  const mappedChild = Array.from(target.querySelectorAll?.("[data-note-draw-line-mapped='true']") || []).find((element) => {
+    return isMarkdownBlockCandidateElement(element);
+  });
+  if (mappedChild) {
+    return mappedChild;
+  }
+  const owner = findNoteFlowMarkdownBlockElement(target, root) || target;
+  return isMarkdownBlockCandidateElement(owner) ? owner : null;
+}
 function isMarkdownEmbedBlockElement(element) {
   if (!element?.matches?.(MARKDOWN_EMBED_SELECTOR)) {
     return false;
@@ -22975,12 +23108,6 @@ function findMarkdownEmbedBlockElement(target, previewEl = null) {
   }
   const owner = embed.matches?.(".internal-embed") ? embed : embed.closest?.(".internal-embed") || (embed.matches?.(".markdown-embed") ? embed : embed.closest?.(".markdown-embed")) || embed;
   return !previewEl || previewEl.contains?.(owner) ? owner : null;
-}
-function isMarkdownHeadingElement(element) {
-  const flowElement = findNoteFlowMarkdownBlockElement(element) || element;
-  return Boolean(
-    element?.matches?.(MARKDOWN_HEADING_SELECTOR) || flowElement?.matches?.(MARKDOWN_HEADING_SELECTOR) || element?.closest?.(MARKDOWN_HEADING_SELECTOR)
-  );
 }
 function findNoteFlowInlineMeasureElement(element) {
   if (!element) {
@@ -25634,9 +25761,9 @@ function getSourceInfo(element) {
   const lineEnd = parseInteger(element.dataset.noteDrawLineEnd);
   const dataLine = parseInteger(element.dataset.noteDrawDataLine) ?? parseDataLine(element.closest("[data-line]")?.getAttribute("data-line"));
   const dataLineScope = element.dataset.noteDrawDataLineScope || (Number.isFinite(parseDataLine(element.getAttribute("data-line"))) ? "self" : "ancestor");
-  const exactDataLine = dataLineScope === "self" ? dataLine : null;
-  const resolvedStart = exactDataLine ?? lineStart ?? null;
-  const resolvedEnd = exactDataLine ?? lineEnd ?? resolvedStart;
+  const exactDataLine = dataLineScope === "self" && !Number.isFinite(lineStart) ? dataLine : null;
+  const resolvedStart = lineStart ?? exactDataLine ?? dataLine ?? null;
+  const resolvedEnd = lineEnd ?? exactDataLine ?? resolvedStart;
   return {
     lineStart: resolvedStart,
     lineEnd: resolvedEnd,

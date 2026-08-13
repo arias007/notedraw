@@ -106,6 +106,7 @@ export function resolveDragDropHorizontalIntent({
   laneRight = targetRight,
   draggedLeft,
   leftContactTolerance = 8,
+  rightIntentRatio = 0.82,
   horizontalRoom = true
 } = {}) {
   const x = Number(clientX);
@@ -126,7 +127,7 @@ export function resolveDragDropHorizontalIntent({
     return "line-start";
   }
   const rightThreshold = Math.min(
-    left + targetWidth * 0.82,
+    left + targetWidth * clamp(Number(rightIntentRatio) || 0.82, 0.5, 0.92),
     surfaceRight - clamp(laneWidth * 0.08, 32, 64)
   );
   return horizontalRoom && x >= rightThreshold ? "inline-right" : "vertical";

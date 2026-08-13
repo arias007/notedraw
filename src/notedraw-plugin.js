@@ -1257,7 +1257,11 @@ var NOTE_FLOW_RENDERED_OWNER_SELECTOR = [
   "blockquote",
   "pre",
   "table",
-  "hr"
+  "hr",
+  "img",
+  "video",
+  "audio",
+  "iframe"
 ].join(",");
 var NOTE_FLOW_RENDERED_BLOCK_SELECTOR = [
   ".el-p",
@@ -1282,7 +1286,11 @@ var NOTE_FLOW_RENDERED_BLOCK_SELECTOR = [
   "figure",
   ".callout",
   ".internal-embed",
-  ".math-block"
+  ".math-block",
+  "img",
+  "video",
+  "audio",
+  "iframe"
 ].join(",");
 var EDITABLE_SELECTOR = [
   ".markdown-preview-view",
@@ -8136,7 +8144,7 @@ var PreviewDrawingController = class {
   }
   currentPaletteColor() {
     if (this.toolMode === TOOL_SELECT) {
-      const selectedGroupColor = this.selectedWholeElementGroups().filter((group) => group.boxed).map((group) => group.borderColor).find((color) => isCssColor(color));
+      const selectedGroupColor = this.selectedWholeElementGroups().filter((group) => group.boxed).map((group) => group.backgroundColor || group.borderColor).find((color) => isCssColor(color));
       if (selectedGroupColor) {
         return selectedGroupColor;
       }
@@ -8178,7 +8186,8 @@ var PreviewDrawingController = class {
       return stroke && !boxedGroupIds.has(stroke.groupId) && stroke.color !== color;
     });
     const changedBlocks = this.getSelectedMarkdownBlocks().filter((block) => !boxedGroupIds.has(block.groupId) && block.borderColor !== color);
-    const changedGroups = boxedGroups.filter((group) => group.borderColor !== color);
+    const changedGroups = boxedGroups.filter((group) => group.borderColor !== color
+      || isCssColor(group.backgroundColor) && group.backgroundColor !== color);
     if (!changed.length && !changedBlocks.length && !changedGroups.length) {
       return false;
     }
@@ -8191,6 +8200,11 @@ var PreviewDrawingController = class {
     }
     for (const group of changedGroups) {
       group.borderColor = color;
+      // A filled box uses the same palette color for its fill and outline.
+      // Keep outline-only boxes transparent until the fill control is used.
+      if (isCssColor(group.backgroundColor)) {
+        group.backgroundColor = color;
+      }
     }
     this.redoStack = [];
     this.invalidateStaticCache();
@@ -12093,12 +12107,13 @@ var PreviewDrawingController = class {
     return result;
   }
   markdownDropIncludesHeading(target, moving = null) {
-    const movingStates = Array.isArray(moving)
-      ? moving
-      : this.draggedNoteFlowMarkdownStates();
-    return isMarkdownHeadingElement(target) || movingStates.some((state) => {
-      return isMarkdownHeadingElement(state.dragElement || state.element);
-    });
+    // Headings are ordinary Markdown blocks for NoteFlow layout. Treating
+    // them as a vertical-only special case made the same horizontal gesture
+    // behave differently depending on the block type and caused the preview
+    // to jump when a heading was crossed.
+    void target;
+    void moving;
+    return false;
   }
   async commitDraggedMarkdownBlocks(drop, drawingHistoryBefore) {
     const moving = Array.isArray(drop?.moving) ? drop.moving.filter((state) => state?.element && state?.block) : [];
@@ -13200,6 +13215,11 @@ var PreviewDrawingController = class {
       this.invalidateStaticCache();
     }
     if (this.selectedResizeAffectsNoteFlowLayout()) {
+      // Apply one reservation in the same pointer event before the
+      // interaction canvas paints. The queued pass below still settles DOM
+      // reflow, but the first visible frame must already push or release the
+      // Markdown below the resized element.
+      this.flushSelectedResizeNoteFlowLayout({ immediate: true });
       this.queueSelectedResizeNoteFlowLayout();
     }
   }
@@ -13230,7 +13250,7 @@ var PreviewDrawingController = class {
       this.flushSelectedResizeNoteFlowLayout();
     });
   }
-  flushSelectedResizeNoteFlowLayout() {
+  flushSelectedResizeNoteFlowLayout(options = {}) {
     if (this.destroyed || !this.resizingSelection) {
       return false;
     }
@@ -13242,7 +13262,8 @@ var PreviewDrawingController = class {
     // pathological document from turning one pointer frame into an endless
     // layout loop.
     let aligned = false;
-    for (let pass = 0; pass < 3; pass += 1) {
+    const maxPasses = 3;
+    for (let pass = 0; pass < maxPasses; pass += 1) {
       this.noteFlowSettledRowExtents = /* @__PURE__ */ new Map();
       const layoutChanged = this.applyNoteFlowLayout();
       aligned = this.alignNoteFlowStrokesToReservedRows(null, { interaction: true });
@@ -13250,6 +13271,9 @@ var PreviewDrawingController = class {
       changed = changed || passChanged;
       if (!passChanged) {
         break;
+      }
+      if (pass + 1 < maxPasses) {
+        this.previewEl?.getBoundingClientRect?.();
       }
     }
     if (changed || aligned) {
@@ -14519,15 +14543,9 @@ var PreviewDrawingController = class {
     const selection = normalizeCanvasRect(this.pointToCanvas(startPoint), this.pointToCanvas(endPoint));
     const ids = [];
     const seen = /* @__PURE__ */ new Set();
-    const candidates = new Set([
-      ...this.previewEl.querySelectorAll(EDITABLE_SELECTOR),
-      ...this.previewEl.querySelectorAll(MARKDOWN_EMBED_SELECTOR)
-    ]);
+    const candidates = markdownBlockCandidateElements(this.previewEl);
     for (const candidate of candidates) {
-      const element = findMarkdownEmbedBlockElement(candidate, this.previewEl) || candidate;
-      if (element.closest(BLOCKED_EDIT_SELECTOR)) {
-        continue;
-      }
+      const element = candidate;
       const bounds = this.markdownElementCanvasBounds(element, { forSelection: true });
       if (!bounds || !rectsIntersect(selection, bounds)) {
         continue;
@@ -14732,7 +14750,7 @@ var PreviewDrawingController = class {
     }
     const path = normalizeVaultPath(blockElement.dataset.noteDrawSourcePath || this.file?.path || "");
     const info = getSourceInfo(blockElement);
-    const hint = normalizeRenderedText(blockElement.innerText || blockElement.textContent || "").slice(0, 240);
+    const hint = normalizeRenderedText(renderedMarkdownIdentityText(blockElement)).slice(0, 240);
     const candidates = this.markdownBlockRecords().filter((block) => block.path === path);
     return candidates.find((block) => Number.isFinite(info.lineStart) && block.lineStart === info.lineStart && (!block.textHint || block.textHint === hint))
       || candidates.find((block) => Number.isFinite(info.lineStart) && block.lineStart === info.lineStart)
@@ -14746,6 +14764,10 @@ var PreviewDrawingController = class {
     const embeddedBlock = findMarkdownEmbedBlockElement(target, this.previewEl);
     if (embeddedBlock) {
       return this.markdownElementContainsClientPoint(embeddedBlock, clientPoint) ? embeddedBlock : null;
+    }
+    const renderedBlock = markdownBlockCandidateElementForTarget(target, this.previewEl);
+    if (renderedBlock && this.markdownElementContainsClientPoint(renderedBlock, clientPoint)) {
+      return renderedBlock;
     }
     const marked = target.closest?.(".notedraw-md-block");
     if (marked && this.previewEl.contains(marked) && isConcreteMarkdownBlockElement(marked)) {
@@ -14781,7 +14803,7 @@ var PreviewDrawingController = class {
     }
     const info = getSourceInfo(blockElement);
     const path = normalizeVaultPath(blockElement.dataset.noteDrawSourcePath || this.file?.path || "");
-    const textHint = normalizeRenderedText(blockElement.innerText || blockElement.textContent || "").slice(0, 240);
+    const textHint = normalizeRenderedText(renderedMarkdownIdentityText(blockElement)).slice(0, 240);
     if (!path || !textHint) {
       return null;
     }
@@ -14959,15 +14981,9 @@ var PreviewDrawingController = class {
       element?.parentElement,
       this.markdownBlockGridContainer(element)
     ]).filter(Boolean));
-    const candidates = Array.from(new Set([
-      ...this.previewEl.querySelectorAll(EDITABLE_SELECTOR),
-      ...this.previewEl.querySelectorAll(MARKDOWN_EMBED_SELECTOR)
-    ])).filter((element) => {
-      return isConcreteMarkdownBlockElement(element)
-        && !element.closest(BLOCKED_EDIT_SELECTOR)
-        && normalizeRenderedText(renderedMarkdownIdentityText(element));
-    });
+    const candidates = markdownBlockCandidateElements(this.previewEl);
     const candidateMeta = /* @__PURE__ */ new Map();
+    const idCandidates = /* @__PURE__ */ new Map();
     const exactCandidates = /* @__PURE__ */ new Map();
     const lineCandidates = /* @__PURE__ */ new Map();
     const hintCandidates = /* @__PURE__ */ new Map();
@@ -14976,11 +14992,15 @@ var PreviewDrawingController = class {
       values.push(element);
       map.set(key, values);
     };
-    for (const element of candidates) {
+    for (const [candidateOrder, element] of candidates.entries()) {
       const path = normalizeVaultPath(element.dataset.noteDrawSourcePath || this.file?.path || "");
       const info = getSourceInfo(element);
       const hint = normalizeRenderedText(renderedMarkdownIdentityText(element)).slice(0, 240);
-      candidateMeta.set(element, { path, info, hint });
+      candidateMeta.set(element, { path, info, hint, order: candidateOrder });
+      const mappedId = element.dataset.noteDrawMarkdownBlockId;
+      if (mappedId) {
+        queueCandidate(idCandidates, mappedId, element);
+      }
       if (Number.isFinite(info.lineStart)) {
         queueCandidate(exactCandidates, `${path}\u0000${info.lineStart}\u0000${hint}`, element);
         queueCandidate(lineCandidates, `${path}\u0000${info.lineStart}`, element);
@@ -14999,17 +15019,57 @@ var PreviewDrawingController = class {
       const exactKey = `${block.path}\u0000${block.lineStart}\u0000${block.textHint}`;
       const lineKey = `${block.path}\u0000${block.lineStart}`;
       const hintKey = `${block.path}\u0000${block.textHint}`;
-      const element = previousMatches
+      let element = previousMatches
         ? previous
-        : takeUnused(exactCandidates.get(exactKey))
+        : takeUnused(idCandidates.get(block.id))
+          || takeUnused(exactCandidates.get(exactKey))
           || takeUnused(lineCandidates.get(lineKey))
           || takeUnused(hintCandidates.get(hintKey));
+      if (!element) {
+        const blockHint = normalizeRenderedText(block.textHint);
+        const blockLine = Number(block.lineStart);
+        const scored = candidates.map((candidate, candidateOrder) => {
+          if (used.has(candidate)) {
+            return null;
+          }
+          const meta = candidateMeta.get(candidate);
+          if (!meta || meta.path !== block.path) {
+            return null;
+          }
+          const candidateLine = Number(meta.info?.lineStart);
+          const candidateHint = normalizeRenderedText(meta.hint);
+          const lineExact = Number.isFinite(blockLine) && Number.isFinite(candidateLine) && blockLine === candidateLine;
+          const hintExact = Boolean(blockHint && candidateHint && blockHint === candidateHint);
+          const hintRelated = Boolean(blockHint && candidateHint && (blockHint.includes(candidateHint) || candidateHint.includes(blockHint)));
+          const lineDistance = Number.isFinite(blockLine) && Number.isFinite(candidateLine)
+            ? Math.abs(blockLine - candidateLine)
+            : Number.POSITIVE_INFINITY;
+          const score = (lineExact ? 1000 : 0)
+            + (hintExact ? 700 : hintRelated ? 220 : 0)
+            + (Number.isFinite(lineDistance) ? Math.max(0, 80 - Math.min(80, lineDistance)) : 0)
+            + Math.max(0, 20 - Math.abs(candidateOrder - this.markdownBlockRecords().indexOf(block)));
+          return { candidate, score };
+        }).filter(Boolean).sort((left, right) => right.score - left.score)[0];
+        // Only use a scored fallback when there is an actual identity signal;
+        // never consume an unrelated Markdown element just to fill a gap.
+        if (scored && scored.score >= 220) {
+          element = scored.candidate;
+        }
+      }
+      // Obsidian can replace/measure a rendered section in several DOM steps.
+      // Keep a still-connected binding alive for that short gap instead of
+      // clearing its presentation and making the Markdown block disappear.
+      if (!element && previous?.isConnected && !used.has(previous)
+        && previous?.dataset?.noteDrawMarkdownBlockId === block.id
+        && (!candidateMeta.has(previous) || candidateMeta.get(previous)?.path === block.path)) {
+        element = previous;
+      }
       if (!element) {
         continue;
       }
       used.add(element);
       next.set(block.id, element);
-      const meta = candidateMeta.get(element) || { info: getSourceInfo(element), hint: normalizeRenderedText(element.innerText || element.textContent || "").slice(0, 240) };
+      const meta = candidateMeta.get(element) || { info: getSourceInfo(element), hint: normalizeRenderedText(renderedMarkdownIdentityText(element)).slice(0, 240) };
       const info = meta.info;
       if (Number.isFinite(info.lineStart)) {
         markdownMetadataChanged = markdownMetadataChanged
@@ -16005,7 +16065,35 @@ var PreviewDrawingController = class {
       return null;
     }
     const geometry = this.dragDropGeometrySnapshot();
-    const placement = selectNoteFlowDropPlacementFromIndex(geometry?.noteFlowDropIndex, { dropY: Number(clientY) });
+    const previousPlacement = this.dragNoteFlowPlacement;
+    let placement = selectNoteFlowDropPlacementFromIndex(geometry?.noteFlowDropIndex, { dropY: Number(clientY) });
+    // Keep an already-visible inline candidate while the pointer is still in
+    // its generous vertical capture band. The row-boundary index is based on
+    // live DOM geometry; choosing it afresh on every pointer frame lets a
+    // one-pixel height/scroll change switch between before/after and inline.
+    if (previousPlacement?.horizontalSide && previousPlacement.candidate) {
+      const previousCandidate = this.refreshDraggedNoteFlowPreviewCandidate(previousPlacement.candidate);
+      const previousRect = previousCandidate
+        ? this.noteFlowCandidateRect(previousCandidate, "inline")
+        : null;
+      const previousHeight = previousRect ? Math.max(1, previousRect.bottom - previousRect.top) : 0;
+      const verticalTolerance = Math.max(32, previousHeight * 0.75);
+      const lane = geometry?.laneRect;
+      const remainsInLane = !lane
+        || (Number(clientX) >= Number(lane.left) - 24 && Number(clientX) <= Number(lane.right) + 24);
+      if (previousRect && remainsInLane
+        && Number(clientY) >= previousRect.top - verticalTolerance
+        && Number(clientY) <= previousRect.bottom + verticalTolerance) {
+        placement = {
+          candidate: previousCandidate,
+          side: previousPlacement.side,
+          line: previousPlacement.line,
+          boundary: previousRect.top,
+          flowOrder: previousPlacement.flowOrder,
+          noteFlowBoundary: previousPlacement.noteFlowBoundary
+        };
+      }
+    }
     const target = placement?.candidate?.sourceElement || placement?.candidate?.element || null;
     const targetRect = placement?.candidate
       ? this.noteFlowCandidateRect(placement.candidate, "inline")
@@ -16049,9 +16137,18 @@ var PreviewDrawingController = class {
       bottom: targetRect.top + draggedClientHeight
     };
     const targetHeight = Math.max(1, targetRect.bottom - targetRect.top);
-    const inlineEdgeBand = clamp(targetHeight * 0.22, 4, 12);
-    const inlineRowHit = Number(clientY) > targetRect.top + inlineEdgeBand
-      && Number(clientY) < targetRect.bottom - inlineEdgeBand;
+    const inlineEdgeBand = clamp(targetHeight * 0.14, 3, 9);
+    const inlineCaptureBand = clamp(targetHeight * 0.55, 18, 44);
+    const sameInlineCandidate = Boolean(previousPlacement?.horizontalSide
+      && previousPlacement.candidate
+      && placement?.candidate
+      && (previousPlacement.candidate.blockKey || noteFlowBlockKey(previousPlacement.candidate, this.file?.path || ""))
+        === (placement.candidate.blockKey || noteFlowBlockKey(placement.candidate, this.file?.path || "")));
+    const inlineRowHit = sameInlineCandidate
+      ? Number(clientY) >= targetRect.top - inlineCaptureBand
+        && Number(clientY) <= targetRect.bottom + inlineCaptureBand
+      : Number(clientY) >= targetRect.top + inlineEdgeBand
+        && Number(clientY) <= targetRect.bottom - inlineEdgeBand;
     const inlineTarget = isConcreteMarkdownBlockElement(target)
       ? target
       : findNoteFlowInlineMeasureElement(target);
@@ -16069,7 +16166,8 @@ var PreviewDrawingController = class {
       laneLeft: laneRect.left,
       laneRight: laneRect.right,
       draggedLeft: this.draggedSelectionClientLeft(),
-      horizontalRoom
+      horizontalRoom,
+      rightIntentRatio: 0.68
     });
     const horizontalSide = intent === "inline-right" ? "right" : null;
     const leftSnap = intent === "line-start";
@@ -16159,8 +16257,12 @@ var PreviewDrawingController = class {
       || previous?.horizontalSide !== horizontalSide
       || previous?.leftSnap !== leftSnap
       || previous?.flowOrder !== flowOrder
-      || previous?.inlineBoundary !== inlineBoundary
-      || previous?.boundary !== flowBoundary;
+      || (Number.isFinite(Number(previous?.inlineBoundary)) && Number.isFinite(Number(inlineBoundary))
+        ? Math.abs(Number(previous.inlineBoundary) - Number(inlineBoundary)) > 2
+        : previous?.inlineBoundary !== inlineBoundary)
+      || (Number.isFinite(Number(previous?.boundary)) && Number.isFinite(Number(flowBoundary))
+        ? Math.abs(Number(previous.boundary) - Number(flowBoundary)) > 2
+        : previous?.boundary !== flowBoundary);
     if (presentationChanged || !indicator.classList.contains("is-visible")) {
       this.removeDraggedNoteFlowPlacementVisual();
       this.dragNoteFlowTargetElement = flowTarget;
@@ -16281,6 +16383,13 @@ var PreviewDrawingController = class {
     let changed = false;
     for (const block of this.markdownBlockRecords()) {
       if (!block.noteFlowAutoSpan) {
+        continue;
+      }
+      // A span below 12 is a user-confirmed parallel row. Its NoteFlow ink
+      // may be temporarily absent while Obsidian rebuilds the preview, so it
+      // must not be converted back to a full-width block during that window.
+      if (Number(block.span) > 0 && Number(block.span) < 12) {
+        block.noteFlowAutoSpan = false;
         continue;
       }
       const blockKey = noteFlowBlockKey({
@@ -17831,10 +17940,21 @@ var PreviewDrawingController = class {
         contentWidth: contentFrame.width,
         viewportHeight,
         preferCurrent: Boolean(normalizeNoteFlow(stroke.noteFlow)?.positionBasis)
+          || this.resizingSelection
       });
       return { stroke, index, ...stabilized };
     }).filter(Boolean).sort((a, b) => a.bounds.minY - b.bounds.minY);
-    if (this.noteFlowOperationPending && flows.length && !this.noteFlowMarkdownAnnotationComplete) {
+    // Existing NoteFlow elements already carry their Markdown line/block
+    // anchors. A selection resize must use those current candidates at once;
+    // waiting for the annotation refresh leaves the resized box visible while
+    // the Markdown reservation below it stays at the old height. New or
+    // anchorless placements still wait for canonical annotation as before.
+    const canLayoutDuringResize = this.resizingSelection && flows.some((item) => {
+      const noteFlow = normalizeNoteFlow(item.stroke?.noteFlow);
+      return hasStableNoteFlowAnchor(noteFlow)
+        || Number.isFinite(Number(noteFlow?.line));
+    });
+    if (this.noteFlowOperationPending && flows.length && !this.noteFlowMarkdownAnnotationComplete && !canLayoutDuringResize) {
       this.noteFlowLayoutIncomplete = true;
       this.scheduleMarkdownAnnotationRefresh({ layout: false, delay: 0, force: true });
       return false;
@@ -17861,6 +17981,13 @@ var PreviewDrawingController = class {
     }
     const scaleY = canvasRect.height > 0 ? canvasRect.height / Math.max(1, this.canvasRenderHeight) : 1;
     const candidates = this.noteFlowCandidates();
+    // A resize frame must be measured from the points just written by the
+    // pointer event. Never carry the previous row extent into that measure;
+    // otherwise shrinking a NoteFlow box can leave the Markdown reservation
+    // at its previous height and the following content cannot move back up.
+    if (this.resizingSelection) {
+      this.noteFlowSettledRowExtents = /* @__PURE__ */ new Map();
+    }
     const settledRowExtentsChanged = this.alignNoteFlowStrokesToReservedRows(candidates, { measureOnly: true });
     let missingStableAnchor = candidates.length === 0;
     const canRepairStoredAnchors = this.noteFlowAnchorRepairReady
@@ -18020,11 +18147,27 @@ var PreviewDrawingController = class {
         });
       }
       const state = states.get(property);
-      const stableHeight = currentNoteFlow.boxHeightRatio > 0
-        ? currentNoteFlow.boxHeightRatio * Math.max(1, contentFrame.width)
-        : Math.max(0, item.bounds.maxY - item.bounds.minY);
+      const liveBounds = this.resizingSelection
+        ? getStrokeBounds(item.stroke, this.canvasWidth(), this.canvasHeight())
+        : null;
+      const liveHeight = Math.max(
+        0,
+        (liveBounds || item.bounds).maxY - (liveBounds || item.bounds).minY
+      );
+      // During a selection resize the stored ratio can still describe the
+      // previous frame, especially when the content frame is settling. Use
+      // the current box height for the reservation so both expansion and
+      // contraction move the following NoteFlow/Markdown content now.
+      const stableHeight = this.resizingSelection
+        ? liveHeight
+        : currentNoteFlow.boxHeightRatio > 0
+          ? currentNoteFlow.boxHeightRatio * Math.max(1, contentFrame.width)
+          : liveHeight;
       const settledRowKey = noteFlowPlacementRowKey(currentNoteFlow, this.file?.path || "");
       const settledExtent = this.noteFlowSettledRowExtents.get(settledRowKey) || 0;
+      // During resize the map above was rebuilt from this frame, so this
+      // extent is allowed to shrink with the live box. Outside resize the
+      // settled extent remains the stabilizing floor for ordinary layout.
       const settledHeight = Math.max(stableHeight, settledExtent);
       // The reservation belongs to the logical row, like a Markdown block's
       // grid row. It is derived from stable box geometry, never from an anchor
@@ -19883,6 +20026,64 @@ function isConcreteMarkdownBlockElement(element) {
     return false;
   }
   return !element.querySelector?.(MARKDOWN_TEXT_SELECTOR);
+}
+function isMarkdownBlockCandidateElement(element) {
+  if (!element || element.closest?.(NOTEDRAW_OWNED_MUTATION_SELECTOR)
+    || element.closest?.(".frontmatter,.metadata-container")) {
+    return false;
+  }
+  if (isConcreteMarkdownBlockElement(element)) {
+    return true;
+  }
+  return Boolean(
+    element.matches?.(NOTE_FLOW_RENDERED_OWNER_SELECTOR)
+      || element.matches?.(NOTE_FLOW_RENDERED_BLOCK_SELECTOR)
+      || element.matches?.("img,video,audio,iframe,hr,figure,table,pre,blockquote,.math-block,.el-img,.el-hr")
+  );
+}
+function markdownBlockCandidateElements(root) {
+  if (!root) {
+    return [];
+  }
+  const candidates = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const element of collectNoteFlowMarkdownOwners(root)) {
+    if (!isMarkdownBlockCandidateElement(element) || seen.has(element)) {
+      continue;
+    }
+    seen.add(element);
+    candidates.push(element);
+  }
+  for (const element of [
+    ...Array.from(root.querySelectorAll?.(EDITABLE_SELECTOR) || []),
+    ...Array.from(root.querySelectorAll?.(MARKDOWN_EMBED_SELECTOR) || []),
+    ...Array.from(root.querySelectorAll?.(NOTE_FLOW_RENDERED_BLOCK_SELECTOR) || [])
+  ]) {
+    const owner = findNoteFlowMarkdownBlockElement(element, root) || element;
+    if (!isMarkdownBlockCandidateElement(owner) || seen.has(owner)) {
+      continue;
+    }
+    seen.add(owner);
+    candidates.push(owner);
+  }
+  return candidates;
+}
+function markdownBlockCandidateElementForTarget(target, root) {
+  if (!target || !root?.contains?.(target)) {
+    return null;
+  }
+  const preciselyMapped = target.closest?.("[data-note-draw-line-mapped='true']");
+  if (preciselyMapped && root.contains(preciselyMapped) && isMarkdownBlockCandidateElement(preciselyMapped)) {
+    return preciselyMapped;
+  }
+  const mappedChild = Array.from(target.querySelectorAll?.("[data-note-draw-line-mapped='true']") || []).find((element) => {
+    return isMarkdownBlockCandidateElement(element);
+  });
+  if (mappedChild) {
+    return mappedChild;
+  }
+  const owner = findNoteFlowMarkdownBlockElement(target, root) || target;
+  return isMarkdownBlockCandidateElement(owner) ? owner : null;
 }
 function isMarkdownEmbedBlockElement(element) {
   if (!element?.matches?.(MARKDOWN_EMBED_SELECTOR)) {
@@ -22611,9 +22812,12 @@ function getSourceInfo(element) {
   const lineEnd = parseInteger(element.dataset.noteDrawLineEnd);
   const dataLine = parseInteger(element.dataset.noteDrawDataLine) ?? parseDataLine(element.closest("[data-line]")?.getAttribute("data-line"));
   const dataLineScope = element.dataset.noteDrawDataLineScope || (Number.isFinite(parseDataLine(element.getAttribute("data-line"))) ? "self" : "ancestor");
-  const exactDataLine = dataLineScope === "self" ? dataLine : null;
-  const resolvedStart = exactDataLine ?? lineStart ?? null;
-  const resolvedEnd = exactDataLine ?? lineEnd ?? resolvedStart;
+  // Tasks and other post-processors can expose a synthetic data-line (Tasks
+  // uses 0 for several unrelated items). A mapped NoteDraw line is
+  // authoritative and must not be replaced by that marker.
+  const exactDataLine = dataLineScope === "self" && !Number.isFinite(lineStart) ? dataLine : null;
+  const resolvedStart = lineStart ?? exactDataLine ?? dataLine ?? null;
+  const resolvedEnd = lineEnd ?? exactDataLine ?? resolvedStart;
   return {
     lineStart: resolvedStart,
     lineEnd: resolvedEnd,

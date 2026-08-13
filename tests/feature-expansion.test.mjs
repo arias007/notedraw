@@ -126,7 +126,9 @@ test("palette changes update the selected NoteDraw elements", async () => {
   const source = await readFile(sourceUrl, "utf8");
 
   assert.match(source, /setCurrentBrushColor\(color\)[\s\S]*this\.applyColorToSelectedStrokes\(color\)/);
+  assert.match(source, /currentPaletteColor\(\)[\s\S]*group\.backgroundColor \|\| group\.borderColor/);
   assert.match(source, /applyColorToSelectedStrokes\(color\)[\s\S]*this\.drawingData\.strokes\[index\]\.color = color/);
+  assert.match(source, /group\.backgroundColor = color/);
   assert.match(source, /recordDrawingHistory\(historyBefore\)/);
   assert.match(source, /const selectedElements = this\.hasHybridSelection\(\)/);
   assert.match(source, /const paletteDisabled = this\.toolMode === TOOL_EDIT_MD \|\| this\.toolMode === TOOL_SELECT && !selectedElements/);
@@ -253,7 +255,7 @@ test("reading-only note pen and selected elements can reserve Markdown flow spac
   assert.match(flowLayout, /noteFlowRowReservation\(\{[\s\S]*rowOffset: currentNoteFlow\.rowOffset[\s\S]*boxHeight: settledHeight/);
   assert.match(flowLayout, /state\.applied = Math\.max\(0, appliedValue - state\.base\)/);
   assert.match(flowLayout, /stabilizeNoteFlowBounds\(\{/);
-  assert.match(flowLayout, /preferCurrent: Boolean\(normalizeNoteFlow\(stroke\.noteFlow\)\?\.positionBasis\)/);
+  assert.match(flowLayout, /preferCurrent: Boolean\(normalizeNoteFlow\(stroke\.noteFlow\)\?\.positionBasis\)[\s\S]*this\.resizingSelection/);
   assert.match(flowLayout, /this\.repairRunawayNoteFlowSurface\(runawayReferenceHeight\)/);
   assert.match(flowLayout, /const editingNoteFlow = this\.active && \(/);
   assert.match(flowLayout, /if \(!editingNoteFlow \|\| this\.isReadingZoomInteractionActive\(\)\) \{\s*return false;/);

@@ -22,7 +22,9 @@ test("embedded Markdown edits resolve and save against the referenced file", asy
   assert.match(source, /this\.toolMode !== TOOL_EDIT_MD && this\.findStrokeAt/);
   assert.match(source, /markdownBlockElementForTarget\(target, clientPoint = null\)[\s\S]*findMarkdownEmbedBlockElement\(target, this\.previewEl\)[\s\S]*markdownElementContainsClientPoint\(embeddedBlock, clientPoint\)/);
   assert.match(source, /findMarkdownEmbedBlockElement\(target, previewEl = null\)[\s\S]*embed\.matches\?\.\("\.internal-embed"\)[\s\S]*embed\.closest\?\.\("\.internal-embed"\)[\s\S]*embed\.closest\?\.\("\.markdown-embed"\)/);
-  assert.match(source, /findMarkdownBlocksInSelection\(startPoint, endPoint\)[\s\S]*MARKDOWN_EMBED_SELECTOR[\s\S]*findMarkdownEmbedBlockElement\(candidate, this\.previewEl\) \|\| candidate[\s\S]*forSelection: true/);
+  assert.match(source, /findMarkdownBlocksInSelection\(startPoint, endPoint\)[\s\S]*const candidates = markdownBlockCandidateElements\(this\.previewEl\)[\s\S]*const element = candidate[\s\S]*forSelection: true/);
+  assert.match(source, /function markdownBlockCandidateElements\(root\)[\s\S]*MARKDOWN_EMBED_SELECTOR[\s\S]*findNoteFlowMarkdownBlockElement\(element, root\)/);
+  assert.match(source, /function markdownBlockCandidateElementForTarget\(target, root\)[\s\S]*findNoteFlowMarkdownBlockElement\(target, root\)[\s\S]*isMarkdownBlockCandidateElement\(owner\)/);
   assert.match(source, /elementBelowCanvas\(clientX, clientY\)[\s\S]*elementsFromPoint[\s\S]*classList\?\.contains\("notedraw-canvas"\)[\s\S]*pointerEvents: "none"/);
   assert.match(source, /if \(this\.currentEditor && this\.currentEditorEmbedded\) \{\s*return null;/);
   assert.match(source, /this\.surfaceType === "source" && this\.toolMode === TOOL_EDIT_MD && !this\.currentEditorEmbedded/);
@@ -96,14 +98,14 @@ test("deleting a vault file clears NoteDraw controllers, DOM presentation, cache
   assert.match(source, /collectDeletedVaultFiles\(deletedFile\)/);
 });
 
-test("3.4.76 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
+test("3.4.83 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
   const [source, manifestText] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(manifestUrl, "utf8")
   ]);
   const manifest = JSON.parse(manifestText);
 
-  assert.equal(manifest.version, "3.4.76");
+  assert.equal(manifest.version, "3.4.83");
   assert.match(source, /version: "3\.4\.19"/);
   assert.match(source, /this\.readingVirtualStyleState = \/\* @__PURE__ \*\/ new Map\(\)/);
   assert.match(source, /shouldClearStaleReadingVirtualMinHeight\(\{/);
@@ -439,7 +441,7 @@ test("selection tool previews and commits exact NoteFlow Markdown insertion targ
   assert.match(dropSource, /this\.toolMode === TOOL_SELECT[\s\S]*queueDraggedNoteFlowPlacement\(clientX, clientY\)[\s\S]*window\.requestAnimationFrame/);
   assert.match(dropSource, /notedraw-text-sort-target-before[\s\S]*notedraw-text-sort-target-after[\s\S]*notedraw-text-sort-target-left[\s\S]*notedraw-text-sort-target-right/);
   assert.match(dropSource, /noteDrawDropSide[\s\S]*noteDrawDropLine/);
-  assert.match(dropSource, /const inlineRowHit = Number\(clientY\)[\s\S]*const inlineRow = this\.markdownDropRowMetrics\(inlineTarget, movingElements\)[\s\S]*const horizontalRoom = !this\.markdownDropIncludesHeading\(inlineTarget\)[\s\S]*inlineRowHit[\s\S]*movingLaneCount > 0[\s\S]*inlineRow\.canFit[\s\S]*laneWidth >= Math\.max\(180, inlineRow\.totalCount \* 32\)/);
+  assert.match(dropSource, /const inlineRowHit = sameInlineCandidate[\s\S]*const inlineRow = this\.markdownDropRowMetrics\(inlineTarget, movingElements\)[\s\S]*const horizontalRoom = !this\.markdownDropIncludesHeading\(inlineTarget\)[\s\S]*inlineRowHit[\s\S]*movingLaneCount > 0[\s\S]*inlineRow\.canFit[\s\S]*laneWidth >= Math\.max\(180, inlineRow\.totalCount \* 32\)/);
   assert.match(dropSource, /noteFlowCandidateRect\(placement\.candidate, "inline"\)/);
   assert.match(dropSource, /noteFlowCandidateRect\([\s\S]*horizontalSide \? "inline" : "row"/);
   assert.match(dropSource, /const intent = resolveDragDropHorizontalIntent\([\s\S]*horizontalRoom[\s\S]*\);[\s\S]*const horizontalSide = intent === "inline-right" \? "right" : null[\s\S]*const leftSnap = intent === "line-start"/);
@@ -572,4 +574,6 @@ test("NoteFlow resize updates stable geometry and remeasures row reservations be
   assert.match(cancelSource, /stroke\.noteFlow = original\.noteFlow \? \{ \.\.\.original\.noteFlow \} : null/);
   assert.match(alignSource, /const measureOnly = options\.measureOnly === true[\s\S]*if \(measureOnly\) \{\s*return extentsChanged;/);
   assert.match(flowSource, /alignNoteFlowStrokesToReservedRows\(candidates, \{ measureOnly: true \}\)[\s\S]*boxHeight: settledHeight/);
+  assert.match(flowSource, /const canLayoutDuringResize = this\.resizingSelection[\s\S]*hasStableNoteFlowAnchor\(noteFlow\)[\s\S]*Number\.isFinite\(Number\(noteFlow\?\.line\)\)/);
+  assert.match(flowSource, /noteFlowMarkdownAnnotationComplete && !canLayoutDuringResize/);
 });
