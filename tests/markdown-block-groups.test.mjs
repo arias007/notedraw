@@ -340,14 +340,14 @@ test("NoteFlow dragging previews the same snapped and packed placement committed
   const rowMetricsSource = source.slice(source.indexOf("  markdownDropRowMetrics("), source.indexOf("  async commitDraggedMarkdownBlocks("));
 
   assert.match(dragSource, /this\.dragNoteFlowOriginalBounds = new Map\(movableIndexes\.flatMap/);
-  assert.match(moveSource, /this\.restoreDraggedNoteFlowLivePreview\(\);[\s\S]*this\.captureDraggedNoteFlowRawPreview\(\);/);
+  assert.match(moveSource, /this\.restoreDraggedNoteFlowLivePreview\(\{ preserveDom: true \}\);[\s\S]*this\.captureDraggedNoteFlowRawPreview\(\);/);
   assert.match(moveSource, /const hasDraggedNoteFlow = Boolean\(this\.dragNoteFlowOriginalBounds\?\.size\)/);
   assert.match(moveSource, /const previewDx = hasDraggedNoteFlow \? dx : snappedDx/);
   assert.match(moveSource, /const previewDy = hasDraggedNoteFlow \? dy : snappedDy/);
-  assert.match(placementSource, /this\.applyDraggedNoteFlowLivePreview\(this\.dragNoteFlowPlacement\)/);
+  assert.match(placementSource, /this\.applyDraggedNoteFlowLivePreview\(this\.dragNoteFlowPlacement, \{ preserveDom: preserveDomPreview \}\)/);
   assert.match(placementSource, /const inlineEdgeBand = clamp\(targetHeight \* 0\.22, 4, 12\)[\s\S]*const inlineRowHit = Number\(clientY\) > targetRect\.top \+ inlineEdgeBand[\s\S]*Number\(clientY\) < targetRect\.bottom - inlineEdgeBand[\s\S]*const horizontalRoom = !this\.markdownDropIncludesHeading\(inlineTarget\)[\s\S]*inlineRowHit/);
   assert.match(dragSource, /createComment\("notedraw-note-flow-drag-origin"\)[\s\S]*state\.domMarker = marker/);
-  assert.match(livePreviewSource, /this\.restoreDraggedNoteFlowLivePreview\(\)[\s\S]*applyDraggedNoteFlowAnchorDomPreview\(resolved, drop\)[\s\S]*applyDraggedMarkdownDomPreview\(drop\)[\s\S]*applyDraggedNoteFlowReservationPreview\(liveResolved, movedIndexes, rowExtent\)/);
+  assert.match(livePreviewSource, /this\.restoreDraggedNoteFlowLivePreview\(\{ preserveDom: options\.preserveDom === true \}\)[\s\S]*applyDraggedNoteFlowAnchorDomPreview\(resolved, drop\)[\s\S]*applyDraggedMarkdownDomPreview\(drop\)[\s\S]*applyDraggedNoteFlowReservationPreview\(liveResolved, movedIndexes, rowExtent\)/);
   assert.match(livePreviewSource, /const liveResolved = resolved[\s\S]*snapDraggedSelectionToNoteFlowPlacement\(liveResolved, movedIndexes\)[\s\S]*dragDropGeometrySnapshot\(\)\?\.noteFlowCandidates[\s\S]*reflowNoteFlowElementsAfterDrag\(movedIndexes, liveResolved, \{[\s\S]*preview: true/);
   assert.doesNotMatch(livePreviewSource, /refreshDraggedNoteFlowPreviewCandidate\(resolved\.candidate\)/);
   assert.match(livePreviewSource, /rowOffset \+ bounds\.maxY - bounds\.minY[\s\S]*this\.draggedNoteFlowPreviewHeight\(movedIndexes\)/);
@@ -367,6 +367,17 @@ test("NoteFlow dragging previews the same snapped and packed placement committed
   assert.match(domPreviewSource, /const markdownHeight = this\.draggedNoteFlowMarkdownStates\(\)\.reduce[\s\S]*Math\.max\(strokeHeight, markdownHeight\)/);
   assert.match(domPreviewSource, /if \(!placement\?\.candidate \|\| placement\.horizontalSide\)/);
   assert.doesNotMatch(domPreviewSource, /placement\.horizontalSide \|\| !indexes\?\.length/);
+});
+
+test("inline links select and drag their paragraph-level Markdown block", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const targetStart = source.indexOf("function findEditableTarget(target, previewEl, clientPoint = null) {");
+  const targetSource = source.slice(targetStart, source.indexOf("function findWebviewEditableTarget", targetStart));
+
+  assert.match(targetSource, /const blockedTarget = target\.closest\(BLOCKED_EDIT_SELECTOR\)/);
+  assert.match(targetSource, /blockedTarget && !blockedTarget\.matches\?\.\("a"\)/);
+  assert.match(targetSource, /const editable = target\.closest\(EDITABLE_SELECTOR\)/);
+  assert.match(targetSource, /isConcreteMarkdownBlockElement\(editable\)/);
 });
 
 test("selection handle hit testing stays usable for narrow elements at visual zoom", async () => {

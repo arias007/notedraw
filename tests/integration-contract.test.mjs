@@ -92,14 +92,14 @@ test("deleting a vault file clears NoteDraw controllers, DOM presentation, cache
   assert.match(source, /collectDeletedVaultFiles\(deletedFile\)/);
 });
 
-test("3.4.65 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
+test("3.4.69 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
   const [source, manifestText] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(manifestUrl, "utf8")
   ]);
   const manifest = JSON.parse(manifestText);
 
-  assert.equal(manifest.version, "3.4.65");
+  assert.equal(manifest.version, "3.4.69");
   assert.match(source, /version: "3\.4\.19"/);
   assert.match(source, /this\.readingVirtualStyleState = \/\* @__PURE__ \*\/ new Map\(\)/);
   assert.match(source, /shouldClearStaleReadingVirtualMinHeight\(\{/);
@@ -111,6 +111,7 @@ test("3.4.65 preserves reading content and cross-view frames without hidden-surf
   assert.match(source, /flushScheduledResize\(\)[\s\S]*window\.cancelAnimationFrame\(this\.resizeFrameId\)[\s\S]*window\.clearTimeout\(this\.resizeFallbackTimer\)/);
   assert.match(source, /this\.repairConnectedReadingSections\(\);\s*await this\.prepareInitialReadingLayout\(\)/);
   assert.match(source, /new MutationObserver\(\(mutations\) => \{\s*if \(mutations\.some\(\(mutation\) => isMarkdownContentMutation\(mutation\)\)\) \{\s*this\.noteFlowMarkdownAnnotationComplete = false;\s*this\.repairConnectedReadingSections\(\)/);
+  assert.match(source, /if \(editingLayout\) \{[\s\S]*this\.scheduleMarkdownAnnotationRefresh\(\{ layout: false \}\);\s*} else \{\s*this\.syncMarkdownBlockPresentation\(\);\s*this\.scheduleFrozenNoteFlowLayoutRestore\(\)/);
   assert.match(source, /await this\.ensureDrawingsLoaded\(\);[\s\S]*?this\.repairConnectedReadingSections\(\);/);
   assert.match(source, /repairConnectedReadingSections\(renderer = this\.readingPreviewRenderer\(\)\)[\s\S]*renderer\.updateVirtualDisplay\?\.\(\);[\s\S]*section\.rendered !== false[\s\S]*section\.render\?\.\(\);[\s\S]*renderer\.measureSection\?\.\(section\);[\s\S]*renderer\.updateVirtualDisplay\?\.\(\)/);
   assert.match(source, /restoreReadingVirtualSections\(\)[\s\S]*this\.repairConnectedReadingSections\(renderer\)/);
@@ -160,6 +161,7 @@ test("3.4.65 preserves reading content and cross-view frames without hidden-surf
   assert.match(source, /const refreshLayout = options\.layout === true && !interactionActive/);
   const activeState = source.slice(source.indexOf("  applyActiveState(active, options = {})"), source.indexOf("  controlsShouldBeVisible()", source.indexOf("  applyActiveState(active, options = {})")));
   assert.doesNotMatch(activeState, /scheduleLayoutRefresh/);
+  assert.match(activeState, /if \(!this\.active && wasActive\)[\s\S]*this\.syncMarkdownBlockPresentation\(\);\s*this\.scheduleFrozenNoteFlowLayoutRestore\(\);\s*this\.render\(\)/);
   assert.match(activeState, /if \(wasActive !== this\.active && this\.drawingsLoaded\) \{\s*this\.scheduleResize\(\{ layout: false, measure: false \}\)/);
   assert.match(source, /this\.registerMarkdownPostProcessor\([\s\S]*this\.runSurfaceSync\(\);\s*this\.scheduleSurfaceSync\(180\);\s*}\s*onunload\(\)/);
 });
@@ -440,7 +442,7 @@ test("selection tool previews and commits exact NoteFlow Markdown insertion targ
   assert.match(dropSource, /const intent = resolveDragDropHorizontalIntent\([\s\S]*horizontalRoom[\s\S]*\);[\s\S]*const horizontalSide = intent === "inline-right" \? "right" : null[\s\S]*const leftSnap = intent === "line-start"/);
   assert.match(dropSource, /canonicalNoteFlowGapPlacement\([\s\S]*canonicalRowKey[\s\S]*const peers = \[\][\s\S]*flowOrder = insertionIndex/);
   assert.match(dropSource, /noteFlowBoundary[\s\S]*flowBoundary/);
-  assert.match(dropSource, /this\.applyDraggedNoteFlowLivePreview\(this\.dragNoteFlowPlacement\)/);
+  assert.match(dropSource, /const preserveDomPreview = previewSignature === this\.dragNoteFlowPreviewSignature[\s\S]*this\.applyDraggedNoteFlowLivePreview\(this\.dragNoteFlowPlacement, \{ preserveDom: preserveDomPreview \}\)/);
   assert.match(dropSource, /snapDraggedSelectionToNoteFlowPlacement[\s\S]*draggedNoteFlowClientBounds\(\)[\s\S]*const targetClientX = leftSnap[\s\S]*placement\.inlineBoundary[\s\S]*dragNoteFlowPlacementClientDelta/);
   assert.match(dragSource, /this\.usesDraggedNoteFlowPlacement\(\)[\s\S]*this\.queueDraggedNoteFlowPlacement\(event\.clientX, event\.clientY\)[\s\S]*this\.queueDraggedNoteFlowRefresh/);
   assert.match(finishSource, /requestedDropPlacement[\s\S]*this\.resolveDraggedNoteFlowPlacement[\s\S]*this\.snapDraggedSelectionToNoteFlowPlacement[\s\S]*preserveBoxGeometry:[\s\S]*scheduleNoteFlowLayout\(\{ operation: true, defer: true \}\)/);
@@ -510,7 +512,7 @@ test("selection geometry follows live element bounds and drag preview owns place
   assert.match(selectionSource, /const bounds = this\.getSelectedStrokeBounds\(\)/);
   assert.match(selectionSource, /const geometryKey = bounds/);
   assert.match(selectionSource, /const key = `\$\{this\.selectionStateKey\(\)\}\|\$\{geometryKey\}`/);
-  assert.match(dragSource, /this\.applyDraggedNoteFlowLivePreview\(this\.dragNoteFlowPlacement\)/);
+  assert.match(dragSource, /const preserveDomPreview = previewSignature === this\.dragNoteFlowPreviewSignature[\s\S]*this\.applyDraggedNoteFlowLivePreview\(this\.dragNoteFlowPlacement, \{ preserveDom: preserveDomPreview \}\)/);
   assert.doesNotMatch(dragSource, /flowTarget\.classList\.add\(`notedraw-text-sort-target-/);
   assert.doesNotMatch(markdownDropSource, /target\.addClass\(`notedraw-text-sort-target-/);
 });

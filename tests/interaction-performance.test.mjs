@@ -38,17 +38,39 @@ test("scoped embed refreshes update selected nodes without pruning the full laye
   assert.match(updateSource, /if \(!scopedIndexes\) \{[\s\S]*this\.embedNodes\.delete\(key\)/);
 });
 
-test("ordinary drags and resizes do not schedule NoteFlow layout work", async () => {
+test("ordinary drags stay light and NoteFlow resizes use one fresh interaction frame", async () => {
   const source = await readFile(sourceUrl, "utf8");
   const queueStart = source.indexOf("  queueDraggedNoteFlowRefresh(indexes) {");
   const queueSource = source.slice(queueStart, source.indexOf("  refreshDraggedNoteFlowAnchors", queueStart));
   const resizeStart = source.indexOf("  applySelectedStrokeResize(point) {");
   const resizeSource = source.slice(resizeStart, source.indexOf("  finishSelectedStrokeResize", resizeStart));
+  const resizeQueueStart = source.indexOf("  queueSelectedResizeNoteFlowLayout() {");
+  const resizeQueueSource = source.slice(resizeQueueStart, source.indexOf("  finishSelectedStrokeResize", resizeQueueStart));
 
   assert.match(queueSource, /let queued = false/);
   assert.match(queueSource, /stroke\?\.noteFlow\?\.enabled[\s\S]*queued = true/);
   assert.match(queueSource, /if \(queued && !this\.draggingStroke\) \{\s*this\.scheduleNoteFlowLayout\(\)/);
-  assert.match(resizeSource, /if \(Array\.from\(this\.resizeSelectionOriginalStrokes\.keys\(\)\)\.some\([\s\S]*noteFlow\?\.enabled\)\) \{\s*this\.scheduleNoteFlowLayout\(\{ operation: true \}\)/);
+  assert.match(resizeSource, /if \(Array\.from\(this\.resizeSelectionOriginalStrokes\.keys\(\)\)\.some\([\s\S]*noteFlow\?\.enabled\)\) \{\s*this\.queueSelectedResizeNoteFlowLayout\(\)/);
+  assert.match(resizeQueueSource, /scheduleNoteFlowLayout\(\{ operation: true, defer: true \}\)/);
+  assert.match(resizeQueueSource, /this\.resizeNoteFlowFrameId !== null[\s\S]*window\.requestAnimationFrame\([\s\S]*this\.flushSelectedResizeNoteFlowLayout\(\)/);
+  assert.match(resizeQueueSource, /this\.previewEl\?\.getBoundingClientRect\?\.\(\);\s*this\.noteFlowSettledRowExtents = [\s\S]*new Map\(\);\s*const changed = this\.applyNoteFlowLayout\(\);\s*const aligned = this\.alignNoteFlowStrokesToReservedRows\(null, \{ interaction: true \}\)/);
+  assert.match(resizeQueueSource, /window\.cancelAnimationFrame\(this\.resizeNoteFlowFrameId\)/);
+});
+
+test("inline drag preview keeps a stable semantic slot instead of rebuilding on pointer jitter", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const placementStart = source.indexOf("  updateDraggedNoteFlowPlacement(clientX, clientY) {");
+  const placementSource = source.slice(placementStart, source.indexOf("  syncMarkdownDropFromNoteFlowPlacement", placementStart));
+  const domStart = source.indexOf("  applyDraggedNoteFlowAnchorDomPreview(placement, drop = null) {");
+  const domSource = source.slice(domStart, source.indexOf("  applyDraggedMarkdownDomPreview", domStart));
+
+  assert.match(placementSource, /const sameSemanticSlot = [\s\S]*previous\?\.flowOrder === flowOrder/);
+  assert.match(placementSource, /if \(sameSemanticSlot\) \{\s*flowBoundary = previous\.boundary;\s*inlineBoundary = previous\.inlineBoundary/);
+  assert.match(placementSource, /const previewSignature = \[[\s\S]*candidate\?\.blockKey \|\| ""[\s\S]*\.join\(":"\)/);
+  assert.doesNotMatch(placementSource.slice(placementSource.indexOf("const previewSignature"), placementSource.indexOf("const preserveDomPreview")), /inlineBoundary|boundary/);
+  assert.match(placementSource, /preserveDomPreview[\s\S]*applyDraggedNoteFlowLivePreview\(this\.dragNoteFlowPlacement, \{ preserveDom: preserveDomPreview \}\)/);
+  assert.match(domSource, /const row = drop\?\.row \|\| this\.markdownDropRowMetrics\(target, movingElements\);[\s\S]*const span = row\.span/);
+  assert.doesNotMatch(domSource, /targetWidth|Math\.floor\(targetWidth \/ laneWidth/);
 });
 
 test("selection filter cycles perform one full presentation pass", async () => {
