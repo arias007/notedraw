@@ -5159,11 +5159,15 @@ var NoteDrawPlugin = class extends Plugin {
       return false;
     }
     const block = source.slice(moving.start, moving.end).trim();
-    const without = `${source.slice(0, moving.start)}${source.slice(moving.end)}`;
+    let without = `${source.slice(0, moving.start)}${source.slice(moving.end)}`;
     let insertion = placeAfter ? target.end : target.start;
     if (moving.start < insertion) {
       insertion -= moving.end - moving.start;
     }
+    // 折叠删除移动块后残留的多余空行（跳过代码围栏内部），并同步修正插入点偏移
+    const collapsed = collapseRunawayBlankLines(without, insertion);
+    without = collapsed.text;
+    insertion = collapsed.position;
     const before = without.slice(0, insertion).replace(/[ \t]+$/g, "");
     const after = without.slice(insertion).replace(/^[ \t]+/g, "");
     const separatorBefore = before && !before.endsWith("\n\n") ? before.endsWith("\n") ? "\n" : "\n\n" : "";
@@ -5214,6 +5218,10 @@ var NoteDrawPlugin = class extends Plugin {
         insertion -= item.end - item.start;
       }
     }
+    // 折叠删除移动块后残留的多余空行（跳过代码围栏内部），并同步修正插入点偏移
+    const collapsed = collapseRunawayBlankLines(without, insertion);
+    without = collapsed.text;
+    insertion = collapsed.position;
     const before = without.slice(0, insertion).replace(/[ \t]+$/g, "");
     const after = without.slice(insertion).replace(/^[ \t]+/g, "");
     const joined = blocks.join("\n\n");
@@ -20952,6 +20960,55 @@ function normalizeMarkdownBlock(value) {
   text = text.replace(/<br\s*\/?>/gi, "\n").replace(/<\/(p|div|li|h[1-6])>/gi, "\n").replace(/<pre[^>]*><code[^>]*>([\s\S]*?)<\/code><\/pre>/gi, "$1").replace(/<\/?(span|u|mark|kbd|sup|sub|small|strong|b|em|i|code)[^>]*>/gi, "").replace(/<[^>]+>/g, "");
   text = text.replace(/^\s*[-*+]\s+\[[ xX]\]\s+/gm, "").replace(/^#{1,6}\s+/gm, "").replace(/^\s{0,3}>\s?/gm, "").replace(/^\s*[-*+]\s+/gm, "").replace(/^\s*\d+[.)]\s+/gm, "").replace(/\*\*([^*]+)\*\*/g, "$1").replace(/\*([^*]+)\*/g, "$1").replace(/__([^_]+)__/g, "$1").replace(/_([^_]+)_/g, "$1").replace(/==([^=]+)==/g, "$1").replace(/`([^`]+)`/g, "$1").replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, "$2").replace(/\[\[([^\]]+)\]\]/g, "$1").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
   return normalizeRenderedText(text);
+}
+function collapseRunawayBlankLines(source, trackPosition = -1) {
+  // 折叠代码围栏（``` / ~~~）之外的连续空行（3 个以上换行 → 保留 1 个空行），
+  // 同时把 trackPosition（插入点字符偏移）映射到折叠后的新位置。
+  let out = "";
+  let position = trackPosition;
+  let inFence = false;
+  let i = 0;
+  const n = source.length;
+  let lineStart = 0;
+  while (i < n) {
+    const ch = source[i];
+    const beforeIsBlank = source.slice(lineStart, i).trim() === "";
+    if (beforeIsBlank && (ch === "`" || ch === "~")) {
+      let j = i;
+      while (j < n && source[j] === ch) j += 1;
+      if (j - i >= 3) {
+        inFence = !inFence;
+        out += source.slice(i, j);
+        i = j;
+        continue;
+      }
+    }
+    if (!inFence && ch === "\n") {
+      let j = i;
+      while (j < n && source[j] === "\n") j += 1;
+      const count = j - i;
+      if (count > 2) {
+        const removed = count - 2;
+        if (position >= j) {
+          position -= removed;
+        } else if (position > i) {
+          position = Math.min(i + 2, position);
+        }
+        out += "\n\n";
+      } else {
+        out += "\n".repeat(count);
+      }
+      i = j;
+      lineStart = i;
+      continue;
+    }
+    out += ch;
+    if (ch === "\n") {
+      lineStart = i + 1;
+    }
+    i += 1;
+  }
+  return { text: out, position };
 }
 function collectMarkdownBlocks(source) {
   const blocks = [];
