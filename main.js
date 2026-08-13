@@ -1200,7 +1200,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
   }
   createPublicApi() {
     return {
-      version: "3.4.74",
+      version: "3.4.75",
       getActiveController: () => this.getActiveController(),
       readDrawings: async (file) => this.readDrawings(file),
       writeDrawings: async (file, data) => this.writeDrawings(file, normalizeDrawingData(data, file)),
