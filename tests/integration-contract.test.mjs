@@ -24,6 +24,10 @@ test("embedded Markdown edits resolve and save against the referenced file", asy
   assert.match(source, /findMarkdownEmbedBlockElement\(target, previewEl = null\)[\s\S]*embed\.matches\?\.\("\.internal-embed"\)[\s\S]*embed\.closest\?\.\("\.internal-embed"\)[\s\S]*embed\.closest\?\.\("\.markdown-embed"\)/);
   assert.match(source, /findMarkdownBlocksInSelection\(startPoint, endPoint\)[\s\S]*MARKDOWN_EMBED_SELECTOR[\s\S]*findMarkdownEmbedBlockElement\(candidate, this\.previewEl\) \|\| candidate[\s\S]*forSelection: true/);
   assert.match(source, /elementBelowCanvas\(clientX, clientY\)[\s\S]*elementsFromPoint[\s\S]*classList\?\.contains\("notedraw-canvas"\)[\s\S]*pointerEvents: "none"/);
+  assert.match(source, /if \(this\.currentEditor && this\.currentEditorEmbedded\) \{\s*return null;/);
+  assert.match(source, /this\.surfaceType === "source" && this\.toolMode === TOOL_EDIT_MD && !this\.currentEditorEmbedded/);
+  assert.match(source, /if \(this\.currentEditorEmbedded\) \{\s*this\.plugin\.stageTextSave\(this\.currentEditorFile, original, edited, element, this\)/);
+  assert.match(source, /queueTextSaveAndWait\(this\.currentEditorFile \|\| this\.file, original, edited, element\)/);
 });
 
 test("the stable v1 API exposes Cancip-friendly capabilities and events", async () => {
@@ -92,14 +96,14 @@ test("deleting a vault file clears NoteDraw controllers, DOM presentation, cache
   assert.match(source, /collectDeletedVaultFiles\(deletedFile\)/);
 });
 
-test("3.4.64 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
+test("3.4.70 preserves reading content and cross-view frames without hidden-surface layout writes", async () => {
   const [source, manifestText] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(manifestUrl, "utf8")
   ]);
   const manifest = JSON.parse(manifestText);
 
-  assert.equal(manifest.version, "3.4.64");
+  assert.equal(manifest.version, "3.4.70");
   assert.match(source, /version: "3\.4\.19"/);
   assert.match(source, /this\.readingVirtualStyleState = \/\* @__PURE__ \*\/ new Map\(\)/);
   assert.match(source, /shouldClearStaleReadingVirtualMinHeight\(\{/);
@@ -111,7 +115,8 @@ test("3.4.64 preserves reading content and cross-view frames without hidden-surf
   assert.match(source, /flushScheduledResize\(\)[\s\S]*window\.cancelAnimationFrame\(this\.resizeFrameId\)[\s\S]*window\.clearTimeout\(this\.resizeFallbackTimer\)/);
   assert.match(source, /this\.repairConnectedReadingSections\(\);\s*await this\.prepareInitialReadingLayout\(\)/);
   assert.match(source, /new MutationObserver\(\(mutations\) => \{\s*if \(mutations\.some\(\(mutation\) => isMarkdownContentMutation\(mutation\)\)\) \{\s*this\.noteFlowMarkdownAnnotationComplete = false;\s*this\.repairConnectedReadingSections\(\)/);
-  assert.match(source, /await this\.ensureDrawingsLoaded\(\);\s*this\.repairConnectedReadingSections\(\);/);
+  assert.match(source, /if \(editingLayout\) \{[\s\S]*this\.scheduleMarkdownAnnotationRefresh\(\{ layout: false \}\);\s*\} else \{\s*this\.syncMarkdownBlockPresentation\(\);\s*this\.scheduleFrozenNoteFlowLayoutRestore\(\)/);
+  assert.match(source, /await this\.ensureDrawingsLoaded\(\);[\s\S]*?this\.repairConnectedReadingSections\(\);/);
   assert.match(source, /repairConnectedReadingSections\(renderer = this\.readingPreviewRenderer\(\)\)[\s\S]*renderer\.updateVirtualDisplay\?\.\(\);[\s\S]*section\.rendered !== false[\s\S]*section\.render\?\.\(\);[\s\S]*renderer\.measureSection\?\.\(section\);[\s\S]*renderer\.updateVirtualDisplay\?\.\(\)/);
   assert.match(source, /restoreReadingVirtualSections\(\)[\s\S]*this\.repairConnectedReadingSections\(renderer\)/);
   assert.match(source, /const requestFrame = \(\) => new Promise[\s\S]*window\.requestAnimationFrame\(finish\)[\s\S]*window\.setTimeout\(finish, 120\)/);
@@ -160,6 +165,7 @@ test("3.4.64 preserves reading content and cross-view frames without hidden-surf
   assert.match(source, /const refreshLayout = options\.layout === true && !interactionActive/);
   const activeState = source.slice(source.indexOf("  applyActiveState(active, options = {})"), source.indexOf("  controlsShouldBeVisible()", source.indexOf("  applyActiveState(active, options = {})")));
   assert.doesNotMatch(activeState, /scheduleLayoutRefresh/);
+  assert.match(activeState, /if \(!this\.active && wasActive\)[\s\S]*this\.syncMarkdownBlockPresentation\(\);\s*this\.scheduleFrozenNoteFlowLayoutRestore\(\);\s*this\.render\(\)/);
   assert.match(activeState, /if \(wasActive !== this\.active && this\.drawingsLoaded\) \{\s*this\.scheduleResize\(\{ layout: false, measure: false \}\)/);
   assert.match(source, /this\.registerMarkdownPostProcessor\([\s\S]*this\.runSurfaceSync\(\);\s*this\.scheduleSurfaceSync\(180\);\s*}\s*onunload\(\)/);
 });
@@ -495,6 +501,23 @@ test("reading double-click stays in preview and source view exposes the Markdown
   assert.match(source, /this\.previewEl\.addEventListener\("dblclick", this\.onPreviewDoubleClick, true\)/);
   assert.match(source, /onPreviewDoubleClick\(event\)[\s\S]*this\.surfaceType !== "preview"[\s\S]*this\.onCanvasDoubleClick\(event\)[\s\S]*stopImmediatePropagation/);
   assert.match(source, /this\.previewEl\?\.removeEventListener\("dblclick", this\.onPreviewDoubleClick, true\)/);
+});
+
+test("source Markdown editing exposes formatting for CodeMirror and embedded Markdown", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+
+  assert.match(source, /this\.surfaceType === "source" \|\| this\.allowTextEdit && this\.surfaceType !== "webview"/);
+  assert.match(source, /bindSourceFormatToolbarEvents\(\)/);
+  assert.match(source, /sourceSelectionRange\(\)/);
+  assert.match(source, /cmView\.state\.sliceDoc\(range\.from, range\.to\)/);
+  assert.match(source, /cmView\.dispatch\(\{[\s\S]*changes,[\s\S]*selection: nextSelection/);
+  assert.match(source, /applySourceTextInlineFormat\(tagName, styles\)/);
+  assert.match(source, /applySourceTextBlockFormat\(kind\)/);
+  assert.match(source, /insertSourceTextBreak\(\)/);
+  assert.match(source, /clearSourceTextFormat\(\)/);
+  assert.match(source, /const sourceMarkdownEditActive = this\.surfaceType === "source" && this\.toolMode === TOOL_EDIT_MD;[\s\S]*this\.formatToolbar\?\.classList\.toggle\("is-visible", sourceMarkdownEditActive\)/);
+  assert.match(source, /this\.currentEditorEmbedded = this\.embeddedSurface \|\| isEmbeddedEditableElement\(element\) \|\| normalizeVaultPath\(this\.currentEditorFile\?\.path\) !== normalizeVaultPath\(this\.file\?\.path\)/);
+  assert.match(source, /serializeControllerEditableSource\(element, this\.currentEditorEmbedded\)/);
 });
 
 test("selection requires a completed tap before moving an element and reserves resize for frame corners", async () => {

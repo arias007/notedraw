@@ -5230,6 +5230,8 @@ var PreviewDrawingController = class {
     this.formatColorInput = null;
     this.formatHighlightInput = null;
     this.formatSizeSelect = null;
+    this.sourceFormatToolbarCleanup = null;
+    this.sourceFormatToolbarRetryTimer = null;
     this.brushMode = this.runtimeSettings.lastBrushMode;
     this.brushVariants = {
       [BRUSH_PEN]: this.runtimeSettings.lastPenVariant,
@@ -5352,6 +5354,7 @@ var PreviewDrawingController = class {
     this.resizeSelectionPointerGeometry = null;
     this.resizeSelectionClientBounds = null;
     this.resizeSelectionMoved = false;
+    this.resizeNoteFlowFrameId = null;
     this.selectingStrokes = false;
     this.selectionStartPoint = null;
     this.selectionCurrentPoint = null;
@@ -5649,7 +5652,7 @@ var PreviewDrawingController = class {
     this.createTextPanel();
     this.selectionMenu = createNoteDrawControlElement(this.floatingControlsHost, "notedraw-selection-menu");
     this.createSelectionMenu();
-    if (this.allowTextEdit && this.surfaceType !== "webview") {
+    if (this.surfaceType === "source" || this.allowTextEdit && this.surfaceType !== "webview") {
       this.createFormatToolbar();
     }
     this.colorInput = this.palettePanel.createEl("input", {
@@ -5775,6 +5778,7 @@ var PreviewDrawingController = class {
     activeDocument.addEventListener("pointercancel", this.onDocumentPointerFinish, true);
     activeDocument.addEventListener("selectionchange", this.onDocumentSelectionChange);
     activeDocument.addEventListener("keydown", this.onDocumentKeyDown, true);
+    this.bindSourceFormatToolbarEvents();
     if (typeof ResizeObserver !== "undefined") {
       this.resizeObserver = new ResizeObserver(this.onResize);
       this.resizeObserver.observe(this.previewEl);
@@ -5803,6 +5807,7 @@ var PreviewDrawingController = class {
           if (editingLayout) {
             this.scheduleMarkdownAnnotationRefresh({ layout: false });
           } else {
+            this.syncMarkdownBlockPresentation();
             this.scheduleFrozenNoteFlowLayoutRestore();
             this.scheduleReadingVirtualSectionSync();
             this.scheduleResize({ layout: false, measure: false });
@@ -5818,6 +5823,7 @@ var PreviewDrawingController = class {
     this.applyReadingZoom();
     this.applyActiveState(this.active);
     await this.ensureDrawingsLoaded();
+    this.bindSourceFormatToolbarEvents();
     this.repairConnectedReadingSections();
     this.plugin.emitApiEvent("surface-changed", { ...this.plugin.describeController(this), phase: "mounted" });
   }
@@ -6144,6 +6150,7 @@ var PreviewDrawingController = class {
       this.scrollSettleTimer = null;
     }
     this.cancelMultiTouchFrame();
+    this.cancelSelectedResizeNoteFlowLayout();
     this.resizeObserver?.disconnect();
     this.markdownRenderObserver?.disconnect();
     this.markdownRenderObserver = null;
@@ -6169,6 +6176,12 @@ var PreviewDrawingController = class {
     this.cancelFrozenNoteFlowLayoutRestore();
     this.clearNoteFlowLayout();
     this.stopFormatToolbarDrag();
+    this.sourceFormatToolbarCleanup?.();
+    this.sourceFormatToolbarCleanup = null;
+    if (this.sourceFormatToolbarRetryTimer !== null) {
+      window.clearTimeout(this.sourceFormatToolbarRetryTimer);
+      this.sourceFormatToolbarRetryTimer = null;
+    }
     this.canvas?.removeEventListener("pointerdown", this.onPointerDown);
     this.canvas?.removeEventListener("pointermove", this.onPointerMove);
     this.canvas?.removeEventListener("pointerup", this.onPointerUp);
@@ -6324,6 +6337,8 @@ var PreviewDrawingController = class {
       this.cancelSelectedStrokeResize(true);
       this.clearSelectedStrokes();
       this.resetTouchGestureState();
+      this.syncMarkdownBlockPresentation();
+      this.scheduleFrozenNoteFlowLayoutRestore();
       this.render();
     } else if (this.active && eager && (!wasActive || !this.drawingsLoaded)) {
       this.ensureDrawingsLoaded().catch((error) => {
@@ -6900,6 +6915,10 @@ var PreviewDrawingController = class {
     this.setTextPanelOpen(false);
     this.endFloatingTextInput(true);
     this.endTextEdit();
+    if (this.surfaceType === "source") {
+      this.formatToolbar?.addClass("is-visible");
+      this.scheduleFloatingControlsPosition();
+    }
     this.cancelCurrentStroke();
     this.cancelSelectionDrag(true);
     this.updateToolButtons();
@@ -7099,12 +7118,16 @@ var PreviewDrawingController = class {
   updateToolButtons() {
     const penActive = this.toolMode === TOOL_DRAW && this.brushMode === BRUSH_PEN;
     const watercolorActive = this.toolMode === TOOL_DRAW && this.brushMode === BRUSH_WATERCOLOR;
+    const sourceMarkdownEditActive = this.surfaceType === "source" && this.toolMode === TOOL_EDIT_MD;
     this.applyBrushButtonState(this.penButton, this.brushSettings?.[BRUSH_PEN], penActive);
     this.applyBrushButtonState(this.watercolorButton, this.brushSettings?.[BRUSH_WATERCOLOR], watercolorActive);
     this.textButton?.classList.toggle("is-active", this.toolMode === TOOL_TEXT || this.textPanelOpen);
     this.textButton?.toggleAttribute("hidden", false);
     this.selectButton?.classList.toggle("is-active", this.toolMode === TOOL_SELECT);
     this.editMarkdownButton?.classList.toggle("is-active", this.toolMode === TOOL_EDIT_MD);
+    if (this.surfaceType === "source") {
+      this.formatToolbar?.classList.toggle("is-visible", sourceMarkdownEditActive);
+    }
     const selectedElements = this.hasHybridSelection();
     const paletteDisabled = this.toolMode === TOOL_EDIT_MD || this.toolMode === TOOL_SELECT && !selectedElements;
     this.paletteButton?.toggleAttribute("disabled", paletteDisabled);
@@ -7592,7 +7615,162 @@ var PreviewDrawingController = class {
     });
     return button;
   }
+  sourceCodeMirrorView() {
+    return this.surfaceType === "source" ? getCodeMirrorView(this.view, this.previewEl) : null;
+  }
+  bindSourceFormatToolbarEvents() {
+    if (this.surfaceType !== "source") {
+      return;
+    }
+    this.sourceFormatToolbarCleanup?.();
+    this.sourceFormatToolbarCleanup = null;
+    const cmView = this.sourceCodeMirrorView();
+    const dom = cmView?.dom;
+    if (!dom?.addEventListener) {
+      if (this.sourceFormatToolbarRetryTimer === null && !this.destroyed) {
+        this.sourceFormatToolbarRetryTimer = window.setTimeout(() => {
+          this.sourceFormatToolbarRetryTimer = null;
+          this.bindSourceFormatToolbarEvents();
+        }, 120);
+      }
+      return;
+    }
+    if (this.sourceFormatToolbarRetryTimer !== null) {
+      window.clearTimeout(this.sourceFormatToolbarRetryTimer);
+      this.sourceFormatToolbarRetryTimer = null;
+    }
+    const refresh = () => {
+      if (this.toolMode === TOOL_EDIT_MD) {
+        this.formatToolbar?.addClass("is-visible");
+        this.positionFormatToolbar();
+      }
+    };
+    for (const type of ["mouseup", "keyup", "input", "scroll", "focus"]) {
+      dom.addEventListener(type, refresh, true);
+    }
+    this.sourceFormatToolbarCleanup = () => {
+      for (const type of ["mouseup", "keyup", "input", "scroll", "focus"]) {
+        dom.removeEventListener(type, refresh, true);
+      }
+    };
+  }
+  sourceSelectionRange() {
+    if (this.currentEditor && this.currentEditorEmbedded) {
+      return null;
+    }
+    const cmView = this.sourceCodeMirrorView();
+    const selection = cmView?.state?.selection?.main;
+    if (!cmView || !selection || !Number.isFinite(selection.from) || !Number.isFinite(selection.to)) {
+      return null;
+    }
+    return { cmView, from: selection.from, to: selection.to };
+  }
+  dispatchSourceSelection(changes, selection = null) {
+    const range = this.sourceSelectionRange();
+    if (!range || !Array.isArray(changes) || !changes.length) {
+      return false;
+    }
+    const nextSelection = selection || {
+      anchor: range.from,
+      head: range.from
+    };
+    range.cmView.focus?.();
+    range.cmView.dispatch({
+      changes,
+      selection: nextSelection,
+      scrollIntoView: false
+    });
+    this.formatToolbar?.addClass("is-visible");
+    this.positionFormatToolbar();
+    return true;
+  }
+  sourceInlineFormatMarkers(tagName, styles = {}) {
+    if (tagName === "strong") {
+      return ["**", "**"];
+    }
+    if (tagName === "em") {
+      return ["*", "*"];
+    }
+    if (tagName === "code") {
+      return ["`", "`"];
+    }
+    if (tagName === "kbd") {
+      return ["<kbd>", "</kbd>"];
+    }
+    if (tagName === "sup" || tagName === "sub" || tagName === "u") {
+      return [`<${tagName}>`, `</${tagName}>`];
+    }
+    if (tagName === "mark") {
+      return styles.backgroundColor
+        ? [`<mark style="background-color: ${styles.backgroundColor};">`, "</mark>"]
+        : ["==", "=="];
+    }
+    if (tagName === "span") {
+      const css = Object.entries(styles)
+        .filter(([key, value]) => value && isSafeCssSize(value) || key === "color" && isCssColor(value))
+        .map(([key, value]) => `${key.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}: ${value}`)
+        .join("; ");
+      return css ? [`<span style="${css}">`, "</span>"] : ["", ""];
+    }
+    return ["", ""];
+  }
+  applySourceTextInlineFormat(tagName, styles = {}) {
+    const range = this.sourceSelectionRange();
+    if (!range || range.from === range.to) {
+      return false;
+    }
+    const selected = range.cmView.state.sliceDoc(range.from, range.to);
+    const [prefix, suffix] = this.sourceInlineFormatMarkers(tagName, styles);
+    if (!prefix && !suffix) {
+      return false;
+    }
+    return this.dispatchSourceSelection([
+      { from: range.from, to: range.to, insert: `${prefix}${selected}${suffix}` }
+    ], {
+      anchor: range.from + prefix.length,
+      head: range.from + prefix.length + selected.length
+    });
+  }
+  applySourceTextBlockFormat(kind) {
+    const range = this.sourceSelectionRange();
+    if (!range || kind !== "code") {
+      return false;
+    }
+    const selected = range.cmView.state.sliceDoc(range.from, range.to);
+    const insert = `\n\`\`\`\n${selected}\n\`\`\`\n`;
+    return this.dispatchSourceSelection([{ from: range.from, to: range.to, insert }], {
+      anchor: range.from + 5,
+      head: range.from + 5 + selected.length
+    });
+  }
+  insertSourceTextBreak() {
+    const range = this.sourceSelectionRange();
+    if (!range) {
+      return false;
+    }
+    return this.dispatchSourceSelection([{ from: range.from, to: range.to, insert: "\n" }], {
+      anchor: range.from + 1,
+      head: range.from + 1
+    });
+  }
+  clearSourceTextFormat() {
+    const range = this.sourceSelectionRange();
+    if (!range || range.from === range.to) {
+      return false;
+    }
+    const selected = range.cmView.state.sliceDoc(range.from, range.to)
+      .replace(/\*\*|__|~~|`|==/g, "")
+      .replace(/<\/?(?:u|kbd|sup|sub|mark|span)(?:\s[^>]*)?>/gi, "");
+    return this.dispatchSourceSelection([{ from: range.from, to: range.to, insert: selected }], {
+      anchor: range.from,
+      head: range.from + selected.length
+    });
+  }
   onDocumentSelectionChange() {
+    if (this.surfaceType === "source" && this.toolMode === TOOL_EDIT_MD && !this.currentEditorEmbedded) {
+      this.positionFormatToolbar();
+      return;
+    }
     if (!this.currentEditor || !this.formatToolbar) {
       return;
     }
@@ -7608,7 +7786,42 @@ var PreviewDrawingController = class {
     this.positionFormatToolbar();
   }
   positionFormatToolbar() {
-    if (!this.formatToolbar || !this.currentEditor) {
+    if (!this.formatToolbar) {
+      return;
+    }
+    if (this.surfaceType === "source" && this.toolMode === TOOL_EDIT_MD && !this.currentEditorEmbedded) {
+      const cmView = this.sourceCodeMirrorView();
+      const selection = cmView?.state?.selection?.main;
+      const from = Number.isFinite(selection?.from) ? cmView.coordsAtPos(selection.from) : null;
+      const to = Number.isFinite(selection?.to) ? cmView.coordsAtPos(selection.to) : from;
+      const sourceRect = from && to ? {
+        left: Math.min(from.left, to.left),
+        right: Math.max(from.right ?? from.left, to.right ?? to.left),
+        top: Math.min(from.top, to.top),
+        bottom: Math.max(from.bottom, to.bottom)
+      } : this.previewEl.getBoundingClientRect?.();
+      if (!sourceRect) {
+        return;
+      }
+      const toolbarRect = this.formatToolbar.getBoundingClientRect();
+      const width = Math.max(180, toolbarRect.width || 280);
+      const height = Math.max(34, toolbarRect.height || 34);
+      const viewport = window.visualViewport;
+      const viewportTop = viewport?.offsetTop || 0;
+      const viewportLeft = viewport?.offsetLeft || 0;
+      const viewportHeight = Math.max(120, viewport?.height || window.innerHeight || 120);
+      const viewportWidth = Math.max(160, viewport?.width || window.innerWidth || 160);
+      const minTop = viewportTop + 8;
+      const maxTop = Math.max(minTop, viewportTop + viewportHeight - height - 8);
+      const left = clamp(Math.round((sourceRect.left + sourceRect.right - width) / 2), viewportLeft + 8, Math.max(viewportLeft + 8, viewportLeft + viewportWidth - width - 8));
+      const top = clamp(Math.round(sourceRect.bottom + 14), minTop, maxTop);
+      setNoteDrawCssProps(this.formatToolbar, {
+        "--notedraw-format-top": `${top}px`,
+        "--notedraw-format-left": `${left}px`
+      });
+      return;
+    }
+    if (!this.currentEditor) {
       return;
     }
     const selection = window.getSelection?.();
@@ -7723,6 +7936,9 @@ var PreviewDrawingController = class {
     return true;
   }
   applyTextInlineFormat(tagName, styles = {}) {
+    if (this.surfaceType === "source" && this.toolMode === TOOL_EDIT_MD && !this.currentEditorEmbedded) {
+      return this.applySourceTextInlineFormat(tagName, styles);
+    }
     if (!this.currentEditor || !this.restoreTextRange()) {
       return;
     }
@@ -7745,6 +7961,9 @@ var PreviewDrawingController = class {
     this.positionFormatToolbar();
   }
   applyTextBlockFormat(kind) {
+    if (this.surfaceType === "source" && this.toolMode === TOOL_EDIT_MD && !this.currentEditorEmbedded) {
+      return this.applySourceTextBlockFormat(kind);
+    }
     if (!this.currentEditor || !this.restoreTextRange()) {
       return;
     }
@@ -7771,6 +7990,9 @@ var PreviewDrawingController = class {
     }
   }
   insertTextBreak() {
+    if (this.surfaceType === "source" && this.toolMode === TOOL_EDIT_MD && !this.currentEditorEmbedded) {
+      return this.insertSourceTextBreak();
+    }
     if (!this.currentEditor || !this.restoreTextRange()) {
       return;
     }
@@ -7794,6 +8016,9 @@ var PreviewDrawingController = class {
     this.positionFormatToolbar();
   }
   clearTextFormat() {
+    if (this.surfaceType === "source" && this.toolMode === TOOL_EDIT_MD && !this.currentEditorEmbedded) {
+      return this.clearSourceTextFormat();
+    }
     if (!this.currentEditor || !this.restoreTextRange()) {
       return;
     }
@@ -12957,6 +13182,9 @@ var PreviewDrawingController = class {
         });
       }
     }
+    if (originalMarkdownBlocks?.size) {
+      this.refreshMarkdownBlockPresentation(originalMarkdownBlocks.keys());
+    }
     const resizedGroupIds = new Set([
       ...Array.from(originalStrokes.keys()).map((index) => this.drawingData.strokes[index]?.groupId),
       ...Array.from(originalMarkdownBlocks?.values?.() || []).map((state) => state.block?.groupId)
@@ -12972,11 +13200,43 @@ var PreviewDrawingController = class {
       this.invalidateStaticCache();
     }
     if (Array.from(this.resizeSelectionOriginalStrokes.keys()).some((index) => this.drawingData.strokes[index]?.noteFlow?.enabled)) {
-      this.scheduleNoteFlowLayout({ operation: true });
+      this.queueSelectedResizeNoteFlowLayout();
+    }
+  }
+  queueSelectedResizeNoteFlowLayout() {
+    this.scheduleNoteFlowLayout({ operation: true, defer: true });
+    if (this.resizeNoteFlowFrameId !== null || this.destroyed) {
+      return;
+    }
+    this.resizeNoteFlowFrameId = window.requestAnimationFrame(() => {
+      this.resizeNoteFlowFrameId = null;
+      this.flushSelectedResizeNoteFlowLayout();
+    });
+  }
+  flushSelectedResizeNoteFlowLayout() {
+    if (this.destroyed || !this.resizingSelection) {
+      return false;
+    }
+    this.previewEl?.getBoundingClientRect?.();
+    this.noteFlowSettledRowExtents = /* @__PURE__ */ new Map();
+    const changed = this.applyNoteFlowLayout();
+    const aligned = this.alignNoteFlowStrokesToReservedRows(null, { interaction: true });
+    if (changed || aligned) {
+      this.invalidateSelectionFrameSnapshot();
+      this.requestRender(this.selectionHasDomStrokes() ? "interaction" : false);
+    }
+    return changed || aligned;
+  }
+  cancelSelectedResizeNoteFlowLayout() {
+    if (this.resizeNoteFlowFrameId !== null) {
+      window.cancelAnimationFrame(this.resizeNoteFlowFrameId);
+      this.resizeNoteFlowFrameId = null;
     }
   }
   finishSelectedStrokeResize(event) {
     if (this.resizeSelectionMoved) {
+      this.cancelSelectedResizeNoteFlowLayout();
+      this.flushSelectedResizeNoteFlowLayout();
       const resizedIndexes = Array.from(this.resizeSelectionOriginalStrokes?.keys() || []);
       this.captureResponsiveAnchorsForIndexes(resizedIndexes);
       this.syncBoundConnectors({ elementIds: this.connectorTargetIdsForStrokeIndexes(resizedIndexes) });
@@ -13032,6 +13292,7 @@ var PreviewDrawingController = class {
   }
   clearSelectedStrokeResizeState() {
     const needsGeometrySettle = this.resizingSelection;
+    this.cancelSelectedResizeNoteFlowLayout();
     this.resizingSelection = false;
     this.resizeSelectionHandle = null;
     this.resizeSelectionStartPoint = null;
@@ -13049,6 +13310,9 @@ var PreviewDrawingController = class {
     this.previewEl.removeClass("is-resizing-selection");
     this.captureSelectionFrameSnapshot({ force: true });
     if (needsGeometrySettle && !this.destroyed) {
+      if (this.noteFlowOperationPending) {
+        this.scheduleNoteFlowLayout();
+      }
       this.scheduleResize({ layout: false, measure: true });
     }
   }
@@ -16818,7 +17082,12 @@ var PreviewDrawingController = class {
   }
   alignNoteFlowStrokesToReservedRows(allCandidates = null, options = {}) {
     const measureOnly = options.measureOnly === true;
-    if (!measureOnly && (this.draggingStroke || this.resizingSelection) || !this.supportsNoteFlow() || !this.previewEl?.isConnected) {
+    const interaction = options.interaction === true;
+    if (
+      !measureOnly && !interaction && (this.draggingStroke || this.resizingSelection)
+      || !this.supportsNoteFlow()
+      || !this.previewEl?.isConnected
+    ) {
       return false;
     }
     const canvasWidth = this.canvasWidth();

@@ -38,17 +38,28 @@ test("scoped embed refreshes update selected nodes without pruning the full laye
   assert.match(updateSource, /if \(!scopedIndexes\) \{[\s\S]*this\.embedNodes\.delete\(key\)/);
 });
 
-test("ordinary drags and resizes do not schedule NoteFlow layout work", async () => {
+test("ordinary drags stay light while NoteFlow resize reflows once per animation frame", async () => {
   const source = await readFile(sourceUrl, "utf8");
   const queueStart = source.indexOf("  queueDraggedNoteFlowRefresh(indexes) {");
   const queueSource = source.slice(queueStart, source.indexOf("  refreshDraggedNoteFlowAnchors", queueStart));
   const resizeStart = source.indexOf("  applySelectedStrokeResize(point) {");
   const resizeSource = source.slice(resizeStart, source.indexOf("  finishSelectedStrokeResize", resizeStart));
+  const finishStart = source.indexOf("  finishSelectedStrokeResize(event) {");
+  const finishSource = source.slice(finishStart, source.indexOf("  cancelSelectedStrokeResize", finishStart));
 
   assert.match(queueSource, /let queued = false/);
   assert.match(queueSource, /stroke\?\.noteFlow\?\.enabled[\s\S]*queued = true/);
   assert.match(queueSource, /if \(queued && !this\.draggingStroke\) \{\s*this\.scheduleNoteFlowLayout\(\)/);
-  assert.match(resizeSource, /if \(Array\.from\(this\.resizeSelectionOriginalStrokes\.keys\(\)\)\.some\([\s\S]*noteFlow\?\.enabled\)\) \{\s*this\.scheduleNoteFlowLayout\(\{ operation: true \}\)/);
+  assert.match(resizeSource, /this\.refreshMarkdownBlockPresentation\(originalMarkdownBlocks\.keys\(\)\)/);
+  assert.match(resizeSource, /this\.queueSelectedResizeNoteFlowLayout\(\)/);
+  assert.match(resizeSource, /scheduleNoteFlowLayout\(\{ operation: true, defer: true \}\)/);
+  assert.match(resizeSource, /window\.requestAnimationFrame\(\(\) => \{[\s\S]*this\.flushSelectedResizeNoteFlowLayout\(\)/);
+  assert.match(resizeSource, /this\.previewEl\?\.getBoundingClientRect\?\.\(\)/);
+  assert.match(resizeSource, /this\.noteFlowSettledRowExtents = \/\* @__PURE__ \*\/ new Map\(\)/);
+  assert.match(resizeSource, /this\.applyNoteFlowLayout\(\)/);
+  assert.match(resizeSource, /alignNoteFlowStrokesToReservedRows\(null, \{ interaction: true \}\)/);
+  assert.match(resizeSource, /window\.cancelAnimationFrame\(this\.resizeNoteFlowFrameId\)/);
+  assert.match(finishSource, /this\.cancelSelectedResizeNoteFlowLayout\(\);\s*this\.flushSelectedResizeNoteFlowLayout\(\)/);
 });
 
 test("selection filter cycles perform one full presentation pass", async () => {
