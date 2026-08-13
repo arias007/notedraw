@@ -16658,6 +16658,14 @@ ${selected}
   }
   queueSelectedResizeNoteFlowLayout() {
     this.scheduleNoteFlowLayout({ operation: true, defer: true });
+    if (this.noteFlowFrameId !== null) {
+      window.cancelAnimationFrame(this.noteFlowFrameId);
+      this.noteFlowFrameId = null;
+    }
+    if (this.noteFlowFallbackTimer !== null) {
+      window.clearTimeout(this.noteFlowFallbackTimer);
+      this.noteFlowFallbackTimer = null;
+    }
     if (this.resizeNoteFlowFrameId !== null || this.destroyed) {
       return;
     }
@@ -16671,9 +16679,18 @@ ${selected}
       return false;
     }
     this.previewEl?.getBoundingClientRect?.();
-    this.noteFlowSettledRowExtents = /* @__PURE__ */ new Map();
-    const changed = this.applyNoteFlowLayout();
-    const aligned = this.alignNoteFlowStrokesToReservedRows(null, { interaction: true });
+    let changed = false;
+    let aligned = false;
+    for (let pass = 0; pass < 3; pass += 1) {
+      this.noteFlowSettledRowExtents = /* @__PURE__ */ new Map();
+      const layoutChanged = this.applyNoteFlowLayout();
+      aligned = this.alignNoteFlowStrokesToReservedRows(null, { interaction: true });
+      const passChanged = layoutChanged || aligned;
+      changed = changed || passChanged;
+      if (!passChanged) {
+        break;
+      }
+    }
     if (changed || aligned) {
       this.invalidateSelectionFrameSnapshot();
       this.requestRender(this.selectionHasDomStrokes() ? "interaction" : false);

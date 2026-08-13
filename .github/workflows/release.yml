@@ -65,5 +65,5 @@ jobs:
             release/manifest.json \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
-            --title "NoteDraw $GITHUB_REF_NAME" \
-            --notes "NoteDraw $GITHUB_REF_NAME release assets built and attested by GitHub Actions."
+            --title "$GITHUB_REF_NAME" \
+            --notes "$GITHUB_REF_NAME"

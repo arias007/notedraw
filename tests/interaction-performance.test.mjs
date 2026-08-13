@@ -59,6 +59,9 @@ test("ordinary drags stay light while NoteFlow resize reflows once per animation
   assert.match(resizeSource, /this\.noteFlowSettledRowExtents = \/\* @__PURE__ \*\/ new Map\(\)/);
   assert.match(resizeSource, /this\.applyNoteFlowLayout\(\)/);
   assert.match(resizeSource, /alignNoteFlowStrokesToReservedRows\(null, \{ interaction: true \}\)/);
+  assert.match(resizeSource, /if \(this\.noteFlowFrameId !== null\) \{[\s\S]*window\.cancelAnimationFrame\(this\.noteFlowFrameId\)/);
+  assert.match(resizeSource, /for \(let pass = 0; pass < 3; pass \+= 1\)/);
+  assert.match(resizeSource, /const passChanged = layoutChanged \|\| aligned;[\s\S]*if \(!passChanged\) \{/);
   assert.match(resizeSource, /window\.cancelAnimationFrame\(this\.resizeNoteFlowFrameId\)/);
   assert.match(finishSource, /this\.cancelSelectedResizeNoteFlowLayout\(\);\s*this\.flushSelectedResizeNoteFlowLayout\(\)/);
   assert.match(finishSource, /const resizedMarkdownBlocks = Boolean\(this\.resizeSelectionOriginalMarkdownBlocks\?\.size\)/);

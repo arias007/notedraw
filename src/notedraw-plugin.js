@@ -13211,6 +13211,17 @@ var PreviewDrawingController = class {
   }
   queueSelectedResizeNoteFlowLayout() {
     this.scheduleNoteFlowLayout({ operation: true, defer: true });
+    // A normal NoteFlow frame may already be queued from the preceding
+    // pointer event. Letting it run before the resize frame applies a stale
+    // reservation and makes the next resize event appear to "catch up".
+    if (this.noteFlowFrameId !== null) {
+      window.cancelAnimationFrame(this.noteFlowFrameId);
+      this.noteFlowFrameId = null;
+    }
+    if (this.noteFlowFallbackTimer !== null) {
+      window.clearTimeout(this.noteFlowFallbackTimer);
+      this.noteFlowFallbackTimer = null;
+    }
     if (this.resizeNoteFlowFrameId !== null || this.destroyed) {
       return;
     }
@@ -13224,9 +13235,23 @@ var PreviewDrawingController = class {
       return false;
     }
     this.previewEl?.getBoundingClientRect?.();
-    this.noteFlowSettledRowExtents = /* @__PURE__ */ new Map();
-    const changed = this.applyNoteFlowLayout();
-    const aligned = this.alignNoteFlowStrokesToReservedRows(null, { interaction: true });
+    let changed = false;
+    // Applying a reservation moves the Markdown DOM synchronously. Re-run the
+    // measurement against that new DOM before painting so both enlargement and
+    // contraction settle in the same resize gesture. The bound prevents a
+    // pathological document from turning one pointer frame into an endless
+    // layout loop.
+    let aligned = false;
+    for (let pass = 0; pass < 3; pass += 1) {
+      this.noteFlowSettledRowExtents = /* @__PURE__ */ new Map();
+      const layoutChanged = this.applyNoteFlowLayout();
+      aligned = this.alignNoteFlowStrokesToReservedRows(null, { interaction: true });
+      const passChanged = layoutChanged || aligned;
+      changed = changed || passChanged;
+      if (!passChanged) {
+        break;
+      }
+    }
     if (changed || aligned) {
       this.invalidateSelectionFrameSnapshot();
       this.requestRender(this.selectionHasDomStrokes() ? "interaction" : false);
