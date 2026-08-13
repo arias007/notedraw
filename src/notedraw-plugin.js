@@ -5564,6 +5564,7 @@ var PreviewDrawingController = class {
     this.onReadingTouchPointerMove = this.onReadingTouchPointerMove.bind(this);
     this.onReadingTouchPointerFinish = this.onReadingTouchPointerFinish.bind(this);
     this.onReadingClick = this.onReadingClick.bind(this);
+    this.onHeadingCollapseIndicatorClick = this.onHeadingCollapseIndicatorClick.bind(this);
     this.onReadingVirtualScrollCapture = this.onReadingVirtualScrollCapture.bind(this);
     this.onButtonClick = this.onButtonClick.bind(this);
     this.onButtonPointerDown = this.onButtonPointerDown.bind(this);
@@ -5819,6 +5820,7 @@ var PreviewDrawingController = class {
     this.canvas.addEventListener("wheel", this.onWheel, { passive: false });
     this.previewEl.addEventListener("contextmenu", this.onPreviewContextMenu, true);
     this.previewEl.addEventListener("dblclick", this.onPreviewDoubleClick, true);
+    this.previewEl.addEventListener("click", this.onHeadingCollapseIndicatorClick, true);
     if (this.usesVisualReadingZoom()) {
       this.previewEl.addEventListener("pointerdown", this.onReadingTouchPointerDown, true);
       this.previewEl.addEventListener("pointermove", this.onReadingTouchPointerMove, true);
@@ -5882,6 +5884,7 @@ var PreviewDrawingController = class {
     await this.ensureDrawingsLoaded();
     this.bindSourceFormatToolbarEvents();
     this.repairConnectedReadingSections();
+    this.ensureReadingHeadingCollapseIndicators();
     this.plugin.emitApiEvent("surface-changed", { ...this.plugin.describeController(this), phase: "mounted" });
   }
   async prepareInitialReadingLayout() {
@@ -6253,6 +6256,7 @@ var PreviewDrawingController = class {
     this.canvas?.removeEventListener("wheel", this.onWheel);
     this.previewEl?.removeEventListener("contextmenu", this.onPreviewContextMenu, true);
     this.previewEl?.removeEventListener("dblclick", this.onPreviewDoubleClick, true);
+    this.previewEl?.removeEventListener("click", this.onHeadingCollapseIndicatorClick, true);
     this.previewEl?.removeEventListener("pointerdown", this.onReadingTouchPointerDown, true);
     this.previewEl?.removeEventListener("pointermove", this.onReadingTouchPointerMove, true);
     this.previewEl?.removeEventListener("pointerup", this.onReadingTouchPointerFinish, true);
@@ -15402,6 +15406,89 @@ var PreviewDrawingController = class {
       this.captureSelectionFrameSnapshot({ force: true });
       this.render();
     }
+    this.ensureReadingHeadingCollapseIndicators();
+  }
+  ensureReadingHeadingCollapseIndicators() {
+    // Obsidian's incremental re-render (plugin reload, file edits) drops the
+    // heading-collapse-indicator spans it injects on first render. Re-inject
+    // them so heading collapse/expand keeps working after such re-renders.
+    if (this.surfaceType !== "preview" || this.embeddedSurface || !this.previewEl?.isConnected) {
+      return;
+    }
+    if (!this.previewEl.classList?.contains?.("allow-fold-headings")) {
+      return;
+    }
+    const headingSelector = "h1[data-heading],h2[data-heading],h3[data-heading],h4[data-heading],h5[data-heading],h6[data-heading]";
+    const headings = this.previewEl.querySelectorAll?.(headingSelector) || [];
+    for (const heading of headings) {
+      if (heading.querySelector(".heading-collapse-indicator, .collapse-indicator")) {
+        continue;
+      }
+      const doc = heading.ownerDocument || activeDocument;
+      const arrow = doc.createElement?.("span") || document.createElement("span");
+      arrow.className = "heading-collapse-indicator collapse-indicator collapse-icon";
+      arrow.setAttribute("data-note-draw-heading-collapse", "true");
+      const svg = doc.createElementNS?.("http://www.w3.org/2000/svg", "svg");
+      if (svg) {
+        svg.setAttribute("width", "24");
+        svg.setAttribute("height", "24");
+        svg.setAttribute("viewBox", "0 0 24 24");
+        svg.setAttribute("fill", "none");
+        svg.setAttribute("stroke", "currentColor");
+        svg.setAttribute("stroke-width", "2");
+        svg.setAttribute("stroke-linecap", "round");
+        svg.setAttribute("stroke-linejoin", "round");
+        svg.classList.add("svg-icon", "right-triangle");
+        const path = doc.createElementNS("http://www.w3.org/2000/svg", "path");
+        path.setAttribute("d", "M3 8L12 17L21 8");
+        svg.appendChild(path);
+        arrow.appendChild(svg);
+      }
+      heading.insertBefore(arrow, heading.firstChild);
+    }
+  }
+  onHeadingCollapseIndicatorClick(event) {
+    const arrow = event?.target?.closest?.(".heading-collapse-indicator");
+    if (!arrow || !this.previewEl?.contains?.(arrow)) {
+      return;
+    }
+    if (arrow.dataset?.noteDrawHeadingCollapse !== "true") {
+      return;
+    }
+    const heading = arrow.closest("h1,h2,h3,h4,h5,h6");
+    if (!heading) {
+      return;
+    }
+    const renderer = this.readingPreviewRenderer();
+    const section = renderer?.getSectionForElement?.(heading);
+    const owner = heading.closest(".el-h1,.el-h2,.el-h3,.el-h4,.el-h5,.el-h6,li") || heading;
+    const wasCollapsed = section ? Boolean(section.headingCollapsed) : owner.classList.contains("is-collapsed");
+    const willCollapse = !wasCollapsed;
+    if (event.cancelable) {
+      event.preventDefault();
+    }
+    event.stopPropagation?.();
+    if (section) {
+      section.headingCollapsed = willCollapse;
+    }
+    const siblingHeadingSelector = ".el-h1,.el-h2,.el-h3,.el-h4,.el-h5,.el-h6";
+    let sibling = owner.nextElementSibling;
+    while (sibling && !sibling.matches?.(siblingHeadingSelector)) {
+      const next = sibling.nextElementSibling;
+      if (willCollapse) {
+        if (sibling.style.display !== "none") {
+          sibling.dataset.noteDrawFoldDisplay = sibling.style.display || "";
+          sibling.style.display = "none";
+        }
+      } else {
+        sibling.style.display = sibling.dataset.noteDrawFoldDisplay || "";
+        delete sibling.dataset.noteDrawFoldDisplay;
+      }
+      sibling = next;
+    }
+    owner.classList.toggle("is-collapsed", willCollapse);
+    arrow.classList.toggle("is-collapsed", willCollapse);
+    renderer?.updateVirtualDisplay?.();
   }
   selectMarkdownBlock(element, { additive = false, toggle = false, skipGroupExpansion = false } = {}) {
     const block = this.ensureMarkdownBlockRecord(element);
@@ -22155,6 +22242,16 @@ function isNoteDrawOwnedMutation(mutation) {
 }
 function isMarkdownContentMutation(mutation) {
   if (mutation?.type !== "childList" || isNoteDrawOwnedMutation(mutation)) {
+    return false;
+  }
+  // Embedded content is managed by the embedded-surface controllers and is
+  // rendered asynchronously by Obsidian (markdown-embed-content insertion,
+  // heading collapse indicators, embed loading classes). Treating those
+  // mutations as "markdown content changes" makes the preview controller
+  // repair/sync/resize the reading view over and over, which starves
+  // Obsidian's render queue (queued.high never settles), so embeds never
+  // finish loading and heading collapse arrows are never injected.
+  if (mutation.target?.closest?.(".internal-embed, .markdown-embed, .markdown-embed-content")) {
     return false;
   }
   const markdownRootSelector = ".markdown-preview-view, .markdown-embed-content, .internal-embed";
