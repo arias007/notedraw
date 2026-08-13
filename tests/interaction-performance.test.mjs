@@ -52,6 +52,7 @@ test("ordinary drags stay light while NoteFlow resize reflows once per animation
   assert.match(queueSource, /if \(queued && !this\.draggingStroke\) \{\s*this\.scheduleNoteFlowLayout\(\)/);
   assert.match(resizeSource, /this\.refreshMarkdownBlockPresentation\(originalMarkdownBlocks\.keys\(\)\)/);
   assert.match(resizeSource, /this\.queueSelectedResizeNoteFlowLayout\(\)/);
+  assert.match(resizeSource, /selectedResizeAffectsNoteFlowLayout\(\)[\s\S]*resizeSelectionOriginalMarkdownBlocks\?\.size/);
   assert.match(resizeSource, /scheduleNoteFlowLayout\(\{ operation: true, defer: true \}\)/);
   assert.match(resizeSource, /window\.requestAnimationFrame\(\(\) => \{[\s\S]*this\.flushSelectedResizeNoteFlowLayout\(\)/);
   assert.match(resizeSource, /this\.previewEl\?\.getBoundingClientRect\?\.\(\)/);
@@ -60,6 +61,8 @@ test("ordinary drags stay light while NoteFlow resize reflows once per animation
   assert.match(resizeSource, /alignNoteFlowStrokesToReservedRows\(null, \{ interaction: true \}\)/);
   assert.match(resizeSource, /window\.cancelAnimationFrame\(this\.resizeNoteFlowFrameId\)/);
   assert.match(finishSource, /this\.cancelSelectedResizeNoteFlowLayout\(\);\s*this\.flushSelectedResizeNoteFlowLayout\(\)/);
+  assert.match(finishSource, /const resizedMarkdownBlocks = Boolean\(this\.resizeSelectionOriginalMarkdownBlocks\?\.size\)/);
+  assert.match(finishSource, /if \(resizedMarkdownBlocks \|\| resizedNoteFlowStrokes\)/);
 });
 
 test("selection filter cycles perform one full presentation pass", async () => {

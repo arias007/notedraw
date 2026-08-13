@@ -16649,9 +16649,12 @@ ${selected}
     if (this.syncBoundConnectors({ elementIds: resizedElementIds })) {
       this.invalidateStaticCache();
     }
-    if (Array.from(this.resizeSelectionOriginalStrokes.keys()).some((index) => this.drawingData.strokes[index]?.noteFlow?.enabled)) {
+    if (this.selectedResizeAffectsNoteFlowLayout()) {
       this.queueSelectedResizeNoteFlowLayout();
     }
+  }
+  selectedResizeAffectsNoteFlowLayout() {
+    return Boolean(this.resizeSelectionOriginalMarkdownBlocks?.size) || Array.from(this.resizeSelectionOriginalStrokes?.keys?.() || []).some((index) => this.drawingData.strokes[index]?.noteFlow?.enabled);
   }
   queueSelectedResizeNoteFlowLayout() {
     this.scheduleNoteFlowLayout({ operation: true, defer: true });
@@ -16685,6 +16688,8 @@ ${selected}
   }
   finishSelectedStrokeResize(event) {
     if (this.resizeSelectionMoved) {
+      const resizedMarkdownBlocks = Boolean(this.resizeSelectionOriginalMarkdownBlocks?.size);
+      const resizedNoteFlowStrokes = Array.from(this.resizeSelectionOriginalStrokes?.keys?.() || []).some((index) => this.drawingData.strokes[index]?.noteFlow?.enabled);
       this.cancelSelectedResizeNoteFlowLayout();
       this.flushSelectedResizeNoteFlowLayout();
       const resizedIndexes = Array.from(this.resizeSelectionOriginalStrokes?.keys() || []);
@@ -16693,7 +16698,7 @@ ${selected}
       this.redoStack = [];
       this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
       this.recordDrawingHistory(this.resizeDrawingHistoryBefore);
-      if (resizedIndexes.some((index) => this.drawingData.strokes[index]?.noteFlow?.enabled)) {
+      if (resizedMarkdownBlocks || resizedNoteFlowStrokes) {
         this.alignNoteFlowStrokesToReservedRows(null, { measureOnly: true });
         this.scheduleNoteFlowLayout({ operation: true });
       }
@@ -16733,6 +16738,11 @@ ${selected}
         state.block.floating = state.floating;
         state.block.floatBox = state.floatBox ? { ...state.floatBox } : null;
       }
+      this.refreshMarkdownBlockPresentation(this.resizeSelectionOriginalMarkdownBlocks.keys());
+    }
+    if (restoreOriginal && this.active && this.selectedResizeAffectsNoteFlowLayout()) {
+      this.scheduleNoteFlowLayout({ operation: true, defer: true });
+      this.flushSelectedResizeNoteFlowLayout();
     }
     if (this.activePointerId !== null) {
       this.releasePointerCapture(this.activePointerId);
@@ -18116,7 +18126,7 @@ ${selected}
     const info = getSourceInfo(blockElement);
     const hint = normalizeRenderedText2(blockElement.innerText || blockElement.textContent || "").slice(0, 240);
     const candidates = this.markdownBlockRecords().filter((block) => block.path === path);
-    return candidates.find((block) => Number.isFinite(info.lineStart) && block.lineStart === info.lineStart && (!block.textHint || block.textHint === hint)) || candidates.find((block) => block.textHint && block.textHint === hint) || null;
+    return candidates.find((block) => Number.isFinite(info.lineStart) && block.lineStart === info.lineStart && (!block.textHint || block.textHint === hint)) || candidates.find((block) => Number.isFinite(info.lineStart) && block.lineStart === info.lineStart) || candidates.find((block) => block.textHint && block.textHint === hint) || null;
   }
   markdownBlockElementForTarget(target, clientPoint = null) {
     if (this.surfaceType !== "preview" || !target || !this.previewEl?.contains?.(target)) {
@@ -18344,6 +18354,7 @@ ${selected}
     });
     const candidateMeta = /* @__PURE__ */ new Map();
     const exactCandidates = /* @__PURE__ */ new Map();
+    const lineCandidates = /* @__PURE__ */ new Map();
     const hintCandidates = /* @__PURE__ */ new Map();
     const queueCandidate = (map, key, element) => {
       const values = map.get(key) || [];
@@ -18357,6 +18368,7 @@ ${selected}
       candidateMeta.set(element, { path, info, hint });
       if (Number.isFinite(info.lineStart)) {
         queueCandidate(exactCandidates, `${path}\0${info.lineStart}\0${hint}`, element);
+        queueCandidate(lineCandidates, `${path}\0${info.lineStart}`, element);
       }
       queueCandidate(hintCandidates, `${path}\0${hint}`, element);
     }
@@ -18369,8 +18381,9 @@ ${selected}
       const previousMeta = candidateMeta.get(previous);
       const previousMatches = previousMeta && !used.has(previous) && previousMeta.path === block.path && previous?.dataset?.noteDrawMarkdownBlockId === block.id;
       const exactKey = `${block.path}\0${block.lineStart}\0${block.textHint}`;
+      const lineKey = `${block.path}\0${block.lineStart}`;
       const hintKey = `${block.path}\0${block.textHint}`;
-      const element = previousMatches ? previous : takeUnused(exactCandidates.get(exactKey)) || takeUnused(hintCandidates.get(hintKey));
+      const element = previousMatches ? previous : takeUnused(exactCandidates.get(exactKey)) || takeUnused(lineCandidates.get(lineKey)) || takeUnused(hintCandidates.get(hintKey));
       if (!element) {
         continue;
       }
@@ -19558,10 +19571,11 @@ ${selected}
     return changed;
   }
   reconcileAutoNoteFlowMarkdownSpans() {
-    const activeInlineBlockKeys = new Set((this.drawingData?.strokes || []).flatMap((stroke) => {
+    const activeInlineFlows = (this.drawingData?.strokes || []).flatMap((stroke) => {
       const noteFlow = normalizeNoteFlow(stroke?.noteFlow);
-      return noteFlow?.placementMode === "inline" && noteFlow.blockKey ? [noteFlow.blockKey] : [];
-    }));
+      return noteFlow?.placementMode === "inline" ? [noteFlow] : [];
+    });
+    const activeInlineBlockKeys = new Set(activeInlineFlows.map((noteFlow) => noteFlow.blockKey).filter(Boolean));
     let changed = false;
     for (const block of this.markdownBlockRecords()) {
       if (!block.noteFlowAutoSpan) {
@@ -19574,6 +19588,21 @@ ${selected}
         blockEnd: block.lineEnd
       });
       if (blockKey && activeInlineBlockKeys.has(blockKey)) {
+        continue;
+      }
+      const blockPath = normalizeVaultPath(block.path || this.file?.path || "");
+      const blockStart = block.lineStart === null || block.lineStart === void 0 ? Number.NaN : Number(block.lineStart);
+      const blockEnd = block.lineEnd === null || block.lineEnd === void 0 ? blockStart : Number(block.lineEnd);
+      const hasSemanticInlineMatch = activeInlineFlows.some((noteFlow) => {
+        const flowPath = normalizeVaultPath(noteFlow.path || this.file?.path || "");
+        const flowStart = noteFlow.blockStart === null || noteFlow.blockStart === void 0 ? Number(noteFlow.line) : Number(noteFlow.blockStart);
+        const flowEnd = noteFlow.blockEnd === null || noteFlow.blockEnd === void 0 ? flowStart : Number(noteFlow.blockEnd);
+        return flowPath === blockPath && Number.isFinite(blockStart) && Number.isFinite(flowStart) && Math.max(blockStart, flowStart) <= Math.min(blockEnd, flowEnd);
+      });
+      if (hasSemanticInlineMatch) {
+        continue;
+      }
+      if (!this.noteFlowMarkdownAnnotationComplete || !this.markdownBlockElement(block)?.isConnected) {
         continue;
       }
       block.span = 12;

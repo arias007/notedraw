@@ -408,6 +408,20 @@ test("Markdown DOM replacement and async drops rebuild the selection frame", asy
   assert.match(snapshotSource, /selectionFrameAwaitingMarkdownSync && !this\.draggingStroke/);
 });
 
+test("Markdown DOM replacement preserves parallel width when rendered text changes", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const presentationSource = source.slice(source.indexOf("  syncMarkdownBlockPresentation()"), source.indexOf("  selectMarkdownBlock(", source.indexOf("  syncMarkdownBlockPresentation()")));
+  const recordSource = source.slice(source.indexOf("  findMarkdownBlockRecordForElement("), source.indexOf("  markdownBlockElementForTarget(", source.indexOf("  findMarkdownBlockRecordForElement(")));
+  const reconcileSource = source.slice(source.indexOf("  reconcileAutoNoteFlowMarkdownSpans()"), source.indexOf("  resolveDraggedNoteFlowPlacement(", source.indexOf("  reconcileAutoNoteFlowMarkdownSpans()")));
+
+  assert.match(presentationSource, /const lineCandidates =/);
+  assert.match(presentationSource, /queueCandidate\(lineCandidates, `\$\{path\}\\u0000\$\{info\.lineStart\}`/);
+  assert.match(presentationSource, /takeUnused\(exactCandidates\.get\(exactKey\)\)[\s\S]*takeUnused\(lineCandidates\.get\(lineKey\)\)[\s\S]*takeUnused\(hintCandidates\.get\(hintKey\)\)/);
+  assert.match(recordSource, /block\.lineStart === info\.lineStart\)\s*\|\| candidates\.find\(\(block\) => block\.textHint/);
+  assert.match(reconcileSource, /activeInlineFlows[\s\S]*hasSemanticInlineMatch/);
+  assert.match(reconcileSource, /!this\.noteFlowMarkdownAnnotationComplete \|\| !this\.markdownBlockElement\(block\)\?\.isConnected/);
+});
+
 test("NoteFlow release commits the exact candidate and boundary shown by the blue indicator", async () => {
   const source = await readFile(sourceUrl, "utf8");
   const dragFinishSource = source.slice(source.indexOf("  finishSelectedStrokeDrag("), source.indexOf("  cancelSelectedStrokeDrag(", source.indexOf("  finishSelectedStrokeDrag(")));
