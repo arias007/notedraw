@@ -1,6 +1,6 @@
 {
   "name": "notedraw",
-  "version": "3.1.34",
+  "version": "3.4.74",
   "description": "Draw and edit directly on notes with an open API for AI-assisted workflows.",
   "main": "main.js",
   "scripts": {
@@ -15,7 +15,7 @@
     "annotation",
     "ai"
   ],
-  "author": "Murat/Codex",
+  "author": "Murat",
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^24.0.0",

@@ -1,10 +1,10 @@
 {
   "id": "notedraw",
   "name": "NoteDraw",
-  "version": "3.1.34",
+  "version": "3.4.74",
   "minAppVersion": "1.5.0",
   "description": "Draw and edit directly on notes.",
-  "author": "Murat/Codex",
-  "authorUrl": "",
+  "author": "Murat",
+  "authorUrl": "https://github.com/arias007",
   "isDesktopOnly": false
 }
