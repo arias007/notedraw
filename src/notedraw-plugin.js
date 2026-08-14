@@ -12898,12 +12898,26 @@ var PreviewDrawingController = class {
       textCommit: this.dragMarkdownTextCommit,
       domPreview: committedDomPreview
     } : null;
-    if (didMove && markdownDrop) {
+    // Dropping the blocks back exactly where they already are must be a true
+    // no-op: no source rewrite, no span reset, no anchor re-capture. Doing a
+    // real move here broke side-by-side rows (span -> 12) and left a visible
+    // gap each time the user dropped back to the original spot.
+    const noOpMarkdownDrop = didMove && markdownDrop ? this.markdownDropIsNoOp(markdownDrop) : false;
+    if (didMove && markdownDrop && !noOpMarkdownDrop) {
       this.selectionFrameAwaitingMarkdownSync = { committed: false };
       this.invalidateSelectionFrameSnapshot();
     }
     const drawingHistoryBefore = this.dragDrawingHistoryBefore;
-    if (didMove) {
+    if (noOpMarkdownDrop) {
+      // Restore the preview completely and keep the selection, so the note
+      // stays exactly as compact as before the drag.
+      this.restoreDraggedNoteFlowLivePreview();
+      this.restoreDraggedNoteFlowReservationStyles();
+      this.dragMarkdownLastValidDrop = null;
+      this.clearMarkdownBlockDropTarget();
+      this.dragMarkdownDropTarget = null;
+      this.dragMarkdownDropSide = null;
+    } else if (didMove) {
       const movedIndexes = Array.from(this.dragStrokeOriginalPoints?.keys() || []);
       const movedNoteFlowIndexes = this.draggedNoteFlowIndexes(movedIndexes);
       const affectsNoteFlow = movedNoteFlowIndexes.length > 0;
@@ -12982,7 +12996,7 @@ var PreviewDrawingController = class {
       this.settleReadingBottomExtent();
     }
     this.releasePointerCapture(event.pointerId);
-    this.clearSelectedStrokeDragState({ preserveMarkdownDom: Boolean(markdownDrop?.domPreview) });
+    this.clearSelectedStrokeDragState({ preserveMarkdownDom: Boolean(markdownDrop?.domPreview && !noOpMarkdownDrop) });
     if (settleNoteFlowImmediately) {
       this.scheduleNoteFlowLayout({ immediate: true });
     }
@@ -12993,7 +13007,7 @@ var PreviewDrawingController = class {
       }
     }
     this.render();
-    if (didMove && markdownDrop) {
+    if (didMove && markdownDrop && !noOpMarkdownDrop) {
       this.commitDraggedMarkdownBlocks(markdownDrop, drawingHistoryBefore).then((committed) => {
         this.settleCommittedMarkdownDomPreview(markdownDrop, committed);
         if (committed) {
@@ -16748,6 +16762,7 @@ var PreviewDrawingController = class {
     // its generous vertical capture band. The row-boundary index is based on
     // live DOM geometry; choosing it afresh on every pointer frame lets a
     // one-pixel height/scroll change switch between before/after and inline.
+    let keptPreviousInline = false;
     if (previousPlacement?.horizontalSide && previousPlacement.candidate) {
       const previousCandidate = this.refreshDraggedNoteFlowPreviewCandidate(previousPlacement.candidate);
       const previousRect = previousCandidate
@@ -16769,6 +16784,7 @@ var PreviewDrawingController = class {
           flowOrder: previousPlacement.flowOrder,
           noteFlowBoundary: previousPlacement.noteFlowBoundary
         };
+        keptPreviousInline = true;
       }
     }
     // Hysteresis for vertical (row) placements: the drop index snaps to the
@@ -16871,7 +16887,15 @@ var PreviewDrawingController = class {
       horizontalRoom,
       rightIntentRatio: 0.5
     });
-    const horizontalSide = intent === "inline-right" ? "right" : null;
+    const horizontalSide = intent === "inline-right" ? "right"
+      // Once side-by-side, keep the mode while the pointer stays in the
+      // candidate's capture band (the intent alone would flip back to a
+      // vertical insertion the moment the pointer drifts left of the target's
+      // middle, flashing the preview). Only a clear line-start intent or
+      // leaving the band exits the side-by-side mode.
+      : keptPreviousInline && intent !== "line-start"
+        ? previousPlacement.horizontalSide
+        : null;
     const leftSnap = intent === "line-start";
     const canonicalGap = horizontalSide ? null : canonicalNoteFlowGapPlacement(
       geometry?.noteFlowCandidates,
@@ -17033,6 +17057,34 @@ var PreviewDrawingController = class {
     this.dragMarkdownDropSide = side;
     this.dragMarkdownLastValidDrop = drop;
     return drop;
+  }
+  markdownDropIsNoOp(drop) {
+    // A vertical drop-back places every moving block exactly where it already
+    // is (same target and side as its original neighbour). Treating it as a
+    // real move rewrites the source, resets the block's span to 12 and breaks
+    // side-by-side rows, leaving a visible gap. Side-by-side (left/right)
+    // intents are explicit and are never a no-op.
+    const side = drop?.side;
+    if (side !== "after" && side !== "before") {
+      return false;
+    }
+    const moving = Array.isArray(drop?.moving) ? drop.moving.filter((state) => state?.domMarker) : [];
+    if (!moving.length || !drop?.element?.isConnected) {
+      return false;
+    }
+    const ordered = moving.slice().sort((a, b) => (
+      (Number(a.clientRect?.top) || 0) - (Number(b.clientRect?.top) || 0)
+      || (Number(a.clientRect?.left) || 0) - (Number(b.clientRect?.left) || 0)
+    ));
+    // The domMarker comment sits at the block's original spot, so its
+    // neighbours are the elements the moving group originally sat between.
+    const after = side === "after";
+    const marker = after ? ordered[0]?.domMarker : ordered[ordered.length - 1]?.domMarker;
+    if (!marker?.parentNode) {
+      return false;
+    }
+    const originalNeighbour = after ? marker.previousElementSibling : marker.nextElementSibling;
+    return Boolean(originalNeighbour && originalNeighbour === drop.element);
   }
   prepareMarkdownAnchorForInlineNoteFlow(placement) {
     const candidate = placement?.candidate;

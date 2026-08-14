@@ -16344,12 +16344,20 @@ ${selected}
       textCommit: this.dragMarkdownTextCommit,
       domPreview: committedDomPreview
     } : null;
-    if (didMove && markdownDrop) {
+    const noOpMarkdownDrop = didMove && markdownDrop ? this.markdownDropIsNoOp(markdownDrop) : false;
+    if (didMove && markdownDrop && !noOpMarkdownDrop) {
       this.selectionFrameAwaitingMarkdownSync = { committed: false };
       this.invalidateSelectionFrameSnapshot();
     }
     const drawingHistoryBefore = this.dragDrawingHistoryBefore;
-    if (didMove) {
+    if (noOpMarkdownDrop) {
+      this.restoreDraggedNoteFlowLivePreview();
+      this.restoreDraggedNoteFlowReservationStyles();
+      this.dragMarkdownLastValidDrop = null;
+      this.clearMarkdownBlockDropTarget();
+      this.dragMarkdownDropTarget = null;
+      this.dragMarkdownDropSide = null;
+    } else if (didMove) {
       const movedIndexes = Array.from(this.dragStrokeOriginalPoints?.keys() || []);
       const movedNoteFlowIndexes = this.draggedNoteFlowIndexes(movedIndexes);
       const affectsNoteFlow = movedNoteFlowIndexes.length > 0;
@@ -16417,7 +16425,7 @@ ${selected}
       this.settleReadingBottomExtent();
     }
     this.releasePointerCapture(event.pointerId);
-    this.clearSelectedStrokeDragState({ preserveMarkdownDom: Boolean(markdownDrop?.domPreview) });
+    this.clearSelectedStrokeDragState({ preserveMarkdownDom: Boolean(markdownDrop?.domPreview && !noOpMarkdownDrop) });
     if (settleNoteFlowImmediately) {
       this.scheduleNoteFlowLayout({ immediate: true });
     }
@@ -16428,7 +16436,7 @@ ${selected}
       }
     }
     this.render();
-    if (didMove && markdownDrop) {
+    if (didMove && markdownDrop && !noOpMarkdownDrop) {
       this.commitDraggedMarkdownBlocks(markdownDrop, drawingHistoryBefore).then((committed) => {
         this.settleCommittedMarkdownDomPreview(markdownDrop, committed);
         if (committed) {
@@ -20011,6 +20019,7 @@ ${selected}
     const geometry = this.dragDropGeometrySnapshot();
     const previousPlacement = this.dragNoteFlowPlacement;
     let placement = selectNoteFlowDropPlacementFromIndex(geometry?.noteFlowDropIndex, { dropY: Number(clientY) });
+    let keptPreviousInline = false;
     if (previousPlacement?.horizontalSide && previousPlacement.candidate) {
       const previousCandidate = this.refreshDraggedNoteFlowPreviewCandidate(previousPlacement.candidate);
       const previousRect = previousCandidate ? this.noteFlowCandidateRect(previousCandidate, "inline") : null;
@@ -20027,6 +20036,7 @@ ${selected}
           flowOrder: previousPlacement.flowOrder,
           noteFlowBoundary: previousPlacement.noteFlowBoundary
         };
+        keptPreviousInline = true;
       }
     }
     if (previousPlacement && !previousPlacement.horizontalSide && !previousPlacement.leftSnap && previousPlacement.candidate) {
@@ -20101,7 +20111,7 @@ ${selected}
       horizontalRoom,
       rightIntentRatio: 0.5
     });
-    const horizontalSide = intent === "inline-right" ? "right" : null;
+    const horizontalSide = intent === "inline-right" ? "right" : keptPreviousInline && intent !== "line-start" ? previousPlacement.horizontalSide : null;
     const leftSnap = intent === "line-start";
     const canonicalGap = horizontalSide ? null : canonicalNoteFlowGapPlacement(
       geometry?.noteFlowCandidates,
@@ -20221,6 +20231,24 @@ ${selected}
     this.dragMarkdownDropSide = side;
     this.dragMarkdownLastValidDrop = drop;
     return drop;
+  }
+  markdownDropIsNoOp(drop) {
+    const side = drop?.side;
+    if (side !== "after" && side !== "before") {
+      return false;
+    }
+    const moving = Array.isArray(drop?.moving) ? drop.moving.filter((state) => state?.domMarker) : [];
+    if (!moving.length || !drop?.element?.isConnected) {
+      return false;
+    }
+    const ordered = moving.slice().sort((a, b) => (Number(a.clientRect?.top) || 0) - (Number(b.clientRect?.top) || 0) || (Number(a.clientRect?.left) || 0) - (Number(b.clientRect?.left) || 0));
+    const after = side === "after";
+    const marker = after ? ordered[0]?.domMarker : ordered[ordered.length - 1]?.domMarker;
+    if (!marker?.parentNode) {
+      return false;
+    }
+    const originalNeighbour = after ? marker.previousElementSibling : marker.nextElementSibling;
+    return Boolean(originalNeighbour && originalNeighbour === drop.element);
   }
   prepareMarkdownAnchorForInlineNoteFlow(placement) {
     const candidate = placement?.candidate;
