@@ -12853,9 +12853,9 @@ var PreviewDrawingController = class {
       }
       this.dragNoteFlowDropClientX = null;
       this.dragNoteFlowDropClientY = null;
-      // Force the final placement on release so the committed drop matches
-      // what the pointer is over (bypasses the side-by-side rebuild debounce).
-      this.updateDraggedNoteFlowPlacement(event.clientX, event.clientY, { force: true });
+      // Commit the placement that was actually previewed (WYSIWYG). The
+      // preview must already show the final position; recomputing here would
+      // apply a placement the user never saw and flash after release.
       requestedDropPlacement = this.dragNoteFlowPlacement ? {
         path: this.dragNoteFlowPlacement.path,
         line: this.dragNoteFlowPlacement.line,
@@ -13033,8 +13033,34 @@ var PreviewDrawingController = class {
     this.render();
     if (didMove && markdownDrop && !noOpMarkdownDrop) {
       this.commitDraggedMarkdownBlocks(markdownDrop, drawingHistoryBefore).then((committed) => {
-        this.settleCommittedMarkdownDomPreview(markdownDrop, committed);
-        if (committed) {
+        const committedChanged = Boolean(committed && committed.changed !== false);
+        // A vertical drop whose source did not actually change is effectively
+        // a drop-back: undo the span/float mutations on the block records and
+        // revert the preserved DOM preview, otherwise the block keeps the
+        // commit's span (12) or the preview DOM lingers and a blank area
+        // appears. Side-by-side (left/right) commits keep their spans even
+        // when the source text was already adjacent.
+        const horizontalCommit = markdownDrop.side === "left" || markdownDrop.side === "right";
+        const revertBlockState = !committedChanged && !horizontalCommit;
+        if (revertBlockState) {
+          for (const state of markdownDrop.moving || []) {
+            if (!state?.block) {
+              continue;
+            }
+            state.block.span = state.span;
+            state.block.noteFlowAutoSpan = state.noteFlowAutoSpan;
+            state.block.widthScale = state.widthScale;
+            state.block.floating = Boolean(state.floatBox);
+            state.block.floatingExplicit = Boolean(state.floatingExplicit);
+            state.block.floatBox = state.floatBox ? { ...state.floatBox } : null;
+          }
+          this.refreshMarkdownBlockPresentation(Array.from(markdownDrop.moving || []).map((state) => state.block?.id).filter(Boolean));
+        }
+        // When the source did not actually change, Obsidian never re-renders,
+        // so the preserved DOM preview (moved elements, grid classes) would
+        // linger and leave a blank area. Revert it in that case.
+        this.settleCommittedMarkdownDomPreview(markdownDrop, committedChanged && !revertBlockState);
+        if (committedChanged) {
           // Obsidian rebuilds the moved blocks after the source edit. If its
           // incremental render stalls (stale section refs), the blocks would
           // stay missing; force a render repair so elements never vanish
@@ -16105,7 +16131,7 @@ var PreviewDrawingController = class {
     this.rememberDraggedNoteFlowDomClass(element, className);
     element.classList.toggle(className, Boolean(enabled));
   }
-  restoreDraggedNoteFlowDomPreview() {
+  restoreDraggedNoteFlowDomPreview(options = {}) {
     const preview = this.dragNoteFlowDomPreview;
     if (preview) {
       for (const [element, styles] of preview.styles || []) {
@@ -16124,14 +16150,16 @@ var PreviewDrawingController = class {
       }
     }
     const restored = /* @__PURE__ */ new Set();
-    for (const state of this.dragMarkdownOriginalElements?.values?.() || []) {
-      const dragElement = state.dragElement || state.element;
-      const marker = state.domMarker;
-      if (!dragElement || !marker?.parentNode || restored.has(dragElement)) {
-        continue;
+    if (options.keepElements !== true) {
+      for (const state of this.dragMarkdownOriginalElements?.values?.() || []) {
+        const dragElement = state.dragElement || state.element;
+        const marker = state.domMarker;
+        if (!dragElement || !marker?.parentNode || restored.has(dragElement)) {
+          continue;
+        }
+        marker.parentNode.insertBefore(dragElement, marker.nextSibling);
+        restored.add(dragElement);
       }
-      marker.parentNode.insertBefore(dragElement, marker.nextSibling);
-      restored.add(dragElement);
     }
     this.dragNoteFlowDomPreview = null;
     return Boolean(preview || restored.size);
@@ -16674,12 +16702,21 @@ var PreviewDrawingController = class {
     return changed || domChanged;
   }
   applyDraggedNoteFlowLivePreview(placement, options = {}) {
-    // Rebuilding the preview on every pointer-move frame restores the
-    // dragged elements to their original spot first and then re-inserts them
-    // at the drop target, which visibly flickers. When the placement intent
-    // is unchanged, keep the existing DOM preview and only refresh the
-    // reservation so the element follows the pointer smoothly.
-    if (options.skipRestore !== true) {
+    // Re-target incrementally: when the drop candidate changes, undo the
+    // previous target's reservation margin and DOM classes in place and let
+    // insertBefore relocate the elements. The old behavior restored the
+    // dragged elements back to their origin markers first and then re-inserted
+    // them, which flashed the preview on every target change.
+    const previousApplied = this.dragNoteFlowLastAppliedPlacement;
+    const candidateChanged = Boolean(
+      previousApplied?.candidate && placement?.candidate
+      && (previousApplied.candidate.sourceElement || previousApplied.candidate.element)
+        !== (placement.candidate.sourceElement || placement.candidate.element)
+    );
+    if (candidateChanged && options.skipRestore === true) {
+      this.restoreDraggedNoteFlowDomPreview({ keepElements: true });
+      this.restoreDraggedNoteFlowReservationStyles();
+    } else if (options.skipRestore !== true) {
       this.restoreDraggedNoteFlowLivePreview();
     }
     const movedIndexes = Array.from(this.dragStrokeOriginalPoints?.keys?.() || []);
@@ -16734,6 +16771,7 @@ var PreviewDrawingController = class {
     }
     this.invalidateSelectionFrameSnapshot();
     this.requestRender(this.selectionHasDomStrokes() ? "interaction" : false);
+    this.dragNoteFlowLastAppliedPlacement = placement;
     return affectedIndexes;
   }
   refreshDraggedNoteFlowPreviewCandidate(candidate) {
@@ -17126,7 +17164,10 @@ var PreviewDrawingController = class {
     }
     this.dragNoteFlowLastAppliedPlacement = this.dragNoteFlowPlacement;
     const drop = this.syncMarkdownDropFromNoteFlowPlacement(this.dragNoteFlowPlacement);
-    this.applyDraggedNoteFlowLivePreview(this.dragNoteFlowPlacement, { skipRestore: !targetChanged, drop });
+    // Always apply incrementally during the drag: elements are relocated by
+    // insertBefore and the previous target's styles are undone in place. The
+    // full restore back to the origin markers only happens at drag end.
+    this.applyDraggedNoteFlowLivePreview(this.dragNoteFlowPlacement, { skipRestore: true, drop });
     return this.dragNoteFlowPlacement;
   }
   syncMarkdownDropFromNoteFlowPlacement(placement) {

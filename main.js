@@ -16305,7 +16305,6 @@ ${selected}
       }
       this.dragNoteFlowDropClientX = null;
       this.dragNoteFlowDropClientY = null;
-      this.updateDraggedNoteFlowPlacement(event.clientX, event.clientY, { force: true });
       requestedDropPlacement = this.dragNoteFlowPlacement ? {
         path: this.dragNoteFlowPlacement.path,
         line: this.dragNoteFlowPlacement.line,
@@ -16451,8 +16450,25 @@ ${selected}
     this.render();
     if (didMove && markdownDrop && !noOpMarkdownDrop) {
       this.commitDraggedMarkdownBlocks(markdownDrop, drawingHistoryBefore).then((committed) => {
-        this.settleCommittedMarkdownDomPreview(markdownDrop, committed);
-        if (committed) {
+        const committedChanged = Boolean(committed && committed.changed !== false);
+        const horizontalCommit = markdownDrop.side === "left" || markdownDrop.side === "right";
+        const revertBlockState = !committedChanged && !horizontalCommit;
+        if (revertBlockState) {
+          for (const state of markdownDrop.moving || []) {
+            if (!state?.block) {
+              continue;
+            }
+            state.block.span = state.span;
+            state.block.noteFlowAutoSpan = state.noteFlowAutoSpan;
+            state.block.widthScale = state.widthScale;
+            state.block.floating = Boolean(state.floatBox);
+            state.block.floatingExplicit = Boolean(state.floatingExplicit);
+            state.block.floatBox = state.floatBox ? { ...state.floatBox } : null;
+          }
+          this.refreshMarkdownBlockPresentation(Array.from(markdownDrop.moving || []).map((state) => state.block?.id).filter(Boolean));
+        }
+        this.settleCommittedMarkdownDomPreview(markdownDrop, committedChanged && !revertBlockState);
+        if (committedChanged) {
           this.repairMarkdownDomAfterCommit(markdownDrop);
           this.scheduleMarkdownMoveRepair(markdownDrop.moving);
         }
@@ -19418,7 +19434,7 @@ ${selected}
     this.rememberDraggedNoteFlowDomClass(element, className);
     element.classList.toggle(className, Boolean(enabled));
   }
-  restoreDraggedNoteFlowDomPreview() {
+  restoreDraggedNoteFlowDomPreview(options = {}) {
     const preview = this.dragNoteFlowDomPreview;
     if (preview) {
       for (const [element, styles] of preview.styles || []) {
@@ -19437,14 +19453,16 @@ ${selected}
       }
     }
     const restored = /* @__PURE__ */ new Set();
-    for (const state of this.dragMarkdownOriginalElements?.values?.() || []) {
-      const dragElement = state.dragElement || state.element;
-      const marker = state.domMarker;
-      if (!dragElement || !marker?.parentNode || restored.has(dragElement)) {
-        continue;
+    if (options.keepElements !== true) {
+      for (const state of this.dragMarkdownOriginalElements?.values?.() || []) {
+        const dragElement = state.dragElement || state.element;
+        const marker = state.domMarker;
+        if (!dragElement || !marker?.parentNode || restored.has(dragElement)) {
+          continue;
+        }
+        marker.parentNode.insertBefore(dragElement, marker.nextSibling);
+        restored.add(dragElement);
       }
-      marker.parentNode.insertBefore(dragElement, marker.nextSibling);
-      restored.add(dragElement);
     }
     this.dragNoteFlowDomPreview = null;
     return Boolean(preview || restored.size);
@@ -19932,7 +19950,14 @@ ${selected}
     return changed || domChanged;
   }
   applyDraggedNoteFlowLivePreview(placement, options = {}) {
-    if (options.skipRestore !== true) {
+    const previousApplied = this.dragNoteFlowLastAppliedPlacement;
+    const candidateChanged = Boolean(
+      previousApplied?.candidate && placement?.candidate && (previousApplied.candidate.sourceElement || previousApplied.candidate.element) !== (placement.candidate.sourceElement || placement.candidate.element)
+    );
+    if (candidateChanged && options.skipRestore === true) {
+      this.restoreDraggedNoteFlowDomPreview({ keepElements: true });
+      this.restoreDraggedNoteFlowReservationStyles();
+    } else if (options.skipRestore !== true) {
       this.restoreDraggedNoteFlowLivePreview();
     }
     const movedIndexes = Array.from(this.dragStrokeOriginalPoints?.keys?.() || []);
@@ -19986,6 +20011,7 @@ ${selected}
     }
     this.invalidateSelectionFrameSnapshot();
     this.requestRender(this.selectionHasDomStrokes() ? "interaction" : false);
+    this.dragNoteFlowLastAppliedPlacement = placement;
     return affectedIndexes;
   }
   refreshDraggedNoteFlowPreviewCandidate(candidate) {
@@ -20281,7 +20307,7 @@ ${selected}
     }
     this.dragNoteFlowLastAppliedPlacement = this.dragNoteFlowPlacement;
     const drop = this.syncMarkdownDropFromNoteFlowPlacement(this.dragNoteFlowPlacement);
-    this.applyDraggedNoteFlowLivePreview(this.dragNoteFlowPlacement, { skipRestore: !targetChanged, drop });
+    this.applyDraggedNoteFlowLivePreview(this.dragNoteFlowPlacement, { skipRestore: true, drop });
     return this.dragNoteFlowPlacement;
   }
   syncMarkdownDropFromNoteFlowPlacement(placement) {
