@@ -16830,10 +16830,13 @@ var PreviewDrawingController = class {
         ? this.noteFlowCandidateRect(previousCandidate, "inline")
         : null;
       const previousHeight = previousRect ? Math.max(1, previousRect.bottom - previousRect.top) : 0;
-      const verticalTolerance = Math.max(32, previousHeight * 0.75);
+      // Generous keep-band: once side-by-side, stay side-by-side while the
+      // pointer is near the block (including comfortably above/below it) so
+      // it does not drop out at the slightest nudge.
+      const verticalTolerance = Math.max(48, previousHeight * 1.1);
       const lane = geometry?.laneRect;
       const remainsInLane = !lane
-        || (Number(clientX) >= Number(lane.left) - 24 && Number(clientX) <= Number(lane.right) + 24);
+        || (Number(clientX) >= Number(lane.left) - 32 && Number(clientX) <= Number(lane.right) + 32);
       if (previousRect && remainsInLane
         && Number(clientY) >= previousRect.top - verticalTolerance
         && Number(clientY) <= previousRect.bottom + verticalTolerance) {
@@ -16917,8 +16920,12 @@ var PreviewDrawingController = class {
       bottom: targetRect.top + draggedClientHeight
     };
     const targetHeight = Math.max(1, targetRect.bottom - targetRect.top);
-    const inlineEdgeBand = clamp(targetHeight * 0.14, 3, 9);
-    const inlineCaptureBand = clamp(targetHeight * 0.55, 18, 44);
+    // A wider side-by-side capture zone: the pointer only needs to be near
+    // the block's vertical span (not strictly inside it), and the right-half
+    // intent threshold is lowered, so the side-by-side placement is easy to
+    // find and hard to lose.
+    const inlineEdgeBand = clamp(targetHeight * 0.10, 2, 6);
+    const inlineCaptureBand = clamp(targetHeight * 0.85, 28, 72);
     const sameInlineCandidate = Boolean(previousPlacement?.horizontalSide
       && previousPlacement.candidate
       && placement?.candidate
@@ -16938,7 +16945,7 @@ var PreviewDrawingController = class {
       && inlineRowHit
       && movingLaneCount > 0
       && inlineRow.canFit
-      && laneWidth >= Math.max(180, inlineRow.totalCount * 32);
+      && laneWidth >= Math.max(160, inlineRow.totalCount * 28);
     const intent = resolveDragDropHorizontalIntent({
       clientX,
       targetLeft: targetRect.left,
@@ -16947,15 +16954,14 @@ var PreviewDrawingController = class {
       laneRight: laneRect.right,
       draggedLeft: this.draggedSelectionClientLeft(),
       horizontalRoom,
-      rightIntentRatio: 0.5
+      rightIntentRatio: 0.45
     });
     const horizontalSide = intent === "inline-right" ? "right"
-      // Once side-by-side, keep the mode while the pointer stays in the
-      // candidate's capture band (the intent alone would flip back to a
-      // vertical insertion the moment the pointer drifts left of the target's
-      // middle, flashing the preview). Only a clear line-start intent or
-      // leaving the band exits the side-by-side mode.
-      : keptPreviousInline && intent !== "line-start"
+      // Once side-by-side, stay side-by-side while the pointer stays in the
+      // candidate's capture band (a line-start / left drift no longer exits
+      // it — only clearly leaving the band switches back to a vertical
+      // insertion), so the placement is lazy instead of jumping away.
+      : keptPreviousInline
         ? previousPlacement.horizontalSide
         : null;
     const leftSnap = intent === "line-start";

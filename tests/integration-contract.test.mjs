@@ -441,10 +441,10 @@ test("selection tool previews and commits exact NoteFlow Markdown insertion targ
   assert.match(dropSource, /this\.toolMode === TOOL_SELECT[\s\S]*queueDraggedNoteFlowPlacement\(clientX, clientY\)[\s\S]*window\.requestAnimationFrame/);
   assert.match(dropSource, /notedraw-text-sort-target-before[\s\S]*notedraw-text-sort-target-after[\s\S]*notedraw-text-sort-target-left[\s\S]*notedraw-text-sort-target-right/);
   assert.match(dropSource, /noteDrawDropSide[\s\S]*noteDrawDropLine/);
-  assert.match(dropSource, /const inlineRowHit = sameInlineCandidate[\s\S]*const inlineRow = this\.markdownDropRowMetrics\(inlineTarget, movingElements\)[\s\S]*const horizontalRoom = !this\.markdownDropIncludesHeading\(inlineTarget\)[\s\S]*inlineRowHit[\s\S]*movingLaneCount > 0[\s\S]*inlineRow\.canFit[\s\S]*laneWidth >= Math\.max\(180, inlineRow\.totalCount \* 32\)/);
+  assert.match(dropSource, /const inlineRowHit = sameInlineCandidate[\s\S]*const inlineRow = this\.markdownDropRowMetrics\(inlineTarget, movingElements\)[\s\S]*const horizontalRoom = !this\.markdownDropIncludesHeading\(inlineTarget\)[\s\S]*inlineRowHit[\s\S]*movingLaneCount > 0[\s\S]*inlineRow\.canFit[\s\S]*laneWidth >= Math\.max\(160, inlineRow\.totalCount \* 28\)/);
   assert.match(dropSource, /noteFlowCandidateRect\(placement\.candidate, "inline"\)/);
   assert.match(dropSource, /noteFlowCandidateRect\([\s\S]*horizontalSide \? "inline" : "row"/);
-  assert.match(dropSource, /const intent = resolveDragDropHorizontalIntent\([\s\S]*horizontalRoom[\s\S]*\);[\s\S]*const horizontalSide = intent === "inline-right" \? "right"[\s\S]*keptPreviousInline && intent !== "line-start"[\s\S]*\? previousPlacement\.horizontalSide[\s\S]*: null[\s\S]*const leftSnap = intent === "line-start"/);
+  assert.match(dropSource, /const intent = resolveDragDropHorizontalIntent\([\s\S]*horizontalRoom[\s\S]*\);[\s\S]*const horizontalSide = intent === "inline-right" \? "right"[\s\S]*: keptPreviousInline[\s\S]*\? previousPlacement\.horizontalSide[\s\S]*: null[\s\S]*const leftSnap = intent === "line-start"/);
   assert.match(dropSource, /canonicalNoteFlowGapPlacement\([\s\S]*canonicalRowKey[\s\S]*const peers = \[\][\s\S]*flowOrder = insertionIndex/);
   assert.match(dropSource, /noteFlowBoundary[\s\S]*flowBoundary/);
   assert.match(dropSource, /this\.removeDraggedNoteFlowPlacementVisual\(\);[\s\S]*indicator\.dataset\.noteDrawDropSide = horizontalSide \|\| flowSide[\s\S]*indicator\.dataset\.noteDrawDropLine = String\(flowLine\)/);

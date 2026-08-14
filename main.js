@@ -20072,9 +20072,9 @@ ${selected}
       const previousCandidate = this.refreshDraggedNoteFlowPreviewCandidate(previousPlacement.candidate) || previousPlacement.candidate;
       const previousRect = previousCandidate ? this.noteFlowCandidateRect(previousCandidate, "inline") : null;
       const previousHeight = previousRect ? Math.max(1, previousRect.bottom - previousRect.top) : 0;
-      const verticalTolerance = Math.max(32, previousHeight * 0.75);
+      const verticalTolerance = Math.max(48, previousHeight * 1.1);
       const lane = geometry?.laneRect;
-      const remainsInLane = !lane || Number(clientX) >= Number(lane.left) - 24 && Number(clientX) <= Number(lane.right) + 24;
+      const remainsInLane = !lane || Number(clientX) >= Number(lane.left) - 32 && Number(clientX) <= Number(lane.right) + 32;
       if (previousRect && remainsInLane && Number(clientY) >= previousRect.top - verticalTolerance && Number(clientY) <= previousRect.bottom + verticalTolerance) {
         placement = {
           candidate: previousCandidate,
@@ -20141,14 +20141,14 @@ ${selected}
       bottom: targetRect.top + draggedClientHeight
     };
     const targetHeight = Math.max(1, targetRect.bottom - targetRect.top);
-    const inlineEdgeBand = clamp10(targetHeight * 0.14, 3, 9);
-    const inlineCaptureBand = clamp10(targetHeight * 0.55, 18, 44);
+    const inlineEdgeBand = clamp10(targetHeight * 0.1, 2, 6);
+    const inlineCaptureBand = clamp10(targetHeight * 0.85, 28, 72);
     const sameInlineCandidate = Boolean(previousPlacement?.horizontalSide && previousPlacement.candidate && placement?.candidate && (previousPlacement.candidate.blockKey || noteFlowBlockKey(previousPlacement.candidate, this.file?.path || "")) === (placement.candidate.blockKey || noteFlowBlockKey(placement.candidate, this.file?.path || "")));
     const inlineRowHit = sameInlineCandidate ? Number(clientY) >= targetRect.top - inlineCaptureBand && Number(clientY) <= targetRect.bottom + inlineCaptureBand : Number(clientY) >= targetRect.top + inlineEdgeBand && Number(clientY) <= targetRect.bottom - inlineEdgeBand;
     const inlineTarget = isConcreteMarkdownBlockElement(target) ? target : findNoteFlowInlineMeasureElement(target);
     const movingElements = new Set(this.draggedNoteFlowMarkdownStates().map((state) => state.element));
     const inlineRow = this.markdownDropRowMetrics(inlineTarget, movingElements);
-    const horizontalRoom = !this.markdownDropIncludesHeading(inlineTarget) && inlineRowHit && movingLaneCount > 0 && inlineRow.canFit && laneWidth >= Math.max(180, inlineRow.totalCount * 32);
+    const horizontalRoom = !this.markdownDropIncludesHeading(inlineTarget) && inlineRowHit && movingLaneCount > 0 && inlineRow.canFit && laneWidth >= Math.max(160, inlineRow.totalCount * 28);
     const intent = resolveDragDropHorizontalIntent({
       clientX,
       targetLeft: targetRect.left,
@@ -20157,9 +20157,9 @@ ${selected}
       laneRight: laneRect.right,
       draggedLeft: this.draggedSelectionClientLeft(),
       horizontalRoom,
-      rightIntentRatio: 0.5
+      rightIntentRatio: 0.45
     });
-    const horizontalSide = intent === "inline-right" ? "right" : keptPreviousInline && intent !== "line-start" ? previousPlacement.horizontalSide : null;
+    const horizontalSide = intent === "inline-right" ? "right" : keptPreviousInline ? previousPlacement.horizontalSide : null;
     const leftSnap = intent === "line-start";
     const canonicalGap = horizontalSide ? null : canonicalNoteFlowGapPlacement(
       geometry?.noteFlowCandidates,
