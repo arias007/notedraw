@@ -127,8 +127,8 @@ export function resolveDragDropHorizontalIntent({
     return "line-start";
   }
   const rightThreshold = Math.min(
-    left + targetWidth * clamp(Number(rightIntentRatio) || 0.82, 0.5, 0.92),
-    surfaceRight - clamp(laneWidth * 0.08, 32, 64)
+    left + targetWidth * clamp(Number(rightIntentRatio) || 0.6, 0.5, 0.92),
+    surfaceRight - clamp(laneWidth * 0.06, 24, 48)
   );
   return horizontalRoom && x >= rightThreshold ? "inline-right" : "vertical";
 }

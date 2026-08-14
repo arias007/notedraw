@@ -1586,8 +1586,8 @@ function resolveDragDropHorizontalIntent({
     return "line-start";
   }
   const rightThreshold = Math.min(
-    left + targetWidth * clamp4(Number(rightIntentRatio) || 0.82, 0.5, 0.92),
-    surfaceRight - clamp4(laneWidth * 0.08, 32, 64)
+    left + targetWidth * clamp4(Number(rightIntentRatio) || 0.6, 0.5, 0.92),
+    surfaceRight - clamp4(laneWidth * 0.06, 24, 48)
   );
   return horizontalRoom && x >= rightThreshold ? "inline-right" : "vertical";
 }
@@ -15731,6 +15731,13 @@ ${selected}
     } else if (horizontalRoom && intent === "line-start") {
       side = "left";
     }
+    if ((this.dragMarkdownDropSide === "right" || this.dragMarkdownDropSide === "left") && this.dragMarkdownDropTarget === target) {
+      if (this.dragMarkdownDropSide === "right" && clientX >= rect.left + rect.width * 0.35) {
+        side = "right";
+      } else if (this.dragMarkdownDropSide === "left" && clientX <= rect.left + rect.width * 0.65) {
+        side = "left";
+      }
+    }
     if (target !== this.dragMarkdownDropTarget || side !== this.dragMarkdownDropSide) {
       this.clearMarkdownBlockDropTarget();
       this.dragMarkdownDropTarget = target;
@@ -16385,6 +16392,9 @@ ${selected}
     if (didMove && markdownDrop) {
       this.commitDraggedMarkdownBlocks(markdownDrop, drawingHistoryBefore).then((committed) => {
         this.settleCommittedMarkdownDomPreview(markdownDrop, committed);
+        if (committed) {
+          this.repairMarkdownDomAfterCommit(markdownDrop);
+        }
         if (!committed && this.selectionFrameAwaitingMarkdownSync) {
           this.selectionFrameAwaitingMarkdownSync = null;
           this.invalidateSelectionFrameSnapshot();
@@ -19376,6 +19386,29 @@ ${selected}
     }
     return true;
   }
+  repairMarkdownDomAfterCommit(drop) {
+    if (!this.previewEl?.isConnected || !Array.isArray(drop?.moving)) {
+      return;
+    }
+    const missing = drop.moving.some((state) => {
+      const dragElement = state.dragElement || state.element;
+      return Boolean(dragElement && !dragElement.isConnected);
+    });
+    if (!missing) {
+      return;
+    }
+    const renderer = this.readingPreviewRenderer();
+    if (!renderer) {
+      return;
+    }
+    for (const section of renderer.sections || []) {
+      if (section?.el && !section.el.isConnected && section.rendered !== false) {
+        section.rendered = false;
+      }
+    }
+    this.repairConnectedReadingSections(renderer);
+    this.scheduleResize({ layout: false, measure: true });
+  }
   draggedNoteFlowPreviewHeight(indexes = this.draggedNoteFlowIndexes()) {
     const bounds = this.getStrokeIndexesBounds(indexes);
     const strokeHeight = bounds ? Math.max(0, bounds.maxY - bounds.minY) : 0;
@@ -19827,17 +19860,6 @@ ${selected}
       flowTarget.classList.add(`notedraw-text-sort-target-${horizontalSide || flowSide}`);
       const left = leftSnap ? laneRect.left : targetRect.left;
       const right = leftSnap ? laneRect.right : targetRect.right;
-      applyElementStyles(indicator, horizontalSide ? {
-        left: `${Math.round(inlineBoundary)}px`,
-        top: `${Math.round(targetRect.top)}px`,
-        width: "4px",
-        height: `${Math.max(16, Math.round(targetRect.height))}px`
-      } : {
-        left: `${Math.round(left)}px`,
-        top: `${Math.round(flowBoundary)}px`,
-        width: `${Math.max(16, Math.round(right - left))}px`,
-        height: "4px"
-      });
       indicator.dataset.noteDrawDropSide = horizontalSide || flowSide;
       indicator.dataset.noteDrawDropLine = String(flowLine);
       if (leftSnap) {
@@ -19845,7 +19867,8 @@ ${selected}
       } else {
         delete indicator.dataset.noteDrawDropMagnet;
       }
-      indicator.classList.add("is-notedraw-controls-visible", "is-visible");
+      void left;
+      void right;
     }
     this.dragNoteFlowPlacement = {
       path: normalizeVaultPath(placement.candidate.path || this.file?.path || ""),

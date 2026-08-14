@@ -12241,6 +12241,17 @@ var PreviewDrawingController = class {
     } else if (horizontalRoom && intent === "line-start") {
       side = "left";
     }
+    // Hysteresis: once the drag settles on a side-by-side placement, keep it
+    // while the pointer stays inside the target so it does not flicker
+    // between inline and vertical insertion (which read as "slides up/down").
+    if ((this.dragMarkdownDropSide === "right" || this.dragMarkdownDropSide === "left")
+      && this.dragMarkdownDropTarget === target) {
+      if (this.dragMarkdownDropSide === "right" && clientX >= rect.left + rect.width * 0.35) {
+        side = "right";
+      } else if (this.dragMarkdownDropSide === "left" && clientX <= rect.left + rect.width * 0.65) {
+        side = "left";
+      }
+    }
     if (target !== this.dragMarkdownDropTarget || side !== this.dragMarkdownDropSide) {
       this.clearMarkdownBlockDropTarget();
       this.dragMarkdownDropTarget = target;
@@ -12931,6 +12942,13 @@ var PreviewDrawingController = class {
     if (didMove && markdownDrop) {
       this.commitDraggedMarkdownBlocks(markdownDrop, drawingHistoryBefore).then((committed) => {
         this.settleCommittedMarkdownDomPreview(markdownDrop, committed);
+        if (committed) {
+          // Obsidian rebuilds the moved blocks after the source edit. If its
+          // incremental render stalls (stale section refs), the blocks would
+          // stay missing; force a render repair so elements never vanish
+          // after a move.
+          this.repairMarkdownDomAfterCommit(markdownDrop);
+        }
         if (!committed && this.selectionFrameAwaitingMarkdownSync) {
           this.selectionFrameAwaitingMarkdownSync = null;
           this.invalidateSelectionFrameSnapshot();
@@ -16018,6 +16036,33 @@ var PreviewDrawingController = class {
     }
     return true;
   }
+  repairMarkdownDomAfterCommit(drop) {
+    if (!this.previewEl?.isConnected || !Array.isArray(drop?.moving)) {
+      return;
+    }
+    const missing = drop.moving.some((state) => {
+      const dragElement = state.dragElement || state.element;
+      return Boolean(dragElement && !dragElement.isConnected);
+    });
+    if (!missing) {
+      return;
+    }
+    const renderer = this.readingPreviewRenderer();
+    if (!renderer) {
+      return;
+    }
+    // A stalled incremental render keeps stale section.el references (the
+    // old detached nodes) while the new DOM never gets built. Mark those
+    // sections un-rendered so the repair pass re-renders them and the moved
+    // blocks reappear instead of vanishing after the move.
+    for (const section of renderer.sections || []) {
+      if (section?.el && !section.el.isConnected && section.rendered !== false) {
+        section.rendered = false;
+      }
+    }
+    this.repairConnectedReadingSections(renderer);
+    this.scheduleResize({ layout: false, measure: true });
+  }
   draggedNoteFlowPreviewHeight(indexes = this.draggedNoteFlowIndexes()) {
     const bounds = this.getStrokeIndexesBounds(indexes);
     const strokeHeight = bounds ? Math.max(0, bounds.maxY - bounds.minY) : 0;
@@ -16545,19 +16590,11 @@ var PreviewDrawingController = class {
       this.removeDraggedNoteFlowPlacementVisual();
       this.dragNoteFlowTargetElement = flowTarget;
       flowTarget.classList.add(`notedraw-text-sort-target-${horizontalSide || flowSide}`);
+      // The drop indicator bar is intentionally disabled: the dragged
+      // element follows the pointer and the target highlights with a
+      // box-shadow, which previews the insertion point more clearly.
       const left = leftSnap ? laneRect.left : targetRect.left;
       const right = leftSnap ? laneRect.right : targetRect.right;
-      applyElementStyles(indicator, horizontalSide ? {
-        left: `${Math.round(inlineBoundary)}px`,
-        top: `${Math.round(targetRect.top)}px`,
-        width: "4px",
-        height: `${Math.max(16, Math.round(targetRect.height))}px`
-      } : {
-        left: `${Math.round(left)}px`,
-        top: `${Math.round(flowBoundary)}px`,
-        width: `${Math.max(16, Math.round(right - left))}px`,
-        height: "4px"
-      });
       indicator.dataset.noteDrawDropSide = horizontalSide || flowSide;
       indicator.dataset.noteDrawDropLine = String(flowLine);
       if (leftSnap) {
@@ -16565,7 +16602,8 @@ var PreviewDrawingController = class {
       } else {
         delete indicator.dataset.noteDrawDropMagnet;
       }
-      indicator.classList.add("is-notedraw-controls-visible", "is-visible");
+      void left;
+      void right;
     }
     this.dragNoteFlowPlacement = {
       path: normalizeVaultPath(placement.candidate.path || this.file?.path || ""),

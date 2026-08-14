@@ -155,7 +155,7 @@
 
 .notedraw-shell.has-notedraw-canvas .notedraw-underlay-canvas,
 .notedraw-shell.has-notedraw-canvas .notedraw-static-canvas,
-.notedraw-shell.has-notedraw-canvas.is-drawing-active .notedraw-canvas {
+.notedraw-shell.has-notedraw-canvas .notedraw-canvas {
   display: block;
 }
 
@@ -635,6 +635,21 @@
 
 .notedraw-md-grid > .notedraw-md-grid-item {
   min-width: 0;
+}
+
+/* Side-by-side heading blocks: Obsidian gives the first heading a large top
+   margin (1.5em) and any heading that follows another heading a small one
+   (0.5em), so two headings packed side-by-side sit at different heights.
+   Normalize the heading margin inside non-full-width grid items so packed
+   headings share the same baseline. */
+.notedraw-md-grid > .notedraw-md-grid-item:not([style*="span 12"]):not([style*="1 / -1"]) > :is(h1, h2, h3, h4, h5, h6),
+.notedraw-md-grid > .el-h1:not([style*="span 12"]):not([style*="1 / -1"]) > h1,
+.notedraw-md-grid > .el-h2:not([style*="span 12"]):not([style*="1 / -1"]) > h2,
+.notedraw-md-grid > .el-h3:not([style*="span 12"]):not([style*="1 / -1"]) > h3,
+.notedraw-md-grid > .el-h4:not([style*="span 12"]):not([style*="1 / -1"]) > h4,
+.notedraw-md-grid > .el-h5:not([style*="span 12"]):not([style*="1 / -1"]) > h5,
+.notedraw-md-grid > .el-h6:not([style*="span 12"]):not([style*="1 / -1"]) > h6 {
+  margin-top: 0.5em !important;
 }
 
 .notedraw-md-block {
