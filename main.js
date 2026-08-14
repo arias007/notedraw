@@ -9066,6 +9066,10 @@ var PreviewDrawingController = class {
     this.dragNoteFlowPlacement = null;
     this.dragNoteFlowTargetElement = null;
     this.dragNoteFlowReservationStyles = null;
+    this.dragNoteFlowRebuildKey = "";
+    this.dragNoteFlowRebuildSince = 0;
+    this.dragNoteFlowLastRebuildAt = 0;
+    this.dragNoteFlowLastAppliedPlacement = null;
     this.noteFlowDropIndicator = null;
     this.resizingSelection = false;
     this.resizeSelectionHandle = null;
@@ -16301,7 +16305,7 @@ ${selected}
       }
       this.dragNoteFlowDropClientX = null;
       this.dragNoteFlowDropClientY = null;
-      this.updateDraggedNoteFlowPlacement(event.clientX, event.clientY);
+      this.updateDraggedNoteFlowPlacement(event.clientX, event.clientY, { force: true });
       requestedDropPlacement = this.dragNoteFlowPlacement ? {
         path: this.dragNoteFlowPlacement.path,
         line: this.dragNoteFlowPlacement.line,
@@ -20034,6 +20038,9 @@ ${selected}
     this.dragNoteFlowDropClientX = null;
     this.dragNoteFlowDropClientY = null;
     this.dragNoteFlowPlacement = null;
+    this.dragNoteFlowRebuildKey = "";
+    this.dragNoteFlowRebuildSince = 0;
+    this.dragNoteFlowLastAppliedPlacement = null;
     this.removeDraggedNoteFlowPlacementVisual();
   }
   queueDraggedNoteFlowPlacement(clientX, clientY) {
@@ -20056,7 +20063,7 @@ ${selected}
       this.updateDraggedNoteFlowPlacement(pendingX, pendingY);
     });
   }
-  updateDraggedNoteFlowPlacement(clientX, clientY) {
+  updateDraggedNoteFlowPlacement(clientX, clientY, options = {}) {
     if (!this.usesDraggedNoteFlowPlacement() || !Number.isFinite(Number(clientX)) || !Number.isFinite(Number(clientY))) {
       this.restoreDraggedNoteFlowLivePreview();
       this.clearDraggedNoteFlowPlacement();
@@ -20252,6 +20259,27 @@ ${selected}
       noteFlowBoundary,
       candidate: { ...flowCandidate }
     };
+    const enteringInline = Boolean(horizontalSide) && !previousPlacement?.horizontalSide;
+    const debounceZone = (Boolean(horizontalSide) || Boolean(previousPlacement?.horizontalSide)) && !enteringInline;
+    let appliedPlacement = this.dragNoteFlowPlacement;
+    if (debounceZone && targetChanged && options.force !== true) {
+      const candidateKey = flowCandidate.blockKey || noteFlowBlockKey(flowCandidate, this.file?.path || "");
+      const placementKey = `${candidateKey}:${flowSide}:${horizontalSide || "row"}:${Number(flowLine)}:${leftSnap ? 1 : 0}`;
+      const now = Date.now();
+      if (this.dragNoteFlowRebuildKey !== placementKey) {
+        this.dragNoteFlowRebuildKey = placementKey;
+        this.dragNoteFlowRebuildSince = now;
+      }
+      if (now - this.dragNoteFlowRebuildSince < 250 || now - this.dragNoteFlowLastRebuildAt < 400) {
+        appliedPlacement = this.dragNoteFlowLastAppliedPlacement || this.dragNoteFlowPlacement;
+      } else {
+        this.dragNoteFlowLastRebuildAt = now;
+      }
+    }
+    if (appliedPlacement !== this.dragNoteFlowPlacement) {
+      this.dragNoteFlowPlacement = appliedPlacement;
+    }
+    this.dragNoteFlowLastAppliedPlacement = this.dragNoteFlowPlacement;
     const drop = this.syncMarkdownDropFromNoteFlowPlacement(this.dragNoteFlowPlacement);
     this.applyDraggedNoteFlowLivePreview(this.dragNoteFlowPlacement, { skipRestore: !targetChanged, drop });
     return this.dragNoteFlowPlacement;

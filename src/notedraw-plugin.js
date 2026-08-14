@@ -5413,6 +5413,10 @@ var PreviewDrawingController = class {
     this.dragNoteFlowPlacement = null;
     this.dragNoteFlowTargetElement = null;
     this.dragNoteFlowReservationStyles = null;
+    this.dragNoteFlowRebuildKey = "";
+    this.dragNoteFlowRebuildSince = 0;
+    this.dragNoteFlowLastRebuildAt = 0;
+    this.dragNoteFlowLastAppliedPlacement = null;
     this.noteFlowDropIndicator = null;
     this.resizingSelection = false;
     this.resizeSelectionHandle = null;
@@ -12849,7 +12853,9 @@ var PreviewDrawingController = class {
       }
       this.dragNoteFlowDropClientX = null;
       this.dragNoteFlowDropClientY = null;
-      this.updateDraggedNoteFlowPlacement(event.clientX, event.clientY);
+      // Force the final placement on release so the committed drop matches
+      // what the pointer is over (bypasses the side-by-side rebuild debounce).
+      this.updateDraggedNoteFlowPlacement(event.clientX, event.clientY, { force: true });
       requestedDropPlacement = this.dragNoteFlowPlacement ? {
         path: this.dragNoteFlowPlacement.path,
         line: this.dragNoteFlowPlacement.line,
@@ -16785,6 +16791,9 @@ var PreviewDrawingController = class {
     this.dragNoteFlowDropClientX = null;
     this.dragNoteFlowDropClientY = null;
     this.dragNoteFlowPlacement = null;
+    this.dragNoteFlowRebuildKey = "";
+    this.dragNoteFlowRebuildSince = 0;
+    this.dragNoteFlowLastAppliedPlacement = null;
     this.removeDraggedNoteFlowPlacementVisual();
   }
   queueDraggedNoteFlowPlacement(clientX, clientY) {
@@ -16807,7 +16816,7 @@ var PreviewDrawingController = class {
       this.updateDraggedNoteFlowPlacement(pendingX, pendingY);
     });
   }
-  updateDraggedNoteFlowPlacement(clientX, clientY) {
+  updateDraggedNoteFlowPlacement(clientX, clientY, options = {}) {
     if (!this.usesDraggedNoteFlowPlacement() || !Number.isFinite(Number(clientX)) || !Number.isFinite(Number(clientY))) {
       this.restoreDraggedNoteFlowLivePreview();
       this.clearDraggedNoteFlowPlacement();
@@ -17089,6 +17098,33 @@ var PreviewDrawingController = class {
       noteFlowBoundary,
       candidate: { ...flowCandidate }
     };
+    // Debounce placement switches inside the side-by-side zone: while the
+    // placement keeps alternating (e.g., between the inline row and the next
+    // line), keep applying the last stable placement so the preview does not
+    // slowly flash. A switch is only committed once it has been stable for a
+    // short window AND enough time passed since the last rebuild. Entering
+    // side-by-side from a vertical placement applies immediately.
+    const enteringInline = Boolean(horizontalSide) && !previousPlacement?.horizontalSide;
+    const debounceZone = (Boolean(horizontalSide) || Boolean(previousPlacement?.horizontalSide)) && !enteringInline;
+    let appliedPlacement = this.dragNoteFlowPlacement;
+    if (debounceZone && targetChanged && options.force !== true) {
+      const candidateKey = flowCandidate.blockKey || noteFlowBlockKey(flowCandidate, this.file?.path || "");
+      const placementKey = `${candidateKey}:${flowSide}:${horizontalSide || "row"}:${Number(flowLine)}:${leftSnap ? 1 : 0}`;
+      const now = Date.now();
+      if (this.dragNoteFlowRebuildKey !== placementKey) {
+        this.dragNoteFlowRebuildKey = placementKey;
+        this.dragNoteFlowRebuildSince = now;
+      }
+      if (now - this.dragNoteFlowRebuildSince < 250 || now - this.dragNoteFlowLastRebuildAt < 400) {
+        appliedPlacement = this.dragNoteFlowLastAppliedPlacement || this.dragNoteFlowPlacement;
+      } else {
+        this.dragNoteFlowLastRebuildAt = now;
+      }
+    }
+    if (appliedPlacement !== this.dragNoteFlowPlacement) {
+      this.dragNoteFlowPlacement = appliedPlacement;
+    }
+    this.dragNoteFlowLastAppliedPlacement = this.dragNoteFlowPlacement;
     const drop = this.syncMarkdownDropFromNoteFlowPlacement(this.dragNoteFlowPlacement);
     this.applyDraggedNoteFlowLivePreview(this.dragNoteFlowPlacement, { skipRestore: !targetChanged, drop });
     return this.dragNoteFlowPlacement;
