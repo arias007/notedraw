@@ -16411,6 +16411,7 @@ ${selected}
         this.settleCommittedMarkdownDomPreview(markdownDrop, committed);
         if (committed) {
           this.repairMarkdownDomAfterCommit(markdownDrop);
+          this.scheduleMarkdownMoveRepair(markdownDrop.moving);
         }
         if (!committed && this.selectionFrameAwaitingMarkdownSync) {
           this.selectionFrameAwaitingMarkdownSync = null;
@@ -19454,6 +19455,43 @@ ${selected}
       this.scheduleEmbedRepair(600);
     }
   }
+  scheduleMarkdownMoveRepair(moving) {
+    const states = Array.isArray(moving) ? moving.filter((state) => state?.block) : [];
+    if (!states.length || this.destroyed || !this.previewEl?.isConnected) {
+      return;
+    }
+    for (const delay of [250, 900, 2200]) {
+      window.setTimeout(() => {
+        if (this.destroyed || !this.previewEl?.isConnected || this.pointerDown || this.draggingStroke) {
+          return;
+        }
+        const missingIds = states.map((state) => state.block?.id).filter((id) => {
+          return id && !this.markdownBlockElement(id);
+        });
+        if (!missingIds.length) {
+          return;
+        }
+        const renderer = this.readingPreviewRenderer();
+        if (!renderer) {
+          return;
+        }
+        let marked = 0;
+        for (const section of renderer.sections || []) {
+          if (section?.el && !section.el.isConnected && section.rendered !== false) {
+            section.rendered = false;
+            marked += 1;
+          }
+        }
+        if (marked > 0) {
+          this.repairConnectedReadingSections(renderer);
+          this.repairWidelyDetachedSections(renderer);
+          this.scheduleResize({ layout: false, measure: true });
+          this.scheduleEmbedRepair(400);
+        }
+        this.scheduleMarkdownAnnotationRefresh({ layout: false, delay: 0, force: true });
+      }, delay);
+    }
+  }
   scheduleEmbedRepair(delay = 1200) {
     if (this.embedRepairTimer !== null) {
       return;
@@ -19581,22 +19619,46 @@ ${selected}
     }, 0);
     return Math.max(strokeHeight, markdownHeight);
   }
+  draggedNoteFlowReservationGap() {
+    let gap = 12;
+    for (const index of this.dragStrokeOriginalPoints?.keys?.() || []) {
+      const stroke = this.drawingData?.strokes?.[index];
+      const noteFlow = normalizeNoteFlow(stroke?.noteFlow);
+      if (noteFlow && Number.isFinite(Number(noteFlow.gap))) {
+        gap = Math.max(gap, Number(noteFlow.gap));
+      }
+    }
+    return gap;
+  }
+  draggedNoteFlowRatioHeight() {
+    const contentFrame = this.getResponsiveContentFrame();
+    const contentWidth = Math.max(1, Number(contentFrame?.width) || this.canvasWidth());
+    let height = 0;
+    for (const index of this.dragStrokeOriginalPoints?.keys?.() || []) {
+      const stroke = this.drawingData?.strokes?.[index];
+      const noteFlow = normalizeNoteFlow(stroke?.noteFlow);
+      if (noteFlow && Number(noteFlow.boxHeightRatio) > 0) {
+        height = Math.max(height, Number(noteFlow.boxHeightRatio) * contentWidth);
+      }
+    }
+    return height;
+  }
   applyDraggedNoteFlowReservationPreview(placement, indexes, reservationHeight = null) {
     if (!placement?.candidate || placement.horizontalSide) {
       return false;
     }
     const target = placement.candidate.element || placement.candidate.sourceElement;
-    const height = Number.isFinite(Number(reservationHeight)) ? Math.max(0, Number(reservationHeight)) : this.draggedNoteFlowPreviewHeight(indexes);
+    const height = Number.isFinite(Number(reservationHeight)) ? Math.max(0, Number(reservationHeight)) : Math.max(this.draggedNoteFlowPreviewHeight(indexes), this.draggedNoteFlowRatioHeight());
     if (!target?.style || !(height > 0)) {
       return false;
     }
     const property = placement.side === "after" ? "padding-bottom" : "padding-top";
     const existingState = this.noteFlowStyledElements.get(target)?.get(property);
-    const styleProperty = existingState?.styleProperty || (property === "padding-bottom" ? "margin-bottom" : "margin-top");
+    const styleProperty = existingState?.styleProperty || this.noteFlowStyleProperty(target, property);
     const applied = Math.ceil(noteFlowRowReservation({
       rowOffset: 0,
       boxHeight: height,
-      gap: 6
+      gap: this.draggedNoteFlowReservationGap()
     }));
     const base = Number.isFinite(Number(existingState?.base)) ? Number(existingState.base) : Number.parseFloat(window.getComputedStyle(target).getPropertyValue(styleProperty)) || 0;
     this.setDraggedNoteFlowDomStyle(target, styleProperty, `${Math.ceil(base + applied)}px`, "important");
@@ -19745,7 +19807,7 @@ ${selected}
     if (!resolved) {
       return [];
     }
-    const drop = this.syncMarkdownDropFromNoteFlowPlacement(resolved);
+    const drop = options.drop || this.syncMarkdownDropFromNoteFlowPlacement(resolved);
     this.applyDraggedNoteFlowAnchorDomPreview(resolved, drop);
     const markdownDomPreview = this.applyDraggedMarkdownDomPreview(drop);
     const liveResolved = resolved;
@@ -20014,7 +20076,9 @@ ${selected}
     }
     const indicator = this.ensureNoteFlowDropIndicator();
     const previous = this.dragNoteFlowPlacement;
-    const presentationChanged = previous?.candidate?.sourceElement !== flowTarget || previous?.candidate?.element !== flowCandidate.element || previous?.side !== flowSide || previous?.line !== Number(flowLine) || previous?.horizontalSide !== horizontalSide || previous?.leftSnap !== leftSnap || previous?.flowOrder !== flowOrder || (Number.isFinite(Number(previous?.inlineBoundary)) && Number.isFinite(Number(inlineBoundary)) ? Math.abs(Number(previous.inlineBoundary) - Number(inlineBoundary)) > 2 : previous?.inlineBoundary !== inlineBoundary) || (Number.isFinite(Number(previous?.boundary)) && Number.isFinite(Number(flowBoundary)) ? Math.abs(Number(previous.boundary) - Number(flowBoundary)) > 2 : previous?.boundary !== flowBoundary);
+    const targetChanged = previous?.candidate?.sourceElement !== flowTarget || previous?.candidate?.element !== flowCandidate.element || previous?.side !== flowSide || previous?.line !== Number(flowLine) || previous?.horizontalSide !== horizontalSide || previous?.leftSnap !== leftSnap;
+    const boundaryJitter = (Number.isFinite(Number(previous?.inlineBoundary)) && Number.isFinite(Number(inlineBoundary)) ? Math.abs(Number(previous.inlineBoundary) - Number(inlineBoundary)) > 2 : previous?.inlineBoundary !== inlineBoundary) || (Number.isFinite(Number(previous?.boundary)) && Number.isFinite(Number(flowBoundary)) ? Math.abs(Number(previous.boundary) - Number(flowBoundary)) > 2 : previous?.boundary !== flowBoundary);
+    const presentationChanged = targetChanged || boundaryJitter || previous?.flowOrder !== flowOrder;
     if (presentationChanged || !indicator.classList.contains("is-visible")) {
       this.removeDraggedNoteFlowPlacementVisual();
       this.dragNoteFlowTargetElement = flowTarget;
@@ -20043,8 +20107,8 @@ ${selected}
       noteFlowBoundary,
       candidate: { ...flowCandidate }
     };
-    this.syncMarkdownDropFromNoteFlowPlacement(this.dragNoteFlowPlacement);
-    this.applyDraggedNoteFlowLivePreview(this.dragNoteFlowPlacement, { skipRestore: !presentationChanged });
+    const drop = this.syncMarkdownDropFromNoteFlowPlacement(this.dragNoteFlowPlacement);
+    this.applyDraggedNoteFlowLivePreview(this.dragNoteFlowPlacement, { skipRestore: !targetChanged, drop });
     return this.dragNoteFlowPlacement;
   }
   syncMarkdownDropFromNoteFlowPlacement(placement) {

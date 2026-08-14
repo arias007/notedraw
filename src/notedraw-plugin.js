@@ -12969,6 +12969,7 @@ var PreviewDrawingController = class {
           // stay missing; force a render repair so elements never vanish
           // after a move.
           this.repairMarkdownDomAfterCommit(markdownDrop);
+          this.scheduleMarkdownMoveRepair(markdownDrop.moving);
         }
         if (!committed && this.selectionFrameAwaitingMarkdownSync) {
           this.selectionFrameAwaitingMarkdownSync = null;
@@ -16115,6 +16116,50 @@ var PreviewDrawingController = class {
       this.scheduleEmbedRepair(600);
     }
   }
+  scheduleMarkdownMoveRepair(moving) {
+    const states = Array.isArray(moving) ? moving.filter((state) => state?.block) : [];
+    if (!states.length || this.destroyed || !this.previewEl?.isConnected) {
+      return;
+    }
+    // Obsidian rebuilds the preview asynchronously after the source edit, so
+    // the immediate post-commit check can run before the rebuild drops the
+    // moved blocks. Re-verify a few times after the rebuild settles and force
+    // the affected sections to re-render / re-annotate while a moved block is
+    // still missing, so dragged elements never stay invisible.
+    for (const delay of [250, 900, 2200]) {
+      window.setTimeout(() => {
+        if (this.destroyed || !this.previewEl?.isConnected || this.pointerDown || this.draggingStroke) {
+          return;
+        }
+        const missingIds = states.map((state) => state.block?.id).filter((id) => {
+          return id && !this.markdownBlockElement(id);
+        });
+        if (!missingIds.length) {
+          return;
+        }
+        const renderer = this.readingPreviewRenderer();
+        if (!renderer) {
+          return;
+        }
+        let marked = 0;
+        for (const section of renderer.sections || []) {
+          if (section?.el && !section.el.isConnected && section.rendered !== false) {
+            section.rendered = false;
+            marked += 1;
+          }
+        }
+        if (marked > 0) {
+          this.repairConnectedReadingSections(renderer);
+          this.repairWidelyDetachedSections(renderer);
+          this.scheduleResize({ layout: false, measure: true });
+          this.scheduleEmbedRepair(400);
+        }
+        // Refresh the block annotation so records re-link to the rebuilt DOM;
+        // this also re-applies grid/float presentation for the moved blocks.
+        this.scheduleMarkdownAnnotationRefresh({ layout: false, delay: 0, force: true });
+      }, delay);
+    }
+  }
   scheduleEmbedRepair(delay = 1200) {
     if (this.embedRepairTimer !== null) {
       return;
@@ -16245,6 +16290,36 @@ var PreviewDrawingController = class {
     }, 0);
     return Math.max(strokeHeight, markdownHeight);
   }
+  draggedNoteFlowReservationGap() {
+    // The committed layout reserves rowOffset + boxHeight + noteFlow.gap
+    // (default 12). The preview must reserve the same gap, otherwise the
+    // released element lands with a visibly larger/smaller gap than the
+    // preview showed (WYSIWYG).
+    let gap = 12;
+    for (const index of this.dragStrokeOriginalPoints?.keys?.() || []) {
+      const stroke = this.drawingData?.strokes?.[index];
+      const noteFlow = normalizeNoteFlow(stroke?.noteFlow);
+      if (noteFlow && Number.isFinite(Number(noteFlow.gap))) {
+        gap = Math.max(gap, Number(noteFlow.gap));
+      }
+    }
+    return gap;
+  }
+  draggedNoteFlowRatioHeight() {
+    // Mirror the committed layout's stableHeight (boxHeightRatio * content
+    // width) so the preview reservation never undershoots the settled row.
+    const contentFrame = this.getResponsiveContentFrame();
+    const contentWidth = Math.max(1, Number(contentFrame?.width) || this.canvasWidth());
+    let height = 0;
+    for (const index of this.dragStrokeOriginalPoints?.keys?.() || []) {
+      const stroke = this.drawingData?.strokes?.[index];
+      const noteFlow = normalizeNoteFlow(stroke?.noteFlow);
+      if (noteFlow && Number(noteFlow.boxHeightRatio) > 0) {
+        height = Math.max(height, Number(noteFlow.boxHeightRatio) * contentWidth);
+      }
+    }
+    return height;
+  }
   applyDraggedNoteFlowReservationPreview(placement, indexes, reservationHeight = null) {
     if (!placement?.candidate || placement.horizontalSide) {
       return false;
@@ -16252,22 +16327,23 @@ var PreviewDrawingController = class {
     const target = placement.candidate.element || placement.candidate.sourceElement;
     const height = Number.isFinite(Number(reservationHeight))
       ? Math.max(0, Number(reservationHeight))
-      : this.draggedNoteFlowPreviewHeight(indexes);
+      : Math.max(this.draggedNoteFlowPreviewHeight(indexes), this.draggedNoteFlowRatioHeight());
     if (!target?.style || !(height > 0)) {
       return false;
     }
     const property = placement.side === "after" ? "padding-bottom" : "padding-top";
     const existingState = this.noteFlowStyledElements.get(target)?.get(property);
+    // Reserve exactly what the committed layout will reserve: the same style
+    // property (spacer-aware) and the same gap as the dragged strokes' stored
+    // NoteFlow gap (default 12). The earlier fixed 6px gap previewed a
+    // tighter layout than the commit, leaving a visibly larger gap after
+    // releasing the pointer.
     const styleProperty = existingState?.styleProperty
-      || (property === "padding-bottom" ? "margin-bottom" : "margin-top");
-    // Use the same 6px gap as the markdown grid so the dragged preview sits
-    // exactly where the committed layout will place it (WYSIWYG). The old
-    // fixed 12px gap made the preview leave a visibly larger gap than the
-    // final arrangement after releasing the pointer.
+      || this.noteFlowStyleProperty(target, property);
     const applied = Math.ceil(noteFlowRowReservation({
       rowOffset: 0,
       boxHeight: height,
-      gap: 6
+      gap: this.draggedNoteFlowReservationGap()
     }));
     const base = Number.isFinite(Number(existingState?.base))
       ? Number(existingState.base)
@@ -16433,7 +16509,7 @@ var PreviewDrawingController = class {
     if (!resolved) {
       return [];
     }
-    const drop = this.syncMarkdownDropFromNoteFlowPlacement(resolved);
+    const drop = options.drop || this.syncMarkdownDropFromNoteFlowPlacement(resolved);
     this.applyDraggedNoteFlowAnchorDomPreview(resolved, drop);
     const markdownDomPreview = this.applyDraggedMarkdownDomPreview(drop);
     const liveResolved = resolved;
@@ -16753,19 +16829,24 @@ var PreviewDrawingController = class {
     }
     const indicator = this.ensureNoteFlowDropIndicator();
     const previous = this.dragNoteFlowPlacement;
-    const presentationChanged = previous?.candidate?.sourceElement !== flowTarget
+    // Only a real target/mode change needs the expensive full DOM restore +
+    // rebuild. flowOrder and boundary nudges inside the same candidate are
+    // applied incrementally; treating them as a rebuild made the side-by-side
+    // preview restore the dragged element to its origin spot on every frame
+    // the pointer crossed a row midpoint, which flickered badly.
+    const targetChanged = previous?.candidate?.sourceElement !== flowTarget
       || previous?.candidate?.element !== flowCandidate.element
       || previous?.side !== flowSide
       || previous?.line !== Number(flowLine)
       || previous?.horizontalSide !== horizontalSide
-      || previous?.leftSnap !== leftSnap
-      || previous?.flowOrder !== flowOrder
-      || (Number.isFinite(Number(previous?.inlineBoundary)) && Number.isFinite(Number(inlineBoundary))
+      || previous?.leftSnap !== leftSnap;
+    const boundaryJitter = (Number.isFinite(Number(previous?.inlineBoundary)) && Number.isFinite(Number(inlineBoundary))
         ? Math.abs(Number(previous.inlineBoundary) - Number(inlineBoundary)) > 2
         : previous?.inlineBoundary !== inlineBoundary)
       || (Number.isFinite(Number(previous?.boundary)) && Number.isFinite(Number(flowBoundary))
         ? Math.abs(Number(previous.boundary) - Number(flowBoundary)) > 2
         : previous?.boundary !== flowBoundary);
+    const presentationChanged = targetChanged || boundaryJitter || previous?.flowOrder !== flowOrder;
     if (presentationChanged || !indicator.classList.contains("is-visible")) {
       this.removeDraggedNoteFlowPlacementVisual();
       this.dragNoteFlowTargetElement = flowTarget;
@@ -16797,8 +16878,8 @@ var PreviewDrawingController = class {
       noteFlowBoundary,
       candidate: { ...flowCandidate }
     };
-    this.syncMarkdownDropFromNoteFlowPlacement(this.dragNoteFlowPlacement);
-    this.applyDraggedNoteFlowLivePreview(this.dragNoteFlowPlacement, { skipRestore: !presentationChanged });
+    const drop = this.syncMarkdownDropFromNoteFlowPlacement(this.dragNoteFlowPlacement);
+    this.applyDraggedNoteFlowLivePreview(this.dragNoteFlowPlacement, { skipRestore: !targetChanged, drop });
     return this.dragNoteFlowPlacement;
   }
   syncMarkdownDropFromNoteFlowPlacement(placement) {

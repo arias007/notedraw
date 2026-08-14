@@ -13,7 +13,7 @@ test("canvas layers stay hidden until their backing stores are initialized", asy
   ]);
 
   assert.match(styles, /\.notedraw-static-canvas,\s*\.notedraw-canvas\s*\{[^}]*display:\s*none;/s);
-  assert.match(styles, /\.notedraw-shell\.has-notedraw-canvas \.notedraw-static-canvas,[^}]*\.is-drawing-active \.notedraw-canvas\s*\{[^}]*display:\s*block;/s);
+  assert.match(styles, /\.notedraw-shell\.has-notedraw-canvas \.notedraw-underlay-canvas,[\s\S]*\.notedraw-shell\.has-notedraw-canvas \.notedraw-static-canvas,[\s\S]*\.notedraw-shell\.has-notedraw-canvas \.notedraw-canvas\s*\{[^}]*display:\s*block;/s);
   assert.match(source, /this\.previewEl\.addClass\("has-notedraw-canvas"\)/);
   assert.match(source, /resetCanvasSurface\(\)\s*\{[^}]*removeClass\("has-notedraw-canvas"\)/s);
   assert.match(source, /resetCanvasSurface\(\)[\s\S]*this\.ctx = null;\s*this\.underlayCtx = null;\s*this\.staticCtx = null;/);
