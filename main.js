@@ -16258,10 +16258,12 @@ ${selected}
     const clientDx = this.dragMarkdownClientDeltaX / Math.max(1e-4, localScaleX);
     const clientDy = (event.clientY - this.pointerStartClient.y) / Math.max(1e-4, localScaleY);
     this.dragMarkdownClientDeltaY = event.clientY - this.pointerStartClient.y;
+    const usesNoteFlowPlacement = this.usesDraggedNoteFlowPlacement();
     for (const state of this.dragMarkdownOriginalElements?.values?.() || []) {
+      const floating = Boolean(state.block?.floating);
       setNoteDrawCssProps(state.dragElement || state.element, {
-        "--notedraw-md-drag-x": `${Math.round(clientDx)}px`,
-        "--notedraw-md-drag-y": `${Math.round(clientDy)}px`
+        "--notedraw-md-drag-x": floating || !usesNoteFlowPlacement ? `${Math.round(clientDx)}px` : "0px",
+        "--notedraw-md-drag-y": floating || !usesNoteFlowPlacement ? `${Math.round(clientDy)}px` : "0px"
       });
     }
     if (this.dragHasBoxBackground) {
@@ -20067,7 +20069,7 @@ ${selected}
     let placement = selectNoteFlowDropPlacementFromIndex(geometry?.noteFlowDropIndex, { dropY: Number(clientY) });
     let keptPreviousInline = false;
     if (previousPlacement?.horizontalSide && previousPlacement.candidate) {
-      const previousCandidate = this.refreshDraggedNoteFlowPreviewCandidate(previousPlacement.candidate);
+      const previousCandidate = this.refreshDraggedNoteFlowPreviewCandidate(previousPlacement.candidate) || previousPlacement.candidate;
       const previousRect = previousCandidate ? this.noteFlowCandidateRect(previousCandidate, "inline") : null;
       const previousHeight = previousRect ? Math.max(1, previousRect.bottom - previousRect.top) : 0;
       const verticalTolerance = Math.max(32, previousHeight * 0.75);
@@ -20086,7 +20088,7 @@ ${selected}
       }
     }
     if (previousPlacement && !previousPlacement.horizontalSide && !previousPlacement.leftSnap && previousPlacement.candidate) {
-      const previousCandidate = this.refreshDraggedNoteFlowPreviewCandidate(previousPlacement.candidate);
+      const previousCandidate = this.refreshDraggedNoteFlowPreviewCandidate(previousPlacement.candidate) || previousPlacement.candidate;
       if (previousCandidate) {
         const previousRect = this.noteFlowCandidateRect(previousCandidate, "row") || previousCandidate;
         const boundary = previousPlacement.side === "after" ? previousRect.bottom : previousRect.top;

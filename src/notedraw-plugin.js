@@ -12801,10 +12801,17 @@ var PreviewDrawingController = class {
     const clientDx = this.dragMarkdownClientDeltaX / Math.max(0.0001, localScaleX);
     const clientDy = (event.clientY - this.pointerStartClient.y) / Math.max(0.0001, localScaleY);
     this.dragMarkdownClientDeltaY = event.clientY - this.pointerStartClient.y;
+    const usesNoteFlowPlacement = this.usesDraggedNoteFlowPlacement();
     for (const state of this.dragMarkdownOriginalElements?.values?.() || []) {
+      // Only floating blocks follow the pointer through the CSS translate.
+      // In-flow blocks are moved into the drop target's DOM by the NoteFlow
+      // preview; leaving the raw drag delta on them stacks the transform on
+      // top of the new DOM position, so the element flashes between the
+      // target position and (target + full drag delta ~ original spot).
+      const floating = Boolean(state.block?.floating);
       setNoteDrawCssProps(state.dragElement || state.element, {
-        "--notedraw-md-drag-x": `${Math.round(clientDx)}px`,
-        "--notedraw-md-drag-y": `${Math.round(clientDy)}px`
+        "--notedraw-md-drag-x": floating || !usesNoteFlowPlacement ? `${Math.round(clientDx)}px` : "0px",
+        "--notedraw-md-drag-y": floating || !usesNoteFlowPlacement ? `${Math.round(clientDy)}px` : "0px"
       });
     }
     if (this.dragHasBoxBackground) {
@@ -16817,7 +16824,8 @@ var PreviewDrawingController = class {
     // one-pixel height/scroll change switch between before/after and inline.
     let keptPreviousInline = false;
     if (previousPlacement?.horizontalSide && previousPlacement.candidate) {
-      const previousCandidate = this.refreshDraggedNoteFlowPreviewCandidate(previousPlacement.candidate);
+      const previousCandidate = this.refreshDraggedNoteFlowPreviewCandidate(previousPlacement.candidate)
+        || previousPlacement.candidate;
       const previousRect = previousCandidate
         ? this.noteFlowCandidateRect(previousCandidate, "inline")
         : null;
@@ -16846,7 +16854,8 @@ var PreviewDrawingController = class {
     // rebuilds on every flip (visible flicker while drag-sorting). Keep the
     // previous row placement while the pointer stays near its boundary.
     if (previousPlacement && !previousPlacement.horizontalSide && !previousPlacement.leftSnap && previousPlacement.candidate) {
-      const previousCandidate = this.refreshDraggedNoteFlowPreviewCandidate(previousPlacement.candidate);
+      const previousCandidate = this.refreshDraggedNoteFlowPreviewCandidate(previousPlacement.candidate)
+        || previousPlacement.candidate;
       if (previousCandidate) {
         const previousRect = this.noteFlowCandidateRect(previousCandidate, "row") || previousCandidate;
         const boundary = previousPlacement.side === "after" ? previousRect.bottom : previousRect.top;
