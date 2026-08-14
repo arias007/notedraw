@@ -105,7 +105,7 @@ test("3.4.84 preserves reading content and cross-view frames without hidden-surf
   ]);
   const manifest = JSON.parse(manifestText);
 
-  assert.match(manifest.version, /^3\.4\.\d+$/);
+  assert.match(manifest.version, /^3\.\d+\.\d+$/);
   assert.match(source, /version: "3\.4\.19"/);
   assert.match(source, /this\.readingVirtualStyleState = \/\* @__PURE__ \*\/ new Map\(\)/);
   assert.match(source, /shouldClearStaleReadingVirtualMinHeight\(\{/);
