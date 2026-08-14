@@ -16873,9 +16873,11 @@ var PreviewDrawingController = class {
     if (previousPlacement?.horizontalSide && previousPlacement.candidate) {
       const previousCandidate = this.refreshDraggedNoteFlowPreviewCandidate(previousPlacement.candidate)
         || previousPlacement.candidate;
-      const previousRect = previousCandidate
-        ? this.noteFlowCandidateRect(previousCandidate, "inline")
-        : null;
+      // Use the stored candidate's frozen rect for the keep-band decision so a
+      // stationary pointer never flips between candidates (the live refresh
+      // above is only used to keep the element reference fresh for snapping).
+      const previousRect = this.noteFlowCandidateRect(previousPlacement.candidate, "inline")
+        || (previousCandidate ? this.noteFlowCandidateRect(previousCandidate, "inline") : null);
       const previousHeight = previousRect ? Math.max(1, previousRect.bottom - previousRect.top) : 0;
       // Generous keep-band: once side-by-side, stay side-by-side while the
       // pointer is near the block (including comfortably above/below it) so
@@ -16907,7 +16909,9 @@ var PreviewDrawingController = class {
       const previousCandidate = this.refreshDraggedNoteFlowPreviewCandidate(previousPlacement.candidate)
         || previousPlacement.candidate;
       if (previousCandidate) {
-        const previousRect = this.noteFlowCandidateRect(previousCandidate, "row") || previousCandidate;
+        const previousRect = this.noteFlowCandidateRect(previousPlacement.candidate, "row")
+          || this.noteFlowCandidateRect(previousCandidate, "row")
+          || previousPlacement.candidate;
         const boundary = previousPlacement.side === "after" ? previousRect.bottom : previousRect.top;
         const previousHeight = Math.max(1, previousRect.bottom - previousRect.top);
         const rowTolerance = Math.max(16, previousHeight * 0.3);
@@ -17136,37 +17140,13 @@ var PreviewDrawingController = class {
       noteFlowBoundary,
       candidate: { ...flowCandidate }
     };
-    // Debounce placement switches inside the side-by-side zone: while the
-    // placement keeps alternating (e.g., between the inline row and the next
-    // line), keep applying the last stable placement so the preview does not
-    // slowly flash. A switch is only committed once it has been stable for a
-    // short window AND enough time passed since the last rebuild. Entering
-    // side-by-side from a vertical placement applies immediately.
-    const enteringInline = Boolean(horizontalSide) && !previousPlacement?.horizontalSide;
-    const debounceZone = (Boolean(horizontalSide) || Boolean(previousPlacement?.horizontalSide)) && !enteringInline;
-    let appliedPlacement = this.dragNoteFlowPlacement;
-    if (debounceZone && targetChanged && options.force !== true) {
-      const candidateKey = flowCandidate.blockKey || noteFlowBlockKey(flowCandidate, this.file?.path || "");
-      const placementKey = `${candidateKey}:${flowSide}:${horizontalSide || "row"}:${Number(flowLine)}:${leftSnap ? 1 : 0}`;
-      const now = Date.now();
-      if (this.dragNoteFlowRebuildKey !== placementKey) {
-        this.dragNoteFlowRebuildKey = placementKey;
-        this.dragNoteFlowRebuildSince = now;
-      }
-      if (now - this.dragNoteFlowRebuildSince < 250 || now - this.dragNoteFlowLastRebuildAt < 400) {
-        appliedPlacement = this.dragNoteFlowLastAppliedPlacement || this.dragNoteFlowPlacement;
-      } else {
-        this.dragNoteFlowLastRebuildAt = now;
-      }
-    }
-    if (appliedPlacement !== this.dragNoteFlowPlacement) {
-      this.dragNoteFlowPlacement = appliedPlacement;
-    }
     this.dragNoteFlowLastAppliedPlacement = this.dragNoteFlowPlacement;
     const drop = this.syncMarkdownDropFromNoteFlowPlacement(this.dragNoteFlowPlacement);
     // Always apply incrementally during the drag: elements are relocated by
     // insertBefore and the previous target's styles are undone in place. The
-    // full restore back to the origin markers only happens at drag end.
+    // full restore back to the origin markers only happens at drag end. The
+    // hysteresis above (frozen-band keep) keeps the placement stable at a
+    // stationary pointer, so there is no oscillation and no debounce lag.
     this.applyDraggedNoteFlowLivePreview(this.dragNoteFlowPlacement, { skipRestore: true, drop });
     return this.dragNoteFlowPlacement;
   }
@@ -17229,7 +17209,22 @@ var PreviewDrawingController = class {
       return false;
     }
     const originalNeighbour = after ? marker.previousElementSibling : marker.nextElementSibling;
-    return Boolean(originalNeighbour && originalNeighbour === drop.element);
+    if (originalNeighbour && originalNeighbour === drop.element) {
+      return true;
+    }
+    // Fallback via source positions (tolerates the blank-line separators and
+    // wrapper/source element mismatches that can defeat the DOM check): the
+    // moving group originally sat immediately after (or before) the target.
+    const targetEndLine = Number(drop.targetInfo?.lineEnd ?? drop.targetInfo?.lineStart);
+    const targetStartLine = Number(drop.targetInfo?.lineStart);
+    const firstStartLine = Number(ordered[0]?.sourceInfo?.lineStart);
+    const lastEndLine = Number(ordered[ordered.length - 1]?.sourceInfo?.lineEnd);
+    if (after) {
+      return Number.isFinite(targetEndLine) && Number.isFinite(firstStartLine)
+        && firstStartLine > targetEndLine && firstStartLine - targetEndLine <= 3;
+    }
+    return Number.isFinite(targetStartLine) && Number.isFinite(lastEndLine)
+      && lastEndLine < targetStartLine && targetStartLine - lastEndLine <= 3;
   }
   prepareMarkdownAnchorForInlineNoteFlow(placement) {
     const candidate = placement?.candidate;

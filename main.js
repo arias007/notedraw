@@ -20103,7 +20103,7 @@ ${selected}
     let keptPreviousInline = false;
     if (previousPlacement?.horizontalSide && previousPlacement.candidate) {
       const previousCandidate = this.refreshDraggedNoteFlowPreviewCandidate(previousPlacement.candidate) || previousPlacement.candidate;
-      const previousRect = previousCandidate ? this.noteFlowCandidateRect(previousCandidate, "inline") : null;
+      const previousRect = this.noteFlowCandidateRect(previousPlacement.candidate, "inline") || (previousCandidate ? this.noteFlowCandidateRect(previousCandidate, "inline") : null);
       const previousHeight = previousRect ? Math.max(1, previousRect.bottom - previousRect.top) : 0;
       const verticalTolerance = Math.max(48, previousHeight * 1.1);
       const lane = geometry?.laneRect;
@@ -20123,7 +20123,7 @@ ${selected}
     if (previousPlacement && !previousPlacement.horizontalSide && !previousPlacement.leftSnap && previousPlacement.candidate) {
       const previousCandidate = this.refreshDraggedNoteFlowPreviewCandidate(previousPlacement.candidate) || previousPlacement.candidate;
       if (previousCandidate) {
-        const previousRect = this.noteFlowCandidateRect(previousCandidate, "row") || previousCandidate;
+        const previousRect = this.noteFlowCandidateRect(previousPlacement.candidate, "row") || this.noteFlowCandidateRect(previousCandidate, "row") || previousPlacement.candidate;
         const boundary = previousPlacement.side === "after" ? previousRect.bottom : previousRect.top;
         const previousHeight = Math.max(1, previousRect.bottom - previousRect.top);
         const rowTolerance = Math.max(16, previousHeight * 0.3);
@@ -20285,26 +20285,6 @@ ${selected}
       noteFlowBoundary,
       candidate: { ...flowCandidate }
     };
-    const enteringInline = Boolean(horizontalSide) && !previousPlacement?.horizontalSide;
-    const debounceZone = (Boolean(horizontalSide) || Boolean(previousPlacement?.horizontalSide)) && !enteringInline;
-    let appliedPlacement = this.dragNoteFlowPlacement;
-    if (debounceZone && targetChanged && options.force !== true) {
-      const candidateKey = flowCandidate.blockKey || noteFlowBlockKey(flowCandidate, this.file?.path || "");
-      const placementKey = `${candidateKey}:${flowSide}:${horizontalSide || "row"}:${Number(flowLine)}:${leftSnap ? 1 : 0}`;
-      const now = Date.now();
-      if (this.dragNoteFlowRebuildKey !== placementKey) {
-        this.dragNoteFlowRebuildKey = placementKey;
-        this.dragNoteFlowRebuildSince = now;
-      }
-      if (now - this.dragNoteFlowRebuildSince < 250 || now - this.dragNoteFlowLastRebuildAt < 400) {
-        appliedPlacement = this.dragNoteFlowLastAppliedPlacement || this.dragNoteFlowPlacement;
-      } else {
-        this.dragNoteFlowLastRebuildAt = now;
-      }
-    }
-    if (appliedPlacement !== this.dragNoteFlowPlacement) {
-      this.dragNoteFlowPlacement = appliedPlacement;
-    }
     this.dragNoteFlowLastAppliedPlacement = this.dragNoteFlowPlacement;
     const drop = this.syncMarkdownDropFromNoteFlowPlacement(this.dragNoteFlowPlacement);
     this.applyDraggedNoteFlowLivePreview(this.dragNoteFlowPlacement, { skipRestore: true, drop });
@@ -20350,7 +20330,17 @@ ${selected}
       return false;
     }
     const originalNeighbour = after ? marker.previousElementSibling : marker.nextElementSibling;
-    return Boolean(originalNeighbour && originalNeighbour === drop.element);
+    if (originalNeighbour && originalNeighbour === drop.element) {
+      return true;
+    }
+    const targetEndLine = Number(drop.targetInfo?.lineEnd ?? drop.targetInfo?.lineStart);
+    const targetStartLine = Number(drop.targetInfo?.lineStart);
+    const firstStartLine = Number(ordered[0]?.sourceInfo?.lineStart);
+    const lastEndLine = Number(ordered[ordered.length - 1]?.sourceInfo?.lineEnd);
+    if (after) {
+      return Number.isFinite(targetEndLine) && Number.isFinite(firstStartLine) && firstStartLine > targetEndLine && firstStartLine - targetEndLine <= 3;
+    }
+    return Number.isFinite(targetStartLine) && Number.isFinite(lastEndLine) && lastEndLine < targetStartLine && targetStartLine - lastEndLine <= 3;
   }
   prepareMarkdownAnchorForInlineNoteFlow(placement) {
     const candidate = placement?.candidate;

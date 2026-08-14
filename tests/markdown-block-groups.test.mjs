@@ -336,7 +336,8 @@ test("NoteFlow dragging previews the same snapped and packed placement committed
   assert.match(placementSource, /this\.refreshDraggedNoteFlowPreviewCandidate\(previousPlacement\.candidate\)\s*\|\|\s*previousPlacement\.candidate/);
   assert.match(placementSource, /this\.applyDraggedNoteFlowLivePreview\(this\.dragNoteFlowPlacement, \{ skipRestore: true, drop \}\)/);
   assert.match(placementSource, /const targetChanged = previous\?\.candidate\?\.sourceElement !== flowTarget[\s\S]*const boundaryJitter = [\s\S]*const presentationChanged = targetChanged \|\| boundaryJitter \|\| previous\?\.flowOrder !== flowOrder/);
-  assert.match(placementSource, /const enteringInline = Boolean\(horizontalSide\) && !previousPlacement\?\.horizontalSide;[\s\S]*const debounceZone = \(Boolean\(horizontalSide\) \|\| Boolean\(previousPlacement\?\.horizontalSide\)\) && !enteringInline;[\s\S]*const placementKey = \`\$\{candidateKey\}:[\s\S]*now - this\.dragNoteFlowRebuildSince < 250[\s\S]*this\.dragNoteFlowLastAppliedPlacement/);
+  assert.match(placementSource, /const previousRect = this\.noteFlowCandidateRect\(previousPlacement\.candidate, "inline"\)/);
+  assert.doesNotMatch(placementSource, /debounceZone|dragNoteFlowRebuildSince/);
   assert.match(placementSource, /const inlineEdgeBand = clamp\(targetHeight \* 0\.10, 2, 6\)[\s\S]*const inlineCaptureBand = clamp\(targetHeight \* 0\.85, 28, 72\)[\s\S]*const sameInlineCandidate[\s\S]*const inlineRowHit = sameInlineCandidate[\s\S]*targetRect\.top - inlineCaptureBand[\s\S]*targetRect\.bottom \+ inlineCaptureBand[\s\S]*const horizontalRoom = !this\.markdownDropIncludesHeading\(inlineTarget\)[\s\S]*inlineRowHit/);
   assert.match(placementSource, /rightIntentRatio: 0\.45/);
   assert.match(placementSource, /const horizontalSide = intent === "inline-right" \? "right"[\s\S]*: keptPreviousInline[\s\S]*\? previousPlacement\.horizontalSide[\s\S]*: null/);
