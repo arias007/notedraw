@@ -388,13 +388,28 @@ test("Markdown selection uses only the visible Canvas frame and its four corners
 test("Markdown selection bounds exclude NoteFlow padding and include task checkboxes", async () => {
   const source = await readFile(sourceUrl, "utf8");
 
-  assert.match(source, /markdownElementCanvasBounds\(this\.markdownBlockElement\(block\), \{ forSelection: true \}\)/);
+  assert.match(source, /markdownElementCanvasBounds\(this\.markdownBlockElementOrFallback\(block\), \{ forSelection: true \}\)/);
+  assert.match(source, /markdownBlockElementOrFallback\(block\)[\s\S]*const mapped = this\.markdownBlockElement\(block\)[\s\S]*data-note-draw-markdown-block-id/);
   assert.match(source, /noteFlowAppliedVerticalInsets\(element\)/);
   assert.match(source, /input\.task-list-item-checkbox, input\[type='checkbox'\]/);
   assert.match(source, /listItem\.matches\?\.\("\.task-list-item, \[data-task\], \[data-task-status\]"\)/);
   assert.match(source, /this\.markdownTaskCheckboxRect\(element, elementRect\)/);
+  // The task checkbox (left of the <li>) is enclosed by the selection frame
+  // so the whole todo item is visibly selected.
+  assert.match(source, /left = Math\.min\(left, checkboxRect\.left\)/);
   assert.match(source, /top \+= flowInsets\.top \* visualScale/);
   assert.match(source, /bottom -= flowInsets\.bottom \* visualScale/);
+});
+
+test("Double-clicking the bottom-right resize handle resets elements to best fit", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const doubleClickSource = source.slice(source.indexOf("  onCanvasDoubleClick("), source.indexOf("  onPreviewDoubleClick("));
+  const resetSource = source.slice(source.indexOf("  resetSelectedElementsToBestFit()"), source.indexOf("  cancelSelectedStrokeResize("));
+
+  assert.match(doubleClickSource, /const resizeHandle = this\.findSelectionHandleAt\(point\);[\s\S]*if \(resizeHandle === "se" && this\.resetSelectedElementsToBestFit\(\)\)/);
+  assert.match(resetSource, /block\.span = 12;[\s\S]*block\.widthScale = 1;[\s\S]*block\.minHeight = null;[\s\S]*block\.floating = false;[\s\S]*block\.floatingExplicit = false;[\s\S]*block\.floatBox = null;/);
+  assert.match(resetSource, /refreshMarkdownBlockPresentation\(blocks\.map\(\(block\) => block\.id\)\)/);
+  assert.match(source, /effectiveSelectionFramePaddingPx\(\)[\s\S]*const shrunk =[\s\S]*return Math\.max\(3, shrunk\);/);
 });
 
 test("Markdown DOM replacement and async drops rebuild the selection frame", async () => {

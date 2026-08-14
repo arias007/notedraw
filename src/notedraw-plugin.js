@@ -10150,6 +10150,17 @@ var PreviewDrawingController = class {
       return;
     }
     const point = this.eventToPoint(event);
+    // Double-clicking the bottom-right resize handle resets the selected
+    // elements to their best-fit size: markdown blocks become full-row width
+    // (span 12) at natural height, floating blocks return to the flow, and
+    // side-by-side rows collapse back to a single column.
+    const resizeHandle = this.findSelectionHandleAt(point);
+    if (resizeHandle === "se" && this.resetSelectedElementsToBestFit()) {
+      this.lastTextTap = null;
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     const hitStrokeIndex = this.findStrokeAt(point, { x: event.clientX, y: event.clientY });
     if (hitStrokeIndex >= 0 && isTextLikeStroke(this.drawingData.strokes[hitStrokeIndex])) {
       this.editFloatingTextStroke(hitStrokeIndex, point);
@@ -13593,8 +13604,50 @@ var PreviewDrawingController = class {
     event.preventDefault();
     event.stopPropagation();
   }
-  cancelSelectedStrokeResize(restoreOriginal = false) {
-    if (restoreOriginal && this.resizeSelectionOriginalStrokes?.size) {
+  resetSelectedElementsToBestFit() {
+    // Reset the selected elements to their best-fit (default) size. Markdown
+    // blocks become full-row width (span 12) at natural height, floating
+    // blocks return to the flow, and any min-height / width scaling is
+    // cleared. Multi-selections reset every selected block.
+    const blocks = this.getSelectedMarkdownBlocks().filter((block) => !block.locked || Boolean(block.groupId));
+    const resizableStrokes = this.getSelectedStrokeIndexes().filter((index) => {
+      const stroke = this.drawingData?.strokes?.[index];
+      return Boolean(stroke) && (!stroke.locked || Boolean(stroke.groupId));
+    });
+    if (!blocks.length && !resizableStrokes.length) {
+      return false;
+    }
+    const historyBefore = this.captureDrawingHistorySnapshot();
+    let changed = false;
+    for (const block of blocks) {
+      const before = `${block.span}:${block.widthScale}:${block.minHeight}:${block.floating ? 1 : 0}`;
+      block.span = 12;
+      block.widthScale = 1;
+      block.minHeight = null;
+      block.floating = false;
+      block.floatingExplicit = false;
+      block.floatBox = null;
+      block.noteFlowAutoSpan = false;
+      changed = changed || before !== `${block.span}:${block.widthScale}:${block.minHeight}:${block.floating ? 1 : 0}`;
+    }
+    if (blocks.length) {
+      this.refreshMarkdownBlockPresentation(blocks.map((block) => block.id));
+    }
+    if (changed || resizableStrokes.length) {
+      this.redoStack = [];
+      this.invalidateStaticCache();
+      this.invalidateSelectionFrameSnapshot();
+      this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
+      this.recordDrawingHistory(historyBefore);
+    }
+    this.syncMarkdownBlockPresentation();
+    this.scheduleNoteFlowLayout({ operation: true, defer: true });
+    this.captureSelectionFrameSnapshot({ force: true });
+    this.scheduleResize({ layout: false, measure: true });
+    this.render();
+    return true;
+  }
+  cancelSelectedStrokeResize(restoreOriginal = false) {    if (restoreOriginal && this.resizeSelectionOriginalStrokes?.size) {
       for (const [index, original] of this.resizeSelectionOriginalStrokes.entries()) {
         const stroke = this.drawingData.strokes[index];
         if (stroke) {
@@ -19470,7 +19523,7 @@ var PreviewDrawingController = class {
     const indexes = this.getSelectedStrokeIndexes();
     let result = this.getStrokeIndexesBounds(indexes);
     for (const block of this.getSelectedMarkdownBlocks()) {
-      const bounds = this.markdownElementCanvasBounds(this.markdownBlockElement(block), { forSelection: true });
+      const bounds = this.markdownElementCanvasBounds(this.markdownBlockElementOrFallback(block), { forSelection: true });
       if (!bounds) {
         continue;
       }
@@ -19482,6 +19535,24 @@ var PreviewDrawingController = class {
       } : { ...bounds };
     }
     return result;
+  }
+  markdownBlockElementOrFallback(block) {
+    const mapped = this.markdownBlockElement(block);
+    if (mapped) {
+      return mapped;
+    }
+    // After Obsidian re-renders (grid re-parenting for side-by-side rows,
+    // embed hydration) the block record can still point at a detached
+    // element. Fall back to the live DOM node so the selection frame keeps
+    // enclosing every selected block, including side-by-side members.
+    if (block?.id && this.previewEl?.isConnected) {
+      const id = String(block.id).replace(/["\\]/g, "");
+      const live = this.previewEl.querySelector?.(`[data-note-draw-markdown-block-id="${id}"]`);
+      if (live?.isConnected) {
+        return live;
+      }
+    }
+    return null;
   }
   selectionStateKey() {
     const strokeIds = this.getSelectedStrokeIndexes().map((index) => strokeElementId(this.drawingData?.strokes?.[index]) || `index:${index}`);
@@ -19523,12 +19594,16 @@ var PreviewDrawingController = class {
     // Shrink the frame when the selected blocks sit close to their
     // neighbours (NoteFlow grid gap is 6px, so the fixed 8px padding would
     // make adjacent blocks' selection frames overlap). The frame then
-    // touches, rather than crosses, the neighbouring element's frame.
+    // touches, rather than crosses, the neighbouring element's frame — but
+    // never below a small floor so the frame still visibly encloses the
+    // element (checkboxes, heading markers near the left edge) instead of
+    // hugging it flush.
     const padding = this.selectionFramePaddingPx();
     const neighborGap = this.minSelectedNeighborGapCanvasPx();
-    return Number.isFinite(neighborGap) && neighborGap >= 0
+    const shrunk = Number.isFinite(neighborGap) && neighborGap >= 0
       ? Math.min(padding, Math.max(0, neighborGap / 2))
       : padding;
+    return Math.max(3, shrunk);
   }
   minSelectedNeighborGapCanvasPx() {
     const canvasRect = this.canvas?.getBoundingClientRect?.();
@@ -19728,14 +19803,13 @@ var PreviewDrawingController = class {
       bottom -= flowInsets.bottom * visualScale;
       const checkboxRect = this.markdownTaskCheckboxRect(element, elementRect);
       if (checkboxRect) {
-        // Obsidian renders the task checkbox in the list-marker zone, left of
-        // the <li>. Including it unchecked pushes the selection frame outside
-        // the element and makes neighbouring blocks' selection frames overlap.
-        // Keep the frame flush with the element bounds instead.
-        left = Math.min(left, Math.max(elementRect.left, checkboxRect.left));
-        right = Math.max(right, Math.min(elementRect.right, checkboxRect.right));
-        top = Math.min(top, Math.max(elementRect.top, checkboxRect.top));
-        bottom = Math.max(bottom, Math.min(elementRect.bottom, checkboxRect.bottom));
+        // The task checkbox renders in the list-marker zone left of the <li>.
+        // Enclose it in the selection frame so the whole todo item (checkbox
+        // included) is visibly selected and resize handles cover it.
+        left = Math.min(left, checkboxRect.left);
+        right = Math.max(right, checkboxRect.right);
+        top = Math.min(top, checkboxRect.top);
+        bottom = Math.max(bottom, checkboxRect.bottom);
       }
     }
     if (right <= left || bottom <= top) {

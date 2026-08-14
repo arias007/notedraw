@@ -13711,6 +13711,13 @@ ${selected}
       return;
     }
     const point = this.eventToPoint(event);
+    const resizeHandle = this.findSelectionHandleAt(point);
+    if (resizeHandle === "se" && this.resetSelectedElementsToBestFit()) {
+      this.lastTextTap = null;
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     const hitStrokeIndex = this.findStrokeAt(point, { x: event.clientX, y: event.clientY });
     if (hitStrokeIndex >= 0 && isTextLikeStroke(this.drawingData.strokes[hitStrokeIndex])) {
       this.editFloatingTextStroke(hitStrokeIndex, point);
@@ -16989,6 +16996,45 @@ ${selected}
     this.render();
     event.preventDefault();
     event.stopPropagation();
+  }
+  resetSelectedElementsToBestFit() {
+    const blocks = this.getSelectedMarkdownBlocks().filter((block) => !block.locked || Boolean(block.groupId));
+    const resizableStrokes = this.getSelectedStrokeIndexes().filter((index) => {
+      const stroke = this.drawingData?.strokes?.[index];
+      return Boolean(stroke) && (!stroke.locked || Boolean(stroke.groupId));
+    });
+    if (!blocks.length && !resizableStrokes.length) {
+      return false;
+    }
+    const historyBefore = this.captureDrawingHistorySnapshot();
+    let changed = false;
+    for (const block of blocks) {
+      const before = `${block.span}:${block.widthScale}:${block.minHeight}:${block.floating ? 1 : 0}`;
+      block.span = 12;
+      block.widthScale = 1;
+      block.minHeight = null;
+      block.floating = false;
+      block.floatingExplicit = false;
+      block.floatBox = null;
+      block.noteFlowAutoSpan = false;
+      changed = changed || before !== `${block.span}:${block.widthScale}:${block.minHeight}:${block.floating ? 1 : 0}`;
+    }
+    if (blocks.length) {
+      this.refreshMarkdownBlockPresentation(blocks.map((block) => block.id));
+    }
+    if (changed || resizableStrokes.length) {
+      this.redoStack = [];
+      this.invalidateStaticCache();
+      this.invalidateSelectionFrameSnapshot();
+      this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
+      this.recordDrawingHistory(historyBefore);
+    }
+    this.syncMarkdownBlockPresentation();
+    this.scheduleNoteFlowLayout({ operation: true, defer: true });
+    this.captureSelectionFrameSnapshot({ force: true });
+    this.scheduleResize({ layout: false, measure: true });
+    this.render();
+    return true;
   }
   cancelSelectedStrokeResize(restoreOriginal = false) {
     if (restoreOriginal && this.resizeSelectionOriginalStrokes?.size) {
@@ -22386,7 +22432,7 @@ ${selected}
     const indexes = this.getSelectedStrokeIndexes();
     let result = this.getStrokeIndexesBounds(indexes);
     for (const block of this.getSelectedMarkdownBlocks()) {
-      const bounds = this.markdownElementCanvasBounds(this.markdownBlockElement(block), { forSelection: true });
+      const bounds = this.markdownElementCanvasBounds(this.markdownBlockElementOrFallback(block), { forSelection: true });
       if (!bounds) {
         continue;
       }
@@ -22398,6 +22444,20 @@ ${selected}
       } : { ...bounds };
     }
     return result;
+  }
+  markdownBlockElementOrFallback(block) {
+    const mapped = this.markdownBlockElement(block);
+    if (mapped) {
+      return mapped;
+    }
+    if (block?.id && this.previewEl?.isConnected) {
+      const id = String(block.id).replace(/["\\]/g, "");
+      const live = this.previewEl.querySelector?.(`[data-note-draw-markdown-block-id="${id}"]`);
+      if (live?.isConnected) {
+        return live;
+      }
+    }
+    return null;
   }
   selectionStateKey() {
     const strokeIds = this.getSelectedStrokeIndexes().map((index) => strokeElementId(this.drawingData?.strokes?.[index]) || `index:${index}`);
@@ -22438,7 +22498,8 @@ ${selected}
   effectiveSelectionFramePaddingPx() {
     const padding = this.selectionFramePaddingPx();
     const neighborGap = this.minSelectedNeighborGapCanvasPx();
-    return Number.isFinite(neighborGap) && neighborGap >= 0 ? Math.min(padding, Math.max(0, neighborGap / 2)) : padding;
+    const shrunk = Number.isFinite(neighborGap) && neighborGap >= 0 ? Math.min(padding, Math.max(0, neighborGap / 2)) : padding;
+    return Math.max(3, shrunk);
   }
   minSelectedNeighborGapCanvasPx() {
     const canvasRect = this.canvas?.getBoundingClientRect?.();
@@ -22632,10 +22693,10 @@ ${selected}
       bottom -= flowInsets.bottom * visualScale;
       const checkboxRect = this.markdownTaskCheckboxRect(element, elementRect);
       if (checkboxRect) {
-        left = Math.min(left, Math.max(elementRect.left, checkboxRect.left));
-        right = Math.max(right, Math.min(elementRect.right, checkboxRect.right));
-        top = Math.min(top, Math.max(elementRect.top, checkboxRect.top));
-        bottom = Math.max(bottom, Math.min(elementRect.bottom, checkboxRect.bottom));
+        left = Math.min(left, checkboxRect.left);
+        right = Math.max(right, checkboxRect.right);
+        top = Math.min(top, checkboxRect.top);
+        bottom = Math.max(bottom, checkboxRect.bottom);
       }
     }
     if (right <= left || bottom <= top) {
