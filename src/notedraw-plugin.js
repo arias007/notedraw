@@ -5206,17 +5206,31 @@ var NoteDrawPlugin = class extends Plugin {
       return false;
     }
     const uniqueMoving = moving.filter((item, index) => index === 0 || item.start !== moving[index - 1].start);
-    const blocks = uniqueMoving.map((item) => source.slice(item.start, item.end).trim()).filter(Boolean);
+    // Guard against corrupting the source file: if any resolved range is out
+    // of bounds (Obsidian's incremental render can leave stale line info),
+    // slice() would truncate a block and permanently damage the note.
+    // Refuse the move instead of writing a broken file.
+    const validMoving = uniqueMoving.filter((item) => isValidSourceRange(source, item.start, item.end) && source.slice(item.start, item.end).trim());
+    if (validMoving.length !== uniqueMoving.length) {
+      return false;
+    }
+    const blocks = validMoving.map((item) => source.slice(item.start, item.end).trim());
     if (!blocks.length) {
       return false;
     }
     let insertion = placeAfter ? target.end : target.start;
+    if (!Number.isFinite(insertion) || insertion < 0 || insertion > source.length) {
+      return false;
+    }
     let without = source;
-    for (const item of uniqueMoving.slice().sort((a, b) => b.start - a.start)) {
+    for (const item of validMoving.slice().sort((a, b) => b.start - a.start)) {
       without = `${without.slice(0, item.start)}${without.slice(item.end)}`;
       if (item.start < insertion) {
         insertion -= item.end - item.start;
       }
+    }
+    if (insertion < 0 || insertion > without.length) {
+      return false;
     }
     // 折叠删除移动块后残留的多余空行（跳过代码围栏内部），并同步修正插入点偏移
     const collapsed = collapseRunawayBlankLines(without, insertion);
@@ -5311,6 +5325,7 @@ var PreviewDrawingController = class {
     this.selectionFilterCycle = null;
     this.selectionFrameSnapshot = null;
     this.selectionFrameAwaitingMarkdownSync = null;
+    this.embedRepairTimer = null;
     this.markdownBlockElements = /* @__PURE__ */ new Map();
     this.applySettings();
     this.penColor = this.brushSettings[BRUSH_PEN].color;
@@ -5870,6 +5885,7 @@ var PreviewDrawingController = class {
             this.scheduleFrozenNoteFlowLayoutRestore();
             this.scheduleReadingVirtualSectionSync();
             this.scheduleResize({ layout: false, measure: false });
+            this.scheduleEmbedRepair();
           }
         }
       });
@@ -5885,6 +5901,7 @@ var PreviewDrawingController = class {
     this.bindSourceFormatToolbarEvents();
     this.repairConnectedReadingSections();
     this.ensureReadingHeadingCollapseIndicators();
+    this.scheduleEmbedRepair();
     this.plugin.emitApiEvent("surface-changed", { ...this.plugin.describeController(this), phase: "mounted" });
   }
   async prepareInitialReadingLayout() {
@@ -6242,6 +6259,10 @@ var PreviewDrawingController = class {
     this.stopToolbarDrag();
     this.sourceFormatToolbarCleanup?.();
     this.sourceFormatToolbarCleanup = null;
+    if (this.embedRepairTimer !== null) {
+      window.clearTimeout(this.embedRepairTimer);
+      this.embedRepairTimer = null;
+    }
     if (this.sourceFormatToolbarRetryTimer !== null) {
       window.clearTimeout(this.sourceFormatToolbarRetryTimer);
       this.sourceFormatToolbarRetryTimer = null;
@@ -12246,9 +12267,9 @@ var PreviewDrawingController = class {
     // between inline and vertical insertion (which read as "slides up/down").
     if ((this.dragMarkdownDropSide === "right" || this.dragMarkdownDropSide === "left")
       && this.dragMarkdownDropTarget === target) {
-      if (this.dragMarkdownDropSide === "right" && clientX >= rect.left + rect.width * 0.35) {
+      if (this.dragMarkdownDropSide === "right" && clientX >= rect.left + rect.width * 0.3) {
         side = "right";
-      } else if (this.dragMarkdownDropSide === "left" && clientX <= rect.left + rect.width * 0.65) {
+      } else if (this.dragMarkdownDropSide === "left" && clientX <= rect.left + rect.width * 0.7) {
         side = "left";
       }
     }
@@ -16062,6 +16083,123 @@ var PreviewDrawingController = class {
     }
     this.repairConnectedReadingSections(renderer);
     this.scheduleResize({ layout: false, measure: true });
+  }
+  scheduleEmbedRepair(delay = 1200) {
+    if (this.embedRepairTimer !== null) {
+      return;
+    }
+    this.embedRepairTimer = window.setTimeout(() => {
+      this.embedRepairTimer = null;
+      if (this.destroyed || !this.previewEl?.isConnected || this.pointerDown || this.draggingStroke) {
+        return;
+      }
+      // Obsidian sometimes fails to hydrate embeds / resolve wikilinks when
+      // it reuses a rendered view (plugin reload, tab restore). Repair them
+      // generically so embedded content and internal links always show.
+      void this.repairUnloadedEmbeds();
+      this.repairUnrenderedWikilinks();
+    }, delay);
+  }
+  async repairUnloadedEmbeds() {
+    if (this.surfaceType !== "preview" || this.embeddedSurface || !this.previewEl?.isConnected || !this.plugin?.app) {
+      return 0;
+    }
+    const embeds = this.previewEl.querySelectorAll?.("span.internal-embed[src], span.internal-embed[data-src]") || [];
+    let repaired = 0;
+    for (const span of embeds) {
+      if (span.classList.contains("markdown-embed") || span.querySelector(".markdown-embed-content")) {
+        continue;
+      }
+      const target = span.getAttribute("data-src") || span.getAttribute("src");
+      if (!target || target.startsWith("http://") || target.startsWith("https://")) {
+        continue;
+      }
+      const dest = this.plugin.app.metadataCache?.getFirstLinkpathDest?.(target, this.file?.path || "") || null;
+      if (!dest || dest.extension !== "md") {
+        continue;
+      }
+      try {
+        const content = await this.plugin.app.vault.read(dest);
+        if (typeof content !== "string") {
+          continue;
+        }
+        span.classList.add("markdown-embed", "inline-embed", "is-loaded");
+        const contentEl = span.ownerDocument.createElement("div");
+        contentEl.className = "markdown-embed-content";
+        const inner = span.ownerDocument.createElement("div");
+        inner.className = "markdown-preview-view markdown-rendered";
+        contentEl.appendChild(inner);
+        span.appendChild(contentEl);
+        await MarkdownRenderer.render(this.plugin.app, content, inner, dest.path, this.plugin);
+        this.plugin.syncEmbeddedMarkdownControllers?.();
+        repaired += 1;
+      } catch (error) {
+        console.error(`[${PLUGIN_ID}] Failed to render embed ${target}`, error);
+      }
+    }
+    return repaired;
+  }
+  repairUnrenderedWikilinks() {
+    if (this.surfaceType !== "preview" || this.embeddedSurface || !this.previewEl?.isConnected || !this.plugin?.app) {
+      return 0;
+    }
+    const doc = this.previewEl.ownerDocument;
+    if (!doc?.createTreeWalker) {
+      return 0;
+    }
+    const walker = doc.createTreeWalker(this.previewEl, NodeFilter.SHOW_TEXT);
+    const pattern = /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g;
+    const candidates = [];
+    let node;
+    while ((node = walker.nextNode())) {
+      const text = node.nodeValue || "";
+      if (!text.includes("[[") || !text.includes("]]")) {
+        continue;
+      }
+      pattern.lastIndex = 0;
+      if (pattern.test(text)) {
+        candidates.push(node);
+      }
+    }
+    let repaired = 0;
+    for (const node of candidates) {
+      const text = node.nodeValue || "";
+      if (!node.parentElement) {
+        continue;
+      }
+      const fragment = doc.createDocumentFragment();
+      let lastIndex = 0;
+      pattern.lastIndex = 0;
+      let match;
+      let changed = false;
+      while ((match = pattern.exec(text)) !== null) {
+        if (match.index > lastIndex) {
+          fragment.appendChild(doc.createTextNode(text.slice(lastIndex, match.index)));
+        }
+        const linkPath = (match[1] || "").trim();
+        const alias = (match[2] || "").trim() || linkPath;
+        const dest = this.plugin.app.metadataCache?.getFirstLinkpathDest?.(linkPath, this.file?.path || "");
+        const link = doc.createElement("a");
+        link.className = "internal-link";
+        link.textContent = alias;
+        if (dest) {
+          link.setAttribute("href", dest.path);
+          link.setAttribute("data-href", dest.path);
+        }
+        fragment.appendChild(link);
+        lastIndex = match.index + match[0].length;
+        changed = true;
+      }
+      if (!changed) {
+        continue;
+      }
+      if (lastIndex < text.length) {
+        fragment.appendChild(doc.createTextNode(text.slice(lastIndex)));
+      }
+      node.parentElement.replaceChild(fragment, node);
+      repaired += 1;
+    }
+    return repaired;
   }
   draggedNoteFlowPreviewHeight(indexes = this.draggedNoteFlowIndexes()) {
     const bounds = this.getStrokeIndexesBounds(indexes);
