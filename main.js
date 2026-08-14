@@ -22062,7 +22062,7 @@ ${selected}
       this.selectionFrameSnapshot = null;
       return null;
     }
-    const padding = this.selectionFramePaddingPx();
+    const padding = this.effectiveSelectionFramePaddingPx();
     const rect = {
       x: bounds.minX - padding,
       y: bounds.minY - padding,
@@ -22071,6 +22071,58 @@ ${selected}
     };
     this.selectionFrameSnapshot = { key, rect };
     return rect;
+  }
+  effectiveSelectionFramePaddingPx() {
+    const padding = this.selectionFramePaddingPx();
+    const neighborGap = this.minSelectedNeighborGapCanvasPx();
+    return Number.isFinite(neighborGap) && neighborGap >= 0 ? Math.min(padding, Math.max(0, neighborGap / 2)) : padding;
+  }
+  minSelectedNeighborGapCanvasPx() {
+    const canvasRect = this.canvas?.getBoundingClientRect?.();
+    if (!canvasRect || canvasRect.width <= 0 || canvasRect.height <= 0) {
+      return Number.POSITIVE_INFINITY;
+    }
+    const scaleX = this.canvasWidth() / canvasRect.width;
+    const scaleY = this.canvasRenderHeight / canvasRect.height;
+    const pixelScale = Math.min(scaleX, scaleY);
+    let minGap = Number.POSITIVE_INFINITY;
+    for (const block of this.getSelectedMarkdownBlocks()) {
+      const element = this.markdownBlockElement(block);
+      if (!element?.isConnected || !element.parentElement) {
+        continue;
+      }
+      const rect = element.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) {
+        continue;
+      }
+      for (const sibling of Array.from(element.parentElement.children || [])) {
+        if (sibling === element || !sibling?.isConnected) {
+          continue;
+        }
+        const siblingRect = sibling.getBoundingClientRect?.();
+        if (!siblingRect || siblingRect.width <= 0 || siblingRect.height <= 0) {
+          continue;
+        }
+        const overlapX = Math.min(rect.right, siblingRect.right) - Math.max(rect.left, siblingRect.left);
+        const overlapY = Math.min(rect.bottom, siblingRect.bottom) - Math.max(rect.top, siblingRect.top);
+        let gap = Number.POSITIVE_INFINITY;
+        if (overlapX > 0) {
+          if (overlapY > 0) {
+            gap = 0;
+          } else if (siblingRect.bottom <= rect.top) {
+            gap = rect.top - siblingRect.bottom;
+          } else {
+            gap = siblingRect.top - rect.bottom;
+          }
+        } else if (overlapY > 0) {
+          gap = siblingRect.right <= rect.left ? rect.left - siblingRect.right : siblingRect.left - rect.right;
+        }
+        if (Number.isFinite(gap) && gap >= 0 && gap < minGap) {
+          minGap = gap;
+        }
+      }
+    }
+    return Number.isFinite(minGap) ? minGap * pixelScale : Number.POSITIVE_INFINITY;
   }
   noteFlowAppliedVerticalInsets(element) {
     const insets = { top: 0, bottom: 0 };
@@ -22217,10 +22269,10 @@ ${selected}
       bottom -= flowInsets.bottom * visualScale;
       const checkboxRect = this.markdownTaskCheckboxRect(element, elementRect);
       if (checkboxRect) {
-        left = Math.min(left, checkboxRect.left);
-        right = Math.max(right, checkboxRect.right);
-        top = Math.min(top, checkboxRect.top);
-        bottom = Math.max(bottom, checkboxRect.bottom);
+        left = Math.min(left, Math.max(elementRect.left, checkboxRect.left));
+        right = Math.max(right, Math.min(elementRect.right, checkboxRect.right));
+        top = Math.min(top, Math.max(elementRect.top, checkboxRect.top));
+        bottom = Math.max(bottom, Math.min(elementRect.bottom, checkboxRect.bottom));
       }
     }
     if (right <= left || bottom <= top) {
@@ -22535,7 +22587,7 @@ ${selected}
       const bounds = this.resizeSelectionPreviewBounds;
       const width = Math.max(1, Number(this.resizeSelectionPointerGeometry?.canvasWidth) || this.canvasWidth());
       const height = Math.max(1, Number(this.resizeSelectionPointerGeometry?.canvasHeight) || this.canvasHeight());
-      const padding = this.selectionFramePaddingPx();
+      const padding = this.effectiveSelectionFramePaddingPx();
       return {
         x: bounds.minX * width - padding,
         y: bounds.minY * height - padding,
@@ -22548,7 +22600,7 @@ ${selected}
       if (!bounds) {
         return null;
       }
-      const padding = this.selectionFramePaddingPx();
+      const padding = this.effectiveSelectionFramePaddingPx();
       return {
         x: bounds.minX - padding,
         y: bounds.minY - padding,
