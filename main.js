@@ -19425,6 +19425,34 @@ ${selected}
     }
     this.repairConnectedReadingSections(renderer);
     this.scheduleResize({ layout: false, measure: true });
+    this.repairWidelyDetachedSections(renderer);
+  }
+  repairWidelyDetachedSections(renderer = null) {
+    if (!this.previewEl?.isConnected) {
+      return;
+    }
+    const current = renderer || this.readingPreviewRenderer();
+    if (!current) {
+      return;
+    }
+    const sections = current.sections || [];
+    const renderedSections = sections.filter((section) => section?.el);
+    const connectedCount = renderedSections.filter((section) => section.el.isConnected).length;
+    if (renderedSections.length < 4 || connectedCount >= renderedSections.length * 0.6) {
+      return;
+    }
+    let marked = 0;
+    for (const section of sections) {
+      if (section?.el && !section.el.isConnected && section.rendered !== false) {
+        section.rendered = false;
+        marked += 1;
+      }
+    }
+    if (marked > 0) {
+      this.repairConnectedReadingSections(current);
+      this.scheduleResize({ layout: false, measure: true });
+      this.scheduleEmbedRepair(600);
+    }
   }
   scheduleEmbedRepair(delay = 1200) {
     if (this.embedRepairTimer !== null) {
@@ -19568,7 +19596,7 @@ ${selected}
     const applied = Math.ceil(noteFlowRowReservation({
       rowOffset: 0,
       boxHeight: height,
-      gap: 12
+      gap: 6
     }));
     const base = Number.isFinite(Number(existingState?.base)) ? Number(existingState.base) : Number.parseFloat(window.getComputedStyle(target).getPropertyValue(styleProperty)) || 0;
     this.setDraggedNoteFlowDomStyle(target, styleProperty, `${Math.ceil(base + applied)}px`, "important");
@@ -19708,8 +19736,10 @@ ${selected}
     }
     return changed || domChanged;
   }
-  applyDraggedNoteFlowLivePreview(placement) {
-    this.restoreDraggedNoteFlowLivePreview();
+  applyDraggedNoteFlowLivePreview(placement, options = {}) {
+    if (options.skipRestore !== true) {
+      this.restoreDraggedNoteFlowLivePreview();
+    }
     const movedIndexes = Array.from(this.dragStrokeOriginalPoints?.keys?.() || []);
     const resolved = this.resolveDraggedNoteFlowPlacement(placement, movedIndexes);
     if (!resolved) {
@@ -19915,7 +19945,7 @@ ${selected}
       laneRight: laneRect.right,
       draggedLeft: this.draggedSelectionClientLeft(),
       horizontalRoom,
-      rightIntentRatio: 0.68
+      rightIntentRatio: 0.5
     });
     const horizontalSide = intent === "inline-right" ? "right" : null;
     const leftSnap = intent === "line-start";
@@ -20014,7 +20044,7 @@ ${selected}
       candidate: { ...flowCandidate }
     };
     this.syncMarkdownDropFromNoteFlowPlacement(this.dragNoteFlowPlacement);
-    this.applyDraggedNoteFlowLivePreview(this.dragNoteFlowPlacement);
+    this.applyDraggedNoteFlowLivePreview(this.dragNoteFlowPlacement, { skipRestore: !presentationChanged });
     return this.dragNoteFlowPlacement;
   }
   syncMarkdownDropFromNoteFlowPlacement(placement) {

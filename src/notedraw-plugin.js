@@ -16083,6 +16083,37 @@ var PreviewDrawingController = class {
     }
     this.repairConnectedReadingSections(renderer);
     this.scheduleResize({ layout: false, measure: true });
+    // Sometimes the whole preview loses its content DOM after a move commit
+    // (Obsidian reuses stale section refs for every block). Detect a
+    // widespread disconnect and force a full re-render.
+    this.repairWidelyDetachedSections(renderer);
+  }
+  repairWidelyDetachedSections(renderer = null) {
+    if (!this.previewEl?.isConnected) {
+      return;
+    }
+    const current = renderer || this.readingPreviewRenderer();
+    if (!current) {
+      return;
+    }
+    const sections = current.sections || [];
+    const renderedSections = sections.filter((section) => section?.el);
+    const connectedCount = renderedSections.filter((section) => section.el.isConnected).length;
+    if (renderedSections.length < 4 || connectedCount >= renderedSections.length * 0.6) {
+      return;
+    }
+    let marked = 0;
+    for (const section of sections) {
+      if (section?.el && !section.el.isConnected && section.rendered !== false) {
+        section.rendered = false;
+        marked += 1;
+      }
+    }
+    if (marked > 0) {
+      this.repairConnectedReadingSections(current);
+      this.scheduleResize({ layout: false, measure: true });
+      this.scheduleEmbedRepair(600);
+    }
   }
   scheduleEmbedRepair(delay = 1200) {
     if (this.embedRepairTimer !== null) {
@@ -16229,10 +16260,14 @@ var PreviewDrawingController = class {
     const existingState = this.noteFlowStyledElements.get(target)?.get(property);
     const styleProperty = existingState?.styleProperty
       || (property === "padding-bottom" ? "margin-bottom" : "margin-top");
+    // Use the same 6px gap as the markdown grid so the dragged preview sits
+    // exactly where the committed layout will place it (WYSIWYG). The old
+    // fixed 12px gap made the preview leave a visibly larger gap than the
+    // final arrangement after releasing the pointer.
     const applied = Math.ceil(noteFlowRowReservation({
       rowOffset: 0,
       boxHeight: height,
-      gap: 12
+      gap: 6
     }));
     const base = Number.isFinite(Number(existingState?.base))
       ? Number(existingState.base)
@@ -16384,8 +16419,15 @@ var PreviewDrawingController = class {
     }
     return changed || domChanged;
   }
-  applyDraggedNoteFlowLivePreview(placement) {
-    this.restoreDraggedNoteFlowLivePreview();
+  applyDraggedNoteFlowLivePreview(placement, options = {}) {
+    // Rebuilding the preview on every pointer-move frame restores the
+    // dragged elements to their original spot first and then re-inserts them
+    // at the drop target, which visibly flickers. When the placement intent
+    // is unchanged, keep the existing DOM preview and only refresh the
+    // reservation so the element follows the pointer smoothly.
+    if (options.skipRestore !== true) {
+      this.restoreDraggedNoteFlowLivePreview();
+    }
     const movedIndexes = Array.from(this.dragStrokeOriginalPoints?.keys?.() || []);
     const resolved = this.resolveDraggedNoteFlowPlacement(placement, movedIndexes);
     if (!resolved) {
@@ -16628,7 +16670,7 @@ var PreviewDrawingController = class {
       laneRight: laneRect.right,
       draggedLeft: this.draggedSelectionClientLeft(),
       horizontalRoom,
-      rightIntentRatio: 0.68
+      rightIntentRatio: 0.5
     });
     const horizontalSide = intent === "inline-right" ? "right" : null;
     const leftSnap = intent === "line-start";
@@ -16756,7 +16798,7 @@ var PreviewDrawingController = class {
       candidate: { ...flowCandidate }
     };
     this.syncMarkdownDropFromNoteFlowPlacement(this.dragNoteFlowPlacement);
-    this.applyDraggedNoteFlowLivePreview(this.dragNoteFlowPlacement);
+    this.applyDraggedNoteFlowLivePreview(this.dragNoteFlowPlacement, { skipRestore: !presentationChanged });
     return this.dragNoteFlowPlacement;
   }
   syncMarkdownDropFromNoteFlowPlacement(placement) {
