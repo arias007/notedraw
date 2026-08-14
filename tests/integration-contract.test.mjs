@@ -116,7 +116,7 @@ test("3.4.84 preserves reading content and cross-view frames without hidden-surf
   assert.match(source, /window\.setTimeout\(\(\) => this\.flushScheduledResize\(\), 120\)/);
   assert.match(source, /flushScheduledResize\(\)[\s\S]*window\.cancelAnimationFrame\(this\.resizeFrameId\)[\s\S]*window\.clearTimeout\(this\.resizeFallbackTimer\)/);
   assert.match(source, /this\.repairConnectedReadingSections\(\);\s*await this\.prepareInitialReadingLayout\(\)/);
-  assert.match(source, /new MutationObserver\(\(mutations\) => \{\s*if \(mutations\.some\(\(mutation\) => isMarkdownContentMutation\(mutation\)\)\) \{\s*this\.noteFlowMarkdownAnnotationComplete = false;\s*this\.repairConnectedReadingSections\(\)/);
+  assert.match(source, /new MutationObserver\(\(mutations\) => \{\s*if \(mutations\.some\(\(mutation\) => isMarkdownContentMutation\(mutation\)\)\) \{\s*this\.noteFlowMarkdownAnnotationComplete = false;\s*if \(this\.draggingStroke \|\| this\.resizingSelection \|\| this\.pointerDown\) \{[\s\S]*?return;[\s\S]*?this\.scheduleMarkdownMutationSync\(\)/);
   assert.match(source, /if \(editingLayout\) \{[\s\S]*this\.scheduleMarkdownAnnotationRefresh\(\{ layout: false \}\);\s*\} else \{\s*this\.syncMarkdownBlockPresentation\(\);\s*this\.scheduleFrozenNoteFlowLayoutRestore\(\)/);
   assert.match(source, /await this\.ensureDrawingsLoaded\(\);[\s\S]*?this\.repairConnectedReadingSections\(\);/);
   assert.match(source, /repairConnectedReadingSections\(renderer = this\.readingPreviewRenderer\(\)\)[\s\S]*renderer\.updateVirtualDisplay\?\.\(\);[\s\S]*section\.rendered !== false[\s\S]*section\.render\?\.\(\);[\s\S]*renderer\.measureSection\?\.\(section\);[\s\S]*renderer\.updateVirtualDisplay\?\.\(\)/);
@@ -447,7 +447,8 @@ test("selection tool previews and commits exact NoteFlow Markdown insertion targ
   assert.match(dropSource, /const intent = resolveDragDropHorizontalIntent\([\s\S]*horizontalRoom[\s\S]*\);[\s\S]*const horizontalSide = intent === "inline-right" \? "right" : null[\s\S]*const leftSnap = intent === "line-start"/);
   assert.match(dropSource, /canonicalNoteFlowGapPlacement\([\s\S]*canonicalRowKey[\s\S]*const peers = \[\][\s\S]*flowOrder = insertionIndex/);
   assert.match(dropSource, /noteFlowBoundary[\s\S]*flowBoundary/);
-  assert.match(dropSource, /flowTarget\.classList\.add\(`notedraw-text-sort-target-\$\{horizontalSide \|\| flowSide\}`\)[\s\S]*indicator\.dataset\.noteDrawDropSide = horizontalSide \|\| flowSide[\s\S]*indicator\.dataset\.noteDrawDropLine = String\(flowLine\)/);
+  assert.match(dropSource, /this\.removeDraggedNoteFlowPlacementVisual\(\);[\s\S]*indicator\.dataset\.noteDrawDropSide = horizontalSide \|\| flowSide[\s\S]*indicator\.dataset\.noteDrawDropLine = String\(flowLine\)/);
+  assert.doesNotMatch(dropSource, /flowTarget\.classList\.add\(`notedraw-text-sort-target-/);
   assert.doesNotMatch(dropSource, /applyElementStyles\(indicator/);
   assert.match(dropSource, /snapDraggedSelectionToNoteFlowPlacement[\s\S]*draggedNoteFlowClientBounds\(\)[\s\S]*const targetClientX = leftSnap[\s\S]*placement\.inlineBoundary[\s\S]*dragNoteFlowPlacementClientDelta/);
   assert.match(dragSource, /this\.usesDraggedNoteFlowPlacement\(\)[\s\S]*this\.queueDraggedNoteFlowPlacement\(event\.clientX, event\.clientY\)[\s\S]*this\.queueDraggedNoteFlowRefresh/);

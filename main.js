@@ -3896,6 +3896,7 @@ var SELECT_RESIZE_HANDLE_HIT_RADIUS = 22;
 var SELECTION_FRAME_COLOR = "rgba(124, 58, 237, 0.96)";
 var SELECTION_FRAME_LINE_WIDTH = 1.5;
 var SELECTION_FRAME_RADIUS = 7;
+var SELECTION_FRAME_DRAG_FILL = "rgba(124, 58, 237, 0.10)";
 var SNAP_GRID_PX = 8;
 var SNAP_THRESHOLD_PX = 7;
 var DRAWING_INTERPOLATION_STEP_PX = 3;
@@ -8979,6 +8980,7 @@ var PreviewDrawingController = class {
     this.selectionFrameSnapshot = null;
     this.selectionFrameAwaitingMarkdownSync = null;
     this.embedRepairTimer = null;
+    this.markdownMutationSyncTimer = null;
     this.markdownBlockElements = /* @__PURE__ */ new Map();
     this.applySettings();
     this.penColor = this.brushSettings[BRUSH_PEN].color;
@@ -9063,6 +9065,7 @@ var PreviewDrawingController = class {
     this.dragNoteFlowDropClientY = null;
     this.dragNoteFlowPlacement = null;
     this.dragNoteFlowTargetElement = null;
+    this.dragNoteFlowReservationStyles = null;
     this.noteFlowDropIndicator = null;
     this.resizingSelection = false;
     this.resizeSelectionHandle = null;
@@ -9520,17 +9523,10 @@ var PreviewDrawingController = class {
       this.markdownRenderObserver = new MutationObserver((mutations) => {
         if (mutations.some((mutation) => isMarkdownContentMutation(mutation))) {
           this.noteFlowMarkdownAnnotationComplete = false;
-          this.repairConnectedReadingSections();
-          const editingLayout = this.active && (this.toolMode === TOOL_EDIT_MD || this.noteFlowOperationPending || this.draggingStroke || this.resizingSelection);
-          if (editingLayout) {
-            this.scheduleMarkdownAnnotationRefresh({ layout: false });
-          } else {
-            this.syncMarkdownBlockPresentation();
-            this.scheduleFrozenNoteFlowLayoutRestore();
-            this.scheduleReadingVirtualSectionSync();
-            this.scheduleResize({ layout: false, measure: false });
-            this.scheduleEmbedRepair();
+          if (this.draggingStroke || this.resizingSelection || this.pointerDown) {
+            return;
           }
+          this.scheduleMarkdownMutationSync();
         }
       });
       this.markdownRenderObserver.observe(this.previewEl, { subtree: true, childList: true });
@@ -9906,6 +9902,10 @@ var PreviewDrawingController = class {
     if (this.embedRepairTimer !== null) {
       window.clearTimeout(this.embedRepairTimer);
       this.embedRepairTimer = null;
+    }
+    if (this.markdownMutationSyncTimer !== null) {
+      window.clearTimeout(this.markdownMutationSyncTimer);
+      this.markdownMutationSyncTimer = null;
     }
     if (this.sourceFormatToolbarRetryTimer !== null) {
       window.clearTimeout(this.sourceFormatToolbarRetryTimer);
@@ -10456,6 +10456,28 @@ var PreviewDrawingController = class {
         }
       });
     }, delay);
+  }
+  scheduleMarkdownMutationSync() {
+    if (this.markdownMutationSyncTimer !== null) {
+      return;
+    }
+    this.markdownMutationSyncTimer = window.setTimeout(() => {
+      this.markdownMutationSyncTimer = null;
+      if (this.destroyed || !this.previewEl?.isConnected) {
+        return;
+      }
+      this.repairConnectedReadingSections();
+      const editingLayout = this.active && (this.toolMode === TOOL_EDIT_MD || this.noteFlowOperationPending || this.draggingStroke || this.resizingSelection);
+      if (editingLayout) {
+        this.scheduleMarkdownAnnotationRefresh({ layout: false });
+      } else {
+        this.syncMarkdownBlockPresentation();
+        this.scheduleFrozenNoteFlowLayoutRestore();
+        this.scheduleReadingVirtualSectionSync();
+        this.scheduleResize({ layout: false, measure: false });
+        this.scheduleEmbedRepair();
+      }
+    }, 40);
   }
   updateFloatingControlsPosition() {
     this.syncFloatingControlClasses();
@@ -15759,7 +15781,6 @@ ${selected}
       this.clearMarkdownBlockDropTarget();
       this.dragMarkdownDropTarget = target;
       this.dragMarkdownDropSide = side;
-      target.addClass(`notedraw-text-sort-target-${side}`);
     }
     const previous = this.dragMarkdownLastValidDrop;
     const drop = previous?.element === target && previous?.side === side ? previous : this.captureMarkdownBlockDropTarget(target, side, row);
@@ -16293,6 +16314,7 @@ ${selected}
       }
     }
     this.restoreDraggedNoteFlowLivePreview({ preserveDom: preserveMarkdownDomPreview });
+    this.restoreDraggedNoteFlowReservationStyles();
     this.clearDraggedNoteFlowPlacement();
     if (didMove && this.dragMarkdownOriginalElements?.size) {
       const visibleDrop = this.dragMarkdownDropTarget?.isConnected ? this.dragMarkdownLastValidDrop?.element === this.dragMarkdownDropTarget && this.dragMarkdownLastValidDrop?.side === this.dragMarkdownDropSide ? this.dragMarkdownLastValidDrop : this.captureMarkdownBlockDropTarget(
@@ -16480,6 +16502,8 @@ ${selected}
     if (!options.preserveMarkdownDom) {
       this.dragNoteFlowDomPreview = null;
     }
+    this.dragNoteFlowReservationStyles?.clear();
+    this.dragNoteFlowReservationStyles = null;
     this.dragStrokeOriginalBounds = null;
     this.dragStrokeMoved = false;
     this.dragStrokeHitIndex = -1;
@@ -17929,12 +17953,20 @@ ${selected}
       return;
     }
     const { x, y, width, height } = frame;
+    const dragging = this.draggingStroke || this.resizingSelection;
     this.ctx.save();
     this.ctx.strokeStyle = SELECTION_FRAME_COLOR;
-    this.ctx.lineWidth = SELECTION_FRAME_LINE_WIDTH;
+    this.ctx.lineWidth = dragging ? SELECTION_FRAME_LINE_WIDTH + 1.25 : SELECTION_FRAME_LINE_WIDTH;
     this.ctx.lineCap = "round";
     this.ctx.lineJoin = "round";
-    this.ctx.setLineDash([3, 2]);
+    if (dragging) {
+      this.ctx.setLineDash([]);
+      this.ctx.fillStyle = SELECTION_FRAME_DRAG_FILL;
+      roundRect(this.ctx, x, y, width, height, SELECTION_FRAME_RADIUS);
+      this.ctx.fill();
+    } else {
+      this.ctx.setLineDash([3, 2]);
+    }
     roundRect(this.ctx, x, y, width, height, SELECTION_FRAME_RADIUS);
     this.ctx.stroke();
     this.ctx.setLineDash([]);
@@ -19511,7 +19543,11 @@ ${selected}
     }
     const embeds = this.previewEl.querySelectorAll?.("span.internal-embed[src], span.internal-embed[data-src]") || [];
     let repaired = 0;
+    const maxPerPass = 6;
     for (const span of embeds) {
+      if (repaired >= maxPerPass) {
+        break;
+      }
       if (span.classList.contains("markdown-embed") || span.querySelector(".markdown-embed-content")) {
         continue;
       }
@@ -19661,6 +19697,13 @@ ${selected}
       gap: this.draggedNoteFlowReservationGap()
     }));
     const base = Number.isFinite(Number(existingState?.base)) ? Number(existingState.base) : Number.parseFloat(window.getComputedStyle(target).getPropertyValue(styleProperty)) || 0;
+    this.dragNoteFlowReservationStyles || (this.dragNoteFlowReservationStyles = /* @__PURE__ */ new Map());
+    let reservationProperties = this.dragNoteFlowReservationStyles.get(target);
+    if (!reservationProperties) {
+      reservationProperties = /* @__PURE__ */ new Set();
+      this.dragNoteFlowReservationStyles.set(target, reservationProperties);
+    }
+    reservationProperties.add(styleProperty);
     this.setDraggedNoteFlowDomStyle(target, styleProperty, `${Math.ceil(base + applied)}px`, "important");
     this.setDraggedNoteFlowDomClass(target, "notedraw-note-flow-anchor", true);
     const moved = new Set(indexes || []);
@@ -19678,6 +19721,34 @@ ${selected}
       }
     }
     return true;
+  }
+  restoreDraggedNoteFlowReservationStyles() {
+    const preview = this.dragNoteFlowDomPreview;
+    const reservations = this.dragNoteFlowReservationStyles;
+    let changed = false;
+    if (preview && reservations?.size) {
+      for (const [element, properties] of reservations) {
+        const styles = preview.styles.get(element);
+        if (!styles) {
+          continue;
+        }
+        for (const property of properties) {
+          const state = styles.get(property);
+          if (!state) {
+            continue;
+          }
+          if (state.value) {
+            element.style?.setProperty?.(property, state.value, state.priority || "");
+          } else {
+            element.style?.removeProperty?.(property);
+          }
+          changed = true;
+        }
+      }
+    }
+    this.dragNoteFlowReservationStyles?.clear();
+    this.dragNoteFlowReservationStyles = null;
+    return changed;
   }
   applyDraggedNoteFlowAnchorDomPreview(placement, drop = null) {
     if (!placement?.horizontalSide || !placement?.candidate) {
@@ -19796,6 +19867,8 @@ ${selected}
     if (changed) {
       this.invalidateStaticCache();
     }
+    this.dragNoteFlowReservationStyles?.clear();
+    this.dragNoteFlowReservationStyles = null;
     return changed || domChanged;
   }
   applyDraggedNoteFlowLivePreview(placement, options = {}) {
@@ -19956,6 +20029,25 @@ ${selected}
         };
       }
     }
+    if (previousPlacement && !previousPlacement.horizontalSide && !previousPlacement.leftSnap && previousPlacement.candidate) {
+      const previousCandidate = this.refreshDraggedNoteFlowPreviewCandidate(previousPlacement.candidate);
+      if (previousCandidate) {
+        const previousRect = this.noteFlowCandidateRect(previousCandidate, "row") || previousCandidate;
+        const boundary = previousPlacement.side === "after" ? previousRect.bottom : previousRect.top;
+        const previousHeight = Math.max(1, previousRect.bottom - previousRect.top);
+        const rowTolerance = Math.max(16, previousHeight * 0.3);
+        if (Number.isFinite(Number(boundary)) && Math.abs(Number(clientY) - Number(boundary)) <= rowTolerance) {
+          placement = {
+            candidate: previousCandidate,
+            side: previousPlacement.side,
+            line: previousPlacement.line,
+            boundary,
+            flowOrder: previousPlacement.flowOrder,
+            noteFlowBoundary: previousPlacement.noteFlowBoundary
+          };
+        }
+      }
+    }
     const target = placement?.candidate?.sourceElement || placement?.candidate?.element || null;
     const targetRect = placement?.candidate ? this.noteFlowCandidateRect(placement.candidate, "inline") : null;
     if (!placement || !target || !targetRect || targetRect.width <= 1 || targetRect.height <= 1) {
@@ -20082,9 +20174,6 @@ ${selected}
     if (presentationChanged || !indicator.classList.contains("is-visible")) {
       this.removeDraggedNoteFlowPlacementVisual();
       this.dragNoteFlowTargetElement = flowTarget;
-      flowTarget.classList.add(`notedraw-text-sort-target-${horizontalSide || flowSide}`);
-      const left = leftSnap ? laneRect.left : targetRect.left;
-      const right = leftSnap ? laneRect.right : targetRect.right;
       indicator.dataset.noteDrawDropSide = horizontalSide || flowSide;
       indicator.dataset.noteDrawDropLine = String(flowLine);
       if (leftSnap) {
@@ -20092,8 +20181,6 @@ ${selected}
       } else {
         delete indicator.dataset.noteDrawDropMagnet;
       }
-      void left;
-      void right;
     }
     this.dragNoteFlowPlacement = {
       path: normalizeVaultPath(placement.candidate.path || this.file?.path || ""),
@@ -20125,8 +20212,8 @@ ${selected}
       return null;
     }
     const side = placement.horizontalSide ? "right" : placement.side;
-    const row = this.markdownDropRowMetrics(target, movingElements);
-    const drop = this.captureMarkdownBlockDropTarget(target, side, row);
+    const cachedDrop = this.dragMarkdownLastValidDrop;
+    const drop = cachedDrop?.element === target && cachedDrop?.side === side ? cachedDrop : this.captureMarkdownBlockDropTarget(target, side, this.markdownDropRowMetrics(target, movingElements));
     if (!drop) {
       return null;
     }

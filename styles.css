@@ -715,7 +715,7 @@
 .notedraw-note-flow-drop-indicator {
   position: fixed;
   z-index: 10003;
-  display: none;
+  display: none !important;
   height: 4px;
   pointer-events: none;
   border-radius: 2px;
