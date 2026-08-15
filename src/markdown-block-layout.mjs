@@ -106,7 +106,7 @@ export function resolveDragDropHorizontalIntent({
   laneRight = targetRight,
   draggedLeft,
   leftContactTolerance = 8,
-  rightIntentRatio = 0.82,
+  rightIntentRatio = 0.5,
   horizontalRoom = true
 } = {}) {
   const x = Number(clientX);
@@ -120,16 +120,12 @@ export function resolveDragDropHorizontalIntent({
   if (![x, left, right, surfaceLeft, surfaceRight].every(Number.isFinite) || right <= left || surfaceRight <= surfaceLeft) {
     return "vertical";
   }
-  const targetWidth = right - left;
   const laneWidth = surfaceRight - surfaceLeft;
   const contactTolerance = clamp(Number(leftContactTolerance) || 0, 0, 24);
   if (Number.isFinite(movingLeft) && movingLeft <= surfaceLeft + contactTolerance) {
     return "line-start";
   }
-  const rightThreshold = Math.min(
-    left + targetWidth * clamp(Number(rightIntentRatio) || 0.5, 0.4, 0.92),
-    surfaceRight - clamp(laneWidth * 0.05, 20, 40)
-  );
+  const rightThreshold = surfaceLeft + laneWidth * clamp(Number(rightIntentRatio) || 0.5, 0.4, 0.92);
   return horizontalRoom && x >= rightThreshold ? "inline-right" : "vertical";
 }
 

@@ -1567,7 +1567,7 @@ function resolveDragDropHorizontalIntent({
   laneRight = targetRight,
   draggedLeft,
   leftContactTolerance = 8,
-  rightIntentRatio = 0.82,
+  rightIntentRatio = 0.5,
   horizontalRoom = true
 } = {}) {
   const x = Number(clientX);
@@ -1579,16 +1579,12 @@ function resolveDragDropHorizontalIntent({
   if (![x, left, right, surfaceLeft, surfaceRight].every(Number.isFinite) || right <= left || surfaceRight <= surfaceLeft) {
     return "vertical";
   }
-  const targetWidth = right - left;
   const laneWidth = surfaceRight - surfaceLeft;
   const contactTolerance = clamp4(Number(leftContactTolerance) || 0, 0, 24);
   if (Number.isFinite(movingLeft) && movingLeft <= surfaceLeft + contactTolerance) {
     return "line-start";
   }
-  const rightThreshold = Math.min(
-    left + targetWidth * clamp4(Number(rightIntentRatio) || 0.5, 0.4, 0.92),
-    surfaceRight - clamp4(laneWidth * 0.05, 20, 40)
-  );
+  const rightThreshold = surfaceLeft + laneWidth * clamp4(Number(rightIntentRatio) || 0.5, 0.4, 0.92);
   return horizontalRoom && x >= rightThreshold ? "inline-right" : "vertical";
 }
 function resolveVerticalMarkdownDropTarget({
@@ -3944,6 +3940,7 @@ var WATERCOLOR_VARIANT_STRAIGHT = "straight";
 var MIN_READING_ZOOM = 0.6;
 var MAX_READING_ZOOM = 100;
 var DRAG_PEER_ANIMATION_MS = 150;
+var DRAG_STROKE_ANIMATION_MS = 160;
 var MOUSE_SELECTED_DRAG_ACTIVATION_PX = 3;
 var TOUCH_SELECTED_DRAG_ACTIVATION_PX = 5;
 var MIN_INLINE_NOTE_FLOW_ITEM_WIDTH_PX = 18;
@@ -9029,6 +9026,7 @@ var PreviewDrawingController = class {
     this.dragStrokeStartPoint = null;
     this.dragStrokePointerGeometry = null;
     this.dragStrokeOriginalPoints = null;
+    this.dragNoteFlowConnectorOriginalStates = /* @__PURE__ */ new Map();
     this.dragStrokeOriginalPointBounds = null;
     this.dragStrokeIndexes = [];
     this.dragShouldSnap = false;
@@ -9075,6 +9073,8 @@ var PreviewDrawingController = class {
     this.dragNoteFlowPeerAnimationTimers = /* @__PURE__ */ new Map();
     this.dragNoteFlowPeerAnimatingElements = /* @__PURE__ */ new Set();
     this.dragNoteFlowPeerAnimationFrameId = null;
+    this.dragNoteFlowStrokeAnimation = null;
+    this.dragNoteFlowStrokeAnimationFrameId = null;
     this.dragNoteFlowDropFrameId = null;
     this.dragNoteFlowDropClientX = null;
     this.dragNoteFlowDropClientY = null;
@@ -9753,6 +9753,7 @@ var PreviewDrawingController = class {
     this.noteFlowMarkdownAnnotationComplete = false;
     this.restoreDraggedNoteFlowLivePreview();
     this.clearNoteFlowPeerAnimations();
+    this.cancelDraggedNoteFlowStrokeAnimation(false);
     this.clearDraggedMarkdownDomMarkers();
     this.clearDraggedNoteFlowPlacement();
     this.clearNoteFlowLayout();
@@ -9890,6 +9891,7 @@ var PreviewDrawingController = class {
     }
     this.restoreDraggedNoteFlowLivePreview();
     this.clearNoteFlowPeerAnimations();
+    this.cancelDraggedNoteFlowStrokeAnimation(false);
     this.clearDraggedMarkdownDomMarkers();
     this.clearDraggedNoteFlowPlacement();
     this.destroyed = true;
@@ -15367,6 +15369,7 @@ ${selected}
     this.dragMarkdownTextCommit = this.endTextEdit();
     this.restoreDraggedNoteFlowLivePreview();
     this.clearNoteFlowPeerAnimations();
+    this.cancelDraggedNoteFlowStrokeAnimation(false);
     this.clearDraggedMarkdownDomMarkers();
     this.clearDraggedNoteFlowPlacement();
     this.cancelMarkdownBlockDropFrame();
@@ -15395,6 +15398,7 @@ ${selected}
       index,
       this.drawingData.strokes[index].points.map((strokePoint) => ({ ...strokePoint }))
     ]));
+    this.dragNoteFlowConnectorOriginalStates.clear();
     let pointMinX = 1;
     let pointMinY = 1;
     let pointMaxX = 0;
@@ -16355,6 +16359,7 @@ ${selected}
   }
   finishSelectedStrokeDrag(event) {
     this.clearSelectionLongPress();
+    this.cancelDraggedNoteFlowStrokeAnimation(true);
     const didMove = this.dragStrokeMoved;
     let requestedDropPlacement = null;
     let settleNoteFlowImmediately = false;
@@ -16557,6 +16562,7 @@ ${selected}
   }
   cancelSelectedStrokeDrag(restoreOriginal = false) {
     this.clearSelectionLongPress();
+    this.cancelDraggedNoteFlowStrokeAnimation(false);
     this.restoreDraggedNoteFlowLivePreview();
     this.clearNoteFlowPeerAnimations();
     this.clearDraggedNoteFlowPlacement();
@@ -16573,6 +16579,15 @@ ${selected}
         }
       }
     }
+    if (restoreOriginal && this.dragNoteFlowConnectorOriginalStates.size) {
+      for (const [index, points] of this.dragNoteFlowConnectorOriginalStates) {
+        const stroke = this.drawingData?.strokes?.[index];
+        if (!stroke) {
+          continue;
+        }
+        stroke.points = points.map((point) => ({ ...point }));
+      }
+    }
     if (this.activePointerId !== null) {
       this.releasePointerCapture(this.activePointerId);
     }
@@ -16583,6 +16598,7 @@ ${selected}
     this.render();
   }
   clearSelectedStrokeDragState(options = {}) {
+    this.cancelDraggedNoteFlowStrokeAnimation(false);
     this.clearDraggedNoteFlowPlacement();
     this.cancelMarkdownBlockDropFrame();
     this.resetDragDropGeometry();
@@ -16590,6 +16606,7 @@ ${selected}
     this.dragStrokeStartPoint = null;
     this.dragStrokePointerGeometry = null;
     this.dragStrokeOriginalPoints = null;
+    this.dragNoteFlowConnectorOriginalStates.clear();
     this.dragStrokeOriginalPointBounds = null;
     this.dragStrokeIndexes = [];
     this.dragShouldSnap = false;
@@ -19581,6 +19598,147 @@ ${selected}
       }
     }) ?? null;
   }
+  dragStrokeAnimationNow() {
+    return Number(window.performance?.now?.()) || Date.now();
+  }
+  interpolatedDragStrokePoints(entry, now = this.dragStrokeAnimationNow()) {
+    const elapsed = Math.max(0, now - Number(this.dragNoteFlowStrokeAnimation?.startedAt || now));
+    const progress = clamp10(elapsed / Math.max(1, Number(this.dragNoteFlowStrokeAnimation?.duration) || DRAG_STROKE_ANIMATION_MS), 0, 1);
+    const eased = 1 - Math.pow(1 - progress, 3);
+    return entry.target.map((point, index) => {
+      const from = entry.from[index] || point;
+      return {
+        ...point,
+        x: Number(from.x) + (Number(point.x) - Number(from.x)) * eased,
+        y: Number(from.y) + (Number(point.y) - Number(from.y)) * eased
+      };
+    });
+  }
+  captureDraggedNoteFlowStrokeVisualPoints(now = this.dragStrokeAnimationNow()) {
+    const points = /* @__PURE__ */ new Map();
+    for (const [index, stroke] of (this.drawingData?.strokes || []).entries()) {
+      if (normalizeNoteFlow(stroke?.noteFlow) && !isConnectorStroke(stroke)) {
+        points.set(index, stroke.points.map((point) => ({ ...point })));
+      }
+    }
+    for (const [index, entry] of this.dragNoteFlowStrokeAnimation?.entries || []) {
+      points.set(index, this.interpolatedDragStrokePoints(entry, now));
+    }
+    return points;
+  }
+  applyDraggedNoteFlowStrokeAnimation(now = this.dragStrokeAnimationNow()) {
+    const animation = this.dragNoteFlowStrokeAnimation;
+    if (!animation?.entries?.size) {
+      return true;
+    }
+    const elapsed = Math.max(0, now - animation.startedAt);
+    const finished = elapsed >= animation.duration;
+    const indexes = [];
+    const elementIds = /* @__PURE__ */ new Set();
+    for (const [index, entry] of animation.entries) {
+      const stroke = this.drawingData?.strokes?.[index];
+      if (!stroke) {
+        continue;
+      }
+      stroke.points = finished ? entry.target.map((point) => ({ ...point })) : this.interpolatedDragStrokePoints(entry, now);
+      indexes.push(index);
+      const id = strokeElementId(stroke);
+      if (id) {
+        elementIds.add(id);
+      }
+    }
+    if (elementIds.size) {
+      this.rememberDraggedNoteFlowConnectorStates(elementIds);
+      this.syncBoundConnectors({ elementIds });
+    }
+    this.invalidateSelectionFrameSnapshot();
+    this.invalidateStaticCache();
+    if (indexes.length) {
+      this.updateEmbedLayer({ indexes });
+    }
+    this.renderCanvas();
+    return finished;
+  }
+  rememberDraggedNoteFlowConnectorStates(elementIds) {
+    if (!elementIds?.size) {
+      return;
+    }
+    for (const [index, stroke] of (this.drawingData?.strokes || []).entries()) {
+      if (this.dragNoteFlowConnectorOriginalStates.has(index)) {
+        continue;
+      }
+      const connector = normalizeConnector(stroke?.connector);
+      if (!connector || !elementIds.has(connector.fromId) && !elementIds.has(connector.toId)) {
+        continue;
+      }
+      this.dragNoteFlowConnectorOriginalStates.set(
+        index,
+        stroke.points.map((point) => ({ ...point }))
+      );
+    }
+  }
+  cancelDraggedNoteFlowStrokeAnimation(applyTarget = false) {
+    if (this.dragNoteFlowStrokeAnimationFrameId !== null) {
+      window.cancelAnimationFrame(this.dragNoteFlowStrokeAnimationFrameId);
+      this.dragNoteFlowStrokeAnimationFrameId = null;
+    }
+    if (applyTarget && this.dragNoteFlowStrokeAnimation?.entries?.size) {
+      const animation = this.dragNoteFlowStrokeAnimation;
+      for (const [index, entry] of animation.entries) {
+        const stroke = this.drawingData?.strokes?.[index];
+        if (stroke) {
+          stroke.points = entry.target.map((point) => ({ ...point }));
+        }
+      }
+    }
+    this.dragNoteFlowStrokeAnimation = null;
+  }
+  animateDraggedNoteFlowStrokeShifts(beforePoints, indexes) {
+    if (!beforePoints?.size) {
+      return;
+    }
+    const entries = /* @__PURE__ */ new Map();
+    for (const index of new Set(indexes || [])) {
+      const stroke = this.drawingData?.strokes?.[index];
+      const from = beforePoints.get(index);
+      const target = stroke?.points;
+      if (!stroke || !from?.length || from.length !== target?.length || isConnectorStroke(stroke)) {
+        continue;
+      }
+      const changed = target.some((point, pointIndex) => {
+        const previous = from[pointIndex];
+        return Math.hypot(Number(point.x) - Number(previous.x), Number(point.y) - Number(previous.y)) > 1e-7;
+      });
+      if (changed) {
+        entries.set(index, {
+          from: from.map((point) => ({ ...point })),
+          target: target.map((point) => ({ ...point }))
+        });
+      }
+    }
+    this.cancelDraggedNoteFlowStrokeAnimation(false);
+    if (!entries.size) {
+      return;
+    }
+    this.dragNoteFlowStrokeAnimation = {
+      entries,
+      startedAt: this.dragStrokeAnimationNow(),
+      duration: DRAG_STROKE_ANIMATION_MS
+    };
+    this.applyDraggedNoteFlowStrokeAnimation(this.dragNoteFlowStrokeAnimation.startedAt);
+    const tick = (now) => {
+      this.dragNoteFlowStrokeAnimationFrameId = null;
+      if (!this.dragNoteFlowStrokeAnimation || this.destroyed) {
+        return;
+      }
+      if (this.applyDraggedNoteFlowStrokeAnimation(Number(now) || this.dragStrokeAnimationNow())) {
+        this.cancelDraggedNoteFlowStrokeAnimation(true);
+        return;
+      }
+      this.dragNoteFlowStrokeAnimationFrameId = window.requestAnimationFrame(tick);
+    };
+    this.dragNoteFlowStrokeAnimationFrameId = window.requestAnimationFrame(tick);
+  }
   setDraggedNoteFlowDomStyle(element, property, value, priority = "") {
     if (!element?.style) {
       return;
@@ -20130,6 +20288,7 @@ ${selected}
     const reuseAppliedPreview = options.skipRestore === true && Boolean(previousApplied) && !previewStructureChanged;
     const previewTransition = Boolean(placement) && (!previousApplied || previewStructureChanged);
     const peerRects = previewTransition ? this.captureNoteFlowPeerRects() : null;
+    const strokePoints = previewTransition ? this.captureDraggedNoteFlowStrokeVisualPoints() : null;
     if (previewStructureChanged && options.skipRestore === true) {
       this.restoreDraggedNoteFlowLivePreview();
     } else if (options.skipRestore !== true) {
@@ -20151,6 +20310,9 @@ ${selected}
       }
       if (this.dragNoteFlowPreviewElementIds.size) {
         this.syncBoundConnectors({ elementIds: new Set(this.dragNoteFlowPreviewElementIds) });
+      }
+      if (this.dragNoteFlowStrokeAnimation) {
+        this.applyDraggedNoteFlowStrokeAnimation();
       }
       this.invalidateSelectionFrameSnapshot();
       this.requestRender(this.selectionHasDomStrokes() ? "interaction" : false);
@@ -20200,6 +20362,9 @@ ${selected}
       if (id) {
         this.dragNoteFlowPreviewElementIds.add(id);
       }
+    }
+    if (strokePoints) {
+      this.animateDraggedNoteFlowStrokeShifts(strokePoints, affectedIndexes);
     }
     if (this.dragNoteFlowPreviewElementIds.size) {
       this.syncBoundConnectors({ elementIds: new Set(this.dragNoteFlowPreviewElementIds) });
@@ -20375,8 +20540,7 @@ ${selected}
       laneLeft: laneRect.left,
       laneRight: laneRect.right,
       draggedLeft: this.draggedSelectionClientLeft(),
-      horizontalRoom,
-      rightIntentRatio: 0.45
+      horizontalRoom
     });
     const horizontalSide = intent === "inline-right" ? "right" : keptPreviousInline ? previousPlacement.horizontalSide : null;
     const leftSnap = intent === "line-start";
@@ -20890,6 +21054,8 @@ ${selected}
           path,
           start: line,
           end: line,
+          left: Math.min(...rects.map((rect) => rect.left)),
+          right: Math.max(...rects.map((rect) => rect.right)),
           top: Math.min(...rects.map((rect) => rect.top)),
           bottom: Math.max(...rects.map((rect) => rect.bottom)),
           inlineElement: sourceElement,
@@ -20982,6 +21148,8 @@ ${selected}
         path,
         start: sourceLine,
         end: sourceLine,
+        left: line.left,
+        right: line.right,
         top: line.top,
         bottom: line.bottom,
         inlineElement: sourceElement,
@@ -21099,7 +21267,36 @@ ${selected}
         identityQuality
       });
     }
-    const candidates = Array.from(grouped.values()).flatMap((byPath) => Array.from(byPath.values()));
+    const blockCandidates = Array.from(grouped.values()).flatMap((byPath) => Array.from(byPath.values()));
+    const candidates = blockCandidates.flatMap((candidate) => {
+      const paragraph = candidate.inlineElement?.tagName === "P" ? candidate.inlineElement : null;
+      if (!paragraph || !Number.isFinite(candidate.start) || !Number.isFinite(candidate.end)) {
+        return [candidate];
+      }
+      const explicitLines = this.noteFlowInlineLineCandidates(
+        paragraph,
+        candidate.path,
+        candidate.start,
+        candidate.end
+      );
+      const visualLines = explicitLines.length > 1 ? explicitLines : candidate.end > candidate.start ? this.noteFlowVisualLineCandidates(paragraph, candidate.path, candidate.start, candidate.end) : [];
+      if (visualLines.length <= 1) {
+        return [candidate];
+      }
+      return visualLines.map((line, lineIndex) => ({
+        ...candidate,
+        ...line,
+        blockStart: line.start,
+        blockEnd: line.end,
+        blockKey: noteFlowBlockKey({
+          path: candidate.path,
+          line: line.start,
+          blockStart: line.start,
+          blockEnd: line.end
+        }),
+        order: candidate.order + lineIndex / Math.max(2, visualLines.length + 1)
+      }));
+    });
     return candidates.filter((candidate) => {
       return !candidates.some((other) => other !== candidate && other.path === candidate.path && candidate.element !== other.element && !candidate.element.matches?.("li") && candidate.element.contains?.(other.element));
     }).sort((a, b) => a.top - b.top || a.bottom - b.bottom || a.order - b.order);
