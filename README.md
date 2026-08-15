@@ -65,7 +65,7 @@ Changing the setting preserves old data and copies the active note's current dra
 
 ## Migration
 
-Version `0.2.0` is the full NoteDraw rename and uses plugin id:
+Version `3.5.6` is the current NoteDraw release and uses plugin id:
 
 ```text
 notedraw
@@ -297,4 +297,4 @@ The current package focuses on the local Obsidian plugin runtime. The API and DO
 
 ## Version
 
-Current version: `3.4.51`.
+Current version: `3.5.6`.

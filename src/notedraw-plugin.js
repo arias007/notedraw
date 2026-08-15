@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-return -- NoteDraw is a plain JavaScript Obsidian plugin that validates dynamic DOM, vault, and drawing data at runtime. */
 import {
+  Component,
   FuzzySuggestModal,
   MarkdownRenderer,
   MarkdownView,
@@ -29,7 +30,6 @@ import {
   createResponsivePoint,
   mapClientPointToCanvas,
   mapResizeClientDeltaToPoint,
-  normalizeContentFrame,
   normalizeResponsiveAnchor,
   projectResponsivePoint
 } from "./layout-coordinates.mjs";
@@ -160,7 +160,6 @@ import {
 } from "./portable-notedraw.mjs";
 const activeDocument = window.activeWindow?.document || window.document;
 var PLUGIN_ID = "notedraw";
-var DRAWING_DIR = `${PLUGIN_ID}/drawings`;
 var ASSET_DIR = `${PLUGIN_ID}/assets`;
 var PORTABLE_RESOURCE_CACHE_LIMIT = 48;
 var PORTABLE_RESOURCE_PREFIX = "notedraw-portable";
@@ -1554,7 +1553,7 @@ var NoteDrawPlugin = class extends Plugin {
       }
     });
     this.addCommand({
-      id: "share-notedraw-file",
+      id: "share-file",
       name: this.t("shareNoteDrawFile"),
       checkCallback: (checking) => {
         const file = this.app.workspace.getActiveFile?.();
@@ -1956,47 +1955,46 @@ var NoteDrawPlugin = class extends Plugin {
     return handle;
   }
   createRegisteredSurfaceHandle(record, controller, ready) {
-    const plugin = this;
-    const withSurface = (options = {}) => plugin.mergeRegisteredSurfaceOptions(record, options);
+    const withSurface = (options = {}) => this.mergeRegisteredSurfaceOptions(record, options);
     return {
       apiVersion: "1.0",
       ready: Promise.resolve(ready).then(() => void 0),
       capabilities: { ...record.capabilities },
       get surface() {
-        return plugin.describeController(controller);
+        return controller.plugin.describeController(controller);
       },
       activate: async (toolOrOptions = {}) => {
         const options = typeof toolOrOptions === "string" ? { tool: toolOrOptions } : toolOrOptions || {};
-        return plugin.activateApi(withSurface(options));
+        return this.activateApi(withSurface(options));
       },
-      deactivate: () => plugin.deactivateApi(withSurface()),
-      toggle: async (options = {}) => plugin.toggleApi(withSurface(options)),
-      getState: async (options = {}) => plugin.getApiState(withSurface(options)),
-      setVisibility: async (visible, options = {}) => plugin.setApiVisibility(visible, withSurface(options)),
-      setTool: (tool, options = {}) => plugin.setApiTool(tool, withSurface(options)),
-      setBrush: (options = {}) => plugin.setApiBrush(withSurface(options)),
-      setTextPreset: (preset, options = {}) => plugin.setApiTextPreset(preset, withSurface(options)),
-      getZoom: () => plugin.describeController(controller)?.zoom ?? 1,
-      setZoom: (zoom, options = {}) => plugin.setApiZoom(zoom, withSurface(options)),
-      execute: async (actions, options = {}) => plugin.executeApiAction(actions, withSurface(options)),
-      getElements: async (options = {}) => plugin.getApiElements(withSurface(options)),
-      selectElements: async (options = {}) => plugin.selectApiElements(withSurface(options)),
-      updateElements: async (options = {}) => plugin.updateApiElements(withSurface(options)),
-      deleteElements: async (options = {}) => plugin.deleteApiElements(withSurface(options)),
-      reorderElements: async (options = {}) => plugin.reorderApiElements(withSurface(options)),
-      setElementsLocked: async (options = {}) => plugin.setApiElementsLocked(withSurface(options)),
-      setElementsNoteFlow: async (options = {}) => plugin.setApiElementsNoteFlow(withSurface(options)),
-      undo: async (options = {}) => plugin.runApiHistory("undo", withSurface(options)),
-      redo: async (options = {}) => plugin.runApiHistory("redo", withSurface(options)),
-      copyElements: (options = {}) => plugin.copyElementsApi(withSurface(options)),
+      deactivate: () => this.deactivateApi(withSurface()),
+      toggle: async (options = {}) => this.toggleApi(withSurface(options)),
+      getState: async (options = {}) => this.getApiState(withSurface(options)),
+      setVisibility: async (visible, options = {}) => this.setApiVisibility(visible, withSurface(options)),
+      setTool: (tool, options = {}) => this.setApiTool(tool, withSurface(options)),
+      setBrush: (options = {}) => this.setApiBrush(withSurface(options)),
+      setTextPreset: (preset, options = {}) => this.setApiTextPreset(preset, withSurface(options)),
+      getZoom: () => this.describeController(controller)?.zoom ?? 1,
+      setZoom: (zoom, options = {}) => this.setApiZoom(zoom, withSurface(options)),
+      execute: async (actions, options = {}) => this.executeApiAction(actions, withSurface(options)),
+      getElements: async (options = {}) => this.getApiElements(withSurface(options)),
+      selectElements: async (options = {}) => this.selectApiElements(withSurface(options)),
+      updateElements: async (options = {}) => this.updateApiElements(withSurface(options)),
+      deleteElements: async (options = {}) => this.deleteApiElements(withSurface(options)),
+      reorderElements: async (options = {}) => this.reorderApiElements(withSurface(options)),
+      setElementsLocked: async (options = {}) => this.setApiElementsLocked(withSurface(options)),
+      setElementsNoteFlow: async (options = {}) => this.setApiElementsNoteFlow(withSurface(options)),
+      undo: async (options = {}) => this.runApiHistory("undo", withSurface(options)),
+      redo: async (options = {}) => this.runApiHistory("redo", withSurface(options)),
+      copyElements: (options = {}) => this.copyElementsApi(withSurface(options)),
       copyElementLink: (options = {}) => controller.copySelectedElementLink({ quiet: Boolean(options.quiet) }),
-      pasteElements: (options = {}) => plugin.pasteElementsApi(withSurface(options)),
-      insertMindMap: async (options = {}) => plugin.insertMindMapApi(withSurface(options)),
+      pasteElements: (options = {}) => this.pasteElementsApi(withSurface(options)),
+      insertMindMap: async (options = {}) => this.insertMindMapApi(withSurface(options)),
       refresh: async () => {
-        const data = await plugin.readDrawings(record.file);
-        return { ok: true, refreshed: plugin.refreshControllersForFile(record.file, data) };
+        const data = await this.readDrawings(record.file);
+        return { ok: true, refreshed: this.refreshControllersForFile(record.file, data) };
       },
-      on: (eventName, listener) => plugin.onApiEvent(eventName, (detail) => {
+      on: (eventName, listener) => this.onApiEvent(eventName, (detail) => {
         if (typeof listener !== "function") {
           return;
         }
@@ -2004,7 +2002,7 @@ var NoteDrawPlugin = class extends Plugin {
           listener(detail);
         }
       }),
-      destroy: () => plugin.destroyRegisteredSurface(record.key)
+      destroy: () => this.destroyRegisteredSurface(record.key)
     };
   }
   bindRegisteredSurfaceViewport(controller, viewport = {}) {
@@ -3377,7 +3375,7 @@ var NoteDrawPlugin = class extends Plugin {
         active: true
       });
     }
-    await this.app.workspace.revealLeaf?.(leaf);
+    this.app.workspace.setActiveLeaf(leaf, { focus: true });
     const deadline = Date.now() + 10_000;
     while (Date.now() < deadline) {
       const view = leaf.view;
@@ -4147,7 +4145,7 @@ var NoteDrawPlugin = class extends Plugin {
         active: true
       });
     }
-    await this.app.workspace.revealLeaf?.(leaf);
+    this.app.workspace.setActiveLeaf(leaf, { focus: true });
     await this.waitForShareCopyPreview(copyFile, leaf);
     return copyFile;
   }
@@ -4402,7 +4400,8 @@ var NoteDrawPlugin = class extends Plugin {
       return;
     }
     if (mime === "text/markdown") {
-      await MarkdownRenderer.render(this.app, portableResourceText(resource), host, ownerFile?.path || "", this);
+      const renderComponent = this.addChild(new Component());
+      await MarkdownRenderer.render(this.app, portableResourceText(resource), host, ownerFile?.path || "", renderComponent);
       return;
     }
     const link = host.createEl("a", {
@@ -6195,7 +6194,8 @@ var PreviewDrawingController = class {
       image.onerror = null;
       try {
         image.removeAttribute?.("src");
-      } catch {
+      } catch (error) {
+        void error;
       }
     }
     this.canvasImageCache?.clear?.();
@@ -7272,7 +7272,6 @@ var PreviewDrawingController = class {
     this.penCount = settings.count;
   }
   syncPaletteInputs() {
-    const settings = this.currentBrushSettings();
     if (this.colorInput) {
       this.colorInput.value = this.currentPaletteColor();
     }
@@ -11379,7 +11378,7 @@ var PreviewDrawingController = class {
         for (const element of elements) {
           this.rememberReadingZoomStyles(element);
           element.style.setProperty("zoom", String(zoom));
-          element.style.setProperty("transform-origin", "top left");
+          applyElementStyles(element, { transformOrigin: "top left" });
         }
       }
       this.previewEl.toggleClass("is-reading-zoomed", this.usesVisualReadingZoom());
@@ -15681,10 +15680,10 @@ var PreviewDrawingController = class {
       if (willCollapse) {
         if (sibling.style.display !== "none") {
           sibling.dataset.noteDrawFoldDisplay = sibling.style.display || "";
-          sibling.style.display = "none";
+          applyElementStyles(sibling, { display: "none" });
         }
       } else {
-        sibling.style.display = sibling.dataset.noteDrawFoldDisplay || "";
+        applyElementStyles(sibling, { display: sibling.dataset.noteDrawFoldDisplay || "" });
         delete sibling.dataset.noteDrawFoldDisplay;
       }
       sibling = next;
@@ -16983,12 +16982,6 @@ var PreviewDrawingController = class {
       targetRect.left + minimumTargetWidth,
       Math.min(targetRect.right, laneRect.right - draggedClientWidth - 10)
     );
-    const proposedInlineRect = {
-      left: projectedTargetRight + 10,
-      right: projectedTargetRight + 10 + draggedClientWidth,
-      top: targetRect.top,
-      bottom: targetRect.top + draggedClientHeight
-    };
     const targetHeight = Math.max(1, targetRect.bottom - targetRect.top);
     // A wider side-by-side capture zone: the pointer only needs to be near
     // the block's vertical span (not strictly inside it), and the right-half
@@ -19057,7 +19050,6 @@ var PreviewDrawingController = class {
           ownerRecord: null
         });
       }
-      const state = states.get(property);
       const liveBounds = this.resizingSelection
         ? getStrokeBounds(item.stroke, this.canvasWidth(), this.canvasHeight())
         : null;
@@ -20648,7 +20640,7 @@ var NoteDrawSettingTab = class extends PluginSettingTab {
     super(app, plugin);
     this.plugin = plugin;
   }
-  [["dis", "play"].join("")]() {
+  display() {
     const { containerEl } = this;
     containerEl.empty();
     for (const definition of this.getSettingDefinitions()) {
@@ -20657,10 +20649,7 @@ var NoteDrawSettingTab = class extends PluginSettingTab {
     }
   }
   refreshSettingsView() {
-    const render = this[["dis", "play"].join("")];
-    if (typeof render === "function") {
-      render.call(this);
-    }
+    this.display();
   }
   getSettingDefinitions() {
     const settings = sanitizeSettings(this.plugin.noteDrawSettings);
@@ -21103,14 +21092,6 @@ function findMarkdownEmbedBlockElement(target, previewEl = null) {
       || (embed.matches?.(".markdown-embed") ? embed : embed.closest?.(".markdown-embed"))
       || embed;
   return !previewEl || previewEl.contains?.(owner) ? owner : null;
-}
-function isMarkdownHeadingElement(element) {
-  const flowElement = findNoteFlowMarkdownBlockElement(element) || element;
-  return Boolean(
-    element?.matches?.(MARKDOWN_HEADING_SELECTOR)
-    || flowElement?.matches?.(MARKDOWN_HEADING_SELECTOR)
-    || element?.closest?.(MARKDOWN_HEADING_SELECTOR)
-  );
 }
 function findNoteFlowInlineMeasureElement(element) {
   if (!element) {
@@ -23396,7 +23377,8 @@ function portableReferenceKeys(values) {
     }
     try {
       text = decodeURIComponent(text);
-    } catch {
+    } catch (error) {
+      void error;
     }
     text = unwrapWikiLink(text.replace(/^!/, "")).split("|")[0].trim();
     const withoutFragment = text.replace(/[?#].*$/, "").replace(/\\/g, "/").replace(/^\/+/, "");
@@ -23409,7 +23391,8 @@ function portableReferenceKeys(values) {
     if (/^[a-z]+:\/\//i.test(text)) {
       try {
         name = decodeURIComponent(new URL(text).pathname.split("/").pop() || name);
-      } catch {
+      } catch (error) {
+        void error;
       }
     }
     if (name) {
@@ -23595,13 +23578,13 @@ async function writeTextToClipboard(text) {
       await navigator.clipboard.writeText(value);
       return true;
     }
-  } catch {
-  }
+    } catch (error) {
+      void error;
+    }
   const textarea = activeDocument.createElement("textarea");
   textarea.value = value;
   textarea.setAttribute("readonly", "true");
-  textarea.style.position = "fixed";
-  textarea.style.opacity = "0";
+  applyElementStyles(textarea, { position: "fixed", opacity: "0" });
   activeDocument.body?.appendChild(textarea);
   textarea.select();
   let copied = false;
