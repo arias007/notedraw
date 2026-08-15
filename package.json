@@ -1,0 +1,26 @@
+{
+  "name": "notedraw",
+  "version": "3.5.8",
+  "description": "Draw and edit directly on notes with an open API for AI-assisted workflows.",
+  "main": "main.js",
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "check": "node --check main.js",
+    "test": "node --test tests/*.test.mjs",
+    "verify": "npm run test && npm run build && npm run check"
+  },
+  "keywords": [
+    "obsidian",
+    "notes",
+    "drawing",
+    "annotation",
+    "ai"
+  ],
+  "author": "Murat",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "esbuild": "^0.28.1",
+    "obsidian": "^1.8.7"
+  }
+}
