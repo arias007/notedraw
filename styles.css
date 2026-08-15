@@ -1,0 +1,1301 @@
+.notedraw-shell {
+  position: relative;
+}
+
+.notedraw-shell.is-notedraw-source-shell {
+  position: relative;
+}
+
+.notedraw-shell.is-notedraw-webview-shell {
+  position: relative;
+  min-height: 180px;
+}
+
+.notedraw-shell.is-notedraw-workspace-shell {
+  position: relative;
+  min-height: 180px;
+}
+
+.notedraw-shell.is-notedraw-workspace-shell .notedraw-static-canvas {
+  z-index: 900;
+}
+
+.notedraw-shell.is-notedraw-workspace-shell .notedraw-canvas {
+  z-index: 901;
+}
+
+.notedraw-shell.is-notedraw-workspace-shell .notedraw-embed-layer {
+  z-index: 899;
+}
+
+.notedraw-shell.is-notedraw-embedded-shell {
+  position: relative;
+  min-height: 48px;
+}
+
+.notedraw-shell.is-reading-zoomed,
+.notedraw-shell.is-editing-layout-zoomed {
+  overflow-x: auto !important;
+  overscroll-behavior: contain;
+}
+
+.notedraw-reading-zoom-extent {
+  position: absolute;
+  z-index: 0;
+  top: 0;
+  left: 0;
+  display: none;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.notedraw-reading-zoom-extent[data-active="true"] {
+  display: block;
+}
+
+.notedraw-reading-stage {
+  position: relative;
+  width: 100%;
+  min-width: 100%;
+  min-height: 1px;
+  transform-origin: 0 0;
+}
+
+.notedraw-reading-stage > .markdown-preview-sizer {
+  position: relative;
+  z-index: 1;
+}
+
+.notedraw-reading-bottom-spacer {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-height: 0;
+  height: 0;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  pointer-events: none;
+  contain: layout size;
+}
+
+.notedraw-shell.is-notedraw-embedded-shell .notedraw-static-canvas {
+  z-index: 64;
+}
+
+.notedraw-shell.is-notedraw-embedded-shell.is-drawing-active .notedraw-canvas {
+  z-index: 65;
+  pointer-events: none;
+}
+
+.notedraw-shell.is-notedraw-embedded-shell .notedraw-embed-layer {
+  z-index: 63;
+}
+
+.notedraw-header-button.is-active {
+  color: var(--interactive-accent);
+  background: var(--background-modifier-hover);
+}
+
+.notedraw-header-button {
+  border-radius: 999px;
+}
+
+.notedraw-fallback-button {
+  position: absolute;
+  z-index: 70;
+  top: 8px;
+  right: 12px;
+}
+
+.notedraw-webview-button {
+  z-index: 1000;
+  background: color-mix(in srgb, var(--background-primary) 86%, transparent);
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.14);
+}
+
+.notedraw-webview-inline-button {
+  flex: 0 0 auto;
+  margin-inline-start: 2px;
+}
+
+.notedraw-webview-inline-button svg,
+.notedraw-webview-inline-button .svg-icon {
+  width: 18px;
+  height: 18px;
+}
+
+.notedraw-underlay-canvas,
+.notedraw-static-canvas,
+.notedraw-canvas {
+  display: none;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: auto;
+  bottom: auto;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  touch-action: none;
+  user-select: none;
+}
+
+.notedraw-underlay-canvas {
+  z-index: 0;
+}
+
+.notedraw-static-canvas {
+  z-index: 59;
+}
+
+.notedraw-canvas {
+  z-index: 60;
+}
+
+.notedraw-shell.has-notedraw-canvas .notedraw-underlay-canvas,
+.notedraw-shell.has-notedraw-canvas .notedraw-static-canvas,
+.notedraw-shell.has-notedraw-canvas .notedraw-canvas {
+  display: block;
+}
+
+.notedraw-shell.has-notedraw-canvas > :not(.notedraw-underlay-canvas):not(.notedraw-static-canvas):not(.notedraw-canvas):not(.notedraw-underlay-embed-layer):not(.notedraw-embed-layer):not(.notedraw-reading-zoom-extent):not(.notedraw-toolbar):not(.notedraw-palette-panel):not(.notedraw-brush-panel):not(.notedraw-text-panel):not(.notedraw-selection-menu):not(.notedraw-format-toolbar):not(.notedraw-file-input) {
+  position: relative;
+  z-index: 1;
+}
+
+.notedraw-underlay-embed-layer,
+.notedraw-embed-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: auto;
+  bottom: auto;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  user-select: none;
+}
+
+.notedraw-underlay-embed-layer {
+  z-index: 0;
+}
+
+.notedraw-embed-layer {
+  z-index: 55;
+}
+
+.notedraw-shell.is-drawing-hidden .notedraw-underlay-embed-layer,
+.notedraw-shell.is-drawing-hidden .notedraw-embed-layer {
+  opacity: 0;
+}
+
+.notedraw-embed {
+  position: absolute;
+  box-sizing: border-box;
+  overflow: hidden;
+  pointer-events: auto;
+  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 82%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--background-primary) 92%, transparent);
+  box-shadow: 0 2px 9px rgba(0, 0, 0, 0.12);
+}
+
+.notedraw-embed.is-selected {
+  border-color: color-mix(in srgb, var(--color-yellow) 72%, var(--interactive-accent));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--color-yellow) 55%, transparent),
+    0 2px 9px rgba(0, 0, 0, 0.16);
+}
+
+.notedraw-embed.is-locked::after {
+  content: "";
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-yellow) 78%, var(--interactive-accent));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--background-primary) 78%, transparent);
+}
+
+.notedraw-embed img,
+.notedraw-embed video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+
+.notedraw-embed.is-rich-text {
+  padding: 10px 12px;
+  overflow: hidden;
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+  line-height: 1.35;
+}
+
+.notedraw-embed.is-rich-text > *:first-child {
+  margin-top: 0;
+}
+
+.notedraw-embed.is-rich-text > *:last-child {
+  margin-bottom: 0;
+}
+
+.notedraw-embed.is-mind-map-node {
+  border-color: color-mix(in srgb, var(--notedraw-node-color, var(--interactive-accent)) 72%, var(--background-modifier-border));
+  border-radius: 6px;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.1);
+}
+
+.notedraw-embed.is-mind-map-node .markdown-rendered {
+  font-size: inherit;
+  line-height: 1.3;
+}
+
+.notedraw-embed.is-mind-map-node img,
+.notedraw-embed.is-mind-map-node .internal-embed {
+  max-height: 96px;
+  object-fit: contain;
+}
+
+.internal-embed[data-notedraw-portable-resource] > :not(.notedraw-portable-resource) {
+  display: none;
+}
+
+.notedraw-portable-resource {
+  width: 100%;
+  max-width: 100%;
+  color: var(--text-normal);
+}
+
+.notedraw-portable-resource img,
+.notedraw-portable-resource video,
+.notedraw-portable-resource audio {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+.notedraw-portable-resource > a {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.notedraw-portable-resource-icon,
+.notedraw-portable-resource-icon svg {
+  width: 15px;
+  height: 15px;
+}
+
+.notedraw-file-card {
+  height: 100%;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 9px;
+  align-items: center;
+  padding: 10px;
+  box-sizing: border-box;
+}
+
+.notedraw-file-icon {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  color: var(--text-muted);
+  background: var(--background-secondary);
+}
+
+.notedraw-file-body {
+  min-width: 0;
+}
+
+.notedraw-file-name {
+  overflow: hidden;
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notedraw-file-meta {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.notedraw-file-input {
+  position: fixed;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.notedraw-shell.is-drawing-active .notedraw-canvas {
+  pointer-events: auto;
+  cursor: crosshair;
+}
+
+.notedraw-shell.is-drawing-active .notedraw-embed input.task-list-item-checkbox,
+.notedraw-shell.is-drawing-active .notedraw-embed input[type="checkbox"] {
+  pointer-events: auto;
+  position: relative;
+  z-index: 2;
+}
+
+.notedraw-shell.is-notedraw-source-shell .notedraw-canvas {
+  z-index: 20;
+}
+
+.notedraw-shell.is-notedraw-source-shell .notedraw-static-canvas {
+  z-index: 19;
+}
+
+.notedraw-shell.is-notedraw-source-shell .notedraw-embed-layer {
+  z-index: 18;
+}
+
+.notedraw-shell.is-two-finger-scroll .notedraw-canvas {
+  cursor: grab;
+}
+
+.notedraw-shell.is-two-finger-scroll .markdown-preview-sizer {
+  overflow-anchor: none;
+}
+
+.notedraw-shell.is-moving-selection .notedraw-canvas {
+  cursor: move;
+}
+
+.notedraw-shell.is-resizing-selection .notedraw-canvas {
+  cursor: nwse-resize;
+}
+
+.notedraw-shell.is-drawing-hidden .notedraw-underlay-canvas,
+.notedraw-shell.is-drawing-hidden .notedraw-static-canvas,
+.notedraw-shell.is-drawing-hidden .notedraw-canvas {
+  opacity: 0;
+}
+
+.notedraw-mind-map-source-setting {
+  border-bottom: 1px solid var(--background-modifier-border);
+  margin: 0 12px;
+}
+
+.notedraw-mind-map-source-setting .setting-item {
+  padding: 10px 0;
+}
+
+.notedraw-editing {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--interactive-accent) 10%, transparent);
+}
+
+.notedraw-floating-text-input {
+  position: fixed;
+  z-index: 1205;
+  min-width: 120px;
+  max-width: min(520px, calc(100vw - 16px));
+  max-height: calc(100vh - 16px);
+  min-height: 32px;
+  padding: 3px 5px;
+  box-sizing: border-box;
+  border: 1px dashed var(--interactive-accent);
+  border-radius: 4px;
+  outline: none;
+  color: var(--text-normal);
+  background: color-mix(in srgb, var(--background-primary) 84%, transparent);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  resize: none;
+  overflow: hidden;
+  line-height: 1.25;
+}
+
+.notedraw-saving {
+  opacity: 0.82;
+}
+
+.notedraw-toolbar {
+  position: fixed;
+  z-index: 1001;
+  top: var(--notedraw-toolbar-top, 48px);
+  left: var(--notedraw-toolbar-left, auto);
+  right: var(--notedraw-toolbar-right, 8px);
+  display: none;
+  width: max-content;
+  min-width: 0;
+  gap: 3px;
+  align-items: center;
+  padding: 4px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--background-primary) 88%, var(--background-secondary));
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.10);
+  max-width: calc(100vw - 16px);
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  touch-action: none;
+  cursor: grab;
+}
+
+.notedraw-toolbar.is-moving {
+  cursor: grabbing;
+  user-select: none;
+}
+
+.notedraw-shell.is-drawing-active.is-notedraw-controls-visible > .notedraw-toolbar {
+  display: inline-flex;
+}
+
+.notedraw-body-control.notedraw-toolbar.is-drawing-active.is-notedraw-controls-visible {
+  display: inline-flex;
+}
+
+.notedraw-body-control {
+  transform: translateZ(0);
+}
+
+.notedraw-body-control:not(.is-notedraw-controls-visible) {
+  display: none !important;
+}
+
+.notedraw-body-control.notedraw-toolbar {
+  z-index: 10000;
+}
+
+.notedraw-body-control.notedraw-palette-panel,
+.notedraw-body-control.notedraw-brush-panel,
+.notedraw-body-control.notedraw-text-panel {
+  z-index: 10001;
+}
+
+.notedraw-body-control.notedraw-format-toolbar,
+.notedraw-body-control.notedraw-selection-menu {
+  z-index: 10002;
+}
+
+.notedraw-toolbar button {
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  box-sizing: border-box;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: var(--text-muted);
+  background: transparent;
+  touch-action: manipulation;
+  cursor: pointer;
+}
+
+.notedraw-toolbar button.is-active {
+  color: var(--interactive-accent);
+  background: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--interactive-accent) 24%, transparent);
+}
+
+.notedraw-toolbar button.is-selection-available:not(:disabled) {
+  color: var(--text-normal);
+  background: color-mix(in srgb, var(--interactive-accent) 8%, transparent);
+  border-color: color-mix(in srgb, var(--interactive-accent) 18%, transparent);
+  opacity: 1;
+}
+
+.notedraw-toolbar button.notedraw-brush-button.is-brush-color-active {
+  color: var(--notedraw-brush-button-contrast, #fff);
+  background: var(--notedraw-brush-button-color, var(--interactive-accent));
+  border-color: color-mix(in srgb, var(--notedraw-brush-button-color, var(--interactive-accent)) 82%, #000);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.22),
+    0 1px 4px rgba(0, 0, 0, 0.16);
+}
+
+.notedraw-toolbar button.notedraw-brush-button.is-brush-color-active:hover {
+  color: var(--notedraw-brush-button-contrast, #fff);
+  background: var(--notedraw-brush-button-color, var(--interactive-accent));
+  filter: brightness(1.04);
+}
+
+.notedraw-toolbar button svg,
+.notedraw-toolbar button .svg-icon {
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  min-height: 20px;
+  stroke-width: 1.7;
+}
+
+.notedraw-shell.is-watercolor-mode > .notedraw-toolbar button.is-active {
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.24),
+    inset 0 -2px 0 rgba(255, 255, 255, 0.28),
+    0 1px 4px rgba(0, 0, 0, 0.16);
+}
+
+.notedraw-toolbar button:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+  border-color: transparent;
+}
+
+.notedraw-toolbar button:disabled {
+  opacity: 0.38;
+  cursor: default;
+  background: transparent;
+  color: var(--text-faint);
+}
+
+.notedraw-toolbar button:disabled:hover {
+  background: transparent;
+  color: var(--text-faint);
+}
+
+.notedraw-shell.is-select-mode .notedraw-canvas {
+  cursor: crosshair;
+}
+
+.notedraw-shell.is-edit-md-mode .notedraw-canvas {
+  cursor: text;
+}
+
+.notedraw-shell.is-selecting-strokes .notedraw-canvas {
+  cursor: cell;
+}
+
+.notedraw-shell.is-native-text-editing .notedraw-canvas {
+  pointer-events: none;
+}
+
+.notedraw-shell .notedraw-editing {
+  position: relative;
+  outline: 1px solid color-mix(in srgb, var(--interactive-accent) 52%, transparent);
+  outline-offset: 2px;
+  border-radius: 4px;
+  caret-color: var(--interactive-accent);
+  user-select: text;
+}
+
+.notedraw-shell .notedraw-md-block.notedraw-editing {
+  outline-offset: -1px;
+}
+
+.notedraw-shell .notedraw-editing.notedraw-editing-flow-clipped {
+  clip-path: inset(
+    var(--notedraw-editing-flow-top, 0px)
+    0
+    var(--notedraw-editing-flow-bottom, 0px)
+    0
+    round 4px
+  );
+}
+
+.notedraw-text-sort-target-before {
+  box-shadow: inset 0 2px 0 var(--interactive-accent);
+}
+
+.notedraw-text-sort-target-after {
+  box-shadow: inset 0 -2px 0 var(--interactive-accent);
+}
+
+.notedraw-text-sort-target-left {
+  box-shadow: inset 4px 0 0 var(--interactive-accent), -5px 0 12px color-mix(in srgb, var(--interactive-accent) 24%, transparent);
+}
+
+.notedraw-text-sort-target-right {
+  box-shadow: inset -4px 0 0 var(--interactive-accent), 5px 0 12px color-mix(in srgb, var(--interactive-accent) 24%, transparent);
+}
+
+.notedraw-md-grid {
+  display: grid !important;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 6px;
+  align-items: start;
+  container-type: inline-size;
+}
+
+.notedraw-md-grid > * {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+.notedraw-md-grid > .notedraw-md-grid-item {
+  min-width: 0;
+}
+
+/* Side-by-side heading blocks: Obsidian gives the first heading a large top
+   margin (1.5em) and any heading that follows another heading a small one
+   (0.5em), so two headings packed side-by-side sit at different heights.
+   Normalize the heading margin inside non-full-width grid items so packed
+   headings share the same baseline. */
+.notedraw-md-grid > .notedraw-md-grid-item:not([style*="span 12"]):not([style*="1 / -1"]) > :is(h1, h2, h3, h4, h5, h6),
+.notedraw-md-grid > .el-h1:not([style*="span 12"]):not([style*="1 / -1"]) > h1,
+.notedraw-md-grid > .el-h2:not([style*="span 12"]):not([style*="1 / -1"]) > h2,
+.notedraw-md-grid > .el-h3:not([style*="span 12"]):not([style*="1 / -1"]) > h3,
+.notedraw-md-grid > .el-h4:not([style*="span 12"]):not([style*="1 / -1"]) > h4,
+.notedraw-md-grid > .el-h5:not([style*="span 12"]):not([style*="1 / -1"]) > h5,
+.notedraw-md-grid > .el-h6:not([style*="span 12"]):not([style*="1 / -1"]) > h6 {
+  margin-top: 0.5em !important;
+}
+
+.notedraw-md-block {
+  position: relative;
+  min-width: 0;
+  box-sizing: border-box;
+  isolation: isolate;
+  transition: outline-color 100ms ease;
+  opacity: var(--notedraw-md-content-opacity, 1);
+  zoom: var(--notedraw-md-content-scale, 1);
+}
+
+.notedraw-md-block,
+.notedraw-md-block :where(a, span, strong, em, code, mark, del, small) {
+  color: var(--notedraw-md-content-color, inherit);
+}
+
+.notedraw-md-block[data-note-draw-resized-height] {
+  min-height: var(--notedraw-md-min-height);
+}
+
+.notedraw-md-block::before {
+  position: absolute;
+  z-index: -1;
+  inset: -4px;
+  border: 1.5px solid var(--notedraw-md-border, transparent);
+  border-radius: 6px;
+  background: var(--notedraw-md-background, transparent);
+  content: "";
+  pointer-events: none;
+}
+
+.notedraw-md-block.is-floating {
+  z-index: 8;
+  width: var(--notedraw-md-float-width, auto);
+  max-width: none;
+  transform: translate(
+    calc(var(--notedraw-md-float-x, 0px) + var(--notedraw-md-drag-x, 0px)),
+    calc(var(--notedraw-md-float-y, 0px) + var(--notedraw-md-drag-y, 0px))
+  );
+}
+
+.notedraw-md-block.is-notedraw-md-dragging:not(.is-floating) {
+  z-index: 9;
+  transform: translate(var(--notedraw-md-drag-x, 0px), var(--notedraw-md-drag-y, 0px));
+  pointer-events: none;
+  opacity: 0.84;
+}
+
+.notedraw-md-grid-item.is-notedraw-md-dragging {
+  z-index: 9;
+  transform: translate(var(--notedraw-md-drag-x, 0px), var(--notedraw-md-drag-y, 0px));
+  pointer-events: none;
+  opacity: 0.84;
+}
+
+.notedraw-clear-md-background {
+  width: 28px;
+  height: 28px;
+  padding: 5px;
+}
+
+.notedraw-note-flow-drop-indicator {
+  position: fixed;
+  z-index: 10003;
+  display: none !important;
+  height: 4px;
+  pointer-events: none;
+  border-radius: 2px;
+  background: var(--interactive-accent);
+  box-shadow: 0 0 0 1px var(--background-primary), 0 0 0 3px color-mix(in srgb, var(--interactive-accent) 28%, transparent);
+  transform: translateY(-2px) translateZ(0);
+}
+
+.notedraw-note-flow-drop-indicator[data-note-draw-drop-side="left"],
+.notedraw-note-flow-drop-indicator[data-note-draw-drop-side="right"] {
+  transform: translateX(-2px) translateZ(0);
+}
+
+.notedraw-note-flow-drop-indicator[data-note-draw-drop-magnet="left"]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: -6px;
+  width: 4px;
+  height: 16px;
+  border-radius: 2px;
+  background: var(--interactive-accent);
+}
+
+.notedraw-body-control.notedraw-note-flow-drop-indicator.is-notedraw-controls-visible.is-visible {
+  display: block;
+}
+
+.notedraw-format-toolbar {
+  position: fixed;
+  z-index: 1003;
+  top: var(--notedraw-format-top, 72px);
+  left: var(--notedraw-format-left, 8px);
+  display: none;
+  align-items: center;
+  gap: 3px;
+  max-width: calc(100vw - 16px);
+  padding: 4px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--background-primary) 94%, var(--background-secondary));
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.16);
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+.notedraw-shell.is-notedraw-controls-visible > .notedraw-format-toolbar.is-visible,
+.notedraw-body-control.notedraw-format-toolbar.is-notedraw-controls-visible.is-visible {
+  display: inline-flex;
+}
+
+.notedraw-format-toolbar button,
+.notedraw-format-toolbar input,
+.notedraw-format-toolbar select {
+  flex: 0 0 auto;
+}
+
+.notedraw-format-toolbar button {
+  width: 26px;
+  height: 26px;
+  min-width: 26px;
+  box-sizing: border-box;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: var(--text-muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.notedraw-format-toolbar button:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+.notedraw-format-toolbar.is-moving {
+  cursor: grabbing;
+}
+
+.notedraw-format-move-button {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+  touch-action: none;
+  cursor: grab;
+}
+
+.notedraw-format-toolbar.is-moving .notedraw-format-move-button {
+  cursor: grabbing;
+}
+
+.notedraw-format-toolbar button svg,
+.notedraw-format-toolbar button .svg-icon {
+  width: 17px;
+  height: 17px;
+  min-width: 17px;
+  min-height: 17px;
+  stroke-width: 1.8;
+}
+
+.notedraw-format-color {
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  padding: 0;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 999px;
+  background: transparent;
+}
+
+.notedraw-format-size {
+  height: 26px;
+  max-width: 58px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  background: var(--background-primary);
+  font-size: 12px;
+}
+
+.notedraw-palette-panel {
+  position: fixed;
+  z-index: 1002;
+  top: var(--notedraw-palette-top, 92px);
+  left: var(--notedraw-palette-left, auto);
+  right: var(--notedraw-palette-right, var(--notedraw-toolbar-right, 8px));
+  display: none;
+  min-width: 220px;
+  padding: 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 7px;
+  background: var(--background-primary);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.14);
+}
+
+.notedraw-shell.is-drawing-active.is-notedraw-controls-visible.is-palette-open > .notedraw-palette-panel {
+  display: grid;
+  gap: 8px;
+}
+
+.notedraw-body-control.notedraw-palette-panel.is-drawing-active.is-notedraw-controls-visible.is-palette-open {
+  display: grid;
+  gap: 8px;
+}
+
+.notedraw-brush-panel {
+  position: fixed;
+  z-index: 1002;
+  top: var(--notedraw-brush-panel-top, 92px);
+  left: var(--notedraw-brush-panel-left, auto);
+  right: var(--notedraw-brush-panel-right, var(--notedraw-toolbar-right, 8px));
+  display: none;
+  width: max-content;
+  min-width: 0;
+  padding: 4px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 7px;
+  background: var(--background-primary);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.14);
+}
+
+.notedraw-shell.is-drawing-active.is-notedraw-controls-visible.is-brush-panel-open > .notedraw-brush-panel,
+.notedraw-body-control.notedraw-brush-panel.is-drawing-active.is-notedraw-controls-visible.is-brush-panel-open {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.notedraw-brush-option {
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--text-muted);
+  background: transparent;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.notedraw-brush-option[hidden] {
+  display: none;
+}
+
+.notedraw-brush-option svg,
+.notedraw-brush-option .svg-icon {
+  width: 17px;
+  height: 17px;
+  min-width: 17px;
+}
+
+.notedraw-brush-option.is-active,
+.notedraw-brush-option:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+  border-color: color-mix(in srgb, var(--interactive-accent) 35%, var(--background-modifier-border));
+}
+
+.notedraw-text-panel {
+  position: fixed;
+  z-index: 1002;
+  top: var(--notedraw-text-panel-top, 92px);
+  left: var(--notedraw-text-panel-left, auto);
+  right: var(--notedraw-text-panel-right, var(--notedraw-toolbar-right, 8px));
+  display: none;
+  width: 236px;
+  padding: 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 7px;
+  background: var(--background-primary);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.14);
+}
+
+.notedraw-shell.is-drawing-active.is-notedraw-controls-visible.is-text-panel-open > .notedraw-text-panel {
+  display: grid;
+  gap: 8px;
+}
+
+.notedraw-body-control.notedraw-text-panel.is-drawing-active.is-notedraw-controls-visible.is-text-panel-open {
+  display: grid;
+  gap: 8px;
+}
+
+.notedraw-text-group {
+  display: grid;
+  gap: 5px;
+}
+
+.notedraw-text-group-label {
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 1;
+}
+
+.notedraw-text-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.notedraw-text-option {
+  min-width: 0;
+  height: 30px;
+  padding: 0 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  color: var(--text-muted);
+  background: var(--background-secondary);
+  cursor: pointer;
+  font-size: 11px;
+  touch-action: manipulation;
+}
+
+.notedraw-text-panel button,
+.notedraw-palette-panel button,
+.notedraw-brush-panel button {
+  touch-action: manipulation;
+}
+
+.notedraw-text-option svg,
+.notedraw-text-option .svg-icon {
+  width: 14px;
+  height: 14px;
+  min-width: 14px;
+}
+
+.notedraw-text-option[data-note-draw-text-preset="circle"] svg {
+  fill: currentColor;
+}
+
+.notedraw-text-option span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notedraw-text-option.is-active,
+.notedraw-text-option:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+  border-color: color-mix(in srgb, var(--interactive-accent) 35%, var(--background-modifier-border));
+}
+
+.notedraw-selection-menu {
+  position: fixed;
+  z-index: 1004;
+  top: var(--notedraw-selection-menu-top, 80px);
+  left: var(--notedraw-selection-menu-left, 8px);
+  display: none;
+  gap: 4px;
+  align-items: center;
+  max-width: calc(100vw - 16px);
+  padding: 4px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--background-primary) 94%, var(--background-secondary));
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.16);
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+.notedraw-shell.is-notedraw-controls-visible > .notedraw-selection-menu.is-visible,
+.notedraw-body-control.notedraw-selection-menu.is-notedraw-controls-visible.is-visible {
+  display: inline-flex;
+}
+
+.notedraw-selection-menu-button {
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  box-sizing: border-box;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: var(--text-muted);
+  background: transparent;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.notedraw-selection-menu-button:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+.notedraw-selection-menu-button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.notedraw-selection-menu-button[hidden] {
+  display: none;
+}
+
+.notedraw-note-flow-anchor {
+  overflow-anchor: none;
+}
+
+.notedraw-note-flow-line-spacer {
+  display: block;
+  height: 0;
+  pointer-events: none;
+}
+
+.notedraw-note-flow-block-spacer {
+  display: block;
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  width: 100%;
+  grid-column: 1 / -1;
+  min-height: 0;
+  height: 0;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  pointer-events: none;
+  overflow-anchor: none;
+}
+
+.notedraw-selection-menu-button svg,
+.notedraw-selection-menu-button .svg-icon {
+  width: 17px;
+  height: 17px;
+  min-width: 17px;
+  min-height: 17px;
+}
+
+.notedraw-palette-row {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.notedraw-color-row {
+  align-items: start;
+}
+
+.notedraw-color-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 24px);
+  gap: 6px;
+  align-items: center;
+}
+
+.notedraw-color-swatch,
+.notedraw-color-advanced {
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  padding: 0;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 999px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.notedraw-color-swatch {
+  background:
+    linear-gradient(var(--notedraw-swatch-color), var(--notedraw-swatch-color)),
+    repeating-conic-gradient(#ddd 0% 25%, #fff 0% 50%) 50% / 8px 8px;
+}
+
+.notedraw-color-none {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  background: repeating-conic-gradient(#ddd 0% 25%, #fff 0% 50%) 50% / 8px 8px;
+}
+
+.notedraw-color-none svg,
+.notedraw-color-none .svg-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.notedraw-color-swatch.is-active,
+.notedraw-color-advanced.is-active {
+  border-color: var(--interactive-accent);
+  box-shadow:
+    0 0 0 2px var(--background-primary),
+    0 0 0 4px color-mix(in srgb, var(--interactive-accent) 70%, transparent);
+}
+
+.notedraw-color-advanced {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  background: var(--background-secondary);
+}
+
+.notedraw-color-advanced:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+.notedraw-color-advanced svg,
+.notedraw-color-advanced .svg-icon {
+  width: 15px;
+  height: 15px;
+}
+
+.notedraw-palette-icon {
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.notedraw-palette-icon svg,
+.notedraw-palette-icon .svg-icon {
+  width: 18px;
+  height: 18px;
+}
+
+.notedraw-palette-row input[type="range"] {
+  width: 100%;
+}
+
+.notedraw-advanced-color {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.notedraw-settings-section-title {
+  margin: 22px 0 6px;
+  letter-spacing: 0;
+}
+
+.notedraw-setting-value {
+  min-width: 58px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  text-align: right;
+}
+
+.notedraw-settings-codes {
+  width: 100%;
+}
+
+.notedraw-settings-codes-title {
+  margin-bottom: 4px;
+  color: var(--text-normal);
+  font-size: var(--font-ui-medium);
+  font-weight: 600;
+}
+
+.notedraw-settings-codes-subtitle {
+  margin-bottom: 12px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  line-height: 1.35;
+}
+
+.notedraw-settings-codes-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.notedraw-settings-code {
+  width: 128px;
+}
+
+.notedraw-settings-code-image {
+  display: block;
+  width: 128px;
+  height: 128px;
+  object-fit: contain;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.notedraw-settings-code-label {
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  text-align: center;
+}
+
+@media (max-width: 640px) {
+  .notedraw-toolbar {
+    width: auto;
+    max-width: calc(100vw - 16px);
+    justify-content: flex-start;
+  }
+
+  .notedraw-toolbar button {
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
+  }
+
+  .notedraw-toolbar button svg,
+  .notedraw-toolbar button .svg-icon {
+    width: 19px;
+    height: 19px;
+    min-width: 19px;
+    min-height: 19px;
+  }
+
+  .notedraw-palette-panel,
+  .notedraw-text-panel {
+    left: 8px;
+    right: 8px;
+    width: auto;
+    min-width: 0;
+    max-height: min(62vh, 420px);
+    overflow: auto;
+  }
+
+  .notedraw-brush-panel {
+    left: var(--notedraw-brush-panel-left, auto);
+    right: var(--notedraw-brush-panel-right, 8px);
+    width: max-content;
+    min-width: 0;
+    max-width: calc(100vw - 16px);
+    max-height: none;
+    overflow: visible;
+  }
+
+  .notedraw-format-toolbar {
+    max-width: calc(100vw - 16px);
+  }
+}
