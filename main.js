@@ -7060,6 +7060,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       if (normalizeVaultPath(controller.file?.path) !== normalizeVaultPath(file2?.path) || controller.drawingData === options.excludeData || controller.pointerDown || controller.draggingStroke || controller.resizingSelection) {
         continue;
       }
+      controller.markdownSourceRevisionChanged = Boolean(data?._notedrawSourceRevisionMismatch);
       controller.drawingData = normalizeDrawingData(data, file2);
       controller.rebuildElementRelations();
       controller.drawingsLoaded = true;
@@ -8409,7 +8410,16 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       }
       candidates.sort((a, b) => portableTimestamp(b.updatedAt) - portableTimestamp(a.updatedAt) || b.priority - a.priority);
       const selected = candidates[0] || null;
+      const sourceRevision = sourceRevisionForFile(file2);
+      const storedRevision = normalizeSourceRevision(selected?.data?.sourceRevision);
       const data = selected ? normalizeDrawingData(selected.data, file2) : createEmptyDrawingData(file2);
+      const sourceRevisionMismatch = Boolean(selected && (!storedRevision || storedRevision !== sourceRevision));
+      data.sourceRevision = sourceRevision;
+      Object.defineProperty(data, "_notedrawSourceRevisionMismatch", {
+        configurable: true,
+        enumerable: false,
+        value: sourceRevisionMismatch
+      });
       this.drawingStateCache.set(storageKey, normalizeDrawingData(data, file2));
       if (selected?.kind === "legacy" && options.migrateLegacy !== false) {
         await this.writeDrawings(file2, data, { refresh: false });
@@ -9427,6 +9437,7 @@ var PreviewDrawingController = class {
     this.drawingsLoaded = false;
     this.loadingDrawings = null;
     this.drawingLoadGeneration = 0;
+    this.markdownSourceRevisionChanged = false;
     this.onPointerDown = this.onPointerDown.bind(this);
     this.onPointerMove = this.onPointerMove.bind(this);
     this.onPointerUp = this.onPointerUp.bind(this);
@@ -9950,6 +9961,7 @@ var PreviewDrawingController = class {
     this.noteFlowPersistencePending = false;
     this.noteFlowActivationRepairAttempted = false;
     this.noteFlowLayoutIncomplete = false;
+    this.markdownSourceRevisionChanged = false;
     this.noteFlowAvoidanceAnchors.clear();
     this.cancelRenderFrame();
     this.cancelResizeFrame();
@@ -10359,6 +10371,7 @@ var PreviewDrawingController = class {
         return;
       }
       this.drawingData = data;
+      this.markdownSourceRevisionChanged = Boolean(data?._notedrawSourceRevisionMismatch);
       const clearedUnboundRelations = this.rebuildElementRelations();
       if (clearedUnboundRelations) {
         this.plugin.scheduleDrawingSave(file2, this.drawingData, { userOperation: true, replace: true });
@@ -18845,12 +18858,45 @@ ${selected}
         changed = true;
         continue;
       }
+      const template = records.find((item) => item.path === path && item.explicitLineGroup === group && item.lineStart >= first && item.lineEnd <= last) || null;
       for (const { candidate, line } of ordered) {
-        const block = records.find((item) => item.path === path && item.lineStart === line && item.lineEnd === line);
+        const hint = normalizeRenderedText2(renderedMarkdownIdentityText(candidate)).slice(0, 240);
+        let block = records.find((item) => item.path === path && item.lineStart === line && item.lineEnd === line && item.explicitLineGroup === group && item.textHint === hint);
+        if (!block) {
+          const base = template || {
+            path,
+            span: 12,
+            noteFlowAutoSpan: false,
+            widthScale: 1,
+            minHeight: 0,
+            borderColor: "",
+            backgroundColor: "",
+            contentColor: "",
+            contentOpacity: 1,
+            contentScale: 1,
+            floating: false,
+            floatingExplicit: false,
+            floatBox: null,
+            locked: false,
+            groupId: ""
+          };
+          block = normalizeMarkdownBlocks([{
+            ...base,
+            id: `${base.id || `md-${Date.now().toString(36)}`}-${hashString(`${group}:${line}:${hint}`)}`,
+            path,
+            lineStart: line,
+            lineEnd: line,
+            textHint: hint,
+            explicitLineGroup: group
+          }], this.file)[0] || null;
+          if (block) {
+            records.push(block);
+            changed = true;
+          }
+        }
         if (!block) {
           continue;
         }
-        const hint = normalizeRenderedText2(renderedMarkdownIdentityText(candidate)).slice(0, 240);
         if (block.explicitLineGroup !== group || block.textHint !== hint) {
           block.explicitLineGroup = group;
           block.textHint = hint;
@@ -19056,7 +19102,7 @@ ${selected}
     const info = getSourceInfo(blockElement);
     const hint = normalizeRenderedText2(renderedMarkdownIdentityText(blockElement)).slice(0, 240);
     const candidates = this.markdownBlockRecords().filter((block) => block.path === path);
-    return candidates.find((block) => Number.isFinite(info.lineStart) && block.lineStart === info.lineStart && (!block.textHint || block.textHint === hint)) || candidates.find((block) => Number.isFinite(info.lineStart) && block.lineStart === info.lineStart) || candidates.find((block) => block.textHint && block.textHint === hint) || null;
+    return candidates.find((block) => Number.isFinite(info.lineStart) && block.lineStart === info.lineStart && (!block.textHint || block.textHint === hint)) || candidates.find((block) => block.textHint && block.textHint === hint) || null;
   }
   markdownBlockElementForTarget(target, clientPoint = null) {
     if (this.surfaceType !== "preview" || !target || !this.previewEl?.contains?.(target)) {
@@ -19297,7 +19343,6 @@ ${selected}
     const candidateMeta = /* @__PURE__ */ new Map();
     const idCandidates = /* @__PURE__ */ new Map();
     const exactCandidates = /* @__PURE__ */ new Map();
-    const lineCandidates = /* @__PURE__ */ new Map();
     const hintCandidates = /* @__PURE__ */ new Map();
     const queueCandidate = (map, key, element) => {
       const values = map.get(key) || [];
@@ -19315,47 +19360,55 @@ ${selected}
       }
       if (Number.isFinite(info.lineStart)) {
         queueCandidate(exactCandidates, `${path}\0${info.lineStart}\0${hint}`, element);
-        queueCandidate(lineCandidates, `${path}\0${info.lineStart}`, element);
       }
       queueCandidate(hintCandidates, `${path}\0${hint}`, element);
     }
     const used = /* @__PURE__ */ new Set();
     let markdownMetadataChanged = explicitDomChanged || explicitRecordsChanged;
-    const takeUnused = (values) => values?.find((element) => !used.has(element)) || null;
+    const explicitGroupMatches = (block, element) => {
+      const group = String(block?.explicitLineGroup || "");
+      return !group || String(element?.dataset?.noteDrawExplicitLineGroup || "") === group;
+    };
+    const identityMatches = (block, element) => {
+      if (!element || !explicitGroupMatches(block, element)) {
+        return false;
+      }
+      if (!block?.textHint) {
+        return true;
+      }
+      const hint = normalizeRenderedText2(renderedMarkdownIdentityText(element)).slice(0, 240);
+      return hint === normalizeRenderedText2(block.textHint);
+    };
+    const takeUnused = (values, block = null) => values?.find((element) => !used.has(element) && identityMatches(block, element)) || null;
     const next = /* @__PURE__ */ new Map();
     for (const block of this.markdownBlockRecords()) {
       const previous = this.markdownBlockElements.get(block.id);
       const previousMeta = candidateMeta.get(previous);
-      const previousMatches = previousMeta && !used.has(previous) && previousMeta.path === block.path && previous?.dataset?.noteDrawMarkdownBlockId === block.id;
+      const previousMatches = previousMeta && !used.has(previous) && previousMeta.path === block.path && previous?.dataset?.noteDrawMarkdownBlockId === block.id && identityMatches(block, previous);
       const exactKey = `${block.path}\0${block.lineStart}\0${block.textHint}`;
       const lineKey = `${block.path}\0${block.lineStart}`;
       const hintKey = `${block.path}\0${block.textHint}`;
-      let element = previousMatches ? previous : takeUnused(idCandidates.get(block.id)) || takeUnused(exactCandidates.get(exactKey)) || takeUnused(lineCandidates.get(lineKey)) || takeUnused(hintCandidates.get(hintKey));
+      let element = previousMatches ? previous : takeUnused(idCandidates.get(block.id), block) || takeUnused(exactCandidates.get(exactKey), block) || takeUnused(hintCandidates.get(hintKey), block);
       if (!element) {
         const blockHint = normalizeRenderedText2(block.textHint);
-        const blockLine = Number(block.lineStart);
         const scored = candidates.map((candidate, candidateOrder) => {
-          if (used.has(candidate)) {
+          if (used.has(candidate) || !identityMatches(block, candidate)) {
             return null;
           }
           const meta2 = candidateMeta.get(candidate);
           if (!meta2 || meta2.path !== block.path) {
             return null;
           }
-          const candidateLine = Number(meta2.info?.lineStart);
           const candidateHint = normalizeRenderedText2(meta2.hint);
-          const lineExact = Number.isFinite(blockLine) && Number.isFinite(candidateLine) && blockLine === candidateLine;
           const hintExact = Boolean(blockHint && candidateHint && blockHint === candidateHint);
-          const hintRelated = Boolean(blockHint && candidateHint && (blockHint.includes(candidateHint) || candidateHint.includes(blockHint)));
-          const lineDistance = Number.isFinite(blockLine) && Number.isFinite(candidateLine) ? Math.abs(blockLine - candidateLine) : Number.POSITIVE_INFINITY;
-          const score = (lineExact ? 1e3 : 0) + (hintExact ? 700 : hintRelated ? 220 : 0) + (Number.isFinite(lineDistance) ? Math.max(0, 80 - Math.min(80, lineDistance)) : 0) + Math.max(0, 20 - Math.abs(candidateOrder - this.markdownBlockRecords().indexOf(block)));
+          const score = hintExact ? 1e3 : 0;
           return { candidate, score };
         }).filter(Boolean).sort((left, right) => right.score - left.score)[0];
-        if (scored && scored.score >= 220) {
+        if (scored && scored.score >= 1e3) {
           element = scored.candidate;
         }
       }
-      if (!element && previous?.isConnected && !used.has(previous) && previous?.dataset?.noteDrawMarkdownBlockId === block.id && (!candidateMeta.has(previous) || candidateMeta.get(previous)?.path === block.path)) {
+      if (!element && previous?.isConnected && !used.has(previous) && previous?.dataset?.noteDrawMarkdownBlockId === block.id && (!candidateMeta.has(previous) || candidateMeta.get(previous)?.path === block.path) && identityMatches(block, previous)) {
         element = previous;
       }
       if (!element) {
@@ -19488,9 +19541,6 @@ ${selected}
       }
     }
     markdownMetadataChanged = markdownMetadataChanged || repairedImplicitFloatingOverlap;
-    if (markdownMetadataChanged && !this.draggingStroke && this.file && this.drawingData) {
-      this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
-    }
     if (repairedImplicitFloatingOverlap) {
       this.readingLogicalSizerHeight = 0;
       this.invalidateSelectionFrameSnapshot();
@@ -27299,6 +27349,7 @@ function createEmptyDrawingData(file2) {
   return {
     version: 3,
     sourcePath: file2.path,
+    sourceRevision: sourceRevisionForFile(file2),
     visible: true,
     strokes: [],
     markdownBlocks: [],
@@ -27307,6 +27358,16 @@ function createEmptyDrawingData(file2) {
     webEdits: [],
     updatedAt: null
   };
+}
+function normalizeSourceRevision(value) {
+  return typeof value === "string" ? value.trim().slice(0, 160) : "";
+}
+function sourceRevisionForFile(file2) {
+  const stat = file2?.stat || {};
+  const ctime = Number.isFinite(Number(stat.ctime)) ? Math.max(0, Math.round(Number(stat.ctime))) : 0;
+  const mtime = Number.isFinite(Number(stat.mtime)) ? Math.max(0, Math.round(Number(stat.mtime))) : 0;
+  const size = Number.isFinite(Number(stat.size)) ? Math.max(0, Math.round(Number(stat.size))) : 0;
+  return `${ctime}:${mtime}:${size}`;
 }
 function createDrawingDataFile(path) {
   const normalized = normalizeVaultPath(path) || "NoteDraw.md";
@@ -27383,6 +27444,7 @@ function normalizeDrawingData(data, file2) {
   return {
     version: Math.max(1, Number.isFinite(data?.version) ? data.version : 1),
     sourcePath: file2.path,
+    sourceRevision: normalizeSourceRevision(data?.sourceRevision) || sourceRevisionForFile(file2),
     visible: data?.visible !== false,
     strokes: strokes.map(normalizeStroke).map((stroke) => ({
       ...stroke,
@@ -27395,6 +27457,19 @@ function normalizeDrawingData(data, file2) {
     updatedAt: data?.updatedAt || null
   };
 }
+function parseExplicitMarkdownLineGroup(value) {
+  const parts = String(value || "").split("\0");
+  if (parts.length < 4) {
+    return null;
+  }
+  const path = normalizeVaultPath(parts[0]);
+  const start = Number(parts[1]);
+  const end = Number(parts[2]);
+  if (!path || !Number.isFinite(start) || !Number.isFinite(end) || end < start) {
+    return null;
+  }
+  return { path, start: Math.round(start), end: Math.round(end) };
+}
 function normalizeMarkdownBlocks(value, file2) {
   if (!Array.isArray(value)) {
     return [];
@@ -27406,7 +27481,7 @@ function normalizeMarkdownBlocks(value, file2) {
     const lineStart = Number.isFinite(Number(block?.lineStart)) ? Math.max(0, Math.round(Number(block.lineStart))) : null;
     const id = typeof block?.id === "string" && block.id ? block.id : `md-${hashString(`${path}:${lineStart ?? "x"}:${textHint}:${index}`)}`;
     const floatBox = normalizeMarkdownFloatBox(block?.floatBox);
-    return {
+    const normalized = {
       id,
       path,
       lineStart,
@@ -27428,7 +27503,12 @@ function normalizeMarkdownBlocks(value, file2) {
       groupId: typeof block?.groupId === "string" ? block.groupId : "",
       explicitLineGroup: typeof block?.explicitLineGroup === "string" ? block.explicitLineGroup : ""
     };
-  }).filter((block) => block.path && block.id && !seen.has(block.id) && seen.add(block.id));
+    const explicit = parseExplicitMarkdownLineGroup(normalized.explicitLineGroup);
+    if (explicit && (explicit.path !== path || !Number.isFinite(lineStart) || lineStart < explicit.start || lineStart > explicit.end || normalized.lineEnd < explicit.start || normalized.lineEnd > explicit.end)) {
+      return null;
+    }
+    return normalized;
+  }).filter((block) => block && block.path && block.id && !seen.has(block.id) && seen.add(block.id));
 }
 function normalizeMarkdownBlockWidthScale(value) {
   const widthScale = Number(value);

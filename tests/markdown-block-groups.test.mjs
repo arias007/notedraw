@@ -282,6 +282,25 @@ test("NoteFlow release keeps browser scroll anchoring disabled through async set
   assert.match(styles, /\.notedraw-shell\.is-note-flow-settling \.markdown-preview-sizer \{[\s\S]*overflow-anchor: none/);
 });
 
+test("restored files never rebind stale Markdown records by line number", async () => {
+  const [source, styles] = await Promise.all([
+    readFile(sourceUrl, "utf8"),
+    readFile(stylesUrl, "utf8")
+  ]);
+  const sync = source.slice(source.indexOf("  syncMarkdownBlockPresentation()"), source.indexOf("  selectMarkdownBlock(", source.indexOf("  syncMarkdownBlockPresentation()")));
+  const normalize = source.slice(source.indexOf("function parseExplicitMarkdownLineGroup"), source.indexOf("function normalizeMarkdownBlockWidthScale"));
+
+  assert.match(sync, /const identityMatches = \(block, element\)/);
+  assert.match(sync, /return hint === normalizeRenderedText\(block\.textHint\)/);
+  assert.doesNotMatch(sync, /takeUnused\(lineCandidates\.get\(lineKey\)/);
+  assert.doesNotMatch(sync, /hintRelated = Boolean/);
+  assert.match(normalize, /parseExplicitMarkdownLineGroup\(normalized\.explicitLineGroup\)/);
+  assert.match(normalize, /lineStart < explicit\.start/);
+  assert.match(source, /sourceRevisionMismatch = Boolean\(selected &&/);
+  assert.match(source, /_notedrawSourceRevisionMismatch/);
+  assert.match(styles, /\.notedraw-shell \.markdown-preview-sizer \{[\s\S]*overflow-anchor: none/);
+});
+
 test("parallel Markdown preview measures the full content lane before deciding column capacity", async () => {
   const source = await readFile(sourceUrl, "utf8");
   const metrics = source.slice(source.indexOf("  markdownDropRowMetrics("), source.indexOf("  markdownDropIncludesHeading(", source.indexOf("  markdownDropRowMetrics(")));
@@ -560,14 +579,14 @@ test("Markdown DOM replacement preserves parallel width when rendered text chang
   const recordSource = source.slice(source.indexOf("  findMarkdownBlockRecordForElement("), source.indexOf("  markdownBlockElementForTarget(", source.indexOf("  findMarkdownBlockRecordForElement(")));
   const reconcileSource = source.slice(source.indexOf("  reconcileAutoNoteFlowMarkdownSpans()"), source.indexOf("  resolveDraggedNoteFlowPlacement(", source.indexOf("  reconcileAutoNoteFlowMarkdownSpans()")));
 
-  assert.match(presentationSource, /const lineCandidates =/);
   assert.match(presentationSource, /const idCandidates =/);
-  assert.match(presentationSource, /takeUnused\(idCandidates\.get\(block\.id\)\)/);
-  assert.match(presentationSource, /queueCandidate\(lineCandidates, `\$\{path\}\\u0000\$\{info\.lineStart\}`/);
+  assert.match(presentationSource, /takeUnused\(idCandidates\.get\(block\.id\), block\)/);
+  assert.doesNotMatch(presentationSource, /lineCandidates/);
   assert.match(presentationSource, /const scored = candidates\.map\(\(candidate, candidateOrder\)/);
-  assert.match(presentationSource, /scored\.score >= 220/);
-  assert.match(presentationSource, /takeUnused\(exactCandidates\.get\(exactKey\)\)[\s\S]*takeUnused\(lineCandidates\.get\(lineKey\)\)[\s\S]*takeUnused\(hintCandidates\.get\(hintKey\)\)/);
-  assert.match(recordSource, /block\.lineStart === info\.lineStart\)\s*\|\| candidates\.find\(\(block\) => block\.textHint/);
+  assert.match(presentationSource, /scored\.score >= 1000/);
+  assert.match(presentationSource, /takeUnused\(exactCandidates\.get\(exactKey\), block\)[\s\S]*takeUnused\(hintCandidates\.get\(hintKey\), block\)/);
+  assert.doesNotMatch(presentationSource, /takeUnused\(lineCandidates\.get\(lineKey\)/);
+  assert.match(recordSource, /block\.lineStart === info\.lineStart && \(!block\.textHint \|\| block\.textHint === hint\)/);
   assert.match(reconcileSource, /activeInlineFlows[\s\S]*hasSemanticInlineMatch/);
   assert.match(reconcileSource, /!this\.noteFlowMarkdownAnnotationComplete \|\| !this\.markdownBlockElement\(block\)\?\.isConnected/);
 });
@@ -705,7 +724,7 @@ test("only legacy implicit floating collisions are docked automatically", async 
   assert.match(presentationSource, /block\.floating = false;\s*block\.floatingExplicit = false;\s*block\.floatBox = null;/);
 });
 
-test("Markdown drop settlement remaps every rendered block and persists repaired source lines", async () => {
+test("Markdown drop settlement remaps rendered blocks without auto-persisting stale source lines", async () => {
   const source = await readFile(sourceUrl, "utf8");
   const annotationSource = source.slice(source.indexOf("  scheduleMarkdownAnnotationRefresh("), source.indexOf("  updateFloatingControlsPosition(", source.indexOf("  scheduleMarkdownAnnotationRefresh(")));
   const presentationSource = source.slice(source.indexOf("  syncMarkdownBlockPresentation()"), source.indexOf("  selectMarkdownBlock(", source.indexOf("  syncMarkdownBlockPresentation()")));
@@ -717,7 +736,8 @@ test("Markdown drop settlement remaps every rendered block and persists repaired
   assert.match(annotationSource, /if \(force\) \{\s*this\.noteFlowMarkdownAnnotationComplete = true/);
   assert.match(source, /const sourceIndexes = new Map\([\s\S]*createMarkdownSourceIndex\(source\)/);
   assert.match(source, /resolveSourceDropTarget\(source, state\.sourceInfo, state\.sourceText, sourceIndex\)/);
-  assert.match(presentationSource, /markdownMetadataChanged[\s\S]*block\.lineStart !== info\.lineStart[\s\S]*scheduleDrawingSave\(this\.file, this\.drawingData, \{ userOperation: true \}\)/);
+  assert.match(presentationSource, /markdownMetadataChanged[\s\S]*block\.lineStart !== info\.lineStart/);
+  assert.doesNotMatch(presentationSource, /scheduleDrawingSave\(this\.file, this\.drawingData, \{ userOperation: true \}\)/);
 });
 
 test("Markdown selection keeps complete owners while ordinary paragraph lines become NoteFlow targets", async () => {
