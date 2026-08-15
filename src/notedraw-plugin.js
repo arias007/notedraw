@@ -5417,6 +5417,7 @@ var PreviewDrawingController = class {
     this.dragNoteFlowRebuildSince = 0;
     this.dragNoteFlowLastRebuildAt = 0;
     this.dragNoteFlowLastAppliedPlacement = null;
+    this.allowMarkdownPresentationDuringDrag = false;
     this.noteFlowDropIndicator = null;
     this.resizingSelection = false;
     this.resizeSelectionHandle = null;
@@ -12856,17 +12857,18 @@ var PreviewDrawingController = class {
       // Commit the placement that was actually previewed (WYSIWYG). The
       // preview must already show the final position; recomputing here would
       // apply a placement the user never saw and flash after release.
-      requestedDropPlacement = this.dragNoteFlowPlacement ? {
-        path: this.dragNoteFlowPlacement.path,
-        line: this.dragNoteFlowPlacement.line,
-        side: this.dragNoteFlowPlacement.side,
-        horizontalSide: this.dragNoteFlowPlacement.horizontalSide,
-        leftSnap: this.dragNoteFlowPlacement.leftSnap,
-        boundary: this.dragNoteFlowPlacement.boundary,
-        inlineBoundary: this.dragNoteFlowPlacement.inlineBoundary,
-        flowOrder: this.dragNoteFlowPlacement.flowOrder,
-        noteFlowBoundary: this.dragNoteFlowPlacement.noteFlowBoundary,
-        candidate: this.dragNoteFlowPlacement.candidate
+      const previewedPlacement = this.dragNoteFlowLastAppliedPlacement || this.dragNoteFlowPlacement;
+      requestedDropPlacement = previewedPlacement ? {
+        path: previewedPlacement.path,
+        line: previewedPlacement.line,
+        side: previewedPlacement.side,
+        horizontalSide: previewedPlacement.horizontalSide,
+        leftSnap: previewedPlacement.leftSnap,
+        boundary: previewedPlacement.boundary,
+        inlineBoundary: previewedPlacement.inlineBoundary,
+        flowOrder: previewedPlacement.flowOrder,
+        noteFlowBoundary: previewedPlacement.noteFlowBoundary,
+        candidate: previewedPlacement.candidate
       } : null;
     }
     const preserveMarkdownDomPreview = didMove
@@ -12963,7 +12965,9 @@ var PreviewDrawingController = class {
         : null;
       if (resolvedDropPlacement?.horizontalSide) {
         this.prepareMarkdownAnchorForInlineNoteFlow(resolvedDropPlacement);
+        this.allowMarkdownPresentationDuringDrag = true;
         this.syncMarkdownBlockPresentation();
+        this.allowMarkdownPresentationDuringDrag = false;
       }
       if (resolvedDropPlacement) {
         this.snapDraggedSelectionToNoteFlowPlacement(resolvedDropPlacement, movedIndexes);
@@ -15358,6 +15362,14 @@ var PreviewDrawingController = class {
     if (this.surfaceType !== "preview" || !this.previewEl?.isConnected || !this.drawingData) {
       return;
     }
+    // Annotation refreshes can finish asynchronously while a NoteFlow drag is
+    // paused. Reapplying persisted grid/span presentation at that point
+    // overwrites the live preview and makes inline rows flash back to a
+    // vertical row (or leaves the old reservation in place). The drop path
+    // explicitly opts in after it has captured the preview snapshot.
+    if (this.draggingStroke && this.dragNoteFlowDomPreview && !this.allowMarkdownPresentationDuringDrag) {
+      return;
+    }
     const previousMarkdownBlockElements = this.markdownBlockElements;
     const previousElements = new Set(previousMarkdownBlockElements.values());
     const previousParents = new Set(Array.from(previousElements).flatMap((element) => [
@@ -16708,12 +16720,19 @@ var PreviewDrawingController = class {
     // dragged elements back to their origin markers first and then re-inserted
     // them, which flashed the preview on every target change.
     const previousApplied = this.dragNoteFlowLastAppliedPlacement;
-    const candidateChanged = Boolean(
+    const previewStructureChanged = Boolean(
       previousApplied?.candidate && placement?.candidate
       && (previousApplied.candidate.sourceElement || previousApplied.candidate.element)
         !== (placement.candidate.sourceElement || placement.candidate.element)
+    ) || Boolean(
+      previousApplied && placement && (
+        previousApplied.horizontalSide !== placement.horizontalSide
+        || previousApplied.side !== placement.side
+        || previousApplied.leftSnap !== placement.leftSnap
+        || previousApplied.line !== placement.line
+      )
     );
-    if (candidateChanged && options.skipRestore === true) {
+    if (previewStructureChanged && options.skipRestore === true) {
       this.restoreDraggedNoteFlowDomPreview({ keepElements: true });
       this.restoreDraggedNoteFlowReservationStyles();
     } else if (options.skipRestore !== true) {
@@ -17140,7 +17159,6 @@ var PreviewDrawingController = class {
       noteFlowBoundary,
       candidate: { ...flowCandidate }
     };
-    this.dragNoteFlowLastAppliedPlacement = this.dragNoteFlowPlacement;
     const drop = this.syncMarkdownDropFromNoteFlowPlacement(this.dragNoteFlowPlacement);
     // Always apply incrementally during the drag: elements are relocated by
     // insertBefore and the previous target's styles are undone in place. The

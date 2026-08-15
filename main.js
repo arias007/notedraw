@@ -9070,6 +9070,7 @@ var PreviewDrawingController = class {
     this.dragNoteFlowRebuildSince = 0;
     this.dragNoteFlowLastRebuildAt = 0;
     this.dragNoteFlowLastAppliedPlacement = null;
+    this.allowMarkdownPresentationDuringDrag = false;
     this.noteFlowDropIndicator = null;
     this.resizingSelection = false;
     this.resizeSelectionHandle = null;
@@ -16305,17 +16306,18 @@ ${selected}
       }
       this.dragNoteFlowDropClientX = null;
       this.dragNoteFlowDropClientY = null;
-      requestedDropPlacement = this.dragNoteFlowPlacement ? {
-        path: this.dragNoteFlowPlacement.path,
-        line: this.dragNoteFlowPlacement.line,
-        side: this.dragNoteFlowPlacement.side,
-        horizontalSide: this.dragNoteFlowPlacement.horizontalSide,
-        leftSnap: this.dragNoteFlowPlacement.leftSnap,
-        boundary: this.dragNoteFlowPlacement.boundary,
-        inlineBoundary: this.dragNoteFlowPlacement.inlineBoundary,
-        flowOrder: this.dragNoteFlowPlacement.flowOrder,
-        noteFlowBoundary: this.dragNoteFlowPlacement.noteFlowBoundary,
-        candidate: this.dragNoteFlowPlacement.candidate
+      const previewedPlacement = this.dragNoteFlowLastAppliedPlacement || this.dragNoteFlowPlacement;
+      requestedDropPlacement = previewedPlacement ? {
+        path: previewedPlacement.path,
+        line: previewedPlacement.line,
+        side: previewedPlacement.side,
+        horizontalSide: previewedPlacement.horizontalSide,
+        leftSnap: previewedPlacement.leftSnap,
+        boundary: previewedPlacement.boundary,
+        inlineBoundary: previewedPlacement.inlineBoundary,
+        flowOrder: previewedPlacement.flowOrder,
+        noteFlowBoundary: previewedPlacement.noteFlowBoundary,
+        candidate: previewedPlacement.candidate
       } : null;
     }
     const preserveMarkdownDomPreview = didMove && Boolean(this.dragNoteFlowDomPreview) && Boolean(this.dragMarkdownLastValidDrop?.element?.isConnected);
@@ -16389,7 +16391,9 @@ ${selected}
       const resolvedDropPlacement = affectsNoteFlow ? this.resolveDraggedNoteFlowPlacement(requestedDropPlacement, movedIndexes) : null;
       if (resolvedDropPlacement?.horizontalSide) {
         this.prepareMarkdownAnchorForInlineNoteFlow(resolvedDropPlacement);
+        this.allowMarkdownPresentationDuringDrag = true;
         this.syncMarkdownBlockPresentation();
+        this.allowMarkdownPresentationDuringDrag = false;
       }
       if (resolvedDropPlacement) {
         this.snapDraggedSelectionToNoteFlowPlacement(resolvedDropPlacement, movedIndexes);
@@ -18696,6 +18700,9 @@ ${selected}
     if (this.surfaceType !== "preview" || !this.previewEl?.isConnected || !this.drawingData) {
       return;
     }
+    if (this.draggingStroke && this.dragNoteFlowDomPreview && !this.allowMarkdownPresentationDuringDrag) {
+      return;
+    }
     const previousMarkdownBlockElements = this.markdownBlockElements;
     const previousElements = new Set(previousMarkdownBlockElements.values());
     const previousParents = new Set(Array.from(previousElements).flatMap((element) => [
@@ -19951,10 +19958,12 @@ ${selected}
   }
   applyDraggedNoteFlowLivePreview(placement, options = {}) {
     const previousApplied = this.dragNoteFlowLastAppliedPlacement;
-    const candidateChanged = Boolean(
+    const previewStructureChanged = Boolean(
       previousApplied?.candidate && placement?.candidate && (previousApplied.candidate.sourceElement || previousApplied.candidate.element) !== (placement.candidate.sourceElement || placement.candidate.element)
+    ) || Boolean(
+      previousApplied && placement && (previousApplied.horizontalSide !== placement.horizontalSide || previousApplied.side !== placement.side || previousApplied.leftSnap !== placement.leftSnap || previousApplied.line !== placement.line)
     );
-    if (candidateChanged && options.skipRestore === true) {
+    if (previewStructureChanged && options.skipRestore === true) {
       this.restoreDraggedNoteFlowDomPreview({ keepElements: true });
       this.restoreDraggedNoteFlowReservationStyles();
     } else if (options.skipRestore !== true) {
@@ -20285,7 +20294,6 @@ ${selected}
       noteFlowBoundary,
       candidate: { ...flowCandidate }
     };
-    this.dragNoteFlowLastAppliedPlacement = this.dragNoteFlowPlacement;
     const drop = this.syncMarkdownDropFromNoteFlowPlacement(this.dragNoteFlowPlacement);
     this.applyDraggedNoteFlowLivePreview(this.dragNoteFlowPlacement, { skipRestore: true, drop });
     return this.dragNoteFlowPlacement;
