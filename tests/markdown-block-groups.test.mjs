@@ -331,7 +331,9 @@ test("NoteFlow dragging previews the same snapped and packed placement committed
   const rowMetricsSource = source.slice(source.indexOf("  markdownDropRowMetrics("), source.indexOf("  async commitDraggedMarkdownBlocks("));
 
   assert.match(dragSource, /this\.dragNoteFlowOriginalBounds = new Map\(movableIndexes\.flatMap/);
-  assert.match(moveSource, /const dragUsesNoteFlowPlacement = this\.usesDraggedNoteFlowPlacement\(\)[\s\S]*const dragEvent = dragUsesNoteFlowPlacement \? this\.smoothDraggedClientEvent\(event\) : event[\s\S]*this\.captureDraggedNoteFlowRawPreview\(\);/);
+  assert.match(moveSource, /const dragUsesNoteFlowPlacement = this\.usesDraggedNoteFlowPlacement\(\)[\s\S]*const dragEvent = coalescedEvents\[coalescedEvents\.length - 1\] \|\| event[\s\S]*this\.restoreDraggedNoteFlowLivePreview\(\);[\s\S]*this\.captureDraggedNoteFlowRawPreview\(\);/);
+  assert.match(moveSource, /this\.applyDraggedNoteFlowPlacementFrame\(dragEvent\.clientX, dragEvent\.clientY\)/);
+  assert.doesNotMatch(moveSource, /smoothDraggedClientEvent|queueDraggedNoteFlowPlacement/);
   assert.match(moveSource, /const hasDraggedNoteFlow = Boolean\(this\.dragNoteFlowOriginalBounds\?\.size\)/);
   assert.match(moveSource, /const previewDx = hasDraggedNoteFlow \? dx : snappedDx/);
   assert.match(moveSource, /const previewDy = hasDraggedNoteFlow \? dy : snappedDy/);

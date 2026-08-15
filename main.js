@@ -3943,7 +3943,6 @@ var WATERCOLOR_VARIANT_TEXT = "text-highlight";
 var WATERCOLOR_VARIANT_STRAIGHT = "straight";
 var MIN_READING_ZOOM = 0.6;
 var MAX_READING_ZOOM = 100;
-var DRAG_PREVIEW_LERP = 0.42;
 var DRAG_PEER_ANIMATION_MS = 150;
 var TEXT_RENDER_PLAIN = "plain";
 var TEXT_RENDER_MARKDOWN = "markdown";
@@ -9069,8 +9068,6 @@ var PreviewDrawingController = class {
     this.dragHasBoxBackground = false;
     this.dragLastPointerEvent = null;
     this.dragLastPointerKey = "";
-    this.dragPreviewClientX = null;
-    this.dragPreviewClientY = null;
     this.dragNoteFlowPeerAnimationTimers = /* @__PURE__ */ new Map();
     this.dragNoteFlowDropFrameId = null;
     this.dragNoteFlowDropClientX = null;
@@ -15476,8 +15473,6 @@ ${selected}
     this.dragNoteFlowPreviewElementIds.clear();
     this.dragNoteFlowPlacementClientDelta = null;
     this.dragNoteFlowDomPreview = null;
-    this.dragPreviewClientX = null;
-    this.dragPreviewClientY = null;
     this.dragDrawingHistoryBefore = this.captureDrawingHistorySnapshot();
     this.dragStrokeOriginalBounds = this.getStrokeIndexesNormalizedBounds(movableIndexes);
     this.dragElementGroupBounds = new Map(this.elementGroupRecords().filter((group) => group.boxed || group.locked).map((group) => [group.id, this.getElementGroupBounds(group.id)]));
@@ -15489,8 +15484,6 @@ ${selected}
     this.pointerStartClient = { x: event.clientX, y: event.clientY };
     this.dragStrokePointerGeometry = this.captureCanvasPointerGeometry();
     this.activePointerId = event.pointerId;
-    this.dragPreviewClientX = event.clientX;
-    this.dragPreviewClientY = event.clientY;
     this.previewEl.addClass("is-moving-selection");
     for (const state of this.dragMarkdownOriginalElements.values()) {
       state.dragElement?.addClass?.("is-notedraw-md-dragging");
@@ -16232,7 +16225,11 @@ ${selected}
     this.dragLastPointerEvent = event;
     this.dragLastPointerKey = pointerKey;
     const dragUsesNoteFlowPlacement = this.usesDraggedNoteFlowPlacement();
-    const dragEvent = dragUsesNoteFlowPlacement ? this.smoothDraggedClientEvent(event) : event;
+    const coalescedEvents = event.getCoalescedEvents?.() || [];
+    const dragEvent = coalescedEvents[coalescedEvents.length - 1] || event;
+    if (dragUsesNoteFlowPlacement) {
+      this.restoreDraggedNoteFlowLivePreview();
+    }
     const point = this.dragEventToPoint(dragEvent);
     const originalPointBounds = this.dragStrokeOriginalPointBounds;
     const minX = originalPointBounds?.minX ?? 0;
@@ -16319,8 +16316,8 @@ ${selected}
         this.dragPendingConnectorIds.add(id);
       }
     }
-    if (this.usesDraggedNoteFlowPlacement()) {
-      this.queueDraggedNoteFlowPlacement(dragEvent.clientX, dragEvent.clientY);
+    if (dragUsesNoteFlowPlacement) {
+      this.applyDraggedNoteFlowPlacementFrame(dragEvent.clientX, dragEvent.clientY);
     } else {
       if (this.dragMarkdownOriginalElements?.size) {
         this.queueMarkdownBlockDropTarget(event.clientX, event.clientY);
@@ -16332,25 +16329,6 @@ ${selected}
     }
     event.preventDefault();
     event.stopPropagation();
-  }
-  smoothDraggedClientEvent(event) {
-    if (!this.pointerStartClient || !Number.isFinite(Number(event?.clientX)) || !Number.isFinite(Number(event?.clientY))) {
-      return event;
-    }
-    const rawX = Number(event.clientX);
-    const rawY = Number(event.clientY);
-    if (!Number.isFinite(this.dragPreviewClientX) || !Number.isFinite(this.dragPreviewClientY)) {
-      this.dragPreviewClientX = rawX;
-      this.dragPreviewClientY = rawY;
-    } else {
-      this.dragPreviewClientX += (rawX - this.dragPreviewClientX) * DRAG_PREVIEW_LERP;
-      this.dragPreviewClientY += (rawY - this.dragPreviewClientY) * DRAG_PREVIEW_LERP;
-    }
-    return {
-      ...event,
-      clientX: this.dragPreviewClientX,
-      clientY: this.dragPreviewClientY
-    };
   }
   finishSelectedStrokeDrag(event) {
     this.clearSelectionLongPress();
@@ -16634,8 +16612,6 @@ ${selected}
     this.dragHasBoxBackground = false;
     this.dragLastPointerEvent = null;
     this.dragLastPointerKey = "";
-    this.dragPreviewClientX = null;
-    this.dragPreviewClientY = null;
     this.dragMarkdownLastValidDrop = null;
     this.clearMarkdownBlockDropTarget();
     this.dragDrawingHistoryBefore = null;
@@ -20224,25 +20200,19 @@ ${selected}
     this.dragNoteFlowLastAppliedPlacement = null;
     this.removeDraggedNoteFlowPlacementVisual();
   }
-  queueDraggedNoteFlowPlacement(clientX, clientY) {
+  applyDraggedNoteFlowPlacementFrame(clientX, clientY) {
     if (!this.usesDraggedNoteFlowPlacement() || !Number.isFinite(Number(clientX)) || !Number.isFinite(Number(clientY))) {
       this.restoreDraggedNoteFlowLivePreview();
       this.clearDraggedNoteFlowPlacement();
-      return;
+      return null;
     }
-    this.dragNoteFlowDropClientX = Number(clientX);
-    this.dragNoteFlowDropClientY = Number(clientY);
     if (this.dragNoteFlowDropFrameId !== null) {
-      return;
-    }
-    this.dragNoteFlowDropFrameId = window.requestAnimationFrame(() => {
+      window.cancelAnimationFrame(this.dragNoteFlowDropFrameId);
       this.dragNoteFlowDropFrameId = null;
-      const pendingX = this.dragNoteFlowDropClientX;
-      const pendingY = this.dragNoteFlowDropClientY;
-      this.dragNoteFlowDropClientX = null;
-      this.dragNoteFlowDropClientY = null;
-      this.updateDraggedNoteFlowPlacement(pendingX, pendingY);
-    });
+    }
+    this.dragNoteFlowDropClientX = null;
+    this.dragNoteFlowDropClientY = null;
+    return this.updateDraggedNoteFlowPlacement(Number(clientX), Number(clientY));
   }
   updateDraggedNoteFlowPlacement(clientX, clientY, options = {}) {
     if (!this.usesDraggedNoteFlowPlacement() || !Number.isFinite(Number(clientX)) || !Number.isFinite(Number(clientY))) {

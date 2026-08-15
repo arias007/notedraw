@@ -381,7 +381,7 @@ test("a new NoteFlow stroke waits for canonical Markdown owners before committin
   assert.match(frozenRestore, /this\.noteFlowBlockSpacers\?\.size/);
 });
 
-test("dragged inserted note elements use stable drop placement or frame-batched avoidance refresh", async () => {
+test("dragged inserted note elements use an exact live placement transaction or frame-batched avoidance refresh", async () => {
   const source = await readFile(sourceUrl, "utf8");
   const dragSource = source.slice(source.indexOf("  startSelectedStrokeDrag("), source.indexOf("  startSelectedStrokeResize("));
   const refreshSource = source.slice(source.indexOf("  queueDraggedNoteFlowRefresh("), source.indexOf("  cancelNoteFlowLayout()"));
@@ -389,7 +389,7 @@ test("dragged inserted note elements use stable drop placement or frame-batched 
   const moveSource = dragSource.slice(dragSource.indexOf("  moveSelectedStroke("), dragSource.indexOf("  finishSelectedStrokeDrag("));
 
   assert.match(dragSource, /this\.dragStrokeOriginalNoteFlows = new Map/);
-  assert.match(moveSource, /const dragUsesNoteFlowPlacement = this\.usesDraggedNoteFlowPlacement\(\)[\s\S]*const dragEvent = dragUsesNoteFlowPlacement \? this\.smoothDraggedClientEvent\(event\) : event[\s\S]*if \(this\.usesDraggedNoteFlowPlacement\(\)\) \{\s*this\.queueDraggedNoteFlowPlacement\(dragEvent\.clientX, dragEvent\.clientY\);\s*} else \{[\s\S]*this\.queueDraggedNoteFlowRefresh\(strokeIndexes\)/);
+  assert.match(moveSource, /const dragUsesNoteFlowPlacement = this\.usesDraggedNoteFlowPlacement\(\)[\s\S]*const dragEvent = coalescedEvents\[coalescedEvents\.length - 1\] \|\| event[\s\S]*this\.restoreDraggedNoteFlowLivePreview\(\);[\s\S]*if \(dragUsesNoteFlowPlacement\) \{\s*this\.applyDraggedNoteFlowPlacementFrame\(dragEvent\.clientX, dragEvent\.clientY\);\s*} else \{[\s\S]*this\.queueDraggedNoteFlowRefresh\(strokeIndexes\)/);
   assert.doesNotMatch(moveSource, /captureNoteFlowAnchor|scheduleDrawingSave/);
   assert.match(refreshSource, /this\.pendingDraggedNoteFlowIndexes\.add\(index\)/);
   assert.match(refreshSource, /refreshDraggedNoteFlowAnchors\(\)/);
