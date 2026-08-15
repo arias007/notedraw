@@ -403,7 +403,7 @@ test("dragged inserted note elements use an exact live placement transaction or 
   assert.match(source, /const noteFlowResizeSuppressed = Date\.now\(\) < this\.noteFlowSuppressResizeUntil/);
   assert.match(source, /const wantsLayout = options\.layout !== false[\s\S]*&& !this\.draggingStroke[\s\S]*&& !noteFlowResizeSuppressed[\s\S]*&& !readingScrollActive/);
   assert.doesNotMatch(dragSource.slice(0, dragSource.indexOf("  moveSelectedStroke(")), /this\.cancelResizeFrame\(\)/);
-  assert.match(moveSource, /if \(!this\.dragStrokeMoved && movedDistance <= this\.tapDistancePx\(\)\)[\s\S]*this\.cancelResizeFrame\(\);[\s\S]*this\.prepareReadingBottomExtentForDrag\(\)/);
+  assert.match(moveSource, /if \(!this\.dragStrokeMoved && movedDistance <= this\.selectedDragActivationDistancePx\(event\.pointerType\)\)[\s\S]*this\.cancelResizeFrame\(\);[\s\S]*this\.prepareReadingBottomExtentForDrag\(\)/);
   assert.match(settleSource, /markNoteFlowLayoutMutation\(\)[\s\S]*Date\.now\(\) \+ 180/);
   assert.match(settleSource, /this\.resizeFrameId !== null && this\.resizeNeedsLayout[\s\S]*this\.cancelResizeFrame\(\)[\s\S]*this\.scheduleResize\(\{ layout: false, measure: false \}\)/);
   assert.match(settleSource, /scheduleNoteFlowSettleResize\(\)[\s\S]*this\.noteFlowSettlePasses >= 2[\s\S]*this\.scheduleResize\(\{ layout: false, measure: true, preserveAbsolutePlacement: true \}\)/);

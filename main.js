@@ -3944,6 +3944,10 @@ var WATERCOLOR_VARIANT_STRAIGHT = "straight";
 var MIN_READING_ZOOM = 0.6;
 var MAX_READING_ZOOM = 100;
 var DRAG_PEER_ANIMATION_MS = 150;
+var MOUSE_SELECTED_DRAG_ACTIVATION_PX = 3;
+var TOUCH_SELECTED_DRAG_ACTIVATION_PX = 5;
+var MIN_INLINE_NOTE_FLOW_ITEM_WIDTH_PX = 18;
+var INLINE_NOTE_FLOW_GAP_PX = 6;
 var TEXT_RENDER_PLAIN = "plain";
 var TEXT_RENDER_MARKDOWN = "markdown";
 var TEXT_RENDER_HTML = "html";
@@ -9069,6 +9073,8 @@ var PreviewDrawingController = class {
     this.dragLastPointerEvent = null;
     this.dragLastPointerKey = "";
     this.dragNoteFlowPeerAnimationTimers = /* @__PURE__ */ new Map();
+    this.dragNoteFlowPeerAnimatingElements = /* @__PURE__ */ new Set();
+    this.dragNoteFlowPeerAnimationFrameId = null;
     this.dragNoteFlowDropFrameId = null;
     this.dragNoteFlowDropClientX = null;
     this.dragNoteFlowDropClientY = null;
@@ -9704,6 +9710,10 @@ var PreviewDrawingController = class {
   }
   tapDistancePx() {
     return this.runtimeSettings?.selectTapDistance ?? DEFAULT_SETTINGS.selectTapDistance;
+  }
+  selectedDragActivationDistancePx(pointerType = "mouse") {
+    const preciseThreshold = pointerType === "touch" ? TOUCH_SELECTED_DRAG_ACTIVATION_PX : MOUSE_SELECTED_DRAG_ACTIVATION_PX;
+    return Math.min(this.tapDistancePx(), preciseThreshold);
   }
   selectionHitPaddingPx() {
     return this.runtimeSettings?.selectStrokePadding ?? DEFAULT_SETTINGS.selectStrokePadding;
@@ -15191,6 +15201,7 @@ ${selected}
       ...action,
       pointerId: event.pointerId,
       startClient: { x: event.clientX, y: event.clientY },
+      startPoint: this.eventToPoint(event),
       moved: false
     };
     this.pointerStartClient = { x: event.clientX, y: event.clientY };
@@ -15209,14 +15220,18 @@ ${selected}
     if (!pending || event.pointerId !== pending.pointerId) {
       return;
     }
-    if (pointerDistance(pending.startClient, { x: event.clientX, y: event.clientY }) > this.tapDistancePx()) {
+    const canBecomeElementDrag = pending.type === "edit-markdown-or-drag" || pending.type === "edit-stroke-or-drag";
+    const activationDistance = canBecomeElementDrag ? this.selectedDragActivationDistancePx(event.pointerType) : this.tapDistancePx();
+    if (pointerDistance(pending.startClient, { x: event.clientX, y: event.clientY }) > activationDistance) {
       pending.moved = true;
       this.clearSelectionLongPress();
-      if (pending.type === "edit-markdown-or-drag" || pending.type === "edit-stroke-or-drag") {
+      if (canBecomeElementDrag) {
         this.pendingSelectionTap = null;
-        this.startSelectedStrokeDrag(event, this.eventToPoint(event), pending.index ?? -1, {
-          preserveSelection: pending.preserveSelection
+        this.startSelectedStrokeDrag(event, pending.startPoint || this.eventToPoint(event), pending.index ?? -1, {
+          preserveSelection: pending.preserveSelection,
+          startClient: pending.startClient
         });
+        this.moveSelectedStroke(event);
         return;
       }
     }
@@ -15364,7 +15379,7 @@ ${selected}
       return;
     }
     this.draggingStroke = true;
-    this.dragStrokeStartPoint = point;
+    this.dragStrokeStartPoint = options.startPoint || point;
     this.dragStrokeIndexes = movableIndexes;
     this.dragShouldSnap = this.shouldSnapStrokeIndexes(movableIndexes);
     this.dragMovedElementIds = this.connectorTargetIdsForStrokeIndexes(movableIndexes);
@@ -15481,7 +15496,7 @@ ${selected}
     this.dragStrokeMoved = false;
     this.dragStrokeHitIndex = hitIndex;
     this.dragStrokePreserveSelection = Boolean(options.preserveSelection);
-    this.pointerStartClient = { x: event.clientX, y: event.clientY };
+    this.pointerStartClient = options.startClient ? { x: options.startClient.x, y: options.startClient.y } : { x: event.clientX, y: event.clientY };
     this.dragStrokePointerGeometry = this.captureCanvasPointerGeometry();
     this.activePointerId = event.pointerId;
     this.previewEl.addClass("is-moving-selection");
@@ -15698,7 +15713,7 @@ ${selected}
     const maxDistance = Math.max(80, nearest.rect.height * 1.5);
     const verticalDistance = clientY < nearest.rect.top ? nearest.rect.top - clientY : clientY > nearest.rect.bottom ? clientY - nearest.rect.bottom : 0;
     const row = this.markdownDropRowMetrics(nearest.element, movingElements);
-    const horizontalRoom = row.canFit && Number(this.markdownBlockGridContainer(nearest.element)?.clientWidth || nearest.rect.width) >= Math.max(180, row.totalCount * 32);
+    const horizontalRoom = row.canFit;
     const intent = resolveDragDropHorizontalIntent({
       clientX,
       targetLeft: nearest.rect.left,
@@ -15804,7 +15819,7 @@ ${selected}
       return this.dragMarkdownLastValidDrop ? { ...this.dragMarkdownLastValidDrop } : null;
     }
     const row = this.markdownDropRowMetrics(target, movingElements);
-    const horizontalRoom = !this.markdownDropIncludesHeading(target) && row.canFit && Number(this.markdownBlockGridContainer(target)?.clientWidth || rect.width) >= Math.max(180, row.totalCount * 32);
+    const horizontalRoom = !this.markdownDropIncludesHeading(target) && row.canFit;
     const intent = forcedIntent || resolveDragDropHorizontalIntent({
       clientX,
       targetLeft: rect.left,
@@ -15868,11 +15883,15 @@ ${selected}
     const movingItemCount = Math.max(1, movingMarkdownCount + movingStrokeCount);
     const itemCount = movingItemCount + 1;
     const totalCount = memberIds.length + itemCount;
-    const canFit = totalCount <= 12;
+    const availableWidth = Number(parent?.clientWidth) || Number(geometry?.laneRect?.width) || Number(targetRect?.width) || 0;
+    const requiredWidth = totalCount * MIN_INLINE_NOTE_FLOW_ITEM_WIDTH_PX + Math.max(0, totalCount - 1) * INLINE_NOTE_FLOW_GAP_PX;
+    const canFit = totalCount <= 12 && availableWidth + 0.5 >= requiredWidth;
     const result = {
       canFit,
       span: canFit ? Math.max(1, Math.floor(12 / totalCount)) : 12,
       totalCount,
+      availableWidth,
+      requiredWidth,
       memberIds
     };
     geometry?.rowMetrics?.set(target, result);
@@ -16256,7 +16275,7 @@ ${selected}
       this.canvasWidth(),
       this.canvasHeight()
     );
-    if (!this.dragStrokeMoved && movedDistance <= this.tapDistancePx()) {
+    if (!this.dragStrokeMoved && movedDistance <= this.selectedDragActivationDistancePx(event.pointerType)) {
       event.preventDefault();
       event.stopPropagation();
       return;
@@ -16539,6 +16558,7 @@ ${selected}
   cancelSelectedStrokeDrag(restoreOriginal = false) {
     this.clearSelectionLongPress();
     this.restoreDraggedNoteFlowLivePreview();
+    this.clearNoteFlowPeerAnimations();
     this.clearDraggedNoteFlowPlacement();
     const restoredDrag = Boolean(restoreOriginal && this.dragStrokeOriginalPoints?.size);
     if (restoredDrag) {
@@ -19468,12 +19488,11 @@ ${selected}
     }
   }
   captureNoteFlowPeerRects() {
-    const movingElements = new Set(Array.from(this.dragMarkdownOriginalElements?.values?.() || []).map((state) => state.dragElement || state.element));
     const rects = /* @__PURE__ */ new Map();
     for (const [id, element] of this.markdownBlockElements || []) {
       const block = this.markdownBlockById?.(id) || this.markdownBlockRecords().find((record) => record.id === id);
       const flowElement = this.markdownBlockFlowElement(element) || element;
-      if (!flowElement?.isConnected || movingElements.has(flowElement) || block?.floating || flowElement.classList?.contains("is-notedraw-md-dragging")) {
+      if (!flowElement?.isConnected || block?.floating) {
         continue;
       }
       const rect = flowElement.getBoundingClientRect?.();
@@ -19482,10 +19501,29 @@ ${selected}
       }
       rects.set(flowElement, { left: rect.left, top: rect.top });
     }
+    for (const state of this.dragMarkdownOriginalElements?.values?.() || []) {
+      const flowElement = state.dragElement || state.element;
+      if (!flowElement?.isConnected || state.block?.floating || rects.has(flowElement)) {
+        continue;
+      }
+      const rect = flowElement.getBoundingClientRect?.();
+      if (rect && rect.width > 1 && rect.height > 1) {
+        rects.set(flowElement, { left: rect.left, top: rect.top });
+      }
+    }
     return rects;
   }
   clearNoteFlowPeerAnimations() {
-    for (const [element, timer] of this.dragNoteFlowPeerAnimationTimers || []) {
+    if (this.dragNoteFlowPeerAnimationFrameId !== null) {
+      window.cancelAnimationFrame(this.dragNoteFlowPeerAnimationFrameId);
+      this.dragNoteFlowPeerAnimationFrameId = null;
+    }
+    const animatedElements = /* @__PURE__ */ new Set([
+      ...this.dragNoteFlowPeerAnimatingElements || [],
+      ...this.dragNoteFlowPeerAnimationTimers?.keys?.() || []
+    ]);
+    for (const element of animatedElements) {
+      const timer = this.dragNoteFlowPeerAnimationTimers?.get?.(element);
       if (timer !== null) {
         window.clearTimeout(timer);
       }
@@ -19493,6 +19531,7 @@ ${selected}
       element.style?.removeProperty("--notedraw-note-flow-peer-x");
       element.style?.removeProperty("--notedraw-note-flow-peer-y");
     }
+    this.dragNoteFlowPeerAnimatingElements?.clear?.();
     this.dragNoteFlowPeerAnimationTimers?.clear?.();
   }
   animateNoteFlowPeerShifts(beforeRects) {
@@ -19502,7 +19541,7 @@ ${selected}
     this.clearNoteFlowPeerAnimations();
     const changed = [];
     for (const [element, before] of beforeRects) {
-      if (!element?.isConnected || element.classList?.contains("is-notedraw-md-dragging") || element.classList?.contains("is-floating")) {
+      if (!element?.isConnected || element.classList?.contains("is-floating")) {
         continue;
       }
       const after = element.getBoundingClientRect?.();
@@ -19517,12 +19556,14 @@ ${selected}
       element.classList.add("notedraw-note-flow-peer-animating");
       element.style.setProperty("--notedraw-note-flow-peer-x", `${Math.round(x)}px`);
       element.style.setProperty("--notedraw-note-flow-peer-y", `${Math.round(y)}px`);
+      this.dragNoteFlowPeerAnimatingElements.add(element);
       changed.push(element);
     }
     if (!changed.length) {
       return;
     }
-    window.requestAnimationFrame?.(() => {
+    this.dragNoteFlowPeerAnimationFrameId = window.requestAnimationFrame?.(() => {
+      this.dragNoteFlowPeerAnimationFrameId = null;
       for (const element of changed) {
         if (!element?.isConnected) {
           continue;
@@ -19533,11 +19574,12 @@ ${selected}
           element.classList.remove("notedraw-note-flow-peer-animating");
           element.style.removeProperty("--notedraw-note-flow-peer-x");
           element.style.removeProperty("--notedraw-note-flow-peer-y");
+          this.dragNoteFlowPeerAnimatingElements.delete(element);
           this.dragNoteFlowPeerAnimationTimers.delete(element);
         }, DRAG_PEER_ANIMATION_MS);
         this.dragNoteFlowPeerAnimationTimers.set(element, timer);
       }
-    });
+    }) ?? null;
   }
   setDraggedNoteFlowDomStyle(element, property, value, priority = "") {
     if (!element?.style) {
@@ -20086,7 +20128,8 @@ ${selected}
       previousApplied && placement && (previousApplied.horizontalSide !== placement.horizontalSide || previousApplied.side !== placement.side || previousApplied.leftSnap !== placement.leftSnap || previousApplied.line !== placement.line || previousApplied.flowOrder !== placement.flowOrder)
     );
     const reuseAppliedPreview = options.skipRestore === true && Boolean(previousApplied) && !previewStructureChanged;
-    const peerRects = previewStructureChanged ? this.captureNoteFlowPeerRects() : null;
+    const previewTransition = Boolean(placement) && (!previousApplied || previewStructureChanged);
+    const peerRects = previewTransition ? this.captureNoteFlowPeerRects() : null;
     if (previewStructureChanged && options.skipRestore === true) {
       this.restoreDraggedNoteFlowLivePreview();
     } else if (options.skipRestore !== true) {
@@ -20117,9 +20160,6 @@ ${selected}
     const drop = options.drop || this.syncMarkdownDropFromNoteFlowPlacement(resolved);
     this.applyDraggedNoteFlowAnchorDomPreview(resolved, drop);
     const markdownDomPreview = this.applyDraggedMarkdownDomPreview(drop);
-    if (peerRects && markdownDomPreview) {
-      this.animateNoteFlowPeerShifts(peerRects);
-    }
     const liveResolved = resolved;
     this.snapDraggedSelectionToNoteFlowPlacement(liveResolved, movedIndexes);
     const previewCandidates = this.dragDropGeometrySnapshot()?.noteFlowCandidates || this.noteFlowCandidates();
@@ -20143,10 +20183,13 @@ ${selected}
       const bounds = getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight());
       const rowOffset = Math.max(0, Number(noteFlow.rowOffset) || 0);
       return bounds ? Math.max(extent, rowOffset + bounds.maxY - bounds.minY) : extent;
-    }, this.draggedNoteFlowPreviewHeight(movedIndexes));
+    }, markdownDomPreview ? 0 : this.draggedNoteFlowPreviewHeight(movedIndexes));
     this.applyDraggedNoteFlowReservationPreview(liveResolved, movedIndexes, rowExtent);
     if (!markdownDomPreview) {
       this.applyDraggedMarkdownPlacementPreview();
+    }
+    if (peerRects) {
+      this.animateNoteFlowPeerShifts(peerRects);
     }
     const affectedIndexes = Array.from(/* @__PURE__ */ new Set([
       ...movedIndexes,
@@ -20272,7 +20315,7 @@ ${selected}
         const previousRect = this.noteFlowCandidateRect(previousPlacement.candidate, "row") || this.noteFlowCandidateRect(previousCandidate, "row") || previousPlacement.candidate;
         const boundary = previousPlacement.side === "after" ? previousRect.bottom : previousRect.top;
         const previousHeight = Math.max(1, previousRect.bottom - previousRect.top);
-        const rowTolerance = Math.max(16, previousHeight * 0.3);
+        const rowTolerance = clamp10(previousHeight * 0.1, 3, 7);
         if (Number.isFinite(Number(boundary)) && Math.abs(Number(clientY) - Number(boundary)) <= rowTolerance) {
           placement = {
             candidate: previousCandidate,
@@ -20302,13 +20345,19 @@ ${selected}
     const draggedMarkdownCount = this.draggedNoteFlowMarkdownStates().length;
     const movingLaneCount = draggedMarkdownCount + (draggedStrokeClientWidth > 0 ? 1 : 0);
     const laneWidth = Math.max(1, laneRect.right - laneRect.left);
-    const equalLaneWidth = Math.max(80, (laneWidth - Math.max(1, movingLaneCount) * 10) / Math.max(2, movingLaneCount + 1));
+    const inlineTarget = isConcreteMarkdownBlockElement(target) ? target : findNoteFlowInlineMeasureElement(target);
+    const movingElements = new Set(this.draggedNoteFlowMarkdownStates().map((state) => state.element));
+    const inlineRow = this.markdownDropRowMetrics(inlineTarget, movingElements);
+    const equalLaneWidth = Math.max(
+      MIN_INLINE_NOTE_FLOW_ITEM_WIDTH_PX,
+      (laneWidth - Math.max(0, inlineRow.totalCount - 1) * INLINE_NOTE_FLOW_GAP_PX) / Math.max(1, inlineRow.totalCount)
+    );
     const draggedClientWidth = Math.min(
       laneWidth,
       draggedStrokeClientWidth + draggedMarkdownCount * equalLaneWidth + Math.max(0, movingLaneCount - 1) * 10
     );
     const draggedClientHeight = draggedClientBounds ? Math.max(1, draggedClientBounds.bottom - draggedClientBounds.top) : targetRect.height;
-    const minimumTargetWidth = Math.min(120, laneWidth * 0.45);
+    const minimumTargetWidth = Math.min(equalLaneWidth, laneWidth * 0.45);
     const projectedTargetRight = Math.max(
       targetRect.left + minimumTargetWidth,
       Math.min(targetRect.right, laneRect.right - draggedClientWidth - 10)
@@ -20318,10 +20367,7 @@ ${selected}
     const inlineCaptureBand = clamp10(targetHeight * 0.85, 28, 72);
     const sameInlineCandidate = Boolean(previousPlacement?.horizontalSide && previousPlacement.candidate && placement?.candidate && (previousPlacement.candidate.blockKey || noteFlowBlockKey(previousPlacement.candidate, this.file?.path || "")) === (placement.candidate.blockKey || noteFlowBlockKey(placement.candidate, this.file?.path || "")));
     const inlineRowHit = sameInlineCandidate ? Number(clientY) >= targetRect.top - inlineCaptureBand && Number(clientY) <= targetRect.bottom + inlineCaptureBand : Number(clientY) >= targetRect.top + inlineEdgeBand && Number(clientY) <= targetRect.bottom - inlineEdgeBand;
-    const inlineTarget = isConcreteMarkdownBlockElement(target) ? target : findNoteFlowInlineMeasureElement(target);
-    const movingElements = new Set(this.draggedNoteFlowMarkdownStates().map((state) => state.element));
-    const inlineRow = this.markdownDropRowMetrics(inlineTarget, movingElements);
-    const horizontalRoom = !this.markdownDropIncludesHeading(inlineTarget) && inlineRowHit && movingLaneCount > 0 && inlineRow.canFit && laneWidth >= Math.max(160, inlineRow.totalCount * 28);
+    const horizontalRoom = !this.markdownDropIncludesHeading(inlineTarget) && inlineRowHit && movingLaneCount > 0 && inlineRow.canFit;
     const intent = resolveDragDropHorizontalIntent({
       clientX,
       targetLeft: targetRect.left,

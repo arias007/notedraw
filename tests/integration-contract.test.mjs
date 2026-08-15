@@ -412,7 +412,7 @@ test("note pen ignores element selection and selection-only gestures preserve Ma
   assert.doesNotMatch(pointerSource, /noteFlowOperationPending|scheduleMarkdownAnnotationRefresh/);
   assert.match(drawingMoveSource, /if \(this\.didMove && !wasDrawing\) \{[\s\S]*this\.currentStroke\.noteFlow\?\.enabled[\s\S]*this\.noteFlowOperationPending = true[\s\S]*this\.scheduleMarkdownAnnotationRefresh\(\{ layout: false \}\)/);
   assert.doesNotMatch(startSource, /prepareReadingBottomExtentForDrag|clearNoteFlowLayout|scheduleNoteFlowLayout/);
-  assert.match(moveSource, /if \(!this\.dragStrokeMoved && movedDistance <= this\.tapDistancePx\(\)\) \{[\s\S]*return;[\s\S]*this\.cancelResizeFrame\(\);[\s\S]*this\.prepareReadingBottomExtentForDrag\(\)/);
+  assert.match(moveSource, /if \(!this\.dragStrokeMoved && movedDistance <= this\.selectedDragActivationDistancePx\(event\.pointerType\)\) \{[\s\S]*return;[\s\S]*this\.cancelResizeFrame\(\);[\s\S]*this\.prepareReadingBottomExtentForDrag\(\)/);
   assert.match(finishSource, /const didMove = this\.dragStrokeMoved;[\s\S]*scheduleNoteFlowLayout\(\{ operation: true, defer: true \}\)[\s\S]*clearSelectedStrokeDragState\(\{ preserveMarkdownDom:[\s\S]*scheduleNoteFlowLayout\(\{ immediate: true \}\)/);
   assert.doesNotMatch(finishSource, /this\.clearNoteFlowLayout\(\)/);
   assert.match(finishSource, /const affectsNoteFlow = movedNoteFlowIndexes\.length > 0;[\s\S]*if \(!affectsNoteFlow && movedIndexes\.length[\s\S]*this\.applyDraggedEdgeInsertion\(event, movedIndexes\)/);
@@ -444,7 +444,7 @@ test("selection tool previews and commits exact NoteFlow Markdown insertion targ
   assert.doesNotMatch(previewFrameSource, /requestAnimationFrame|setTimeout/);
   assert.match(dropSource, /notedraw-text-sort-target-before[\s\S]*notedraw-text-sort-target-after[\s\S]*notedraw-text-sort-target-left[\s\S]*notedraw-text-sort-target-right/);
   assert.match(dropSource, /noteDrawDropSide[\s\S]*noteDrawDropLine/);
-  assert.match(dropSource, /const inlineRowHit = sameInlineCandidate[\s\S]*const inlineRow = this\.markdownDropRowMetrics\(inlineTarget, movingElements\)[\s\S]*const horizontalRoom = !this\.markdownDropIncludesHeading\(inlineTarget\)[\s\S]*inlineRowHit[\s\S]*movingLaneCount > 0[\s\S]*inlineRow\.canFit[\s\S]*laneWidth >= Math\.max\(160, inlineRow\.totalCount \* 28\)/);
+  assert.match(dropSource, /const inlineRow = this\.markdownDropRowMetrics\(inlineTarget, movingElements\)[\s\S]*const equalLaneWidth = Math\.max\([\s\S]*inlineRow\.totalCount[\s\S]*const inlineRowHit = sameInlineCandidate[\s\S]*const horizontalRoom = !this\.markdownDropIncludesHeading\(inlineTarget\)[\s\S]*inlineRowHit[\s\S]*movingLaneCount > 0[\s\S]*inlineRow\.canFit/);
   assert.match(dropSource, /noteFlowCandidateRect\(placement\.candidate, "inline"\)/);
   assert.match(dropSource, /noteFlowCandidateRect\([\s\S]*horizontalSide \? "inline" : "row"/);
   assert.match(dropSource, /const intent = resolveDragDropHorizontalIntent\([\s\S]*horizontalRoom[\s\S]*\);[\s\S]*const horizontalSide = intent === "inline-right" \? "right"[\s\S]*: keptPreviousInline[\s\S]*\? previousPlacement\.horizontalSide[\s\S]*: null[\s\S]*const leftSnap = intent === "line-start"/);

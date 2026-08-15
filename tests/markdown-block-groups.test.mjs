@@ -286,7 +286,7 @@ test("selected Markdown text edits on a second tap while a moved tap still drags
   assert.match(source, /this\.editMarkdownButton = this\.surfaceType === "source"/);
   assert.match(pointerSource, /const selectedMarkdownEditableCandidate = markdownSelectionCandidate/);
   assert.match(pointerSource, /type: "edit-markdown-or-drag"/);
-  assert.match(source, /pending\.type === "edit-markdown-or-drag"[\s\S]*this\.startSelectedStrokeDrag\(event, this\.eventToPoint\(event\), pending\.index \?\? -1/);
+  assert.match(source, /pending\.type === "edit-markdown-or-drag"[\s\S]*selectedDragActivationDistancePx\(event\.pointerType\)[\s\S]*this\.startSelectedStrokeDrag\(event, pending\.startPoint \|\| this\.eventToPoint\(event\), pending\.index \?\? -1[\s\S]*startClient: pending\.startClient[\s\S]*this\.moveSelectedStroke\(event\)/);
   assert.match(source, /startTextEdit\(pending\.editable \|\| pending\.element, pending\.clientPoint \|\| null\)/);
   assert.match(tapSource, /const applied = this\.applyPendingSelectionTap\(pending\);[\s\S]*pending\.type !== "edit-markdown-or-drag" \|\| applied === false/);
   assert.match(editSource, /!element\?\.isConnected[\s\S]*findMarkdownBlockRecordForElement\(element\)[\s\S]*markdownBlockElement\(block\)/);
@@ -344,7 +344,7 @@ test("NoteFlow dragging previews the same snapped and packed placement committed
   assert.match(placementSource, /const targetChanged = previous\?\.candidate\?\.sourceElement !== flowTarget[\s\S]*const boundaryJitter = [\s\S]*const presentationChanged = targetChanged \|\| boundaryJitter \|\| previous\?\.flowOrder !== flowOrder/);
   assert.match(placementSource, /const previousRect = this\.noteFlowCandidateRect\(previousPlacement\.candidate, "inline"\)/);
   assert.doesNotMatch(placementSource, /debounceZone|dragNoteFlowRebuildSince/);
-  assert.match(placementSource, /const inlineEdgeBand = clamp\(targetHeight \* 0\.10, 2, 6\)[\s\S]*const inlineCaptureBand = clamp\(targetHeight \* 0\.85, 28, 72\)[\s\S]*const sameInlineCandidate[\s\S]*const inlineRowHit = sameInlineCandidate[\s\S]*targetRect\.top - inlineCaptureBand[\s\S]*targetRect\.bottom \+ inlineCaptureBand[\s\S]*const horizontalRoom = !this\.markdownDropIncludesHeading\(inlineTarget\)[\s\S]*inlineRowHit/);
+  assert.match(placementSource, /const inlineRow = this\.markdownDropRowMetrics\(inlineTarget, movingElements\)[\s\S]*const equalLaneWidth = Math\.max\([\s\S]*MIN_INLINE_NOTE_FLOW_ITEM_WIDTH_PX[\s\S]*inlineRow\.totalCount[\s\S]*const inlineEdgeBand = clamp\(targetHeight \* 0\.10, 2, 6\)[\s\S]*const inlineCaptureBand = clamp\(targetHeight \* 0\.85, 28, 72\)[\s\S]*const sameInlineCandidate[\s\S]*const inlineRowHit = sameInlineCandidate[\s\S]*targetRect\.top - inlineCaptureBand[\s\S]*targetRect\.bottom \+ inlineCaptureBand[\s\S]*const horizontalRoom = !this\.markdownDropIncludesHeading\(inlineTarget\)[\s\S]*inlineRowHit[\s\S]*inlineRow\.canFit/);
   assert.match(placementSource, /rightIntentRatio: 0\.45/);
   assert.match(placementSource, /const horizontalSide = intent === "inline-right" \? "right"[\s\S]*: keptPreviousInline[\s\S]*\? previousPlacement\.horizontalSide[\s\S]*: null/);
   assert.match(dragSource, /createComment\("notedraw-note-flow-drag-origin"\)[\s\S]*state\.domMarker = marker/);
@@ -367,13 +367,37 @@ test("NoteFlow dragging previews the same snapped and packed placement committed
   assert.doesNotMatch(reflowSource, /inlineItems\.map\(\(item\) => \(\{/);
   assert.match(source, /syncMarkdownBlockPresentation\(\)[\s\S]*this\.draggingStroke && this\.dragNoteFlowDomPreview[\s\S]*!this\.allowMarkdownPresentationDuringDrag/);
   assert.match(finishSource, /this\.allowMarkdownPresentationDuringDrag = true;[\s\S]*syncMarkdownBlockPresentation\(\)[\s\S]*this\.allowMarkdownPresentationDuringDrag = false/);
-  assert.match(rowMetricsSource, /const movingItemCount = Math\.max\(1, movingMarkdownCount \+ movingStrokeCount\)[\s\S]*const totalCount = memberIds\.length \+ itemCount[\s\S]*const canFit = totalCount <= 12[\s\S]*Math\.max\(1, Math\.floor\(12 \/ totalCount\)\)[\s\S]*memberIds/);
+  assert.match(rowMetricsSource, /const movingItemCount = Math\.max\(1, movingMarkdownCount \+ movingStrokeCount\)[\s\S]*const totalCount = memberIds\.length \+ itemCount[\s\S]*const requiredWidth = totalCount \* MIN_INLINE_NOTE_FLOW_ITEM_WIDTH_PX[\s\S]*const canFit = totalCount <= 12 && availableWidth \+ 0\.5 >= requiredWidth[\s\S]*Math\.max\(1, Math\.floor\(12 \/ totalCount\)\)[\s\S]*memberIds/);
   assert.doesNotMatch(rowMetricsSource, /totalCount <= 4/);
   assert.doesNotMatch(rowMetricsSource, /itemCount \* 2/);
   assert.match(domPreviewSource, /rowMemberIds[\s\S]*drop\.row\.span/);
   assert.match(domPreviewSource, /const markdownHeight = this\.draggedNoteFlowMarkdownStates\(\)\.reduce[\s\S]*Math\.max\(strokeHeight, markdownHeight\)/);
   assert.match(domPreviewSource, /if \(!placement\?\.candidate \|\| placement\.horizontalSide\)/);
   assert.doesNotMatch(domPreviewSource, /placement\.horizontalSide \|\| !indexes\?\.length/);
+});
+
+test("NoteFlow drag changes keep visual continuity without duplicate Markdown spacing", async () => {
+  const [source, styles] = await Promise.all([
+    readFile(sourceUrl, "utf8"),
+    readFile(stylesUrl, "utf8")
+  ]);
+  const activationSource = source.slice(source.indexOf("  startPendingSelectionTap("), source.indexOf("  finishPendingSelectionTap("));
+  const moveSource = source.slice(source.indexOf("  moveSelectedStroke(event)"), source.indexOf("  finishSelectedStrokeDrag", source.indexOf("  moveSelectedStroke(event)")));
+  const animationSource = source.slice(source.indexOf("  captureNoteFlowPeerRects("), source.indexOf("  setDraggedNoteFlowDomStyle("));
+  const livePreviewSource = source.slice(source.indexOf("  applyDraggedNoteFlowLivePreview("), source.indexOf("  refreshDraggedNoteFlowPreviewCandidate("));
+  const placementSource = source.slice(source.indexOf("  updateDraggedNoteFlowPlacement("), source.indexOf("  syncMarkdownDropFromNoteFlowPlacement("));
+  const cancelSource = source.slice(source.indexOf("  cancelSelectedStrokeDrag("), source.indexOf("  clearSelectedStrokeDragState("));
+
+  assert.match(activationSource, /selectedDragActivationDistancePx\(event\.pointerType\)[\s\S]*startPoint: pending\.startClient|selectedDragActivationDistancePx\(event\.pointerType\)[\s\S]*startClient: pending\.startClient/);
+  assert.match(moveSource, /movedDistance <= this\.selectedDragActivationDistancePx\(event\.pointerType\)/);
+  assert.match(animationSource, /this\.dragMarkdownOriginalElements\?\.values[\s\S]*dragNoteFlowPeerAnimationFrameId[\s\S]*cancelAnimationFrame[\s\S]*dragNoteFlowPeerAnimatingElements[\s\S]*classList\?\.remove\("notedraw-note-flow-peer-animating"\)[\s\S]*requestAnimationFrame/);
+  assert.match(animationSource, /this\.dragNoteFlowPeerAnimatingElements\.add\(element\)[\s\S]*this\.dragNoteFlowPeerAnimatingElements\.delete\(element\)/);
+  assert.doesNotMatch(animationSource, /contains\("is-notedraw-md-dragging"\)/);
+  assert.match(livePreviewSource, /const previewTransition = Boolean\(placement\) && \(!previousApplied \|\| previewStructureChanged\)[\s\S]*const peerRects = previewTransition \? this\.captureNoteFlowPeerRects\(\) : null/);
+  assert.match(livePreviewSource, /markdownDomPreview \? 0 : this\.draggedNoteFlowPreviewHeight\(movedIndexes\)[\s\S]*applyDraggedNoteFlowReservationPreview[\s\S]*animateNoteFlowPeerShifts/);
+  assert.match(placementSource, /const rowTolerance = clamp\(previousHeight \* 0\.1, 3, 7\)/);
+  assert.match(cancelSource, /restoreDraggedNoteFlowLivePreview\(\);[\s\S]*clearNoteFlowPeerAnimations\(\);[\s\S]*clearDraggedNoteFlowPlacement\(\)/);
+  assert.match(styles, /is-notedraw-md-dragging\.notedraw-note-flow-peer-animating[\s\S]*--notedraw-note-flow-peer-x[\s\S]*transition: transform 150ms/);
 });
 
 test("selection handle hit testing stays usable for narrow elements at visual zoom", async () => {
