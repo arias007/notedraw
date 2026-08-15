@@ -18500,16 +18500,20 @@ ${selected}
   markdownBlockGridContainer(element) {
     const flowElement = this.markdownBlockFlowElement(element);
     const container = flowElement?.parentElement;
-    return container && this.previewEl?.contains?.(container) ? container : null;
+    if (!container || !this.previewEl?.contains?.(container)) {
+      return null;
+    }
+    return isNoteFlowCollectionBlock(container) ? null : container;
   }
   applyMarkdownBlockFlowPresentation(block, element) {
     const flowElement = this.markdownBlockFlowElement(element);
+    const gridContainer = this.markdownBlockGridContainer(element);
     element?.style?.removeProperty("grid-column");
     if (!flowElement) {
       return null;
     }
-    flowElement.classList.add("notedraw-md-grid-item");
-    if (block?.floating) {
+    flowElement.classList.toggle("notedraw-md-grid-item", Boolean(gridContainer));
+    if (!gridContainer || block?.floating) {
       flowElement.style.removeProperty("grid-column");
     } else {
       flowElement.style.gridColumn = `span ${clamp10(Math.round(Number(block?.span) || 12), 1, 12)}`;
@@ -19568,6 +19572,12 @@ ${selected}
   }
   setDraggedNoteFlowDomClass(element, className, enabled) {
     if (!element?.classList) {
+      return;
+    }
+    if (className === "notedraw-md-grid" && isNoteFlowCollectionBlock(element)) {
+      return;
+    }
+    if (className === "notedraw-md-grid-item" && isNoteFlowCollectionBlock(element.parentElement)) {
       return;
     }
     this.rememberDraggedNoteFlowDomClass(element, className);

@@ -45,6 +45,9 @@ test("Markdown blocks and inserted ink share the real NoteFlow row contract", as
   const drop = source.slice(source.indexOf("  draggedNoteFlowIndexes("), source.indexOf("  captureNoteFlowAnchor("));
 
   assert.match(presentation, /findNoteFlowMarkdownBlockElement\(element, this\.previewEl\)/);
+  assert.match(presentation, /return isNoteFlowCollectionBlock\(container\) \? null : container/);
+  assert.match(presentation, /const gridContainer = this\.markdownBlockGridContainer\(element\)/);
+  assert.match(presentation, /flowElement\.classList\.toggle\("notedraw-md-grid-item", Boolean\(gridContainer\)\)/);
   assert.match(presentation, /flowElement\.style\.gridColumn = `span/);
   assert.match(presentation, /markdownBlockGridContainer\(element\)/);
   assert.match(styles, /\.notedraw-md-grid > \.notedraw-md-grid-item/);

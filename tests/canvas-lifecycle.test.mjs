@@ -75,6 +75,16 @@ test("root reading controllers wait for Markdown and clear only dormant preview 
   assert.doesNotMatch(source, /prepareInitialReadingLayout\(\)[\s\S]*await annotateRenderedMarkdownLines/);
 });
 
+test("reading virtualizer containers never become NoteFlow grid roots", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const gridSource = source.slice(source.indexOf("  markdownBlockGridContainer("), source.indexOf("  applyMarkdownBlockFlowPresentation("));
+  const dragClassSource = source.slice(source.indexOf("  setDraggedNoteFlowDomClass("), source.indexOf("  restoreDraggedNoteFlowDomPreview("));
+
+  assert.match(gridSource, /return isNoteFlowCollectionBlock\(container\) \? null : container/);
+  assert.match(dragClassSource, /className === "notedraw-md-grid" && isNoteFlowCollectionBlock\(element\)/);
+  assert.match(dragClassSource, /className === "notedraw-md-grid-item" && isNoteFlowCollectionBlock\(element\.parentElement\)/);
+});
+
 test("virtual Markdown recycling cannot discard a live reading controller", async () => {
   const [source, previewLifecycle] = await Promise.all([
     readFile(sourceUrl, "utf8"),
