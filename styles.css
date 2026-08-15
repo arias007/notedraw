@@ -376,6 +376,10 @@
   overflow-anchor: none;
 }
 
+.notedraw-shell.is-note-flow-settling .markdown-preview-sizer {
+  overflow-anchor: none;
+}
+
 .notedraw-shell.is-moving-selection .notedraw-canvas {
   cursor: move;
 }
@@ -636,6 +640,14 @@
   width: 100%;
   margin: 0;
   padding: 0;
+}
+
+/* A real Markdown <br> is an atomic NoteFlow block; soft wrapping stays inside it. */
+.notedraw-md-line-block {
+  display: block;
+  min-width: 0;
+  box-sizing: border-box;
+  overflow-anchor: none;
 }
 
 .notedraw-md-grid > * {

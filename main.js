@@ -9236,6 +9236,7 @@ var PreviewDrawingController = class {
     this.dragMarkdownDropFrameId = null;
     this.dragMarkdownDropClientX = null;
     this.dragMarkdownDropClientY = null;
+    this.dragMarkdownDomPreviewKey = "";
     this.dragMarkdownOriginalClientBounds = null;
     this.dragMarkdownClientDeltaX = 0;
     this.dragMarkdownClientDeltaY = 0;
@@ -9406,6 +9407,7 @@ var PreviewDrawingController = class {
     this.responsiveProjectionSettleTimer = null;
     this.responsiveProjectionPreserveNoteFlowAbsolute = false;
     this.scrollSettleTimer = null;
+    this.noteFlowScrollStabilityTimer = null;
     this.positionFrameId = null;
     this.layoutRefreshGeneration = 0;
     this.markdownAnnotationTimer = null;
@@ -10092,6 +10094,7 @@ var PreviewDrawingController = class {
       window.clearTimeout(this.scrollSettleTimer);
       this.scrollSettleTimer = null;
     }
+    this.endNoteFlowScrollStability();
     this.cancelMultiTouchFrame();
     this.cancelSelectedResizeNoteFlowLayout();
     this.resizeObserver?.disconnect();
@@ -10454,6 +10457,27 @@ var PreviewDrawingController = class {
         this.scheduleResize({ layout: false, measure: false });
       }, 90);
     }
+  }
+  beginNoteFlowScrollStability() {
+    if (this.destroyed || this.surfaceType !== "preview" || !this.previewEl?.isConnected) {
+      return;
+    }
+    if (this.noteFlowScrollStabilityTimer !== null) {
+      window.clearTimeout(this.noteFlowScrollStabilityTimer);
+      this.noteFlowScrollStabilityTimer = null;
+    }
+    this.previewEl.addClass("is-note-flow-settling");
+    this.noteFlowScrollStabilityTimer = window.setTimeout(() => {
+      this.noteFlowScrollStabilityTimer = null;
+      this.endNoteFlowScrollStability();
+    }, 900);
+  }
+  endNoteFlowScrollStability() {
+    if (this.noteFlowScrollStabilityTimer !== null) {
+      window.clearTimeout(this.noteFlowScrollStabilityTimer);
+      this.noteFlowScrollStabilityTimer = null;
+    }
+    this.previewEl?.removeClass?.("is-note-flow-settling");
   }
   isReadingProjectionSettleSurface() {
     return this.surfaceType === "preview" && this.responsivePointsInitialized;
@@ -15751,7 +15775,16 @@ ${selected}
       const pendingY = this.dragMarkdownDropClientY;
       this.dragMarkdownDropClientX = null;
       this.dragMarkdownDropClientY = null;
-      this.updateMarkdownBlockDropTarget(pendingX, pendingY);
+      const previousKey = this.dragMarkdownDomPreviewKey;
+      const drop = this.updateMarkdownBlockDropTarget(pendingX, pendingY);
+      const nextKey = drop?.element && drop?.side ? `${drop.element.dataset?.noteDrawMarkdownBlockId || ""}:${drop.side}` : "";
+      if (drop && nextKey !== previousKey) {
+        if (this.dragNoteFlowDomPreview) {
+          this.restoreDraggedNoteFlowDomPreview();
+        }
+        this.applyDraggedMarkdownDomPreview(drop);
+        this.dragMarkdownDomPreviewKey = nextKey;
+      }
     });
   }
   flushMarkdownBlockDropTarget(clientX, clientY) {
@@ -16071,7 +16104,9 @@ ${selected}
     const movingItemCount = Math.max(1, movingMarkdownCount + movingStrokeCount);
     const itemCount = movingItemCount + 1;
     const totalCount = memberIds.length + itemCount;
-    const availableWidth = Number(parent?.clientWidth) || Number(geometry?.laneRect?.width) || Number(targetRect?.width) || 0;
+    const laneWidth = geometry?.laneRect ? Number(geometry.laneRect.right) - Number(geometry.laneRect.left) : 0;
+    const measuredLaneWidth = this.dragContentLaneRect ? Number(this.dragContentLaneRect.right) - Number(this.dragContentLaneRect.left) : Number(this.layoutMeasureEl?.clientWidth) || Number(this.previewEl?.clientWidth) || 0;
+    const availableWidth = Number(parent?.clientWidth) || laneWidth || measuredLaneWidth || Number(targetRect?.width) || 0;
     const requiredWidth = totalCount * MIN_INLINE_NOTE_FLOW_ITEM_WIDTH_PX + Math.max(0, totalCount - 1) * INLINE_NOTE_FLOW_GAP_PX;
     const canFit = totalCount <= 12 && availableWidth + 0.5 >= requiredWidth;
     const result = {
@@ -16545,6 +16580,9 @@ ${selected}
     this.clearSelectionLongPress();
     this.cancelDraggedNoteFlowStrokeAnimation(true);
     const didMove = this.dragStrokeMoved;
+    if (didMove) {
+      this.beginNoteFlowScrollStability();
+    }
     let requestedDropPlacement = null;
     let settleNoteFlowImmediately = false;
     if (didMove && this.usesDraggedNoteFlowPlacement()) {
@@ -16838,6 +16876,7 @@ ${selected}
     this.dragLastPointerEvent = null;
     this.dragLastPointerKey = "";
     this.dragMarkdownLastValidDrop = null;
+    this.dragMarkdownDomPreviewKey = "";
     this.clearMarkdownBlockDropTarget();
     this.dragDrawingHistoryBefore = null;
     this.pointerStartClient = null;
@@ -17260,6 +17299,9 @@ ${selected}
     }
   }
   finishSelectedStrokeResize(event) {
+    if (this.resizeSelectionMoved) {
+      this.beginNoteFlowScrollStability();
+    }
     if (this.resizeSelectionMoved) {
       const resizedMarkdownBlocks = Boolean(this.resizeSelectionOriginalMarkdownBlocks?.size);
       const resizedNoteFlowStrokes = Array.from(this.resizeSelectionOriginalStrokes?.keys?.() || []).some((index) => this.drawingData.strokes[index]?.noteFlow?.enabled);
@@ -18698,6 +18740,162 @@ ${selected}
     }
     return findNoteFlowMarkdownBlockElement(element, this.previewEl) || element;
   }
+  ensureExplicitMarkdownLineBlocks() {
+    if (this.surfaceType !== "preview" || !this.previewEl?.isConnected || this.draggingStroke || this.resizingSelection) {
+      return false;
+    }
+    const jobs = [];
+    for (const paragraph of Array.from(this.previewEl.querySelectorAll?.("p") || [])) {
+      if (paragraph.closest?.(NOTEDRAW_OWNED_MUTATION_SELECTOR) || paragraph.querySelector?.(".notedraw-md-line-block")) {
+        continue;
+      }
+      const nodes = Array.from(paragraph.childNodes || []);
+      const breakIndexes = nodes.map((node, index) => node.nodeName === "BR" ? index : -1).filter((index) => index >= 0);
+      if (!breakIndexes.length) {
+        continue;
+      }
+      const owner = findNoteFlowMarkdownBlockElement(paragraph, this.previewEl);
+      const start = parseInteger(owner?.dataset?.noteDrawLineStart);
+      const end = parseInteger(owner?.dataset?.noteDrawLineEnd) ?? start;
+      if (!owner || !Number.isFinite(start) || !Number.isFinite(end) || end < start) {
+        continue;
+      }
+      const segments = [];
+      let segmentStart = 0;
+      for (const breakIndex of breakIndexes) {
+        segments.push(nodes.slice(segmentStart, breakIndex));
+        segmentStart = breakIndex + 1;
+      }
+      segments.push(nodes.slice(segmentStart));
+      const renderedSegments = segments.filter((segment) => segment.some((node) => node.nodeType === Node.ELEMENT_NODE || String(node.nodeValue || "").trim()));
+      if (renderedSegments.length <= 1) {
+        continue;
+      }
+      const path = normalizeVaultPath(owner.dataset.noteDrawSourcePath || this.file?.path || "");
+      const group = `${path}\0${start}\0${end}\0${hashString(renderedMarkdownIdentityText(owner))}`;
+      jobs.push({ paragraph, segments, start, end, path, group });
+    }
+    if (!jobs.length) {
+      return false;
+    }
+    this.mutateMarkdownGridRows(() => {
+      for (const job of jobs) {
+        const { paragraph, segments, start, end, path, group } = job;
+        const wrappers = [];
+        segments.forEach((segment, index) => {
+          if (!segment.some((node) => node.nodeType === Node.ELEMENT_NODE || String(node.nodeValue || "").trim())) {
+            return;
+          }
+          const wrapper = paragraph.ownerDocument.createElement("span");
+          const line = clamp10(Math.round(start + index * (end - start) / Math.max(1, segments.length - 1)), start, end);
+          wrapper.className = "notedraw-md-line-block";
+          wrapper.dataset.noteDrawExplicitLine = "true";
+          wrapper.dataset.noteDrawExplicitLineGroup = group;
+          wrapper.dataset.noteDrawSourcePath = path;
+          wrapper.dataset.noteDrawLineStart = String(line);
+          wrapper.dataset.noteDrawLineEnd = String(line);
+          wrapper.dataset.noteDrawLineConfidence = "1";
+          wrapper.dataset.noteDrawLineMapped = "true";
+          wrapper._noteDrawSourceText = segment.map((node) => node.textContent || node.nodeValue || "").join("");
+          for (const node of segment) {
+            wrapper.appendChild(node);
+          }
+          wrappers.push(wrapper);
+        });
+        paragraph.replaceChildren(...wrappers);
+        paragraph.dataset.noteDrawExplicitLineBlocks = "true";
+      }
+    });
+    return true;
+  }
+  expandExplicitMarkdownBlockRecords(candidates) {
+    const records = this.markdownBlockRecords();
+    const groups = /* @__PURE__ */ new Map();
+    for (const candidate of candidates || []) {
+      const group = candidate?.dataset?.noteDrawExplicitLineGroup;
+      const line = parseInteger(candidate?.dataset?.noteDrawLineStart);
+      if (!group || !Number.isFinite(line)) {
+        continue;
+      }
+      const list = groups.get(group) || [];
+      list.push({ candidate, line });
+      groups.set(group, list);
+    }
+    let changed = false;
+    for (const [group, entries] of groups) {
+      const ordered = entries.slice().sort((a, b) => a.line - b.line);
+      const first = ordered[0]?.line;
+      const last = ordered.at(-1)?.line;
+      if (!Number.isFinite(first) || !Number.isFinite(last)) {
+        continue;
+      }
+      const path = normalizeVaultPath(ordered[0].candidate.dataset.noteDrawSourcePath || this.file?.path || "");
+      const aggregate = records.find((block) => block.path === path && block.lineStart === first && block.lineEnd > first && block.lineEnd >= last && block.explicitLineGroup !== group);
+      if (aggregate) {
+        const index = records.indexOf(aggregate);
+        const split = ordered.map(({ candidate, line }, entryIndex) => ({
+          ...aggregate,
+          id: entryIndex === 0 ? aggregate.id : `${aggregate.id}-${hashString(`${group}:${line}`)}`,
+          lineStart: line,
+          lineEnd: line,
+          textHint: normalizeRenderedText2(renderedMarkdownIdentityText(candidate)).slice(0, 240),
+          explicitLineGroup: group
+        }));
+        records.splice(index, 1, ...split);
+        changed = true;
+        continue;
+      }
+      for (const { candidate, line } of ordered) {
+        const block = records.find((item) => item.path === path && item.lineStart === line && item.lineEnd === line);
+        if (!block) {
+          continue;
+        }
+        const hint = normalizeRenderedText2(renderedMarkdownIdentityText(candidate)).slice(0, 240);
+        if (block.explicitLineGroup !== group || block.textHint !== hint) {
+          block.explicitLineGroup = group;
+          block.textHint = hint;
+          changed = true;
+        }
+      }
+    }
+    return changed;
+  }
+  restoreExplicitMarkdownLineBlocks() {
+    if (!this.previewEl?.isConnected) {
+      return false;
+    }
+    const paragraphs = new Set(Array.from(this.previewEl.querySelectorAll?.("p[data-note-draw-explicit-line-blocks='true']") || []));
+    for (const wrapper of Array.from(this.previewEl.querySelectorAll?.(".notedraw-md-line-block") || [])) {
+      if (wrapper.parentElement?.tagName === "P") {
+        paragraphs.add(wrapper.parentElement);
+      }
+    }
+    if (!paragraphs.size) {
+      return false;
+    }
+    this.mutateMarkdownGridRows(() => {
+      for (const paragraph of paragraphs) {
+        const wrappers = Array.from(paragraph.children || []).filter((child) => child.classList?.contains("notedraw-md-line-block"));
+        if (!wrappers.length) {
+          delete paragraph.dataset.noteDrawExplicitLineBlocks;
+          continue;
+        }
+        const fragment = paragraph.ownerDocument.createDocumentFragment();
+        wrappers.forEach((wrapper, index) => {
+          if (index > 0) {
+            fragment.appendChild(paragraph.ownerDocument.createElement("br"));
+          }
+          while (wrapper.firstChild) {
+            fragment.appendChild(wrapper.firstChild);
+          }
+          wrapper.remove();
+        });
+        paragraph.replaceChildren(fragment);
+        delete paragraph.dataset.noteDrawExplicitLineBlocks;
+      }
+    });
+    return true;
+  }
   isOwnedMarkdownGridRow(element) {
     return Boolean(element?.classList?.contains("notedraw-md-grid-row"));
   }
@@ -18846,7 +19044,7 @@ ${selected}
     flowElement.style.removeProperty("--notedraw-md-drag-y");
   }
   findMarkdownBlockRecordForElement(element) {
-    const blockElement = element?.closest?.(".notedraw-md-block") || element;
+    const blockElement = element?.matches?.(".notedraw-md-line-block") ? element : element?.closest?.(".notedraw-md-line-block") || element?.closest?.(".notedraw-md-block") || element;
     const existingId = blockElement?.dataset?.noteDrawMarkdownBlockId;
     if (existingId) {
       return this.markdownBlockRecords().find((block) => block.id === existingId) || null;
@@ -18940,6 +19138,7 @@ ${selected}
       parent?.removeClass?.("notedraw-md-grid");
     }
     this.unwrapMarkdownGridRows();
+    this.restoreExplicitMarkdownLineBlocks();
     this.markdownBlockElements?.clear?.();
   }
   clearMarkdownBlockElementPresentation(element) {
@@ -19007,6 +19206,9 @@ ${selected}
   }
   refreshMarkdownBlockPresentation(blockIds = this.selectedMarkdownBlockIds) {
     if (this.surfaceType !== "preview" || !this.previewEl?.isConnected || !this.drawingData) {
+      return;
+    }
+    if (this.draggingStroke && this.dragNoteFlowDomPreview && !this.allowMarkdownPresentationDuringDrag) {
       return;
     }
     const wanted = new Set(blockIds || []);
@@ -19083,6 +19285,7 @@ ${selected}
     if (this.draggingStroke && this.dragNoteFlowDomPreview && !this.allowMarkdownPresentationDuringDrag) {
       return;
     }
+    const explicitDomChanged = this.ensureExplicitMarkdownLineBlocks();
     const previousMarkdownBlockElements = this.markdownBlockElements;
     const previousElements = new Set(previousMarkdownBlockElements.values());
     const previousParents = new Set(Array.from(previousElements).flatMap((element) => [
@@ -19090,6 +19293,7 @@ ${selected}
       this.markdownBlockGridContainer(element)
     ]).filter(Boolean));
     const candidates = markdownBlockCandidateElements(this.previewEl);
+    const explicitRecordsChanged = this.expandExplicitMarkdownBlockRecords(candidates);
     const candidateMeta = /* @__PURE__ */ new Map();
     const idCandidates = /* @__PURE__ */ new Map();
     const exactCandidates = /* @__PURE__ */ new Map();
@@ -19116,7 +19320,7 @@ ${selected}
       queueCandidate(hintCandidates, `${path}\0${hint}`, element);
     }
     const used = /* @__PURE__ */ new Set();
-    let markdownMetadataChanged = false;
+    let markdownMetadataChanged = explicitDomChanged || explicitRecordsChanged;
     const takeUnused = (values) => values?.find((element) => !used.has(element)) || null;
     const next = /* @__PURE__ */ new Map();
     for (const block of this.markdownBlockRecords()) {
@@ -20680,6 +20884,9 @@ ${selected}
     }
     if (this.dragNoteFlowPreviewElementIds.size) {
       this.syncBoundConnectors({ elementIds: new Set(this.dragNoteFlowPreviewElementIds) });
+    }
+    if (markdownDomPreview && (drop?.side === "left" || drop?.side === "right")) {
+      this.applyDraggedMarkdownDomPreview(drop);
     }
     this.invalidateSelectionFrameSnapshot();
     this.requestRender(this.selectionHasDomStrokes() ? "interaction" : false);
@@ -24522,6 +24729,9 @@ var NoteDrawSettingTab = class extends import_obsidian.PluginSettingTab {
   }
 };
 function isConcreteMarkdownBlockElement(element) {
+  if (element?.matches?.(".notedraw-md-line-block")) {
+    return true;
+  }
   if (isMarkdownEmbedBlockElement(element)) {
     return true;
   }
@@ -24553,8 +24763,18 @@ function markdownBlockCandidateElements(root) {
   }
   const candidates = [];
   const seen = /* @__PURE__ */ new Set();
+  for (const element of root.querySelectorAll?.(".notedraw-md-line-block") || []) {
+    if (!isMarkdownBlockCandidateElement(element) || seen.has(element)) {
+      continue;
+    }
+    seen.add(element);
+    candidates.push(element);
+  }
   for (const element of collectNoteFlowMarkdownOwners(root)) {
     if (!isMarkdownBlockCandidateElement(element) || seen.has(element)) {
+      continue;
+    }
+    if (element.querySelector?.(".notedraw-md-line-block")) {
       continue;
     }
     seen.add(element);
@@ -24630,6 +24850,10 @@ function isNoteFlowCollectionBlock(element) {
 function findNoteFlowMarkdownBlockElement(element, previewEl = null) {
   if (!element || previewEl && !previewEl.contains?.(element)) {
     return null;
+  }
+  const explicitLine = element.matches?.(".notedraw-md-line-block") ? element : element.closest?.(".notedraw-md-line-block");
+  if (explicitLine && (!previewEl || previewEl.contains(explicitLine))) {
+    return explicitLine;
   }
   let listItem = element.closest?.("li");
   while (listItem?.parentElement) {
@@ -27201,7 +27425,8 @@ function normalizeMarkdownBlocks(value, file2) {
       floatingExplicit: Boolean(block?.floatingExplicit),
       floatBox,
       locked: Boolean(block?.locked),
-      groupId: typeof block?.groupId === "string" ? block.groupId : ""
+      groupId: typeof block?.groupId === "string" ? block.groupId : "",
+      explicitLineGroup: typeof block?.explicitLineGroup === "string" ? block.explicitLineGroup : ""
     };
   }).filter((block) => block.path && block.id && !seen.has(block.id) && seen.add(block.id));
 }

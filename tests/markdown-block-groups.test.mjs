@@ -247,8 +247,61 @@ test("selecting Markdown blocks does not trigger a whole-note responsive reflow"
 
   assert.match(source, /const markdownSelectionCandidate = this\.toolMode === TOOL_SELECT \? this\.markdownBlockElementForTarget\(target, clientPoint\) : null;/);
   assert.match(source, /const marked = target\.closest\?\.\("\.notedraw-md-block"\);/);
-  assert.match(source, /const blockElement = element\?\.closest\?\.\("\.notedraw-md-block"\) \|\| element;/);
+  assert.match(source, /const blockElement = element\?\.matches\?\.\("\.notedraw-md-line-block"\)[\s\S]*closest\?\.\("\.notedraw-md-line-block"\)/);
   assert.doesNotMatch(source, /this\.toolMode === TOOL_SELECT && this\.markdownBlockRecords\(\)\.length > 0/);
+});
+
+test("explicit Markdown line breaks become independent NoteFlow blocks without changing source text", async () => {
+  const [source, styles] = await Promise.all([
+    readFile(sourceUrl, "utf8"),
+    readFile(stylesUrl, "utf8")
+  ]);
+  const explicit = source.slice(source.indexOf("  ensureExplicitMarkdownLineBlocks()"), source.indexOf("  isOwnedMarkdownGridRow(", source.indexOf("  ensureExplicitMarkdownLineBlocks()")));
+
+  assert.match(explicit, /querySelectorAll\?\.\("p"\)/);
+  assert.match(explicit, /node\.nodeName === "BR"/);
+  assert.match(explicit, /className = "notedraw-md-line-block"/);
+  assert.match(explicit, /paragraph\.replaceChildren\(\.\.\.wrappers\)/);
+  assert.match(explicit, /restoreExplicitMarkdownLineBlocks\(\)/);
+  assert.match(source, /explicitLineGroup: typeof block\?\.explicitLineGroup === "string"/);
+  assert.match(styles, /\.notedraw-md-line-block \{[\s\S]*overflow-anchor: none/);
+});
+
+test("NoteFlow release keeps browser scroll anchoring disabled through async settlement", async () => {
+  const [source, styles] = await Promise.all([
+    readFile(sourceUrl, "utf8"),
+    readFile(stylesUrl, "utf8")
+  ]);
+  const drag = source.slice(source.indexOf("  finishSelectedStrokeDrag("), source.indexOf("  cancelSelectedStrokeDrag(", source.indexOf("  finishSelectedStrokeDrag(")));
+  const resize = source.slice(source.indexOf("  finishSelectedStrokeResize("), source.indexOf("  resetSelectedElementsToBestFit(", source.indexOf("  finishSelectedStrokeResize(")));
+
+  assert.match(drag, /if \(didMove\) \{\s*this\.beginNoteFlowScrollStability\(\);/);
+  assert.match(resize, /if \(this\.resizeSelectionMoved\) \{\s*this\.beginNoteFlowScrollStability\(\);/);
+  assert.match(source, /this\.previewEl\.addClass\("is-note-flow-settling"\)/);
+  assert.match(source, /setTimeout\(\(\) => \{[\s\S]*endNoteFlowScrollStability\(\);[\s\S]*\}, 900\)/);
+  assert.match(styles, /\.notedraw-shell\.is-note-flow-settling \.markdown-preview-sizer \{[\s\S]*overflow-anchor: none/);
+});
+
+test("parallel Markdown preview measures the full content lane before deciding column capacity", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const metrics = source.slice(source.indexOf("  markdownDropRowMetrics("), source.indexOf("  markdownDropIncludesHeading(", source.indexOf("  markdownDropRowMetrics(")));
+
+  assert.match(metrics, /const laneWidth = geometry\?\.laneRect[\s\S]*Number\(geometry\.laneRect\.right\) - Number\(geometry\.laneRect\.left\)/);
+  assert.match(metrics, /const measuredLaneWidth = this\.dragContentLaneRect[\s\S]*this\.layoutMeasureEl\?\.clientWidth/);
+  assert.match(metrics, /const availableWidth = Number\(parent\?\.clientWidth\)[\s\S]*laneWidth[\s\S]*measuredLaneWidth[\s\S]*Number\(targetRect\?\.width\)/);
+  assert.match(source, /applyDraggedMarkdownDomPreview\(drop\)/);
+});
+
+test("ordinary Markdown dragging applies a reversible DOM preview on each target change", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const queue = source.slice(source.indexOf("  queueMarkdownBlockDropTarget("), source.indexOf("  dragDropScrollKey(", source.indexOf("  queueMarkdownBlockDropTarget(")));
+
+  assert.match(queue, /const previousKey = this\.dragMarkdownDomPreviewKey/);
+  assert.match(queue, /const drop = this\.updateMarkdownBlockDropTarget\(pendingX, pendingY\)/);
+  assert.match(queue, /if \(this\.dragNoteFlowDomPreview\) \{\s*this\.restoreDraggedNoteFlowDomPreview\(\);/);
+  assert.match(queue, /this\.applyDraggedMarkdownDomPreview\(drop\)/);
+  assert.match(queue, /this\.dragMarkdownDomPreviewKey = nextKey/);
+  assert.match(source, /refreshMarkdownBlockPresentation\(blockIds = this\.selectedMarkdownBlockIds\)[\s\S]*this\.draggingStroke && this\.dragNoteFlowDomPreview && !this\.allowMarkdownPresentationDuringDrag/);
 });
 
 test("visible Markdown and task checkboxes select their own block before lower NoteFlow ink", async () => {
