@@ -10387,10 +10387,12 @@ var PreviewDrawingController = class {
     }
   }
   onPreviewDoubleClick(event) {
-    if (!this.active || this.surfaceType !== "preview" || event.button !== 0) {
+    if (this.surfaceType !== "preview" || event.button !== void 0 && event.button !== 0) {
       return;
     }
-    this.onCanvasDoubleClick(event);
+    if (this.active) {
+      this.onCanvasDoubleClick(event);
+    }
     event.preventDefault();
     event.stopPropagation();
     event.stopImmediatePropagation?.();
@@ -16748,10 +16750,16 @@ var PreviewDrawingController = class {
   }
   captureNoteFlowPeerRects() {
     const rects = new Map();
+    // Dragged Markdown blocks already move through the live DOM preview.
+    // Animating them as peers applies a second reverse transform and flashes
+    // the block between its origin and the new parallel position.
+    const draggedElements = new Set(Array.from(this.dragMarkdownOriginalElements?.values?.() || [])
+      .map((state) => state?.dragElement || state?.element)
+      .filter(Boolean));
     for (const [id, element] of this.markdownBlockElements || []) {
       const block = this.markdownBlockById?.(id) || this.markdownBlockRecords().find((record) => record.id === id);
       const flowElement = this.markdownBlockFlowElement(element) || element;
-      if (!flowElement?.isConnected || block?.floating) {
+      if (!flowElement?.isConnected || block?.floating || draggedElements.has(flowElement)) {
         continue;
       }
       const rect = flowElement.getBoundingClientRect?.();
@@ -16762,7 +16770,7 @@ var PreviewDrawingController = class {
     }
     for (const state of this.dragMarkdownOriginalElements?.values?.() || []) {
       const flowElement = state.dragElement || state.element;
-      if (!flowElement?.isConnected || state.block?.floating || rects.has(flowElement)) {
+      if (!flowElement?.isConnected || state.block?.floating || draggedElements.has(flowElement) || rects.has(flowElement)) {
         continue;
       }
       const rect = flowElement.getBoundingClientRect?.();

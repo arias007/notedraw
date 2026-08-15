@@ -506,6 +506,23 @@ test("NoteFlow drag changes keep visual continuity without duplicate Markdown sp
   assert.match(styles, /is-notedraw-md-dragging\.notedraw-note-flow-peer-animating[\s\S]*--notedraw-note-flow-peer-x[\s\S]*transition: transform 150ms/);
 });
 
+test("parallel drag peer animation excludes the blocks already moving in the DOM preview", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const peerSource = source.slice(source.indexOf("  captureNoteFlowPeerRects("), source.indexOf("  clearNoteFlowPeerAnimations(", source.indexOf("  captureNoteFlowPeerRects(")));
+
+  assert.match(peerSource, /const draggedElements = new Set\(Array\.from\(this\.dragMarkdownOriginalElements\?\.values\?\.\(\) \|\| \[\]\)/);
+  assert.match(peerSource, /draggedElements\.has\(flowElement\)/);
+});
+
+test("reading-view double clicks are consumed before Obsidian can switch to source mode", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const handler = source.slice(source.indexOf("  onPreviewDoubleClick("), source.indexOf("  rememberTextTap(", source.indexOf("  onPreviewDoubleClick(")));
+
+  assert.match(handler, /this\.surfaceType !== "preview"/);
+  assert.match(handler, /if \(this\.active\) \{[\s\S]*this\.onCanvasDoubleClick\(event\)/);
+  assert.match(handler, /event\.preventDefault\(\);[\s\S]*event\.stopImmediatePropagation\?\.\(\)/);
+});
+
 test("selection handle hit testing stays usable for narrow elements at visual zoom", async () => {
   const source = await readFile(sourceUrl, "utf8");
   const handleSource = source.slice(source.indexOf("  findSelectionHandleAt("), source.indexOf("  selectedStrokeFrameContains("));
