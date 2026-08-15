@@ -49,6 +49,8 @@ test("the stable v1 API exposes Cancip-friendly capabilities and events", async 
   assert.match(source, /stateBackedWorkspaceSurfaces: true/);
   assert.match(source, /registeredSurfaces: true/);
   assert.match(source, /surfaceHandles: true/);
+  assert.match(source, /regionEditing: true/);
+  assert.match(source, /externalFormats: \["html", "docx", "xlsx", "pptx", "pdf", "web"\]/);
   assert.match(source, /agentActions: true/);
   assert.match(source, /registerSurface: \(options = \{\}\) => this\.registerApiSurface\(options\)/);
   assert.match(source, /registerSurface: v1\.registerSurface/);
@@ -58,6 +60,11 @@ test("the stable v1 API exposes Cancip-friendly capabilities and events", async 
   assert.match(source, /getElements: v1\.getElements/);
   assert.match(source, /updateElements: v1\.updateElements/);
   assert.match(source, /setElementsNoteFlow: v1\.setElementsNoteFlow/);
+  assert.match(source, /highlightRegion: v1\.highlightRegion/);
+  assert.match(source, /insertInk: v1\.insertInk/);
+  assert.match(source, /focusRegion: v1\.focusRegion/);
+  assert.match(source, /updateSurfaceSource: v1\.updateSurfaceSource/);
+  assert.match(source, /version: this\.manifest\.version/);
   assert.match(source, /execute: v1\.execute/);
   assert.match(source, /phase: "mounted"/);
   assert.match(source, /phase: "unmounted"/);
@@ -80,6 +87,12 @@ test("registered surfaces expose stable handles and structured actions without c
   assert.match(source, /if \(Array\.isArray\(action\)\)/);
   assert.match(source, /action\.op \|\| action\.action \|\| action\.type/);
   assert.match(source, /insertApiElements\(options = \{\}\)/);
+  assert.match(source, /insertSurfaceRegionApi\(kind, options = \{\}\)/);
+  assert.match(source, /focusSurfaceRegionApi\(regionInput, options = \{\}\)/);
+  assert.match(source, /updateRegisteredSurfaceSourceApi\(sourceInput, options = \{\}\)/);
+  assert.match(source, /normalizeSurfaceRegion\(value = \{\}, surface = \{\}\)/);
+  assert.match(source, /page", "slide", "sheet", "frame"/);
+  assert.match(source, /normalizeRegisteredSurfaceFormat/);
   assert.match(source, /registeredSurfaceOwner/);
   assert.match(source, /registeredSurfaceId/);
   assert.match(source, /registeredSurfaceSource/);
@@ -106,7 +119,7 @@ test("3.4.84 preserves reading content and cross-view frames without hidden-surf
   const manifest = JSON.parse(manifestText);
 
   assert.match(manifest.version, /^\d+\.\d+\.\d+$/);
-  assert.match(source, /version: "3\.4\.19"/);
+  assert.match(source, /version: this\.manifest\.version/);
   assert.match(source, /this\.readingVirtualStyleState = \/\* @__PURE__ \*\/ new Map\(\)/);
   assert.match(source, /shouldClearStaleReadingVirtualMinHeight\(\{/);
   assert.match(source, /this\.rememberReadingVirtualStyle\(sizer, "min-height"\)/);

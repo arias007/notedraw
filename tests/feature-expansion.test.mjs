@@ -281,7 +281,7 @@ test("reading-only note pen and selected elements can reserve Markdown flow spac
   assert.match(flowLayout, /if \(canRepairStoredAnchors\) \{\s*this\.noteFlowAnchorRepairComplete = true/);
   assert.match(source, /noteFlowInlineLineCandidates\(sourceElement, path, start, end\)/);
   assert.match(source, /const layoutElement = this\.noteFlowLayoutElement\(sourceElement\);[\s\S]*element: layoutElement,[\s\S]*sourceElement/);
-  assert.match(source, /noteFlowVisualLineCandidates\(sourceElement, path, start, end\)[\s\S]*const layoutElement = this\.noteFlowLayoutElement\(sourceElement\)/);
+  assert.match(source, /Only real <br> nodes represent explicit rendered line breaks/);
   assert.match(source, /cls: "notedraw-note-flow-line-spacer"/);
   assert.match(source, /NOTEDRAW_OWNED_MUTATION_SELECTOR = \[[\s\S]*"\.notedraw-note-flow-line-spacer"/);
   assert.match(flowLayout, /const selectedAnchor = exactPlacement \? anchor : avoidanceAnchor \|\| anchor;[\s\S]*const element = this\.noteFlowTargetElement\(selectedAnchor, side, currentNoteFlow\?\.placementMode \|\| "row"\)/);

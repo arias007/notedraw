@@ -90,6 +90,37 @@ test("inline NoteFlow keeps more than four mixed element kinds side by side when
   assert.ok(placed.at(-1).maxX <= 380);
 });
 
+test("note pen strokes preserve their relative overlap while packing as one inline unit", () => {
+  const placed = packNoteFlowInlineRectangles([
+    { id: "pen-a", index: 0, order: 0, minX: 20, maxX: 90, minY: 20, maxY: 60, overlapGroup: "ink:line-4" },
+    { id: "pen-b", index: 1, order: 1, minX: 60, maxX: 130, minY: 35, maxY: 75, overlapGroup: "ink:line-4" }
+  ], {
+    anchor: { minX: 0, maxX: 120, minY: 10, maxY: 80 },
+    laneLeft: 0,
+    laneRight: 320,
+    gap: 8
+  });
+
+  assert.deepEqual(placed.map(({ id, minX, maxX, minY, maxY, scaleX }) => ({ id, minX, maxX, minY, maxY, scaleX })), [
+    { id: "pen-a", minX: 128, maxX: 198, minY: 10, maxY: 50, scaleX: 1 },
+    { id: "pen-b", minX: 168, maxX: 238, minY: 25, maxY: 65, scaleX: 1 }
+  ]);
+});
+
+test("overlapping note pen strokes reserve one union row instead of pushing each other apart", () => {
+  const placed = reflowNoteFlowRectangles([
+    { id: "pen-a", index: 0, minX: 20, maxX: 90, minY: 100, maxY: 140, baseMinY: 80, originalMinY: 100, rowKey: "line-4", overlapGroup: "ink:line-4" },
+    { id: "pen-b", index: 1, minX: 60, maxX: 130, minY: 115, maxY: 155, baseMinY: 80, originalMinY: 115, rowKey: "line-4", overlapGroup: "ink:line-4" },
+    { id: "next", index: 2, minX: 20, maxX: 130, minY: 150, maxY: 180, baseMinY: 120, originalMinY: 150, rowKey: "line-4" }
+  ], { gap: 6 });
+
+  assert.deepEqual(placed.map(({ id, minY, maxY }) => ({ id, minY, maxY })), [
+    { id: "pen-a", minY: 80, maxY: 120 },
+    { id: "pen-b", minY: 95, maxY: 135 },
+    { id: "next", minY: 141, maxY: 171 }
+  ]);
+});
+
 test("a newly inserted inline element shrinks into the remaining row width", () => {
   const placed = packNoteFlowInlineRectangles([
     { id: "new", index: 0, order: 0, minX: 0, maxX: 140, minY: 0, maxY: 30, shrinkToFit: true }

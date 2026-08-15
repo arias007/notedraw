@@ -185,11 +185,40 @@ await noteDraw.replaceText({
   editedText: "edited **Markdown** text"
 });
 await noteDraw.insertStroke("Notes/example.md", stroke);
+await noteDraw.createElements({
+  elements: generatedStrokes,
+  surface: { owner: "cancip", id: "workbench" }
+});
+await noteDraw.highlightRegion({
+  surface: { owner: "cancip", id: "workbench" },
+  region: { basis: "surface-normalized", x: 0.1, y: 0.2, width: 0.4, height: 0.08 },
+  page: 2
+});
+await noteDraw.insertInk({
+  surface: { owner: "noteweb", id: "page" },
+  region: { basis: "surface-pixel", x: 80, y: 120, width: 240, height: 90 },
+  points: [{ x: 0, y: 0.1 }, { x: 1, y: 0.9 }],
+  pointBasis: "region-normalized",
+  noteFlow: true
+});
+await noteDraw.focusRegion({
+  surface: { owner: "noteweb", id: "page" },
+  region: { x: 0.25, y: 0.55, width: 0.2, height: 0.1 }
+});
+await noteDraw.updateSurfaceSource({
+  owner: "cancip",
+  id: "workbench",
+  format: "docx",
+  mediaType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  path: "Exports/example.docx"
+});
 const unsubscribe = noteDraw.on("markdown-changed", (event) => console.log(event));
 await noteDraw.execute("set-tool", { tool: "select" });
 ```
 
 `drawingData.read/parse/serialize` is the placement-neutral integration API for temporary exports. It only returns data and does not create, modify, move, or delete Vault files or change NoteDraw's storage setting. The calling plugin decides whether to embed the serialized block in a Markdown copy, save JSON beside a note, use a subfolder, or keep the result in memory. `parse` reads standard bundle objects, JSON, hidden blocks, and complete Markdown containing a hidden block. The older `writeDrawings` method remains available separately for integrations that explicitly intend to change NoteDraw data.
+
+Region editing uses normalized surface coordinates by default. `surface-pixel` regions are converted using the registered surface size; ink points can be `region-normalized` to stay local to the selected region. Optional location fields (`page`, `slide`, `sheet`, `frame`, `layer`, `range`, and `sourceId`) are preserved for external editors. The advertised source formats are `html`, `web`, `pdf`, `docx`, `xlsx`, and `pptx`. `highlightRegion` creates a highlight stroke, `insertInk` creates a freehand or NoteFlow stroke, `focusRegion` delegates to the host viewport when available, and `updateSurfaceSource` changes the source identity without requiring Cancip or NoteWeb to know NoteDraw's storage layout.
 
 Custom views from Cancip, NoteWeb, or another plugin can register their visible surface without copying NoteDraw internals:
 

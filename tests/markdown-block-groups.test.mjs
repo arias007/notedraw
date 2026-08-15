@@ -47,7 +47,7 @@ test("Markdown blocks and inserted ink share the real NoteFlow row contract", as
 
   assert.match(presentation, /findNoteFlowMarkdownBlockElement\(element, this\.previewEl\)/);
   assert.match(presentation, /return isNoteFlowCollectionBlock\(container\) \? null : container/);
-  assert.match(presentation, /const gridContainer = this\.markdownBlockGridContainer\(element\)/);
+  assert.match(presentation, /const gridContainer = this\.ensureMarkdownBlockGridRow\(block, element\)[\s\S]*this\.markdownBlockGridContainer\(element\)/);
   assert.match(presentation, /flowElement\.classList\.toggle\("notedraw-md-grid-item", Boolean\(gridContainer\)\)/);
   assert.match(presentation, /flowElement\.style\.gridColumn = `span/);
   assert.match(presentation, /markdownBlockGridContainer\(element\)/);
@@ -57,6 +57,34 @@ test("Markdown blocks and inserted ink share the real NoteFlow row contract", as
   assert.match(drop, /syncMarkdownDropFromNoteFlowPlacement\(this\.dragNoteFlowPlacement\)/);
   assert.match(drop, /prepareMarkdownAnchorForInlineNoteFlow\(placement\)/);
   assert.match(source, /const movingItemCount = Math\.max\(1, movingMarkdownCount \+ movingStrokeCount\)[\s\S]*const itemCount = movingItemCount \+ 1/);
+});
+
+test("top-level H1 H2 and H3 blocks use a local grid row instead of the virtualized reading root", async () => {
+  const [source, styles] = await Promise.all([
+    readFile(sourceUrl, "utf8"),
+    readFile(stylesUrl, "utf8")
+  ]);
+  const rows = source.slice(source.indexOf("  isOwnedMarkdownGridRow("), source.indexOf("  findMarkdownBlockRecordForElement("));
+  const preview = source.slice(source.indexOf("  applyDraggedNoteFlowAnchorDomPreview("), source.indexOf("  restoreDraggedNoteFlowLivePreview("));
+
+  assert.match(rows, /notedraw-md-grid-row/);
+  assert.match(rows, /if \(!isNoteFlowCollectionBlock\(current\)\) \{\s*return current/);
+  assert.match(rows, /current\.insertBefore\(row, flowElement\)/);
+  assert.match(rows, /previousRow \|\| nextRow/);
+  assert.match(preview, /ensureMarkdownBlockGridRow\(\{ \.\.\.targetBlock, span: drop\.row\.span \}, target, \{ preview: true \}\)/);
+  assert.match(styles, /\.notedraw-md-grid-row \{/);
+
+  for (const heading of ["h1", "h2", "h3"]) {
+    assert.equal(resolveDragDropHorizontalIntent({
+      clientX: 760,
+      targetLeft: 120,
+      targetRight: 520,
+      laneLeft: 100,
+      laneRight: 900,
+      horizontalRoom: true,
+      heading
+    }), "inline-right");
+  }
 });
 
 test("legacy floating overlap repair requires a real two-dimensional collision", () => {
@@ -660,15 +688,18 @@ test("Markdown selection keeps complete owners while ordinary paragraph lines be
   assert.match(candidateSource, /const owner = findNoteFlowMarkdownBlockElement\(sourceElement, this\.previewEl\)/);
   assert.match(candidateSource, /sourceElements\.add\(owner\)/);
   assert.match(candidateSource, /const canonical = sourceElement\.dataset\.noteDrawLineMapped === "true"/);
-  assert.match(candidateSource, /if \(!canonical && !exactOwnDataLine\) \{\s*continue/);
+  assert.match(candidateSource, /const reliableOwnerRange = [\s\S]*mappedConfidence > 0/);
+  assert.match(candidateSource, /if \(!canonical && !exactOwnDataLine && !reliableOwnerRange\) \{\s*continue/);
   assert.match(candidateSource, /this\.markdownElementVisibleClientRect\(element\)[\s\S]*this\.noteFlowEmptyOwnerClientRect\(element\)/);
   assert.match(source, /const nextBlockTop = Array\.from\(element\.parentElement\?\.children \|\| \[\]\)/);
   assert.match(candidateSource, /grouped\.get\(element\)[\s\S]*existing\.start = Math\.min[\s\S]*existing\.end = Math\.max/);
   assert.match(candidateSource, /identityQuality > existing\.identityQuality[\s\S]*existing\.blockKey = noteFlowBlockKey\(existing\)/);
   assert.match(candidateSource, /!candidate\.element\.matches\?\.\("li"\)/);
   assert.match(candidateSource, /candidate\.element\.contains\?\.\(other\.element\)/);
-  assert.match(candidateSource, /const explicitLines = this\.noteFlowInlineLineCandidates[\s\S]*candidate\.end > candidate\.start[\s\S]*this\.noteFlowVisualLineCandidates/);
-  assert.match(candidateSource, /visualLines\.map[\s\S]*blockStart: line\.start[\s\S]*blockEnd: line\.end[\s\S]*blockKey: noteFlowBlockKey/);
+  assert.match(candidateSource, /const explicitLines = this\.noteFlowInlineLineCandidates[\s\S]*if \(explicitLines\.length <= 1\) \{\s*return \[candidate\]/);
+  assert.doesNotMatch(candidateSource, /this\.noteFlowVisualLineCandidates\(paragraph/);
+  assert.match(candidateSource, /explicitLines\.map[\s\S]*blockStart: line\.start[\s\S]*blockEnd: line\.end[\s\S]*blockKey: noteFlowBlockKey/);
+  assert.match(candidateSource, /const cacheKey = [\s\S]*this\.dragDropScrollKey\(\)[\s\S]*noteFlowCandidateCache/);
   assert.match(edgeSource, /markdownEdgeDropTarget\(clientX, clientY[\s\S]*const intent = resolveDragDropHorizontalIntent/);
   assert.match(edgeSource, /forcedIntent = edgeTarget\?\.intent \|\| null/);
   assert.match(styles, /\.notedraw-text-sort-target-left \{[\s\S]*inset 4px 0 0/);

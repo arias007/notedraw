@@ -865,15 +865,41 @@ export function reflowNoteFlowRectangles(items, { gap = 6 } = {}) {
       gap: Math.max(0, finite(item?.gap, defaultGap)),
       moved: Boolean(item?.moved),
       rowKey: typeof item?.rowKey === "string" ? item.rowKey : "",
+      overlapGroup: typeof item?.overlapGroup === "string" ? item.overlapGroup : "",
       align: item?.align === "bottom" ? "bottom" : "top"
     };
   }).filter(Boolean);
+  const layoutItems = [];
+  const overlapGroups = new Map();
+  for (const item of normalized) {
+    if (!item.overlapGroup) {
+      layoutItems.push({ ...item, members: [item] });
+      continue;
+    }
+    let group = overlapGroups.get(item.overlapGroup);
+    if (!group) {
+      group = { ...item, members: [], originalMinY: item.minY };
+      overlapGroups.set(item.overlapGroup, group);
+      layoutItems.push(group);
+    }
+    group.members.push(item);
+    group.minX = Math.min(group.minX, item.minX);
+    group.maxX = Math.max(group.maxX, item.maxX);
+    group.minY = Math.min(group.minY, item.minY);
+    group.maxY = Math.max(group.maxY, item.maxY);
+    group.baseMinY = Math.min(group.baseMinY, item.baseMinY);
+    group.originalMinY = Math.min(group.originalMinY, item.minY);
+    group.gap = Math.max(group.gap, item.gap);
+    group.moved = group.moved || item.moved;
+    group.order = Math.min(group.order, item.order);
+    group.height = group.maxY - group.minY;
+  }
   const horizontallyOverlaps = (first, second) => (
     Math.min(first.maxX, second.maxX) - Math.max(first.minX, second.minX) > 0.5
   );
 
   const rows = [];
-  const ordered = normalized.slice().sort((a, b) => (
+  const ordered = layoutItems.slice().sort((a, b) => (
     a.baseMinY - b.baseMinY
     || a.order - b.order
     || Number(b.moved) - Number(a.moved)
@@ -937,6 +963,11 @@ export function reflowNoteFlowRectangles(items, { gap = 6 } = {}) {
     for (const item of row.items) {
       item.minY = item.align === "bottom" ? row.maxY - item.height : row.minY;
       item.maxY = item.minY + item.height;
+      const deltaY = item.minY - item.originalMinY;
+      for (const member of item.members) {
+        member.minY += deltaY;
+        member.maxY += deltaY;
+      }
     }
     settledRows.push(row);
   }
@@ -990,15 +1021,40 @@ export function packNoteFlowInlineRectangles(items, {
       order: Number.isFinite(Number(item?.order)) ? Number(item.order) : order,
       width: Math.max(0, rect.maxX - rect.minX),
       height: Math.max(0, rect.maxY - rect.minY),
+      overlapGroup: typeof item?.overlapGroup === "string" ? item.overlapGroup : "",
       originalMinX: rect.minX,
       originalMinY: rect.minY
     } : null;
   }).filter(Boolean).sort((a, b) => a.order - b.order || a.originalMinX - b.originalMinX || a.index - b.index);
+  const packingItems = [];
+  const overlapGroups = new Map();
+  for (const item of normalized) {
+    if (!item.overlapGroup) {
+      packingItems.push({ ...item, members: [item] });
+      continue;
+    }
+    let group = overlapGroups.get(item.overlapGroup);
+    if (!group) {
+      group = { ...item, members: [], shrinkToFit: false };
+      overlapGroups.set(item.overlapGroup, group);
+      packingItems.push(group);
+    }
+    group.members.push(item);
+    group.minX = Math.min(group.minX, item.minX);
+    group.maxX = Math.max(group.maxX, item.maxX);
+    group.minY = Math.min(group.minY, item.minY);
+    group.maxY = Math.max(group.maxY, item.maxY);
+    group.originalMinX = Math.min(group.originalMinX, item.originalMinX);
+    group.originalMinY = Math.min(group.originalMinY, item.originalMinY);
+    group.width = group.maxX - group.minX;
+    group.height = group.maxY - group.minY;
+    group.order = Math.min(group.order, item.order);
+  }
   const placed = [];
   const verticalOverlap = (rect, y, height) => Math.min(rect.maxY, y + height) - Math.max(rect.minY, y) > 0.5;
   const firstRowLeft = Math.min(right, Math.max(left, fixedAnchor.maxX + clearance));
 
-  for (const item of normalized) {
+  for (const item of packingItems) {
     let y = fixedAnchor.minY;
     let firstRow = true;
     let placement = null;
@@ -1061,15 +1117,20 @@ export function packNoteFlowInlineRectangles(items, {
     placed.push(placement);
   }
 
-  return placed.map((item) => ({
-    id: item.id,
-    index: item.index,
-    minX: item.minX,
-    maxX: item.maxX,
-    minY: item.minY,
-    maxY: item.maxY,
-    deltaX: item.minX - item.originalMinX,
-    deltaY: item.minY - item.originalMinY,
-    scaleX: (item.maxX - item.minX) / Math.max(0.001, item.width)
-  }));
+  return placed.flatMap((item) => {
+    const deltaX = item.minX - item.originalMinX;
+    const deltaY = item.minY - item.originalMinY;
+    const scaleX = (item.maxX - item.minX) / Math.max(0.001, item.width);
+    return item.members.map((member) => ({
+      id: member.id,
+      index: member.index,
+      minX: item.overlapGroup ? member.minX + deltaX : item.minX,
+      maxX: item.overlapGroup ? member.maxX + deltaX : item.maxX,
+      minY: item.overlapGroup ? member.minY + deltaY : item.minY,
+      maxY: item.overlapGroup ? member.maxY + deltaY : item.maxY,
+      deltaX,
+      deltaY,
+      scaleX: item.overlapGroup ? 1 : scaleX
+    }));
+  });
 }

@@ -632,6 +632,12 @@
   container-type: inline-size;
 }
 
+.notedraw-md-grid-row {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+}
+
 .notedraw-md-grid > * {
   grid-column: 1 / -1;
   min-width: 0;

@@ -1990,6 +1990,11 @@ var NoteDrawPlugin = class extends Plugin {
       reorderElements: async (options = {}) => this.reorderApiElements(withSurface(options)),
       setElementsLocked: async (options = {}) => this.setApiElementsLocked(withSurface(options)),
       setElementsNoteFlow: async (options = {}) => this.setApiElementsNoteFlow(withSurface(options)),
+      createElements: async (options = {}) => this.insertApiElements(withSurface(options)),
+      highlightRegion: async (options = {}) => this.insertSurfaceRegionApi("highlight", withSurface(options)),
+      insertInk: async (options = {}) => this.insertSurfaceRegionApi("ink", withSurface(options)),
+      focusRegion: async (region, options = {}) => this.focusSurfaceRegionApi(region, withSurface(options)),
+      updateSource: async (source, options = {}) => this.updateRegisteredSurfaceSourceApi(source, withSurface(options)),
       undo: async (options = {}) => this.runApiHistory("undo", withSurface(options)),
       redo: async (options = {}) => this.runApiHistory("redo", withSurface(options)),
       copyElements: (options = {}) => this.copyElementsApi(withSurface(options)),
@@ -2352,6 +2357,8 @@ var NoteDrawPlugin = class extends Plugin {
       imageWorkspaceSurfaces: true,
       registeredSurfaces: true,
       surfaceHandles: true,
+      regionEditing: true,
+      externalFormats: ["html", "docx", "xlsx", "pptx", "pdf", "web"],
       elementClipboard: true,
       readingNoteFlow: true,
       editableMindMaps: true,
@@ -2368,8 +2375,8 @@ var NoteDrawPlugin = class extends Plugin {
       events: ["drawings-changed", "markdown-changed", "surface-changed"],
       tools: [TOOL_DRAW, TOOL_SELECT, TOOL_EDIT_MD, TOOL_TEXT],
       sources: ["vault", "url", "virtual"],
-      surfaceActions: ["activate", "deactivate", "toggle", "set-visibility", "refresh"],
-      elementActions: ["get", "select", "update", "delete", "reorder", "set-locked", "set-note-flow", "copy", "copy-link", "paste"],
+      surfaceActions: ["activate", "deactivate", "toggle", "set-visibility", "refresh", "focus-region", "update-source"],
+      elementActions: ["get", "select", "update", "delete", "reorder", "set-locked", "set-note-flow", "copy", "copy-link", "paste", "create", "highlight-region", "insert-ink"],
       historyActions: ["undo", "redo"]
     });
     const drawingData = Object.freeze({
@@ -2436,6 +2443,11 @@ var NoteDrawPlugin = class extends Plugin {
       },
       replaceText: async (options) => this.replaceTextApi(options),
       insertStroke: async (fileOrPath, stroke) => this.insertStrokeApi(fileOrPath, stroke),
+      createElements: async (options = {}) => this.insertApiElements(options),
+      highlightRegion: async (options = {}) => this.insertSurfaceRegionApi("highlight", options),
+      insertInk: async (options = {}) => this.insertSurfaceRegionApi("ink", options),
+      focusRegion: async (region, options = {}) => this.focusSurfaceRegionApi(region, options),
+      updateSurfaceSource: async (source, options = {}) => this.updateRegisteredSurfaceSourceApi(source, options),
       copyElements: (options = {}) => this.copyElementsApi(options),
       copyElementLink: (options = {}) => this.findApiController(options)?.copySelectedElementLink({ quiet: Boolean(options.quiet) }) || { ok: false, reason: "surface-not-found" },
       pasteElements: (options = {}) => this.pasteElementsApi(options),
@@ -2455,7 +2467,7 @@ var NoteDrawPlugin = class extends Plugin {
       on: (eventName, listener) => this.onApiEvent(eventName, listener)
     };
     return {
-      version: "3.4.19",
+      version: this.manifest.version,
       apiVersion: v1.apiVersion,
       capabilities,
       v1,
@@ -2497,6 +2509,11 @@ var NoteDrawPlugin = class extends Plugin {
       injectExportSnapshot: v1.injectExportSnapshot,
       replaceSelectionText: async (file, originalText, editedText) => this.replaceTextApi({ file, originalText, editedText }),
       insertStroke: v1.insertStroke,
+      createElements: v1.createElements,
+      highlightRegion: v1.highlightRegion,
+      insertInk: v1.insertInk,
+      focusRegion: v1.focusRegion,
+      updateSurfaceSource: v1.updateSurfaceSource,
       copyElements: v1.copyElements,
       copyElementLink: v1.copyElementLink,
       pasteElements: v1.pasteElements,
@@ -3081,6 +3098,11 @@ var NoteDrawPlugin = class extends Plugin {
     if (name === "copy-link" || name === "copy-element-link") return this.findApiController(options)?.copySelectedElementLink({ quiet: Boolean(options.quiet) }) || { ok: false, reason: "surface-not-found" };
     if (name === "paste") return this.pasteElementsApi(options);
     if (name === "insert-stroke" || name === "insert-element" || name === "insert-elements") return this.insertApiElements(options);
+    if (name === "create-elements") return this.insertApiElements(options);
+    if (name === "highlight-region") return this.insertSurfaceRegionApi("highlight", options);
+    if (name === "insert-ink") return this.insertSurfaceRegionApi("ink", options);
+    if (name === "focus-region") return this.focusSurfaceRegionApi(options.region || options, options);
+    if (name === "update-source" || name === "update-surface-source") return this.updateRegisteredSurfaceSourceApi(options.source, options);
     if (name === "insert-mind-map" || name === "insert-mindmap") return this.insertMindMapApi(options);
     if (name === "get-settings") return { ok: true, settings: { ...this.noteDrawSettings } };
     if (name === "update-settings") return this.updateApiSettings(options.patch || options.settings || {});
@@ -3157,6 +3179,114 @@ var NoteDrawPlugin = class extends Plugin {
       elementIds: inserted.map((index) => strokeElementId(controller.drawingData.strokes[index])),
       surface: this.describeController(controller)
     };
+  }
+  async insertSurfaceRegionApi(kind, options = {}) {
+    const controller = await this.getLoadedApiController(options);
+    if (!controller) {
+      return { ok: false, reason: "surface-not-found" };
+    }
+    const region = normalizeSurfaceRegion(options.region || options, {
+      width: controller.canvasWidth(),
+      height: controller.canvasHeight()
+    });
+    if (!region) {
+      return { ok: false, reason: "invalid-region" };
+    }
+    const points = normalizeSurfaceInkPoints(options.points, region, options.pointBasis);
+    const strokePoints = points.length >= 2
+      ? points
+      : kind === "highlight"
+        ? [
+          { x: region.x, y: region.y + region.height / 2 },
+          { x: region.x + region.width, y: region.y + region.height / 2 }
+        ]
+        : [
+          { x: region.x, y: region.y },
+          { x: region.x + region.width, y: region.y },
+          { x: region.x + region.width, y: region.y + region.height },
+          { x: region.x, y: region.y + region.height },
+          { x: region.x, y: region.y }
+        ];
+    const before = controller.captureDrawingHistorySnapshot();
+    const stroke = normalizeStroke({
+      elementId: createElementLayoutId(controller.drawingData.strokes.length),
+      brush: kind === "highlight" ? BRUSH_WATERCOLOR : BRUSH_PEN,
+      variant: kind === "highlight"
+        ? WATERCOLOR_VARIANT_STRAIGHT
+        : options.noteFlow === true ? PEN_VARIANT_NOTE : options.variant,
+      color: options.color || (kind === "highlight" ? "#fff176" : "#e53935"),
+      width: options.width ?? (kind === "highlight"
+        ? clamp(region.height * controller.canvasHeight() * 0.82, MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH)
+        : 3),
+      opacity: options.opacity ?? (kind === "highlight" ? 0.42 : DEFAULT_PEN_OPACITY),
+      noteFlow: options.noteFlow && typeof options.noteFlow === "object" ? options.noteFlow : null,
+      belowMarkdown: Boolean(options.noteFlow),
+      points: strokePoints.map((point, index) => ({ ...point, t: Date.now() + index }))
+    });
+    controller.drawingData.strokes.push(stroke);
+    const index = controller.drawingData.strokes.length - 1;
+    this.commitApiDrawingMutation(controller, before, [index]);
+    const surface = this.describeController(controller);
+    return {
+      ok: true,
+      kind,
+      region,
+      selected: [index],
+      elementIds: [strokeElementId(stroke)],
+      surface
+    };
+  }
+  async focusSurfaceRegionApi(regionInput, options = {}) {
+    const controller = this.findApiController(options);
+    if (!controller) {
+      return { ok: false, reason: "surface-not-found" };
+    }
+    const region = normalizeSurfaceRegion(regionInput, {
+      width: controller.canvasWidth(),
+      height: controller.canvasHeight()
+    });
+    if (!region) {
+      return { ok: false, reason: "invalid-region" };
+    }
+    const viewport = controller.registeredSurfaceViewport;
+    const focus = viewport?.focusRegion || viewport?.scrollToRegion;
+    if (typeof focus === "function") {
+      try {
+        await focus.call(viewport, region);
+        return { ok: true, region, surface: this.describeController(controller) };
+      } catch (error) {
+        return { ok: false, reason: "focus-region-failed", message: String(error?.message || error), region };
+      }
+    }
+    const scroller = controller.scrollContainer;
+    if (typeof scroller?.scrollTo === "function") {
+      scroller.scrollTo({ top: region.y * Math.max(1, scroller.scrollHeight), behavior: options.behavior || "smooth" });
+      return { ok: true, region, surface: this.describeController(controller) };
+    }
+    return { ok: false, reason: "focus-region-unsupported", region, surface: this.describeController(controller) };
+  }
+  async updateRegisteredSurfaceSourceApi(sourceInput, options = {}) {
+    const controller = this.findApiController(options);
+    const key = controller?.registeredSurfaceKey;
+    const record = key ? this.registeredSurfaceRecords.get(key) : null;
+    if (!controller || !record) {
+      return { ok: false, reason: "registered-surface-not-found" };
+    }
+    const source = normalizeRegisteredSurfaceSource(sourceInput || {}, { owner: record.owner, id: record.id });
+    if (!source.kind) {
+      return { ok: false, reason: "invalid-source" };
+    }
+    record.source = source;
+    controller.registeredSurfaceSource = source;
+    if (options.reload !== false) {
+      record.file = createRegisteredSurfaceDrawingFile(this.app, record);
+      await controller.setFile(record.file);
+    }
+    controller.scheduleLayoutRefresh({ settle: false });
+    controller.requestRender(true);
+    const surface = this.describeController(controller);
+    this.emitApiEvent("surface-changed", { ...surface, phase: "source" });
+    return { ok: true, source: { ...source }, surface };
   }
   copyElementsApi(options = {}) {
     const controller = this.findApiController(options);
@@ -5502,6 +5632,7 @@ var PreviewDrawingController = class {
     this.noteFlowSettledRowExtents = /* @__PURE__ */ new Map();
     this.noteFlowBlockSpacers = /* @__PURE__ */ new Map();
     this.noteFlowMarkdownAnnotationComplete = false;
+    this.noteFlowCandidateCache = null;
     this.noteFlowAvoidanceAnchors = /* @__PURE__ */ new Map();
     this.noteFlowLayoutSignature = "";
     this.frozenNoteFlowPreparation = null;
@@ -15181,21 +15312,135 @@ var PreviewDrawingController = class {
     }
     return findNoteFlowMarkdownBlockElement(element, this.previewEl) || element;
   }
+  isOwnedMarkdownGridRow(element) {
+    return Boolean(element?.classList?.contains("notedraw-md-grid-row"));
+  }
+  markdownGridRowSpan(row) {
+    return Array.from(row?.children || []).reduce((sum, child) => (
+      sum + clamp(Math.round(Number(child.dataset?.noteDrawGridSpan) || 12), 1, 12)
+    ), 0);
+  }
+  mutateMarkdownGridRows(callback) {
+    const observer = this.markdownRenderObserver;
+    observer?.disconnect?.();
+    try {
+      return callback();
+    } finally {
+      observer?.takeRecords?.();
+      if (observer && !this.destroyed && this.previewEl?.isConnected) {
+        observer.observe(this.previewEl, { subtree: true, childList: true });
+      }
+      this.noteFlowCandidateCache = null;
+    }
+  }
+  releaseMarkdownBlockGridRow(flowElement) {
+    const row = flowElement?.parentElement;
+    if (!this.isOwnedMarkdownGridRow(row) || !row.parentNode) {
+      return false;
+    }
+    this.mutateMarkdownGridRows(() => {
+      const parent = row.parentNode;
+      const children = Array.from(row.children || []);
+      const index = children.indexOf(flowElement);
+      const before = index >= 0 ? children.slice(0, index) : [];
+      const after = index >= 0 ? children.slice(index + 1) : [];
+      if (before.length) {
+        parent.insertBefore(flowElement, row.nextSibling);
+      } else {
+        parent.insertBefore(flowElement, row);
+      }
+      delete flowElement.dataset.noteDrawGridSpan;
+      if (after.length) {
+        const trailing = flowElement.ownerDocument.createElement("div");
+        trailing.className = "notedraw-md-grid notedraw-md-grid-row";
+        trailing.setAttribute("data-note-draw-grid-row", "true");
+        parent.insertBefore(trailing, flowElement.nextSibling);
+        for (const child of after) {
+          trailing.appendChild(child);
+        }
+      }
+      if (!before.length) {
+        row.remove();
+      }
+    });
+    return true;
+  }
+  ensureMarkdownBlockGridRow(block, element, options = {}) {
+    const flowElement = this.markdownBlockFlowElement(element);
+    const span = clamp(Math.round(Number(block?.span) || 12), 1, 12);
+    if (!flowElement?.isConnected) {
+      return null;
+    }
+    if (block?.floating || span >= 12) {
+      this.releaseMarkdownBlockGridRow(flowElement);
+      return null;
+    }
+    const current = flowElement.parentElement;
+    if (!current || !this.previewEl?.contains?.(current)) {
+      return null;
+    }
+    if (this.isOwnedMarkdownGridRow(current)) {
+      flowElement.dataset.noteDrawGridSpan = String(span);
+      return current;
+    }
+    if (!isNoteFlowCollectionBlock(current)) {
+      return current;
+    }
+    const previous = flowElement.previousElementSibling;
+    const next = flowElement.nextElementSibling;
+    const previousRow = this.isOwnedMarkdownGridRow(previous) && this.markdownGridRowSpan(previous) + span <= 12 ? previous : null;
+    const nextRow = this.isOwnedMarkdownGridRow(next) && this.markdownGridRowSpan(next) + span <= 12 ? next : null;
+    let row = previousRow || nextRow;
+    this.mutateMarkdownGridRows(() => {
+      if (!row) {
+        row = flowElement.ownerDocument.createElement("div");
+        row.className = "notedraw-md-grid notedraw-md-grid-row";
+        row.setAttribute("data-note-draw-grid-row", "true");
+        current.insertBefore(row, flowElement);
+        if (options.preview === true) {
+          this.dragNoteFlowDomPreview ||= { styles: /* @__PURE__ */ new Map(), classes: /* @__PURE__ */ new Map() };
+          this.dragNoteFlowDomPreview.createdRows ||= /* @__PURE__ */ new Set();
+          this.dragNoteFlowDomPreview.createdRows.add(row);
+        }
+      }
+      flowElement.dataset.noteDrawGridSpan = String(span);
+      if (row === nextRow) {
+        row.insertBefore(flowElement, row.firstChild);
+      } else {
+        row.appendChild(flowElement);
+      }
+    });
+    return row;
+  }
+  unwrapMarkdownGridRows(rows = this.previewEl?.querySelectorAll?.(".notedraw-md-grid-row") || []) {
+    this.mutateMarkdownGridRows(() => {
+      for (const row of Array.from(rows || [])) {
+        if (!this.isOwnedMarkdownGridRow(row) || !row.parentNode) {
+          continue;
+        }
+        const parent = row.parentNode;
+        for (const child of Array.from(row.children || [])) {
+          delete child.dataset.noteDrawGridSpan;
+          parent.insertBefore(child, row);
+        }
+        row.remove();
+      }
+    });
+  }
   markdownBlockGridContainer(element) {
     const flowElement = this.markdownBlockFlowElement(element);
     const container = flowElement?.parentElement;
     if (!container || !this.previewEl?.contains?.(container)) {
       return null;
     }
-    // Obsidian owns these collection containers, and its reading virtualizer
-    // uses their grid tracks for section placement. Applying NoteFlow's
-    // twelve-column grid here can inflate the whole document into a huge
-    // blank region. Horizontal packing is only safe inside a real block row.
+    // Never turn Obsidian's virtualized section/sizer into a grid. Top-level
+    // side-by-side blocks are placed in a small NoteDraw-owned row wrapper.
     return isNoteFlowCollectionBlock(container) ? null : container;
   }
   applyMarkdownBlockFlowPresentation(block, element) {
     const flowElement = this.markdownBlockFlowElement(element);
-    const gridContainer = this.markdownBlockGridContainer(element);
+    const gridContainer = this.ensureMarkdownBlockGridRow(block, element)
+      || this.markdownBlockGridContainer(element);
     element?.style?.removeProperty("grid-column");
     if (!flowElement) {
       return null;
@@ -15315,6 +15560,7 @@ var PreviewDrawingController = class {
     for (const parent of parents) {
       parent?.removeClass?.("notedraw-md-grid");
     }
+    this.unwrapMarkdownGridRows();
     this.markdownBlockElements?.clear?.();
   }
   clearMarkdownBlockElementPresentation(element) {
@@ -16511,6 +16757,9 @@ var PreviewDrawingController = class {
         restored.add(dragElement);
       }
     }
+    if (options.keepElements !== true && preview?.createdRows?.size) {
+      this.unwrapMarkdownGridRows(preview.createdRows);
+    }
     this.dragNoteFlowDomPreview = null;
     return Boolean(preview || restored.size);
   }
@@ -16554,6 +16803,9 @@ var PreviewDrawingController = class {
       state.domMarker?.remove?.();
       state.domMarker = null;
       state.preserveDomUntilCommit = false;
+    }
+    if (!committed && preview.createdRows?.size) {
+      this.unwrapMarkdownGridRows(preview.createdRows);
     }
     drop.domPreview = null;
     if (this.dragNoteFlowDomPreview === preview) {
@@ -16931,6 +17183,11 @@ var PreviewDrawingController = class {
     const target = isConcreteMarkdownBlockElement(rawTarget)
       ? rawTarget
       : findNoteFlowInlineMeasureElement(candidate.element);
+    const targetBlock = this.findMarkdownBlockRecordForElement(target);
+    const intendedSpan = drop?.row?.canFit ? drop.row.span : targetBlock?.span;
+    if (targetBlock && Number(intendedSpan) < 12) {
+      this.ensureMarkdownBlockGridRow({ ...targetBlock, span: intendedSpan }, target, { preview: true });
+    }
     const flowElement = this.markdownBlockFlowElement(target) || target;
     const parent = flowElement?.parentElement;
     const lane = this.dragContentLaneRect || this.layoutMeasureEl?.getBoundingClientRect?.();
@@ -16945,7 +17202,6 @@ var PreviewDrawingController = class {
       ? row.span
       : clamp(Math.floor(targetWidth / laneWidth * 12), 1, 10);
     this.setDraggedNoteFlowDomClass(parent, "notedraw-md-grid", true);
-    const targetBlock = this.findMarkdownBlockRecordForElement(target);
     const rowMemberIds = new Set([targetBlock?.id, ...(row?.memberIds || [])].filter(Boolean));
     for (const id of rowMemberIds) {
       const element = this.markdownBlockElements.get(id);
@@ -16965,6 +17221,10 @@ var PreviewDrawingController = class {
     const target = drop?.element;
     if (!moving.length || !target?.isConnected || moving.some((state) => state.element === target)) {
       return false;
+    }
+    const targetBlock = this.findMarkdownBlockRecordForElement(target);
+    if ((drop.side === "left" || drop.side === "right") && drop.row?.canFit && targetBlock) {
+      this.ensureMarkdownBlockGridRow({ ...targetBlock, span: drop.row.span }, target, { preview: true });
     }
     const targetFlow = this.markdownBlockFlowElement(target) || target;
     const parent = targetFlow?.parentNode;
@@ -16989,7 +17249,6 @@ var PreviewDrawingController = class {
       this.setDraggedNoteFlowDomStyle(dragElement, "grid-column", `span ${horizontal ? drop.row.span : 12}`);
     }
     if (horizontal) {
-      const targetBlock = this.findMarkdownBlockRecordForElement(target);
       this.setDraggedNoteFlowDomClass(parent, "notedraw-md-grid", true);
       const rowMemberIds = new Set([targetBlock?.id, ...(drop.row?.memberIds || [])].filter(Boolean));
       for (const id of rowMemberIds) {
@@ -18165,6 +18424,14 @@ var PreviewDrawingController = class {
     });
   }
   noteFlowCandidates() {
+    const cacheKey = [
+      this.layoutRefreshGeneration,
+      this.dragDropScrollKey(),
+      this.noteFlowMarkdownAnnotationComplete ? 1 : 0
+    ].join(":");
+    if (!this.draggingStroke && this.noteFlowCandidateCache?.key === cacheKey) {
+      return this.noteFlowCandidateCache.candidates;
+    }
     const grouped = /* @__PURE__ */ new Map();
     let order = 0;
     const sourceElements = new Set();
@@ -18192,11 +18459,19 @@ var PreviewDrawingController = class {
       const canonical = sourceElement.dataset.noteDrawLineMapped === "true";
       const exactOwnDataLine = Number.isFinite(sourceOwnLine)
         && sourceElement.dataset.noteDrawDataLineScope !== "ancestor";
-      if (!canonical && !exactOwnDataLine) {
+      const mappedStart = parseInteger(sourceElement.dataset.noteDrawLineStart);
+      const mappedEnd = parseInteger(sourceElement.dataset.noteDrawLineEnd) ?? mappedStart;
+      const mappedConfidence = Number(sourceElement.dataset.noteDrawLineConfidence);
+      const reliableOwnerRange = Number.isFinite(mappedStart)
+        && Number.isFinite(mappedEnd)
+        && mappedEnd >= mappedStart
+        && Number.isFinite(mappedConfidence)
+        && mappedConfidence > 0;
+      if (!canonical && !exactOwnDataLine && !reliableOwnerRange) {
         continue;
       }
-      let start = parseInteger(sourceElement.dataset.noteDrawLineStart);
-      let end = parseInteger(sourceElement.dataset.noteDrawLineEnd) ?? start;
+      let start = mappedStart;
+      let end = mappedEnd;
       if (inherited) {
         if (!Number.isFinite(blockOwnLine) || isNoteFlowCollectionBlock(element)) {
           continue;
@@ -18222,7 +18497,7 @@ var PreviewDrawingController = class {
         : element.querySelector?.("[data-note-draw-source-path]");
       const identityQuality = canonical
         ? 3
-        : exactOwnDataLine ? 2 : 1;
+        : exactOwnDataLine ? 2 : reliableOwnerRange ? 1.5 : 1;
       const path = normalizeVaultPath(
         annotatedPathElement?.dataset?.noteDrawSourcePath
         || resolveRenderedSourcePath(this.plugin.app, element, this.file?.path || "")
@@ -18294,15 +18569,13 @@ var PreviewDrawingController = class {
         candidate.start,
         candidate.end
       );
-      const visualLines = explicitLines.length > 1
-        ? explicitLines
-        : candidate.end > candidate.start
-          ? this.noteFlowVisualLineCandidates(paragraph, candidate.path, candidate.start, candidate.end)
-          : [];
-      if (visualLines.length <= 1) {
+      // Only real <br> nodes represent explicit rendered line breaks. DOM
+      // client rects also split ordinary CSS wrapping, which must remain one
+      // Markdown block regardless of viewport width or zoom.
+      if (explicitLines.length <= 1) {
         return [candidate];
       }
-      return visualLines.map((line, lineIndex) => ({
+      return explicitLines.map((line, lineIndex) => ({
         ...candidate,
         ...line,
         blockStart: line.start,
@@ -18313,10 +18586,10 @@ var PreviewDrawingController = class {
           blockStart: line.start,
           blockEnd: line.end
         }),
-        order: candidate.order + lineIndex / Math.max(2, visualLines.length + 1)
+        order: candidate.order + lineIndex / Math.max(2, explicitLines.length + 1)
       }));
     });
-    return candidates.filter((candidate) => {
+    const result = candidates.filter((candidate) => {
       return !candidates.some((other) => (
         other !== candidate
         && other.path === candidate.path
@@ -18325,6 +18598,10 @@ var PreviewDrawingController = class {
         && candidate.element.contains?.(other.element)
       ));
     }).sort((a, b) => a.top - b.top || a.bottom - b.bottom || a.order - b.order);
+    if (!this.draggingStroke) {
+      this.noteFlowCandidateCache = { key: cacheKey, candidates: result };
+    }
+    return result;
   }
   noteFlowTargetElement(anchor, side = anchor?.side, placementMode = "row") {
     const descriptor = anchor?.lineSpacer;
@@ -19595,6 +19872,7 @@ var PreviewDrawingController = class {
     return changed;
   }
   markNoteFlowLayoutMutation() {
+    this.noteFlowCandidateCache = null;
     this.noteFlowSuppressResizeUntil = Math.max(this.noteFlowSuppressResizeUntil, Date.now() + 180);
     if (!this.destroyed && this.resizeFrameId !== null && this.resizeNeedsLayout) {
       this.cancelResizeFrame();
@@ -19751,6 +20029,9 @@ var PreviewDrawingController = class {
         shrinkToFit: movedItem,
         placementMode,
         rowKey: noteFlowPlacementRowKey({ path, line, side, blockStart, blockEnd, placementMode }),
+        overlapGroup: isNoteFlowInkStroke(stroke)
+          ? `ink:${noteFlowPlacementRowKey({ path, line, side, blockStart, blockEnd, placementMode })}`
+          : "",
         anchor,
         align: "top",
         gap: Math.min(8, noteFlow.gap)
@@ -22614,7 +22895,9 @@ function normalizeRegisteredSurfaceOptions(app, options = {}) {
     path: options.path || options.file?.path,
     url: options.url,
     key: options.sourceKey,
-    title: options.title
+    title: options.title,
+    format: options.format,
+    mediaType: options.mediaType
   }, { owner, id });
   const source = normalizedSource.kind ? normalizedSource : {
     kind: "virtual",
@@ -22639,7 +22922,7 @@ function normalizeRegisteredSurfaceSource(source = {}, fallback = {}) {
   if (!source || typeof source !== "object") {
     return {};
   }
-  const hasSource = Boolean(source.kind || source.path || source.file?.path || source.url || source.href || source.key || source.title);
+  const hasSource = Boolean(source.kind || source.path || source.file?.path || source.url || source.href || source.key || source.title || source.format || source.mediaType);
   if (!hasSource) {
     return {};
   }
@@ -22647,7 +22930,9 @@ function normalizeRegisteredSurfaceSource(source = {}, fallback = {}) {
   const normalizedKind = ["vault", "url", "virtual"].includes(kind) ? kind : "virtual";
   const result = {
     kind: normalizedKind,
-    title: String(source.title || source.name || fallback.id || "").trim()
+    title: String(source.title || source.name || fallback.id || "").trim(),
+    format: normalizeRegisteredSurfaceFormat(source.format || source.type || source.extension || source.mediaType),
+    mediaType: String(source.mediaType || source.mime || "").trim().toLowerCase()
   };
   if (normalizedKind === "vault") {
     result.path = normalizeVaultPath(source.path || source.file?.path || source.key || "");
@@ -22660,12 +22945,89 @@ function normalizeRegisteredSurfaceSource(source = {}, fallback = {}) {
   }
   return result;
 }
+function normalizeRegisteredSurfaceFormat(value) {
+  const format = String(value || "").trim().toLowerCase().replace(/^\./, "");
+  const aliases = {
+    htm: "html",
+    webpage: "web",
+    website: "web",
+    msword: "docx",
+    spreadsheet: "xlsx",
+    presentation: "pptx"
+  };
+  return aliases[format] || (["html", "docx", "xlsx", "pptx", "pdf", "web"].includes(format) ? format : "");
+}
+function normalizeSurfaceRegion(value = {}, surface = {}) {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const basis = String(value.basis || value.coordinateBasis || "surface-normalized").trim().toLowerCase();
+  const pixelBasis = ["pixel", "pixels", "surface-pixel", "surface-pixels"].includes(basis);
+  const surfaceWidth = Math.max(1, Number(surface.width) || 1);
+  const surfaceHeight = Math.max(1, Number(surface.height) || 1);
+  let x = Number(value.x ?? value.left);
+  let y = Number(value.y ?? value.top);
+  let width = Number(value.width);
+  let height = Number(value.height);
+  if (!Number.isFinite(width) && Number.isFinite(Number(value.right)) && Number.isFinite(x)) {
+    width = Number(value.right) - x;
+  }
+  if (!Number.isFinite(height) && Number.isFinite(Number(value.bottom)) && Number.isFinite(y)) {
+    height = Number(value.bottom) - y;
+  }
+  if (![x, y, width, height].every(Number.isFinite) || width <= 0 || height <= 0) {
+    return null;
+  }
+  if (pixelBasis) {
+    x /= surfaceWidth;
+    width /= surfaceWidth;
+    y /= surfaceHeight;
+    height /= surfaceHeight;
+  }
+  const left = clamp(x, 0, 1);
+  const top = clamp(y, 0, 1);
+  const right = clamp(x + width, left, 1);
+  const bottom = clamp(y + height, top, 1);
+  if (right - left <= 0 || bottom - top <= 0) {
+    return null;
+  }
+  const region = {
+    basis: "surface-normalized",
+    x: left,
+    y: top,
+    width: right - left,
+    height: bottom - top
+  };
+  for (const key of ["page", "slide", "sheet", "frame", "layer", "range", "sourceId"]) {
+    if (value[key] !== void 0 && value[key] !== null && value[key] !== "") {
+      region[key] = value[key];
+    }
+  }
+  return region;
+}
+function normalizeSurfaceInkPoints(points, region, pointBasis = "surface-normalized") {
+  const basis = String(pointBasis || "surface-normalized").trim().toLowerCase();
+  return (Array.isArray(points) ? points : []).map((point) => {
+    let x = Number(point?.x);
+    let y = Number(point?.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      return null;
+    }
+    if (["region", "region-normalized", "local"].includes(basis)) {
+      x = region.x + clamp(x, 0, 1) * region.width;
+      y = region.y + clamp(y, 0, 1) * region.height;
+    }
+    return { x: clamp(x, 0, 1), y: clamp(y, 0, 1) };
+  }).filter(Boolean);
+}
 function normalizeRegisteredSurfaceCapabilities(capabilities = {}) {
   return {
     drawing: capabilities.drawing !== false,
     textEditing: capabilities.textEditing !== false,
     elements: capabilities.elements !== false,
-    attachments: capabilities.attachments !== false
+    attachments: capabilities.attachments !== false,
+    regionEditing: capabilities.regionEditing !== false,
+    sourceUpdates: capabilities.sourceUpdates !== false
   };
 }
 function createRegisteredSurfaceDrawingFile(app, record) {
@@ -22690,7 +23052,7 @@ function createRegisteredSurfaceDrawingFile(app, record) {
 }
 function registeredSurfaceStoragePath(record) {
   const source = record.source || {};
-  const identity = [record.owner, record.id, source.kind, source.path, source.url, source.key, source.title].filter(Boolean).join("|") || `${record.owner}|${record.id}`;
+  const identity = [record.owner, record.id, source.kind, source.path, source.url, source.key, source.title, source.format, source.mediaType].filter(Boolean).join("|") || `${record.owner}|${record.id}`;
   const owner = safeStorageName(record.owner || "external");
   const label = safeStorageName(source.title || source.url || source.path || source.key || record.id || "surface");
   return `${REGISTERED_SURFACE_PREFIX}/${owner}/${label}__${hashString(identity)}.md`;
@@ -23311,6 +23673,17 @@ function cleanupOrphanedNoteFlowLayout(preview) {
 }
 function cleanupDrawingUi(preview) {
   cleanupOrphanedNoteFlowLayout(preview);
+  for (const row of preview.querySelectorAll?.(".notedraw-md-grid-row") || []) {
+    const parent = row.parentNode;
+    if (!parent) {
+      continue;
+    }
+    for (const child of Array.from(row.children || [])) {
+      delete child.dataset.noteDrawGridSpan;
+      parent.insertBefore(child, row);
+    }
+    row.remove();
+  }
   preview.querySelectorAll(".notedraw-button, .notedraw-fallback-button, .notedraw-webview-button, .notedraw-toolbar, .notedraw-palette-panel, .notedraw-brush-panel, .notedraw-text-panel, .notedraw-selection-menu, .notedraw-format-toolbar, .notedraw-reading-zoom-extent, .notedraw-reading-bottom-spacer, .notedraw-embed-layer, .notedraw-underlay-embed-layer, .notedraw-note-flow-line-spacer, .notedraw-note-flow-block-spacer, .notedraw-file-input, .notedraw-underlay-canvas, .notedraw-static-canvas, .notedraw-canvas").forEach((element) => element.remove());
   preview.classList.remove("notedraw-shell", "is-drawing-active", "is-drawing-hidden", "is-select-mode", "is-palette-open", "is-brush-panel-open", "is-text-panel-open", "is-selection-menu-open", "is-watercolor-mode", "is-edit-md-mode", "is-selecting-strokes", "is-resizing-selection", "is-native-text-editing", "is-reading-zoomed", "is-editing-layout-zoomed", "is-notedraw-webview-shell", "is-notedraw-workspace-shell", "is-notedraw-embedded-shell", "is-notedraw-registered-shell", "is-notedraw-responsive-layout", "is-notedraw-controls-visible", "has-notedraw-body-controls", "has-notedraw-canvas");
   for (const property of [
@@ -24201,6 +24574,11 @@ function strokeElementId(stroke) {
 }
 function isConnectorStroke(stroke) {
   return Boolean(normalizeConnector(stroke?.connector));
+}
+function isNoteFlowInkStroke(stroke) {
+  return stroke?.brush === BRUSH_PEN
+    && normalizeBrushVariant(BRUSH_PEN, stroke?.variant) === PEN_VARIANT_NOTE
+    && Boolean(normalizeNoteFlow(stroke?.noteFlow));
 }
 function isButtonLikeStroke(stroke) {
   return stroke?.uiRole === "button" || Boolean(normalizeButtonStyle(stroke?.buttonStyle));
