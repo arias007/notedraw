@@ -42,7 +42,9 @@ export function resolveMultiTouchGestureMode({
   initialDistance = 0,
   distance = 0,
   minimumDistanceChange = 8,
-  minimumScaleChange = 0.04
+  minimumScaleChange = 0.04,
+  centerMovement = 0,
+  minimumPinchDominance = 1.25
 } = {}) {
   if (mode === "pinch") {
     return "pinch";
@@ -56,7 +58,13 @@ export function resolveMultiTouchGestureMode({
     Math.max(0, finite(minimumDistanceChange, 8)),
     initial * Math.max(0, finite(minimumScaleChange, 0.04))
   );
-  return Math.abs(current - initial) >= threshold ? "pinch" : "pan";
+  const distanceChange = Math.abs(current - initial);
+  if (distanceChange < threshold) {
+    return "pan";
+  }
+  const translation = Math.max(0, finite(centerMovement));
+  const dominance = Math.max(1, finite(minimumPinchDominance, 1.25));
+  return translation > 0 && translation >= distanceChange * dominance ? "pan" : "pinch";
 }
 
 export function calculateReadingZoomMargin(baseMargin, targetHeight, zoom) {

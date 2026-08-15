@@ -451,7 +451,7 @@ test("selection tool previews and commits exact NoteFlow Markdown insertion targ
   assert.doesNotMatch(dropSource, /flowTarget\.classList\.add\(`notedraw-text-sort-target-/);
   assert.doesNotMatch(dropSource, /applyElementStyles\(indicator/);
   assert.match(dropSource, /snapDraggedSelectionToNoteFlowPlacement[\s\S]*draggedNoteFlowClientBounds\(\)[\s\S]*const targetClientX = leftSnap[\s\S]*placement\.inlineBoundary[\s\S]*dragNoteFlowPlacementClientDelta/);
-  assert.match(dragSource, /this\.usesDraggedNoteFlowPlacement\(\)[\s\S]*this\.queueDraggedNoteFlowPlacement\(event\.clientX, event\.clientY\)[\s\S]*this\.queueDraggedNoteFlowRefresh/);
+  assert.match(dragSource, /const dragUsesNoteFlowPlacement = this\.usesDraggedNoteFlowPlacement\(\)[\s\S]*const dragEvent = dragUsesNoteFlowPlacement \? this\.smoothDraggedClientEvent\(event\) : event[\s\S]*this\.queueDraggedNoteFlowPlacement\(dragEvent\.clientX, dragEvent\.clientY\)[\s\S]*this\.queueDraggedNoteFlowRefresh/);
   assert.match(finishSource, /requestedDropPlacement[\s\S]*this\.resolveDraggedNoteFlowPlacement[\s\S]*this\.snapDraggedSelectionToNoteFlowPlacement[\s\S]*preserveBoxGeometry:[\s\S]*scheduleNoteFlowLayout\(\{ operation: true, defer: true \}\)/);
   assert.doesNotMatch(finishSource, /this\.clearNoteFlowLayout\(\)/);
   assert.doesNotMatch(finishSource.slice(0, finishSource.indexOf("this.snapDraggedSelectionToNoteFlowPlacement")), /this\.clearNoteFlowLayout\(\)/);

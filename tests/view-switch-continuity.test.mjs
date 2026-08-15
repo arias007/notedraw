@@ -58,6 +58,16 @@ test("opening the magic wand reveals drawings while long press and right click t
   assert.match(source, /controller\.applyDrawingsVisibility\(controller\.drawingData\.visible !== false\)/);
 });
 
+test("rebinding the same file rehydrates a controller that mounted before drawing data finished loading", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const setFileStart = source.indexOf("  async setFile(file) {");
+  const setFileSource = source.slice(setFileStart, source.indexOf("  resetCanvasSurface()", setFileStart));
+
+  assert.match(setFileSource, /if \(this\.file\?\.path === file\.path\) \{/);
+  assert.match(setFileSource, /if \(!this\.drawingsLoaded\) \{\s*await this\.ensureDrawingsLoaded\(\)/);
+  assert.match(setFileSource, /this\.requestRender\(true\)/);
+});
+
 test("element migration waits for a stable note lane instead of transition geometry", async () => {
   const source = await readFile(sourceUrl, "utf8");
 

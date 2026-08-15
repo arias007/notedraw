@@ -65,7 +65,7 @@ test("reading zoom preserves wrapping while edit zoom can reflow", async () => {
   assert.match(source, /var MAX_READING_ZOOM = 100;/);
   assert.match(source, /setZoom: \(zoom, options = \{\}\) => this\.setApiZoom\(zoom, options\)/);
   assert.match(source, /if \(\(event\.ctrlKey \|\| event\.metaKey\) && this\.canZoomReadingSurface\(\)\)/);
-  assert.match(source, /nextZoom = this\.readingZoom \* distance \/ previousDistance/);
+  assert.match(source, /const rawRatio = distance \/ previousDistance[\s\S]*const ratioDelta = rawRatio - 1[\s\S]*const dampedRatio = 1 \+ clamp\(ratioDelta \* 0\.42/);
   assert.match(source, /calculatePinchPanScroll\(\{[\s\S]*previousCenter,[\s\S]*nextCenter,[\s\S]*zoomRatio: ratio/);
   assert.match(source, /originX: origin\.x,[\s\S]*originY: origin\.y/);
   assert.match(source, /handleMultiTouchScroll\(event\)[\s\S]*window\.requestAnimationFrame/);
@@ -389,7 +389,7 @@ test("dragged inserted note elements use stable drop placement or frame-batched 
   const moveSource = dragSource.slice(dragSource.indexOf("  moveSelectedStroke("), dragSource.indexOf("  finishSelectedStrokeDrag("));
 
   assert.match(dragSource, /this\.dragStrokeOriginalNoteFlows = new Map/);
-  assert.match(moveSource, /if \(this\.usesDraggedNoteFlowPlacement\(\)\) \{\s*this\.queueDraggedNoteFlowPlacement\(event\.clientX, event\.clientY\);\s*} else \{[\s\S]*this\.queueDraggedNoteFlowRefresh\(strokeIndexes\)/);
+  assert.match(moveSource, /const dragUsesNoteFlowPlacement = this\.usesDraggedNoteFlowPlacement\(\)[\s\S]*const dragEvent = dragUsesNoteFlowPlacement \? this\.smoothDraggedClientEvent\(event\) : event[\s\S]*if \(this\.usesDraggedNoteFlowPlacement\(\)\) \{\s*this\.queueDraggedNoteFlowPlacement\(dragEvent\.clientX, dragEvent\.clientY\);\s*} else \{[\s\S]*this\.queueDraggedNoteFlowRefresh\(strokeIndexes\)/);
   assert.doesNotMatch(moveSource, /captureNoteFlowAnchor|scheduleDrawingSave/);
   assert.match(refreshSource, /this\.pendingDraggedNoteFlowIndexes\.add\(index\)/);
   assert.match(refreshSource, /refreshDraggedNoteFlowAnchors\(\)/);

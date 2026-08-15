@@ -221,6 +221,8 @@ var WATERCOLOR_VARIANT_TEXT = "text-highlight";
 var WATERCOLOR_VARIANT_STRAIGHT = "straight";
 var MIN_READING_ZOOM = 0.6;
 var MAX_READING_ZOOM = 100;
+var DRAG_PREVIEW_LERP = 0.42;
+var DRAG_PEER_ANIMATION_MS = 150;
 var TEXT_RENDER_PLAIN = "plain";
 var TEXT_RENDER_MARKDOWN = "markdown";
 var TEXT_RENDER_HTML = "html";
@@ -5406,6 +5408,9 @@ var PreviewDrawingController = class {
     this.dragHasBoxBackground = false;
     this.dragLastPointerEvent = null;
     this.dragLastPointerKey = "";
+    this.dragPreviewClientX = null;
+    this.dragPreviewClientY = null;
+    this.dragNoteFlowPeerAnimationTimers = /* @__PURE__ */ new Map();
     this.dragNoteFlowDropFrameId = null;
     this.dragNoteFlowDropClientX = null;
     this.dragNoteFlowDropClientY = null;
@@ -6066,7 +6071,19 @@ var PreviewDrawingController = class {
     return this.plugin.installHeaderButton(this);
   }
   async setFile(file) {
-    if (this.destroyed || !file || this.file?.path === file.path) {
+    if (this.destroyed || !file) {
+      return;
+    }
+    if (this.file?.path === file.path) {
+      // A preview can be rebound while its controller is still mounting. The
+      // old early return left that controller with an empty surface forever.
+      if (!this.drawingsLoaded) {
+        await this.ensureDrawingsLoaded();
+      } else if (this.previewEl?.isConnected) {
+        this.repairConnectedReadingSections();
+        this.scheduleResize({ layout: false, measure: true });
+        this.requestRender(true);
+      }
       return;
     }
     this.endTextEdit();
@@ -6077,6 +6094,7 @@ var PreviewDrawingController = class {
     this.frozenNoteFlowPreparation = null;
     this.noteFlowMarkdownAnnotationComplete = false;
     this.restoreDraggedNoteFlowLivePreview();
+    this.clearNoteFlowPeerAnimations();
     this.clearDraggedMarkdownDomMarkers();
     this.clearDraggedNoteFlowPlacement();
     this.clearNoteFlowLayout();
@@ -6213,6 +6231,7 @@ var PreviewDrawingController = class {
       this.endFloatingTextInput(true);
     }
     this.restoreDraggedNoteFlowLivePreview();
+    this.clearNoteFlowPeerAnimations();
     this.clearDraggedMarkdownDomMarkers();
     this.clearDraggedNoteFlowPlacement();
     this.destroyed = true;
@@ -11569,11 +11588,20 @@ var PreviewDrawingController = class {
     this.multiTouchGestureMode = resolveMultiTouchGestureMode({
       mode: this.multiTouchGestureMode,
       initialDistance: this.multiTouchInitialDistance,
-      distance
+      distance,
+      centerMovement: pointerDistance(previous, center),
+      minimumDistanceChange: 12,
+      minimumScaleChange: 0.06,
+      minimumPinchDominance: 1.35
     });
     if (this.canZoomReadingSurface() && this.multiTouchGestureMode === "pinch" && distance && previousDistance) {
-      this.multiTouchPinching = true;
-      nextZoom = this.readingZoom * distance / previousDistance;
+      const rawRatio = distance / previousDistance;
+      const ratioDelta = rawRatio - 1;
+      if (Math.abs(ratioDelta) >= 0.012) {
+        this.multiTouchPinching = true;
+        const dampedRatio = 1 + clamp(ratioDelta * 0.42, -0.12, 0.12);
+        nextZoom = this.readingZoom * dampedRatio;
+      }
     }
     this.setReadingZoom(nextZoom, center, {
       previousClientPoint: previous,
@@ -11802,6 +11830,7 @@ var PreviewDrawingController = class {
     ) && this.markdownBlockElement(block));
     this.dragMarkdownTextCommit = this.endTextEdit();
     this.restoreDraggedNoteFlowLivePreview();
+    this.clearNoteFlowPeerAnimations();
     this.clearDraggedMarkdownDomMarkers();
     this.clearDraggedNoteFlowPlacement();
     this.cancelMarkdownBlockDropFrame();
@@ -11935,6 +11964,8 @@ var PreviewDrawingController = class {
     this.dragNoteFlowPreviewElementIds.clear();
     this.dragNoteFlowPlacementClientDelta = null;
     this.dragNoteFlowDomPreview = null;
+    this.dragPreviewClientX = null;
+    this.dragPreviewClientY = null;
     this.dragDrawingHistoryBefore = this.captureDrawingHistorySnapshot();
     this.dragStrokeOriginalBounds = this.getStrokeIndexesNormalizedBounds(movableIndexes);
     this.dragElementGroupBounds = new Map(this.elementGroupRecords().filter((group) => group.boxed || group.locked).map((group) => [group.id, this.getElementGroupBounds(group.id)]));
@@ -11946,6 +11977,8 @@ var PreviewDrawingController = class {
     this.pointerStartClient = { x: event.clientX, y: event.clientY };
     this.dragStrokePointerGeometry = this.captureCanvasPointerGeometry();
     this.activePointerId = event.pointerId;
+    this.dragPreviewClientX = event.clientX;
+    this.dragPreviewClientY = event.clientY;
     this.previewEl.addClass("is-moving-selection");
     for (const state of this.dragMarkdownOriginalElements.values()) {
       state.dragElement?.addClass?.("is-notedraw-md-dragging");
@@ -12733,8 +12766,9 @@ var PreviewDrawingController = class {
     }
     this.dragLastPointerEvent = event;
     this.dragLastPointerKey = pointerKey;
-    this.restoreDraggedNoteFlowLivePreview();
-    const point = this.dragEventToPoint(event);
+    const dragUsesNoteFlowPlacement = this.usesDraggedNoteFlowPlacement();
+    const dragEvent = dragUsesNoteFlowPlacement ? this.smoothDraggedClientEvent(event) : event;
+    const point = this.dragEventToPoint(dragEvent);
     const originalPointBounds = this.dragStrokeOriginalPointBounds;
     const minX = originalPointBounds?.minX ?? 0;
     const maxX = originalPointBounds?.maxX ?? 1;
@@ -12796,15 +12830,15 @@ var PreviewDrawingController = class {
     this.dragNoteFlowPlacementClientDelta = null;
     const localScaleX = canvasRect?.width > 0 ? canvasRect.width / Math.max(1, this.canvasWidth()) : 1;
     const localScaleY = canvasRect?.height > 0 ? canvasRect.height / Math.max(1, this.canvasRenderHeight) : 1;
-    const rawClientDx = event.clientX - this.pointerStartClient.x;
+    const rawClientDx = dragEvent.clientX - this.pointerStartClient.x;
     const minimumClientDx = this.dragMarkdownOriginalClientBounds && laneRect
       ? laneRect.left - this.dragMarkdownOriginalClientBounds.left
       : Number.NEGATIVE_INFINITY;
     const boundedClientDx = Math.max(rawClientDx, minimumClientDx);
     this.dragMarkdownClientDeltaX = Number.isFinite(boundedClientDx) ? boundedClientDx : rawClientDx;
     const clientDx = this.dragMarkdownClientDeltaX / Math.max(0.0001, localScaleX);
-    const clientDy = (event.clientY - this.pointerStartClient.y) / Math.max(0.0001, localScaleY);
-    this.dragMarkdownClientDeltaY = event.clientY - this.pointerStartClient.y;
+    const clientDy = (dragEvent.clientY - this.pointerStartClient.y) / Math.max(0.0001, localScaleY);
+    this.dragMarkdownClientDeltaY = dragEvent.clientY - this.pointerStartClient.y;
     const usesNoteFlowPlacement = this.usesDraggedNoteFlowPlacement();
     for (const state of this.dragMarkdownOriginalElements?.values?.() || []) {
       // Only floating blocks follow the pointer through the CSS translate.
@@ -12828,7 +12862,7 @@ var PreviewDrawingController = class {
       }
     }
     if (this.usesDraggedNoteFlowPlacement()) {
-      this.queueDraggedNoteFlowPlacement(event.clientX, event.clientY);
+      this.queueDraggedNoteFlowPlacement(dragEvent.clientX, dragEvent.clientY);
     } else {
       if (this.dragMarkdownOriginalElements?.size) {
         this.queueMarkdownBlockDropTarget(event.clientX, event.clientY);
@@ -12840,6 +12874,25 @@ var PreviewDrawingController = class {
     }
     event.preventDefault();
     event.stopPropagation();
+  }
+  smoothDraggedClientEvent(event) {
+    if (!this.pointerStartClient || !Number.isFinite(Number(event?.clientX)) || !Number.isFinite(Number(event?.clientY))) {
+      return event;
+    }
+    const rawX = Number(event.clientX);
+    const rawY = Number(event.clientY);
+    if (!Number.isFinite(this.dragPreviewClientX) || !Number.isFinite(this.dragPreviewClientY)) {
+      this.dragPreviewClientX = rawX;
+      this.dragPreviewClientY = rawY;
+    } else {
+      this.dragPreviewClientX += (rawX - this.dragPreviewClientX) * DRAG_PREVIEW_LERP;
+      this.dragPreviewClientY += (rawY - this.dragPreviewClientY) * DRAG_PREVIEW_LERP;
+    }
+    return {
+      ...event,
+      clientX: this.dragPreviewClientX,
+      clientY: this.dragPreviewClientY
+    };
   }
   finishSelectedStrokeDrag(event) {
     this.clearSelectionLongPress();
@@ -13171,6 +13224,8 @@ var PreviewDrawingController = class {
     this.dragHasBoxBackground = false;
     this.dragLastPointerEvent = null;
     this.dragLastPointerKey = "";
+    this.dragPreviewClientX = null;
+    this.dragPreviewClientY = null;
     this.dragMarkdownLastValidDrop = null;
     this.clearMarkdownBlockDropTarget();
     this.dragDrawingHistoryBefore = null;
@@ -16124,6 +16179,78 @@ var PreviewDrawingController = class {
       classes.set(className, element.classList.contains(className));
     }
   }
+  captureNoteFlowPeerRects() {
+    const movingElements = new Set(Array.from(this.dragMarkdownOriginalElements?.values?.() || []).map((state) => state.dragElement || state.element));
+    const rects = new Map();
+    for (const [id, element] of this.markdownBlockElements || []) {
+      const block = this.markdownBlockById?.(id) || this.markdownBlockRecords().find((record) => record.id === id);
+      const flowElement = this.markdownBlockFlowElement(element) || element;
+      if (!flowElement?.isConnected || movingElements.has(flowElement) || block?.floating || flowElement.classList?.contains("is-notedraw-md-dragging")) {
+        continue;
+      }
+      const rect = flowElement.getBoundingClientRect?.();
+      if (!rect || rect.width <= 1 || rect.height <= 1) {
+        continue;
+      }
+      rects.set(flowElement, { left: rect.left, top: rect.top });
+    }
+    return rects;
+  }
+  clearNoteFlowPeerAnimations() {
+    for (const [element, timer] of this.dragNoteFlowPeerAnimationTimers || []) {
+      if (timer !== null) {
+        window.clearTimeout(timer);
+      }
+      element.classList?.remove("notedraw-note-flow-peer-animating");
+      element.style?.removeProperty("--notedraw-note-flow-peer-x");
+      element.style?.removeProperty("--notedraw-note-flow-peer-y");
+    }
+    this.dragNoteFlowPeerAnimationTimers?.clear?.();
+  }
+  animateNoteFlowPeerShifts(beforeRects) {
+    if (!beforeRects?.size) {
+      return;
+    }
+    this.clearNoteFlowPeerAnimations();
+    const changed = [];
+    for (const [element, before] of beforeRects) {
+      if (!element?.isConnected || element.classList?.contains("is-notedraw-md-dragging") || element.classList?.contains("is-floating")) {
+        continue;
+      }
+      const after = element.getBoundingClientRect?.();
+      if (!after || after.width <= 1 || after.height <= 1) {
+        continue;
+      }
+      const x = before.left - after.left;
+      const y = before.top - after.top;
+      if (Math.hypot(x, y) < 1) {
+        continue;
+      }
+      element.classList.add("notedraw-note-flow-peer-animating");
+      element.style.setProperty("--notedraw-note-flow-peer-x", `${Math.round(x)}px`);
+      element.style.setProperty("--notedraw-note-flow-peer-y", `${Math.round(y)}px`);
+      changed.push(element);
+    }
+    if (!changed.length) {
+      return;
+    }
+    window.requestAnimationFrame?.(() => {
+      for (const element of changed) {
+        if (!element?.isConnected) {
+          continue;
+        }
+        element.style.setProperty("--notedraw-note-flow-peer-x", "0px");
+        element.style.setProperty("--notedraw-note-flow-peer-y", "0px");
+        const timer = window.setTimeout(() => {
+          element.classList.remove("notedraw-note-flow-peer-animating");
+          element.style.removeProperty("--notedraw-note-flow-peer-x");
+          element.style.removeProperty("--notedraw-note-flow-peer-y");
+          this.dragNoteFlowPeerAnimationTimers.delete(element);
+        }, DRAG_PEER_ANIMATION_MS);
+        this.dragNoteFlowPeerAnimationTimers.set(element, timer);
+      }
+    });
+  }
   setDraggedNoteFlowDomStyle(element, property, value, priority = "") {
     if (!element?.style) {
       return;
@@ -16731,6 +16858,7 @@ var PreviewDrawingController = class {
         || previousApplied.line !== placement.line
       )
     );
+    const peerRects = previewStructureChanged ? this.captureNoteFlowPeerRects() : null;
     if (previewStructureChanged && options.skipRestore === true) {
       this.restoreDraggedNoteFlowDomPreview({ keepElements: true });
       this.restoreDraggedNoteFlowReservationStyles();
@@ -16745,6 +16873,9 @@ var PreviewDrawingController = class {
     const drop = options.drop || this.syncMarkdownDropFromNoteFlowPlacement(resolved);
     this.applyDraggedNoteFlowAnchorDomPreview(resolved, drop);
     const markdownDomPreview = this.applyDraggedMarkdownDomPreview(drop);
+    if (peerRects && markdownDomPreview) {
+      this.animateNoteFlowPeerShifts(peerRects);
+    }
     const liveResolved = resolved;
     this.snapDraggedSelectionToNoteFlowPlacement(liveResolved, movedIndexes);
     const previewCandidates = this.dragDropGeometrySnapshot()?.noteFlowCandidates

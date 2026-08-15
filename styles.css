@@ -706,6 +706,14 @@
   opacity: 0.84;
 }
 
+.notedraw-md-block.notedraw-note-flow-peer-animating {
+  transform: translate(
+    var(--notedraw-note-flow-peer-x, 0px),
+    var(--notedraw-note-flow-peer-y, 0px)
+  );
+  transition: transform 150ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
 .notedraw-clear-md-background {
   width: 28px;
   height: 28px;

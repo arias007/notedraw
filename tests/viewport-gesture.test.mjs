@@ -91,6 +91,17 @@ test("ordinary two-finger movement stays pan despite small distance jitter", () 
   }), "pan");
 });
 
+test("two-finger translation stays pan when center movement dominates distance drift", () => {
+  assert.equal(resolveMultiTouchGestureMode({
+    initialDistance: 180,
+    distance: 196,
+    centerMovement: 48,
+    minimumDistanceChange: 12,
+    minimumScaleChange: 0.06,
+    minimumPinchDominance: 1.35
+  }), "pan");
+});
+
 test("a deliberate pinch crosses both the absolute and relative threshold", () => {
   assert.equal(resolveMultiTouchGestureMode({
     initialDistance: 180,
