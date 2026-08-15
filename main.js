@@ -15645,7 +15645,14 @@ ${selected}
       const bounds = this.markdownElementVisibleClientRect(element);
       return bounds && bounds.width > 1 && bounds.height > 1 ? { element, rect: { left: bounds.left, right: bounds.right, top: bounds.top, bottom: bounds.bottom, width: bounds.width, height: bounds.height } } : null;
     }).filter(Boolean);
-    const noteFlowCandidates = this.noteFlowCandidates();
+    const noteFlowCandidates = this.noteFlowCandidates().filter((candidate) => {
+      const candidateElements = [
+        candidate?.element,
+        candidate?.sourceElement,
+        candidate?.inlineElement
+      ].filter(Boolean);
+      return !candidateElements.some((candidateElement) => movingElements.has(candidateElement) || Array.from(movingElements).some((moving) => moving.contains?.(candidateElement) || candidateElement.contains?.(moving)));
+    });
     const markdownCandidateByElement = new Map(markdownCandidates.map((entry) => [entry.element, entry]));
     const markdownBlockRecords = new Map(this.markdownBlockRecords().map((item) => [item.id, item]));
     const snapshot = {
@@ -16227,9 +16234,6 @@ ${selected}
     const dragUsesNoteFlowPlacement = this.usesDraggedNoteFlowPlacement();
     const coalescedEvents = event.getCoalescedEvents?.() || [];
     const dragEvent = coalescedEvents[coalescedEvents.length - 1] || event;
-    if (dragUsesNoteFlowPlacement) {
-      this.restoreDraggedNoteFlowLivePreview();
-    }
     const point = this.dragEventToPoint(dragEvent);
     const originalPointBounds = this.dragStrokeOriginalPointBounds;
     const minX = originalPointBounds?.minX ?? 0;
@@ -20079,12 +20083,12 @@ ${selected}
     const previewStructureChanged = Boolean(
       previousApplied?.candidate && placement?.candidate && (previousApplied.candidate.sourceElement || previousApplied.candidate.element) !== (placement.candidate.sourceElement || placement.candidate.element)
     ) || Boolean(
-      previousApplied && placement && (previousApplied.horizontalSide !== placement.horizontalSide || previousApplied.side !== placement.side || previousApplied.leftSnap !== placement.leftSnap || previousApplied.line !== placement.line)
+      previousApplied && placement && (previousApplied.horizontalSide !== placement.horizontalSide || previousApplied.side !== placement.side || previousApplied.leftSnap !== placement.leftSnap || previousApplied.line !== placement.line || previousApplied.flowOrder !== placement.flowOrder)
     );
+    const reuseAppliedPreview = options.skipRestore === true && Boolean(previousApplied) && !previewStructureChanged;
     const peerRects = previewStructureChanged ? this.captureNoteFlowPeerRects() : null;
     if (previewStructureChanged && options.skipRestore === true) {
-      this.restoreDraggedNoteFlowDomPreview({ keepElements: true });
-      this.restoreDraggedNoteFlowReservationStyles();
+      this.restoreDraggedNoteFlowLivePreview();
     } else if (options.skipRestore !== true) {
       this.restoreDraggedNoteFlowLivePreview();
     }
@@ -20092,6 +20096,23 @@ ${selected}
     const resolved = this.resolveDraggedNoteFlowPlacement(placement, movedIndexes);
     if (!resolved) {
       return [];
+    }
+    if (reuseAppliedPreview) {
+      const stableResolved = this.resolveDraggedNoteFlowPlacement(previousApplied, movedIndexes) || resolved;
+      this.snapDraggedSelectionToNoteFlowPlacement(stableResolved, movedIndexes);
+      for (const index of movedIndexes) {
+        const id = strokeElementId(this.drawingData?.strokes?.[index]);
+        if (id) {
+          this.dragNoteFlowPreviewElementIds.add(id);
+        }
+      }
+      if (this.dragNoteFlowPreviewElementIds.size) {
+        this.syncBoundConnectors({ elementIds: new Set(this.dragNoteFlowPreviewElementIds) });
+      }
+      this.invalidateSelectionFrameSnapshot();
+      this.requestRender(this.selectionHasDomStrokes() ? "interaction" : false);
+      this.dragNoteFlowLastAppliedPlacement = previousApplied;
+      return movedIndexes;
     }
     const drop = options.drop || this.syncMarkdownDropFromNoteFlowPlacement(resolved);
     this.applyDraggedNoteFlowAnchorDomPreview(resolved, drop);

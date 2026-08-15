@@ -12142,7 +12142,19 @@ var PreviewDrawingController = class {
         ? { element, rect: { left: bounds.left, right: bounds.right, top: bounds.top, bottom: bounds.bottom, width: bounds.width, height: bounds.height } }
         : null;
     }).filter(Boolean);
-    const noteFlowCandidates = this.noteFlowCandidates();
+    const noteFlowCandidates = this.noteFlowCandidates().filter((candidate) => {
+      const candidateElements = [
+        candidate?.element,
+        candidate?.sourceElement,
+        candidate?.inlineElement
+      ].filter(Boolean);
+      return !candidateElements.some((candidateElement) => (
+        movingElements.has(candidateElement)
+        || Array.from(movingElements).some((moving) => (
+          moving.contains?.(candidateElement) || candidateElement.contains?.(moving)
+        ))
+      ));
+    });
     const markdownCandidateByElement = new Map(markdownCandidates.map((entry) => [entry.element, entry]));
     const markdownBlockRecords = new Map(this.markdownBlockRecords().map((item) => [item.id, item]));
     const snapshot = {
@@ -12762,13 +12774,6 @@ var PreviewDrawingController = class {
     const dragUsesNoteFlowPlacement = this.usesDraggedNoteFlowPlacement();
     const coalescedEvents = event.getCoalescedEvents?.() || [];
     const dragEvent = coalescedEvents[coalescedEvents.length - 1] || event;
-    if (dragUsesNoteFlowPlacement) {
-      // Every drag sample is a complete preview transaction: undo the previous
-      // temporary insertion, then recompute the exact state that a release at
-      // this pointer position would commit. Keeping two incremental layouts
-      // alive at once lets their offsets accumulate and makes the preview jump.
-      this.restoreDraggedNoteFlowLivePreview();
-    }
     const point = this.dragEventToPoint(dragEvent);
     const originalPointBounds = this.dragStrokeOriginalPointBounds;
     const minX = originalPointBounds?.minX ?? 0;
@@ -16834,11 +16839,10 @@ var PreviewDrawingController = class {
     return changed || domChanged;
   }
   applyDraggedNoteFlowLivePreview(placement, options = {}) {
-    // Re-target incrementally: when the drop candidate changes, undo the
-    // previous target's reservation margin and DOM classes in place and let
-    // insertBefore relocate the elements. The old behavior restored the
-    // dragged elements back to their origin markers first and then re-inserted
-    // them, which flashed the preview on every target change.
+    // One semantic insertion result owns one complete preview transaction.
+    // Reuse that transaction while its target/order is unchanged; when the
+    // result changes, roll back to the drag baseline before applying the next
+    // complete DOM, geometry, reflow, and reservation state.
     const previousApplied = this.dragNoteFlowLastAppliedPlacement;
     const previewStructureChanged = Boolean(
       previousApplied?.candidate && placement?.candidate
@@ -16850,12 +16854,18 @@ var PreviewDrawingController = class {
         || previousApplied.side !== placement.side
         || previousApplied.leftSnap !== placement.leftSnap
         || previousApplied.line !== placement.line
+        || previousApplied.flowOrder !== placement.flowOrder
       )
     );
+    const reuseAppliedPreview = options.skipRestore === true
+      && Boolean(previousApplied)
+      && !previewStructureChanged;
     const peerRects = previewStructureChanged ? this.captureNoteFlowPeerRects() : null;
     if (previewStructureChanged && options.skipRestore === true) {
-      this.restoreDraggedNoteFlowDomPreview({ keepElements: true });
-      this.restoreDraggedNoteFlowReservationStyles();
+      // Crossing into a different semantic insertion result starts from the
+      // saved drag baseline. Screen-space boundaries are intentionally not
+      // part of that identity: the preview itself moves those boundaries.
+      this.restoreDraggedNoteFlowLivePreview();
     } else if (options.skipRestore !== true) {
       this.restoreDraggedNoteFlowLivePreview();
     }
@@ -16863,6 +16873,28 @@ var PreviewDrawingController = class {
     const resolved = this.resolveDraggedNoteFlowPlacement(placement, movedIndexes);
     if (!resolved) {
       return [];
+    }
+    if (reuseAppliedPreview) {
+      // The DOM insertion, peer reflow, and row reservation already represent
+      // this exact release result. Reapplying them would stack the same
+      // reservation on every pointer sample. Canvas strokes still start each
+      // move from the raw pointer geometry, so snap only those strokes back to
+      // the already-visible placement and leave the document flow untouched.
+      const stableResolved = this.resolveDraggedNoteFlowPlacement(previousApplied, movedIndexes) || resolved;
+      this.snapDraggedSelectionToNoteFlowPlacement(stableResolved, movedIndexes);
+      for (const index of movedIndexes) {
+        const id = strokeElementId(this.drawingData?.strokes?.[index]);
+        if (id) {
+          this.dragNoteFlowPreviewElementIds.add(id);
+        }
+      }
+      if (this.dragNoteFlowPreviewElementIds.size) {
+        this.syncBoundConnectors({ elementIds: new Set(this.dragNoteFlowPreviewElementIds) });
+      }
+      this.invalidateSelectionFrameSnapshot();
+      this.requestRender(this.selectionHasDomStrokes() ? "interaction" : false);
+      this.dragNoteFlowLastAppliedPlacement = previousApplied;
+      return movedIndexes;
     }
     const drop = options.drop || this.syncMarkdownDropFromNoteFlowPlacement(resolved);
     this.applyDraggedNoteFlowAnchorDomPreview(resolved, drop);

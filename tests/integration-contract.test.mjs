@@ -427,6 +427,7 @@ test("selection tool previews and commits exact NoteFlow Markdown insertion targ
     readFile(stylesUrl, "utf8")
   ]);
   const dragSource = source.slice(source.indexOf("  startSelectedStrokeDrag("), source.indexOf("  startSelectedStrokeResize("));
+  const dragGeometrySource = source.slice(source.indexOf("  dragDropGeometrySnapshot("), source.indexOf("  markdownEdgeDropTarget("));
   const dropSource = source.slice(source.indexOf("  draggedNoteFlowIndexes("), source.indexOf("  captureNoteFlowAnchor("));
   const previewFrameSource = source.slice(source.indexOf("  applyDraggedNoteFlowPlacementFrame("), source.indexOf("  updateDraggedNoteFlowPlacement("));
   const captureSource = source.slice(source.indexOf("  captureNoteFlowAnchor("), source.indexOf("  toggleSelectedFlowMode("));
@@ -453,8 +454,10 @@ test("selection tool previews and commits exact NoteFlow Markdown insertion targ
   assert.doesNotMatch(dropSource, /flowTarget\.classList\.add\(`notedraw-text-sort-target-/);
   assert.doesNotMatch(dropSource, /applyElementStyles\(indicator/);
   assert.match(dropSource, /snapDraggedSelectionToNoteFlowPlacement[\s\S]*draggedNoteFlowClientBounds\(\)[\s\S]*const targetClientX = leftSnap[\s\S]*placement\.inlineBoundary[\s\S]*dragNoteFlowPlacementClientDelta/);
-  assert.match(dragSource, /const dragUsesNoteFlowPlacement = this\.usesDraggedNoteFlowPlacement\(\)[\s\S]*const coalescedEvents = event\.getCoalescedEvents\?\.\(\) \|\| \[\][\s\S]*this\.restoreDraggedNoteFlowLivePreview\(\);[\s\S]*this\.applyDraggedNoteFlowPlacementFrame\(dragEvent\.clientX, dragEvent\.clientY\)[\s\S]*this\.queueDraggedNoteFlowRefresh/);
+  assert.match(dragSource, /const dragUsesNoteFlowPlacement = this\.usesDraggedNoteFlowPlacement\(\)[\s\S]*const coalescedEvents = event\.getCoalescedEvents\?\.\(\) \|\| \[\][\s\S]*this\.applyDraggedNoteFlowPlacementFrame\(dragEvent\.clientX, dragEvent\.clientY\)[\s\S]*this\.queueDraggedNoteFlowRefresh/);
   assert.doesNotMatch(dragSource, /smoothDraggedClientEvent|DRAG_PREVIEW_LERP/);
+  assert.match(dragGeometrySource, /const noteFlowCandidates = this\.noteFlowCandidates\(\)\.filter[\s\S]*movingElements\.has\(candidateElement\)[\s\S]*moving\.contains\?\.\(candidateElement\)[\s\S]*candidateElement\.contains\?\.\(moving\)/);
+  assert.match(styles, /\.notedraw-shell\.is-moving-selection \.markdown-preview-sizer \{\s*overflow-anchor: none;/);
   assert.match(finishSource, /requestedDropPlacement[\s\S]*this\.resolveDraggedNoteFlowPlacement[\s\S]*this\.snapDraggedSelectionToNoteFlowPlacement[\s\S]*preserveBoxGeometry:[\s\S]*scheduleNoteFlowLayout\(\{ operation: true, defer: true \}\)/);
   assert.doesNotMatch(finishSource, /this\.clearNoteFlowLayout\(\)/);
   assert.doesNotMatch(finishSource.slice(0, finishSource.indexOf("this.snapDraggedSelectionToNoteFlowPlacement")), /this\.clearNoteFlowLayout\(\)/);
