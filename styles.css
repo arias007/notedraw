@@ -744,6 +744,13 @@
   min-width: 0;
   box-sizing: border-box;
   vertical-align: top;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.notedraw-md-inline-grid-item > * {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .notedraw-md-inline-grid-item > :is(h1, h2, h3, h4, h5, h6) {

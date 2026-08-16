@@ -56,7 +56,7 @@ test("Markdown blocks and inserted ink share the real NoteFlow row contract", as
   assert.match(drop, /this\.draggedNoteFlowIndexes\(\)\.length > 0 \|\| this\.draggedNoteFlowMarkdownStates\(\)\.length > 0/);
   assert.match(drop, /syncMarkdownDropFromNoteFlowPlacement\(this\.dragNoteFlowPlacement\)/);
   assert.match(drop, /prepareMarkdownAnchorForInlineNoteFlow\(placement\)/);
-  assert.match(source, /const movingItemCount = Math\.max\(1, movingMarkdownCount \+ movingStrokeCount\)[\s\S]*const itemCount = movingItemCount \+ 1/);
+  assert.match(source, /const movingItemCount = Math\.max\(1, movingMarkdownCount \+ movingStrokeCount\)[\s\S]*const totalCount = orderedMemberIds\.length \+ movingItemCount/);
 });
 
 test("all Markdown block types use stable inline lanes inside renderer-owned collections", async () => {
@@ -74,8 +74,8 @@ test("all Markdown block types use stable inline lanes inside renderer-owned col
   assert.match(rows, /if \(!isNoteFlowCollectionBlock\(current\)\) \{\s*return current/);
   assert.match(rows, /current\.insertBefore\(row, flowElement\)/);
   assert.match(rows, /previousRow \|\| nextRow/);
-  assert.match(preview, /applyDraggedMarkdownInlinePresentation\(target, drop\.row\.span\)[\s\S]*ensureMarkdownBlockGridRow\(\{ \.\.\.targetBlock, span: drop\.row\.span \}, target, \{ preview: true \}\)/);
-  assert.match(preview, /applyDraggedMarkdownInlinePresentation\(dragElement, drop\.row\.span\)/);
+  assert.match(preview, /const allocation = this\.markdownInlineRowAllocation\(drop\?\.row, targetBlock, moving, drop\?\.side\)[\s\S]*applyDraggedMarkdownInlinePresentation\(target, targetSpan\)[\s\S]*ensureMarkdownBlockGridRow\(\{ \.\.\.targetBlock, span: targetSpan \}, target, \{ preview: true \}\)/);
+  assert.match(preview, /markdownInlineRowSpan\(allocation, state\.block\?\.id[\s\S]*applyDraggedMarkdownInlinePresentation\(dragElement, span\)/);
   assert.match(styles, /\.notedraw-md-grid-row \{/);
   assert.match(styles, /\.notedraw-md-inline-grid-item \{/);
 
@@ -473,10 +473,10 @@ test("NoteFlow dragging previews the same snapped and packed placement committed
   assert.doesNotMatch(reflowSource, /inlineItems\.map\(\(item\) => \(\{/);
   assert.match(source, /syncMarkdownBlockPresentation\(\)[\s\S]*this\.draggingStroke && this\.dragNoteFlowDomPreview[\s\S]*!this\.allowMarkdownPresentationDuringDrag/);
   assert.match(finishSource, /this\.allowMarkdownPresentationDuringDrag = true;[\s\S]*syncMarkdownBlockPresentation\(\)[\s\S]*this\.allowMarkdownPresentationDuringDrag = false/);
-  assert.match(rowMetricsSource, /const movingItemCount = Math\.max\(1, movingMarkdownCount \+ movingStrokeCount\)[\s\S]*const totalCount = memberIds\.length \+ itemCount[\s\S]*const requiredWidth = totalCount \* MIN_INLINE_NOTE_FLOW_ITEM_WIDTH_PX[\s\S]*const canFit = totalCount <= 12 && availableWidth \+ 0\.5 >= requiredWidth[\s\S]*Math\.max\(1, Math\.floor\(12 \/ totalCount\)\)[\s\S]*memberIds/);
+  assert.match(rowMetricsSource, /const movingItemCount = Math\.max\(1, movingMarkdownCount \+ movingStrokeCount\)[\s\S]*const totalCount = orderedMemberIds\.length \+ movingItemCount[\s\S]*const requiredWidth = totalCount \* MIN_INLINE_NOTE_FLOW_ITEM_WIDTH_PX[\s\S]*const spans = distributeInlineRowSpans\(totalCount\)[\s\S]*const canFit = spans\.length === totalCount[\s\S]*orderedMemberIds/);
   assert.doesNotMatch(rowMetricsSource, /totalCount <= 4/);
   assert.doesNotMatch(rowMetricsSource, /itemCount \* 2/);
-  assert.match(domPreviewSource, /rowMemberIds[\s\S]*drop\.row\.span/);
+  assert.match(domPreviewSource, /rowMemberIds[\s\S]*markdownInlineRowSpan\(allocation, id, 12\)/);
   assert.match(domPreviewSource, /const markdownHeight = this\.draggedNoteFlowMarkdownStates\(\)\.reduce[\s\S]*Math\.max\(strokeHeight, markdownHeight\)/);
   assert.match(domPreviewSource, /if \(!placement\?\.candidate \|\| placement\.horizontalSide\)/);
   assert.doesNotMatch(domPreviewSource, /placement\.horizontalSide \|\| !indexes\?\.length/);
@@ -608,7 +608,7 @@ test("Markdown DOM replacement preserves parallel width when rendered text chang
   assert.match(presentationSource, /scored\.score >= 1000/);
   assert.match(presentationSource, /takeUnused\(exactCandidates\.get\(exactKey\), block\)[\s\S]*takeUnused\(hintCandidates\.get\(hintKey\), block\)/);
   assert.doesNotMatch(presentationSource, /takeUnused\(lineCandidates\.get\(lineKey\)/);
-  assert.match(recordSource, /block\.lineStart === info\.lineStart && \(!block\.textHint \|\| block\.textHint === hint\)/);
+  assert.match(recordSource, /const compatible = \(block\) => explicitGroup[\s\S]*const matching = candidates\.filter\(\(block\) => compatible\(block\)/);
   assert.match(reconcileSource, /activeInlineFlows[\s\S]*hasSemanticInlineMatch/);
   assert.match(reconcileSource, /!this\.noteFlowMarkdownAnnotationComplete \|\| !this\.markdownBlockElement\(block\)\?\.isConnected/);
 });
@@ -809,12 +809,35 @@ test("precisely mapped atomic Markdown blocks keep their own source line and ide
   const targetSource = source.slice(source.indexOf("function markdownBlockCandidateElementForTarget("), source.indexOf("function isMarkdownEmbedBlockElement(", source.indexOf("function markdownBlockCandidateElementForTarget(")));
   const recordSource = source.slice(source.indexOf("  findMarkdownBlockRecordForElement("), source.indexOf("  clearMarkdownBlockPresentation(", source.indexOf("  findMarkdownBlockRecordForElement(")));
 
-  assert.match(targetSource, /target\.closest\?\.\("\[data-note-draw-line-mapped='true'\]"\)/);
-  assert.match(targetSource, /isMarkdownBlockCandidateElement\(preciselyMapped\)/);
+  assert.match(targetSource, /const explicitLine = target\.closest\?\.\("\.notedraw-md-line-block"\)/);
+  assert.match(targetSource, /const marked = target\.closest\?\.\("\[data-note-draw-markdown-block-id\]"\)/);
+  assert.match(targetSource, /const owner = findNoteFlowMarkdownBlockElement\(target, root\)/);
+  assert.match(targetSource, /\[explicitLine, marked, owner, preciselyMapped, mappedChild\]/);
+  assert.match(targetSource, /isMarkdownBlockCandidateElement\(candidate\)/);
   assert.match(targetSource, /target\.querySelectorAll\?\.\("\[data-note-draw-line-mapped='true'\]"\)/);
   assert.match(recordSource, /normalizeRenderedText\(renderedMarkdownIdentityText\(blockElement\)\)/);
   assert.match(styles, /\.notedraw-md-block\[data-note-draw-resized-height\] \{[\s\S]*min-height: var\(--notedraw-md-min-height\)/);
   assert.doesNotMatch(styles, /data-note-draw-resized-height="true"/);
+});
+
+test("multi-item inline rows use one allocation for preview and commit", async () => {
+  const [source, styles] = await Promise.all([
+    readFile(sourceUrl, "utf8"),
+    readFile(stylesUrl, "utf8")
+  ]);
+  const metricsSource = source.slice(source.indexOf("  markdownDropRowMetrics("), source.indexOf("  updateDraggedElementGroupMembership(", source.indexOf("  markdownDropRowMetrics(")));
+  const previewSource = source.slice(source.indexOf("  applyDraggedNoteFlowAnchorDomPreview("), source.indexOf("  restoreDraggedNoteFlowLivePreview(", source.indexOf("  applyDraggedNoteFlowAnchorDomPreview(")));
+  const anchorSource = source.slice(source.indexOf("  prepareMarkdownAnchorForInlineNoteFlow("), source.indexOf("  reconcileAutoNoteFlowMarkdownSpans(", source.indexOf("  prepareMarkdownAnchorForInlineNoteFlow(")));
+
+  assert.match(metricsSource, /distributeInlineRowSpans\(totalCount\)/);
+  assert.match(metricsSource, /const canFit = spans\.length === totalCount/);
+  assert.doesNotMatch(metricsSource, /availableWidth \+ 0\.5 >= requiredWidth/);
+  assert.match(metricsSource, /markdownInlineRowAllocation\(row, targetBlock, moving, drop\.side\)/);
+  assert.match(metricsSource, /markdownInlineRowSpan\(allocation, state\.block\.id/);
+  assert.match(previewSource, /markdownInlineRowAllocation\(drop\?\.row, targetBlock, moving, drop\?\.side\)/);
+  assert.match(previewSource, /markdownInlineRowSpan\(allocation, state\.block\?\.id/);
+  assert.match(anchorSource, /markdownInlineRowAllocation\(row, block, movingStates, placement\.horizontalSide\)/);
+  assert.match(styles, /\.notedraw-md-inline-grid-item \{[\s\S]*min-width: 0[\s\S]*overflow-wrap: anywhere/);
 });
 
 test("inherited section line metadata is remapped before NoteFlow drop targeting", async () => {

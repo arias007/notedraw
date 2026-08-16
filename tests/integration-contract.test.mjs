@@ -24,7 +24,7 @@ test("embedded Markdown edits resolve and save against the referenced file", asy
   assert.match(source, /findMarkdownEmbedBlockElement\(target, previewEl = null\)[\s\S]*embed\.matches\?\.\("\.internal-embed"\)[\s\S]*embed\.closest\?\.\("\.internal-embed"\)[\s\S]*embed\.closest\?\.\("\.markdown-embed"\)/);
   assert.match(source, /findMarkdownBlocksInSelection\(startPoint, endPoint\)[\s\S]*const candidates = markdownBlockCandidateElements\(this\.previewEl\)[\s\S]*const element = candidate[\s\S]*forSelection: true/);
   assert.match(source, /function markdownBlockCandidateElements\(root\)[\s\S]*MARKDOWN_EMBED_SELECTOR[\s\S]*findNoteFlowMarkdownBlockElement\(element, root\)/);
-  assert.match(source, /function markdownBlockCandidateElementForTarget\(target, root\)[\s\S]*findNoteFlowMarkdownBlockElement\(target, root\)[\s\S]*isMarkdownBlockCandidateElement\(owner\)/);
+  assert.match(source, /function markdownBlockCandidateElementForTarget\(target, root\)[\s\S]*findNoteFlowMarkdownBlockElement\(target, root\)[\s\S]*\[explicitLine, marked, owner, preciselyMapped, mappedChild\][\s\S]*isMarkdownBlockCandidateElement\(candidate\)/);
   assert.match(source, /elementBelowCanvas\(clientX, clientY\)[\s\S]*elementsFromPoint[\s\S]*classList\?\.contains\("notedraw-canvas"\)[\s\S]*pointerEvents: "none"/);
   assert.match(source, /if \(this\.currentEditor && this\.currentEditorEmbedded\) \{\s*return null;/);
   assert.match(source, /this\.surfaceType === "source" && this\.toolMode === TOOL_EDIT_MD && !this\.currentEditorEmbedded/);

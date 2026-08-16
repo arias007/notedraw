@@ -53,6 +53,7 @@ import {
   resolveRenderedMarkdownSourceTarget
 } from "./markdown-anchors.mjs";
 import { preservesAllMovedMarkdownBlocks } from "./markdown-reorder.mjs";
+import { allocateInlineRow, distributeInlineRowSpans } from "./markdown-inline-row.mjs";
 import {
   clientPointInRect,
   markdownClientRectsOverlap,
@@ -12620,7 +12621,9 @@ var PreviewDrawingController = class {
     const movingMarkdownCount = movingElements.size || this.dragMarkdownOriginalElements?.size || 0;
     const targetRect = geometry?.markdownCandidateByElement?.get(target)?.rect || target?.getBoundingClientRect?.();
     const parent = this.markdownBlockLayoutLane(target);
-    const memberIds = [];
+    const memberEntries = [];
+    const targetBlock = this.findMarkdownBlockRecordForElement(target);
+    const targetId = targetBlock?.id || target?.dataset?.noteDrawMarkdownBlockId || "__notedraw-inline-target__";
     if (parent && targetRect?.height > 0) {
       const blockRecords = geometry?.markdownBlockRecords || new Map(this.markdownBlockRecords().map((item) => [item.id, item]));
       for (const [id, element] of this.markdownBlockElements.entries()) {
@@ -12635,13 +12638,23 @@ var PreviewDrawingController = class {
         if (!block || block.floating) {
           continue;
         }
-        memberIds.push(id);
+        memberEntries.push({ id, rect });
       }
     }
+    memberEntries.push({ id: targetId, rect: targetRect });
+    memberEntries.sort((left, right) => (
+      Number(left.rect?.left) - Number(right.rect?.left)
+      || Number(left.rect?.top) - Number(right.rect?.top)
+      || left.id.localeCompare(right.id)
+    ));
+    const orderedMemberIds = Array.from(new Set(memberEntries.map((entry) => entry.id)));
+    const memberIds = orderedMemberIds.filter((id) => id !== targetId);
+    const movingMarkdownIds = Array.from(this.dragMarkdownOriginalElements?.values?.() || [])
+      .filter((state) => state?.block?.id && (!movingElements.size || movingElements.has(state.element)))
+      .map((state) => state.block.id);
     const movingStrokeCount = this.draggedNoteFlowIndexes().length ? 1 : 0;
     const movingItemCount = Math.max(1, movingMarkdownCount + movingStrokeCount);
-    const itemCount = movingItemCount + 1;
-    const totalCount = memberIds.length + itemCount;
+    const totalCount = orderedMemberIds.length + movingItemCount;
     const laneWidth = geometry?.laneRect
       ? Number(geometry.laneRect.right) - Number(geometry.laneRect.left)
       : 0;
@@ -12655,17 +12668,49 @@ var PreviewDrawingController = class {
       || 0;
     const requiredWidth = totalCount * MIN_INLINE_NOTE_FLOW_ITEM_WIDTH_PX
       + Math.max(0, totalCount - 1) * INLINE_NOTE_FLOW_GAP_PX;
-    const canFit = totalCount <= 12 && availableWidth + 0.5 >= requiredWidth;
+    const spans = distributeInlineRowSpans(totalCount);
+    // Pixel width is diagnostic only. Narrow rows stay horizontal and let
+    // Markdown wrap vertically; only exhausting the 12-column data model can
+    // require another row.
+    const canFit = spans.length === totalCount;
     const result = {
       canFit,
-      span: canFit ? Math.max(1, Math.floor(12 / totalCount)) : 12,
+      span: canFit ? spans[0] : 12,
+      spans,
       totalCount,
       availableWidth,
       requiredWidth,
-      memberIds
+      memberIds,
+      orderedMemberIds,
+      targetId,
+      movingItemCount,
+      movingMarkdownIds,
+      movingStrokeCount
     };
     geometry?.rowMetrics?.set(target, result);
     return result;
+  }
+  markdownInlineRowAllocation(row, targetBlock, moving = [], side = "right") {
+    const movingIds = moving.map((state) => state?.block?.id || state?.id).filter(Boolean);
+    const knownMovingCount = Math.max(
+      movingIds.length,
+      Number(row?.movingItemCount) || 0,
+      1
+    );
+    return allocateInlineRow({
+      existingIds: row?.orderedMemberIds || [
+        ...(row?.memberIds || []),
+        targetBlock?.id || row?.targetId || "__notedraw-inline-target__"
+      ],
+      movingIds,
+      targetId: targetBlock?.id || row?.targetId || "__notedraw-inline-target__",
+      side,
+      extraMovingCount: Math.max(0, knownMovingCount - movingIds.length)
+    });
+  }
+  markdownInlineRowSpan(allocation, id, fallback = 12) {
+    return allocation?.spanById?.get?.(id)
+      || clamp(Math.round(Number(fallback) || 12), 1, 12);
   }
   async commitDraggedMarkdownBlocks(drop, drawingHistoryBefore) {
     const moving = Array.isArray(drop?.moving) ? drop.moving.filter((state) => state?.element && state?.block) : [];
@@ -12725,17 +12770,17 @@ var PreviewDrawingController = class {
       targetBlock.lineEnd = lockedTarget.endLine ?? lockedTarget.line;
     }
     const requestedHorizontal = drop.side === "left" || drop.side === "right";
-    const horizontal = requestedHorizontal && row.canFit;
+    const allocation = this.markdownInlineRowAllocation(row, targetBlock, moving, drop.side);
+    const horizontal = requestedHorizontal && allocation.canFit;
     const effectiveSide = horizontal ? drop.side : drop.side === "right" ? "after" : drop.side === "left" ? "before" : drop.side;
     if (horizontal && targetBlock) {
-      const span = row.span;
-      for (const block of rowBlocks.values()) {
-        block.span = span;
+      for (const [id, block] of rowBlocks) {
+        block.span = this.markdownInlineRowSpan(allocation, id, block.span);
         block.widthScale = 1;
         block.noteFlowAutoSpan = false;
       }
       for (const state of moving) {
-        state.block.span = span;
+        state.block.span = this.markdownInlineRowSpan(allocation, state.block.id, state.block.span);
         state.block.widthScale = 1;
         state.block.noteFlowAutoSpan = false;
         state.block.floating = false;
@@ -15819,8 +15864,16 @@ var PreviewDrawingController = class {
     const info = getSourceInfo(blockElement);
     const hint = normalizeRenderedText(renderedMarkdownIdentityText(blockElement)).slice(0, 240);
     const candidates = this.markdownBlockRecords().filter((block) => block.path === path);
-    return candidates.find((block) => Number.isFinite(info.lineStart) && block.lineStart === info.lineStart && (!block.textHint || block.textHint === hint))
-      || candidates.find((block) => block.textHint && block.textHint === hint)
+    const explicitGroup = String(blockElement.dataset?.noteDrawExplicitLineGroup || "");
+    const compatible = (block) => explicitGroup
+      ? String(block.explicitLineGroup || "") === explicitGroup
+      : !block.explicitLineGroup;
+    const mapped = candidates.find((block) => this.markdownBlockElements?.get?.(block.id) === blockElement);
+    const matching = candidates.filter((block) => compatible(block)
+      && (!block.textHint || block.textHint === hint));
+    return mapped
+      || matching.find((block) => Number.isFinite(info.lineStart) && block.lineStart === info.lineStart)
+      || matching.find((block) => block.textHint && block.textHint === hint)
       || null;
   }
   markdownBlockElementForTarget(target, clientPoint = null) {
@@ -17541,7 +17594,12 @@ var PreviewDrawingController = class {
       ? rawTarget
       : findNoteFlowInlineMeasureElement(candidate.element);
     const targetBlock = this.findMarkdownBlockRecordForElement(target);
-    const intendedSpan = drop?.row?.canFit ? drop.row.span : targetBlock?.span;
+    const row = drop?.row;
+    const moving = this.draggedNoteFlowMarkdownStates();
+    const allocation = this.markdownInlineRowAllocation(row, targetBlock, moving, placement.horizontalSide);
+    const intendedSpan = allocation.canFit
+      ? this.markdownInlineRowSpan(allocation, targetBlock?.id || row?.targetId, targetBlock?.span)
+      : targetBlock?.span;
     if (targetBlock && Number(intendedSpan) < 12) {
       if (!this.applyDraggedMarkdownInlinePresentation(target, intendedSpan)) {
         this.ensureMarkdownBlockGridRow({ ...targetBlock, span: intendedSpan }, target, { preview: true });
@@ -17555,11 +17613,6 @@ var PreviewDrawingController = class {
     if (!target?.isConnected || !parent || !(laneWidth > 1) || !Number.isFinite(boundary)) {
       return false;
     }
-    const targetWidth = Math.max(1, boundary - Number(lane.left) - 10);
-    const row = drop?.row;
-    const span = row?.canFit
-      ? row.span
-      : clamp(Math.floor(targetWidth / laneWidth * 12), 1, 10);
     this.setDraggedNoteFlowDomClass(parent, "notedraw-md-grid", true);
     const rowMemberIds = new Set([targetBlock?.id, ...(row?.memberIds || [])].filter(Boolean));
     for (const id of rowMemberIds) {
@@ -17568,6 +17621,7 @@ var PreviewDrawingController = class {
       if (!memberFlow?.isConnected || memberFlow.parentNode !== parent) {
         continue;
       }
+      const span = this.markdownInlineRowSpan(allocation, id, 12);
       if (this.applyDraggedMarkdownInlinePresentation(memberFlow, span)) {
         this.setDraggedNoteFlowDomStyle(element, "width", null);
         continue;
@@ -17586,9 +17640,11 @@ var PreviewDrawingController = class {
       return false;
     }
     const targetBlock = this.findMarkdownBlockRecordForElement(target);
-    if ((drop.side === "left" || drop.side === "right") && drop.row?.canFit && targetBlock) {
-      if (!this.applyDraggedMarkdownInlinePresentation(target, drop.row.span)) {
-        this.ensureMarkdownBlockGridRow({ ...targetBlock, span: drop.row.span }, target, { preview: true });
+    const allocation = this.markdownInlineRowAllocation(drop?.row, targetBlock, moving, drop?.side);
+    const targetSpan = this.markdownInlineRowSpan(allocation, targetBlock?.id || drop?.row?.targetId, targetBlock?.span);
+    if ((drop.side === "left" || drop.side === "right") && allocation.canFit && targetBlock) {
+      if (!this.applyDraggedMarkdownInlinePresentation(target, targetSpan)) {
+        this.ensureMarkdownBlockGridRow({ ...targetBlock, span: targetSpan }, target, { preview: true });
       }
     }
     const targetFlow = this.markdownBlockFlowElement(target) || target;
@@ -17597,7 +17653,7 @@ var PreviewDrawingController = class {
       return false;
     }
     const horizontal = (drop.side === "left" || drop.side === "right")
-      && drop.row?.canFit;
+      && allocation.canFit;
     const ordered = moving.slice().sort((a, b) => a.clientRect.top - b.clientRect.top || a.clientRect.left - b.clientRect.left);
     let reference = drop.side === "after" || drop.side === "right" ? targetFlow.nextSibling : targetFlow;
     for (const state of ordered) {
@@ -17609,11 +17665,12 @@ var PreviewDrawingController = class {
       dragElement.classList?.add?.("is-notedraw-md-dragging");
       this.setDraggedNoteFlowDomStyle(dragElement, "--notedraw-md-drag-x", "0px");
       this.setDraggedNoteFlowDomStyle(dragElement, "--notedraw-md-drag-y", "0px");
-      if (horizontal && this.applyDraggedMarkdownInlinePresentation(dragElement, drop.row.span)) {
+      const span = this.markdownInlineRowSpan(allocation, state.block?.id, state.block?.span);
+      if (horizontal && this.applyDraggedMarkdownInlinePresentation(dragElement, span)) {
         continue;
       }
       this.setDraggedNoteFlowDomClass(dragElement, "notedraw-md-grid-item", true);
-      this.setDraggedNoteFlowDomStyle(dragElement, "grid-column", `span ${horizontal ? drop.row.span : 12}`);
+      this.setDraggedNoteFlowDomStyle(dragElement, "grid-column", `span ${horizontal ? span : 12}`);
     }
     if (horizontal) {
       this.setDraggedNoteFlowDomClass(parent, "notedraw-md-grid", true);
@@ -17624,12 +17681,13 @@ var PreviewDrawingController = class {
         if (!flowElement?.isConnected || flowElement.parentNode !== parent) {
           continue;
         }
-        if (this.applyDraggedMarkdownInlinePresentation(flowElement, drop.row.span)) {
+        const span = this.markdownInlineRowSpan(allocation, id, 12);
+        if (this.applyDraggedMarkdownInlinePresentation(flowElement, span)) {
           this.setDraggedNoteFlowDomStyle(element, "width", null);
           continue;
         }
         this.setDraggedNoteFlowDomClass(flowElement, "notedraw-md-grid-item", true);
-        this.setDraggedNoteFlowDomStyle(flowElement, "grid-column", `span ${drop.row.span}`);
+        this.setDraggedNoteFlowDomStyle(flowElement, "grid-column", `span ${span}`);
         this.setDraggedNoteFlowDomStyle(element, "width", null);
       }
       if (targetBlock?.widthScale && targetBlock.widthScale < 0.999) {
@@ -18263,19 +18321,23 @@ var PreviewDrawingController = class {
     if (!block || !(laneWidth > 1) || !Number.isFinite(boundary)) {
       return false;
     }
-    const targetWidth = Math.max(1, boundary - Number(lane.left) - 10);
-    const movingElements = new Set(this.draggedNoteFlowMarkdownStates().map((state) => state.element));
+    const movingStates = this.draggedNoteFlowMarkdownStates();
+    const movingElements = new Set(movingStates.map((state) => state.element));
     const row = this.markdownDropRowMetrics(target, movingElements);
-    const span = row.canFit
-      ? row.span
-      : clamp(Math.floor(targetWidth / laneWidth * 12), 1, 10);
+    const allocation = this.markdownInlineRowAllocation(row, block, movingStates, placement.horizontalSide);
     const blocks = new Map((row.memberIds || []).map((id) => {
       const item = this.markdownBlockRecords().find((record) => record.id === id);
       return item ? [id, item] : null;
     }).filter(Boolean));
     blocks.set(block.id, block);
+    for (const state of movingStates) {
+      if (state?.block?.id) {
+        blocks.set(state.block.id, state.block);
+      }
+    }
     let changed = false;
-    for (const item of blocks.values()) {
+    for (const [id, item] of blocks) {
+      const span = this.markdownInlineRowSpan(allocation, id, item.span);
       changed = changed || item.span !== span || item.widthScale !== 1 || item.noteFlowAutoSpan !== true;
       item.span = span;
       item.widthScale = 1;
@@ -22133,18 +22195,24 @@ function markdownBlockCandidateElementForTarget(target, root) {
   if (!target || !root?.contains?.(target)) {
     return null;
   }
+  // Explicit hard-break blocks are the smallest canonical units. For every
+  // other inline descendant (strong/em/link/code/etc.), use the same rendered
+  // owner that presentation binding uses. Returning an annotated inner <p>
+  // while records are bound to its .el-* owner made the selection disappear
+  // immediately after sync, especially when equal text occurred elsewhere.
+  const explicitLine = target.closest?.(".notedraw-md-line-block");
+  const marked = target.closest?.("[data-note-draw-markdown-block-id]");
+  const owner = findNoteFlowMarkdownBlockElement(target, root);
   const preciselyMapped = target.closest?.("[data-note-draw-line-mapped='true']");
-  if (preciselyMapped && root.contains(preciselyMapped) && isMarkdownBlockCandidateElement(preciselyMapped)) {
-    return preciselyMapped;
-  }
   const mappedChild = Array.from(target.querySelectorAll?.("[data-note-draw-line-mapped='true']") || []).find((element) => {
     return isMarkdownBlockCandidateElement(element);
   });
-  if (mappedChild) {
-    return mappedChild;
+  for (const candidate of [explicitLine, marked, owner, preciselyMapped, mappedChild]) {
+    if (candidate && root.contains(candidate) && isMarkdownBlockCandidateElement(candidate)) {
+      return candidate;
+    }
   }
-  const owner = findNoteFlowMarkdownBlockElement(target, root) || target;
-  return isMarkdownBlockCandidateElement(owner) ? owner : null;
+  return isMarkdownBlockCandidateElement(target) ? target : null;
 }
 function isMarkdownEmbedBlockElement(element) {
   if (!element?.matches?.(MARKDOWN_EMBED_SELECTOR)) {
