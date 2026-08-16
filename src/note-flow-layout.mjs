@@ -1021,6 +1021,7 @@ export function packNoteFlowInlineRectangles(items, {
       order: Number.isFinite(Number(item?.order)) ? Number(item.order) : order,
       width: Math.max(0, rect.maxX - rect.minX),
       height: Math.max(0, rect.maxY - rect.minY),
+      shrinkToFit: Boolean(item?.shrinkToFit),
       overlapGroup: typeof item?.overlapGroup === "string" ? item.overlapGroup : "",
       originalMinX: rect.minX,
       originalMinY: rect.minY
@@ -1035,7 +1036,7 @@ export function packNoteFlowInlineRectangles(items, {
     }
     let group = overlapGroups.get(item.overlapGroup);
     if (!group) {
-      group = { ...item, members: [], shrinkToFit: false };
+      group = { ...item, members: [], shrinkToFit: Boolean(item.shrinkToFit) };
       overlapGroups.set(item.overlapGroup, group);
       packingItems.push(group);
     }
@@ -1048,6 +1049,7 @@ export function packNoteFlowInlineRectangles(items, {
     group.originalMinY = Math.min(group.originalMinY, item.originalMinY);
     group.width = group.maxX - group.minX;
     group.height = group.maxY - group.minY;
+    group.shrinkToFit = group.shrinkToFit || Boolean(item.shrinkToFit);
     group.order = Math.min(group.order, item.order);
   }
   const placed = [];
@@ -1124,13 +1126,17 @@ export function packNoteFlowInlineRectangles(items, {
     return item.members.map((member) => ({
       id: member.id,
       index: member.index,
-      minX: item.overlapGroup ? member.minX + deltaX : item.minX,
-      maxX: item.overlapGroup ? member.maxX + deltaX : item.maxX,
+      minX: item.overlapGroup
+        ? item.minX + (member.minX - item.originalMinX) * scaleX
+        : item.minX,
+      maxX: item.overlapGroup
+        ? item.minX + (member.maxX - item.originalMinX) * scaleX
+        : item.maxX,
       minY: item.overlapGroup ? member.minY + deltaY : item.minY,
       maxY: item.overlapGroup ? member.maxY + deltaY : item.maxY,
       deltaX,
       deltaY,
-      scaleX: item.overlapGroup ? 1 : scaleX
+      scaleX
     }));
   });
 }

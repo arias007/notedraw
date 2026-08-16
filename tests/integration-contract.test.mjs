@@ -130,7 +130,7 @@ test("3.4.84 preserves reading content and cross-view frames without hidden-surf
   assert.match(source, /flushScheduledResize\(\)[\s\S]*window\.cancelAnimationFrame\(this\.resizeFrameId\)[\s\S]*window\.clearTimeout\(this\.resizeFallbackTimer\)/);
   assert.match(source, /this\.repairConnectedReadingSections\(\);\s*await this\.prepareInitialReadingLayout\(\)/);
   assert.match(source, /new MutationObserver\(\(mutations\) => \{\s*if \(mutations\.some\(\(mutation\) => isMarkdownContentMutation\(mutation\)\)\) \{\s*this\.noteFlowMarkdownAnnotationComplete = false;\s*if \(this\.draggingStroke \|\| this\.resizingSelection \|\| this\.pointerDown\) \{[\s\S]*?return;[\s\S]*?this\.scheduleMarkdownMutationSync\(\)/);
-  assert.match(source, /if \(editingLayout\) \{[\s\S]*this\.scheduleMarkdownAnnotationRefresh\(\{ layout: false \}\);\s*\} else \{\s*this\.syncMarkdownBlockPresentation\(\);\s*this\.scheduleFrozenNoteFlowLayoutRestore\(\)/);
+  assert.match(source, /const identityMutationPending = this\.pendingMarkdownIdentityRefresh\?\.expiresAt > Date\.now\(\);[\s\S]*if \(editingLayout \|\| identityMutationPending\) \{[\s\S]*this\.scheduleMarkdownAnnotationRefresh\(\{[\s\S]*force: identityMutationPending[\s\S]*\}\);\s*\} else \{\s*this\.syncMarkdownBlockPresentation\(\);\s*this\.scheduleFrozenNoteFlowLayoutRestore\(\)/);
   assert.match(source, /await this\.ensureDrawingsLoaded\(\);[\s\S]*?this\.repairConnectedReadingSections\(\);/);
   assert.match(source, /repairConnectedReadingSections\(renderer = this\.readingPreviewRenderer\(\)\)[\s\S]*renderer\.updateVirtualDisplay\?\.\(\);[\s\S]*section\.rendered !== false[\s\S]*section\.render\?\.\(\);[\s\S]*renderer\.measureSection\?\.\(section\);[\s\S]*renderer\.updateVirtualDisplay\?\.\(\)/);
   assert.match(source, /restoreReadingVirtualSections\(\)[\s\S]*this\.repairConnectedReadingSections\(renderer\)/);
@@ -523,9 +523,12 @@ test("reading double-click stays in preview and source view exposes the Markdown
   assert.match(source, /this\.editMarkdownButton\?\.classList\.toggle\("is-active", this\.toolMode === TOOL_EDIT_MD\)/);
   assert.match(source, /this\.previewEl\.addEventListener\("dblclick", this\.onPreviewDoubleClick, true\)/);
   assert.match(source, /this\.previewGestureWindow\.addEventListener\("mousedown", this\.onPreviewSecondPress, true\)/);
+  assert.match(source, /this\.previewGestureWindow\.addEventListener\("pointerdown", this\.onPreviewSecondPointerDown, true\)/);
   assert.match(source, /this\.previewGestureWindow\.addEventListener\("dblclick", this\.onPreviewDoubleClick, true\)/);
   assert.match(source, /onPreviewDoubleClick\(event\)[\s\S]*isReadingPreviewGesture\(event\)[\s\S]*this\.onCanvasDoubleClick\(event\)[\s\S]*stopImmediatePropagation/);
   assert.match(source, /onPreviewSecondPress\(event\)[\s\S]*Number\(event\.detail\) < 2[\s\S]*stopImmediatePropagation/);
+  assert.match(source, /onPreviewSecondPointerDown\(event\)[\s\S]*now - previous\.time <= 550[\s\S]*Math\.hypot[\s\S]*stopImmediatePropagation/);
+  assert.match(source, /this\.active && \(event\.target === this\.canvas \|\| path\.includes\(this\.canvas\)\)[\s\S]*event\.preventDefault\(\);\s*return;/);
   assert.match(source, /this\.previewEl\?\.removeEventListener\("dblclick", this\.onPreviewDoubleClick, true\)/);
   assert.match(source, /this\.previewGestureWindow\?\.removeEventListener\("dblclick", this\.onPreviewDoubleClick, true\)/);
 });

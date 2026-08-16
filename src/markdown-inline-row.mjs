@@ -26,7 +26,8 @@ export function allocateInlineRow({
   targetId = "",
   side = "right",
   extraMovingCount = 0,
-  columns = 12
+  columns = 12,
+  preferredSpanById = null
 } = {}) {
   const target = String(targetId || "__notedraw-inline-target__");
   const moving = uniqueIds(movingIds);
@@ -43,7 +44,46 @@ export function allocateInlineRow({
   const insertionIndex = side === "left" ? targetIndex : targetIndex + 1;
   const orderedIds = existing.slice();
   orderedIds.splice(insertionIndex, 0, ...moving);
-  const spans = distributeInlineRowSpans(orderedIds.length, columns);
+  const totalColumns = Math.max(1, Math.floor(Number(columns) || 12));
+  const preferredSpan = (id) => {
+    const raw = preferredSpanById instanceof Map
+      ? preferredSpanById.get(id)
+      : preferredSpanById?.[id];
+    return Math.max(1, Math.min(totalColumns, Math.round(Number(raw) || totalColumns)));
+  };
+  let spans = [];
+  if (preferredSpanById && orderedIds.length <= totalColumns) {
+    spans = orderedIds.map(preferredSpan);
+    let overflow = spans.reduce((sum, span) => sum + span, 0) - totalColumns;
+    const movingSetForPriority = new Set(moving);
+    const movingIndexes = orderedIds
+      .map((id, index) => movingSetForPriority.has(id) ? index : -1)
+      .filter((index) => index >= 0)
+      .reverse();
+    const movingCenter = movingIndexes.length
+      ? movingIndexes.reduce((sum, index) => sum + index, 0) / movingIndexes.length
+      : insertionIndex;
+    const existingIndexes = orderedIds
+      .map((id, index) => movingSetForPriority.has(id) ? -1 : index)
+      .filter((index) => index >= 0)
+      .sort((left, right) => (
+        Math.abs(left - movingCenter) - Math.abs(right - movingCenter)
+        || right - left
+      ));
+    for (const index of [...movingIndexes, ...existingIndexes]) {
+      if (overflow <= 0) {
+        break;
+      }
+      const reduction = Math.min(overflow, Math.max(0, spans[index] - 1));
+      spans[index] -= reduction;
+      overflow -= reduction;
+    }
+    if (overflow > 0) {
+      spans = [];
+    }
+  } else {
+    spans = distributeInlineRowSpans(orderedIds.length, totalColumns);
+  }
   const spanById = new Map(orderedIds.map((id, index) => [id, spans[index] || Number(columns) || 12]));
   return {
     canFit: spans.length === orderedIds.length,

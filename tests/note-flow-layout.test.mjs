@@ -107,6 +107,24 @@ test("note pen strokes preserve their relative overlap while packing as one inli
   ]);
 });
 
+test("an overlapping note-pen group shrinks as one unit without crossing Markdown blockers", () => {
+  const placed = packNoteFlowInlineRectangles([
+    { id: "pen-a", index: 0, order: 0, minX: 20, maxX: 90, minY: 20, maxY: 60, overlapGroup: "ink:line-4", shrinkToFit: true },
+    { id: "pen-b", index: 1, order: 1, minX: 60, maxX: 130, minY: 35, maxY: 75, overlapGroup: "ink:line-4", shrinkToFit: true }
+  ], {
+    anchor: { minX: 0, maxX: 100, minY: 10, maxY: 80 },
+    laneLeft: 0,
+    laneRight: 140,
+    gap: 6,
+    minItemWidth: 24
+  });
+
+  assert.equal(placed.length, 2);
+  assert.ok(Math.max(...placed.map((item) => item.maxX)) <= 140);
+  assert.ok(placed.every((item) => item.scaleX > 0 && item.scaleX < 1));
+  assert.ok(Math.min(placed[0].maxX, placed[1].maxX) - Math.max(placed[0].minX, placed[1].minX) > 0);
+});
+
 test("overlapping note pen strokes reserve one union row instead of pushing each other apart", () => {
   const placed = reflowNoteFlowRectangles([
     { id: "pen-a", index: 0, minX: 20, maxX: 90, minY: 100, maxY: 140, baseMinY: 80, originalMinY: 100, rowKey: "line-4", overlapGroup: "ink:line-4" },

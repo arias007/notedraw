@@ -1519,7 +1519,8 @@ function allocateInlineRow({
   targetId = "",
   side = "right",
   extraMovingCount = 0,
-  columns = 12
+  columns = 12,
+  preferredSpanById = null
 } = {}) {
   const target = String(targetId || "__notedraw-inline-target__");
   const moving = uniqueIds(movingIds);
@@ -1536,7 +1537,33 @@ function allocateInlineRow({
   const insertionIndex = side === "left" ? targetIndex : targetIndex + 1;
   const orderedIds = existing.slice();
   orderedIds.splice(insertionIndex, 0, ...moving);
-  const spans = distributeInlineRowSpans(orderedIds.length, columns);
+  const totalColumns = Math.max(1, Math.floor(Number(columns) || 12));
+  const preferredSpan = (id) => {
+    const raw = preferredSpanById instanceof Map ? preferredSpanById.get(id) : preferredSpanById?.[id];
+    return Math.max(1, Math.min(totalColumns, Math.round(Number(raw) || totalColumns)));
+  };
+  let spans = [];
+  if (preferredSpanById && orderedIds.length <= totalColumns) {
+    spans = orderedIds.map(preferredSpan);
+    let overflow = spans.reduce((sum, span) => sum + span, 0) - totalColumns;
+    const movingSetForPriority = new Set(moving);
+    const movingIndexes = orderedIds.map((id, index) => movingSetForPriority.has(id) ? index : -1).filter((index) => index >= 0).reverse();
+    const movingCenter = movingIndexes.length ? movingIndexes.reduce((sum, index) => sum + index, 0) / movingIndexes.length : insertionIndex;
+    const existingIndexes = orderedIds.map((id, index) => movingSetForPriority.has(id) ? -1 : index).filter((index) => index >= 0).sort((left, right) => Math.abs(left - movingCenter) - Math.abs(right - movingCenter) || right - left);
+    for (const index of [...movingIndexes, ...existingIndexes]) {
+      if (overflow <= 0) {
+        break;
+      }
+      const reduction = Math.min(overflow, Math.max(0, spans[index] - 1));
+      spans[index] -= reduction;
+      overflow -= reduction;
+    }
+    if (overflow > 0) {
+      spans = [];
+    }
+  } else {
+    spans = distributeInlineRowSpans(orderedIds.length, totalColumns);
+  }
   const spanById = new Map(orderedIds.map((id, index) => [id, spans[index] || Number(columns) || 12]));
   return {
     canFit: spans.length === orderedIds.length,
@@ -2599,6 +2626,7 @@ function packNoteFlowInlineRectangles(items, {
       order: Number.isFinite(Number(item?.order)) ? Number(item.order) : order,
       width: Math.max(0, rect.maxX - rect.minX),
       height: Math.max(0, rect.maxY - rect.minY),
+      shrinkToFit: Boolean(item?.shrinkToFit),
       overlapGroup: typeof item?.overlapGroup === "string" ? item.overlapGroup : "",
       originalMinX: rect.minX,
       originalMinY: rect.minY
@@ -2613,7 +2641,7 @@ function packNoteFlowInlineRectangles(items, {
     }
     let group = overlapGroups.get(item.overlapGroup);
     if (!group) {
-      group = { ...item, members: [], shrinkToFit: false };
+      group = { ...item, members: [], shrinkToFit: Boolean(item.shrinkToFit) };
       overlapGroups.set(item.overlapGroup, group);
       packingItems.push(group);
     }
@@ -2626,6 +2654,7 @@ function packNoteFlowInlineRectangles(items, {
     group.originalMinY = Math.min(group.originalMinY, item.originalMinY);
     group.width = group.maxX - group.minX;
     group.height = group.maxY - group.minY;
+    group.shrinkToFit = group.shrinkToFit || Boolean(item.shrinkToFit);
     group.order = Math.min(group.order, item.order);
   }
   const placed = [];
@@ -2700,13 +2729,13 @@ function packNoteFlowInlineRectangles(items, {
     return item.members.map((member) => ({
       id: member.id,
       index: member.index,
-      minX: item.overlapGroup ? member.minX + deltaX : item.minX,
-      maxX: item.overlapGroup ? member.maxX + deltaX : item.maxX,
+      minX: item.overlapGroup ? item.minX + (member.minX - item.originalMinX) * scaleX : item.minX,
+      maxX: item.overlapGroup ? item.minX + (member.maxX - item.originalMinX) * scaleX : item.maxX,
       minY: item.overlapGroup ? member.minY + deltaY : item.minY,
       maxY: item.overlapGroup ? member.maxY + deltaY : item.maxY,
       deltaX,
       deltaY,
-      scaleX: item.overlapGroup ? 1 : scaleX
+      scaleX
     }));
   });
 }
@@ -9361,6 +9390,8 @@ var PreviewDrawingController = class {
     this.dragNoteFlowRebuildSince = 0;
     this.dragNoteFlowLastRebuildAt = 0;
     this.dragNoteFlowLastAppliedPlacement = null;
+    this.previewPrimaryPress = null;
+    this.pendingMarkdownIdentityRefresh = null;
     this.allowMarkdownPresentationDuringDrag = false;
     this.noteFlowDropIndicator = null;
     this.resizingSelection = false;
@@ -9528,6 +9559,7 @@ var PreviewDrawingController = class {
     this.onCanvasDoubleClick = this.onCanvasDoubleClick.bind(this);
     this.onPreviewDoubleClick = this.onPreviewDoubleClick.bind(this);
     this.onPreviewSecondPress = this.onPreviewSecondPress.bind(this);
+    this.onPreviewSecondPointerDown = this.onPreviewSecondPointerDown.bind(this);
     this.onWheel = this.onWheel.bind(this);
     this.onResize = this.onResize.bind(this);
     this.onScroll = this.onScroll.bind(this);
@@ -9790,6 +9822,7 @@ var PreviewDrawingController = class {
     this.previewEl.addEventListener("click", this.onHeadingCollapseIndicatorClick, true);
     this.previewGestureWindow = activeDocument.defaultView || window;
     this.previewGestureWindow.addEventListener("mousedown", this.onPreviewSecondPress, true);
+    this.previewGestureWindow.addEventListener("pointerdown", this.onPreviewSecondPointerDown, true);
     this.previewGestureWindow.addEventListener("dblclick", this.onPreviewDoubleClick, true);
     if (this.usesVisualReadingZoom()) {
       this.previewEl.addEventListener("pointerdown", this.onReadingTouchPointerDown, true);
@@ -10247,6 +10280,7 @@ var PreviewDrawingController = class {
     this.previewEl?.removeEventListener("dblclick", this.onPreviewDoubleClick, true);
     this.previewEl?.removeEventListener("click", this.onHeadingCollapseIndicatorClick, true);
     this.previewGestureWindow?.removeEventListener("mousedown", this.onPreviewSecondPress, true);
+    this.previewGestureWindow?.removeEventListener("pointerdown", this.onPreviewSecondPointerDown, true);
     this.previewGestureWindow?.removeEventListener("dblclick", this.onPreviewDoubleClick, true);
     this.previewGestureWindow = null;
     this.previewEl?.removeEventListener("pointerdown", this.onReadingTouchPointerDown, true);
@@ -10817,8 +10851,13 @@ var PreviewDrawingController = class {
       }
       this.repairConnectedReadingSections();
       const editingLayout = this.active && (this.toolMode === TOOL_EDIT_MD || this.noteFlowOperationPending || this.draggingStroke || this.resizingSelection);
-      if (editingLayout) {
-        this.scheduleMarkdownAnnotationRefresh({ layout: false });
+      const identityMutationPending = this.pendingMarkdownIdentityRefresh?.expiresAt > Date.now();
+      if (editingLayout || identityMutationPending) {
+        this.scheduleMarkdownAnnotationRefresh({
+          layout: false,
+          delay: identityMutationPending ? 0 : void 0,
+          force: identityMutationPending
+        });
       } else {
         this.syncMarkdownBlockPresentation();
         this.scheduleFrozenNoteFlowLayoutRestore();
@@ -14093,9 +14132,32 @@ ${selected}
     event.stopPropagation();
     event.stopImmediatePropagation?.();
   }
+  onPreviewSecondPointerDown(event) {
+    if (!this.isReadingPreviewGesture(event) || event.button !== void 0 && event.button !== 0 || event.isPrimary === false) {
+      return;
+    }
+    this.rememberMarkdownIdentityMutation(event);
+    const now = Number(event.timeStamp) || Date.now();
+    const point = { x: Number(event.clientX) || 0, y: Number(event.clientY) || 0 };
+    const previous = this.previewPrimaryPress;
+    this.previewPrimaryPress = { ...point, time: now };
+    const repeated = previous && now >= previous.time && now - previous.time <= 550 && Math.hypot(point.x - previous.x, point.y - previous.y) <= Math.max(18, this.tapDistancePx() * 2);
+    if (!repeated) {
+      return;
+    }
+    const path = event?.composedPath?.() || [];
+    if (this.active && (event.target === this.canvas || path.includes(this.canvas))) {
+      event.preventDefault();
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation?.();
+  }
   isReadingPreviewGesture(event) {
     const target = event?.target;
-    return this.surfaceType === "preview" && !isSourceMode(this.view) && Boolean(target && this.previewEl?.isConnected && this.previewEl.contains?.(target));
+    const path = event?.composedPath?.() || [];
+    return this.surfaceType === "preview" && !isSourceMode(this.view) && Boolean(target && this.previewEl?.isConnected && (this.previewEl.contains?.(target) || path.includes(this.previewEl)));
   }
   onPreviewSecondPress(event) {
     if (!this.isReadingPreviewGesture(event) || event.button !== void 0 && event.button !== 0 || Number(event.detail) < 2) {
@@ -14104,6 +14166,27 @@ ${selected}
     event.preventDefault();
     event.stopPropagation();
     event.stopImmediatePropagation?.();
+  }
+  rememberMarkdownIdentityMutation(event) {
+    const checkbox = event?.target?.closest?.("input.task-list-item-checkbox, input[type='checkbox']");
+    if (!checkbox || !this.previewEl?.contains?.(checkbox)) {
+      return;
+    }
+    const element = this.markdownBlockElementForTarget(checkbox, {
+      x: Number(event.clientX) || 0,
+      y: Number(event.clientY) || 0
+    });
+    const block = this.findMarkdownBlockRecordForElement(element);
+    if (!block || !Number.isFinite(Number(block.lineStart))) {
+      return;
+    }
+    this.pendingMarkdownIdentityRefresh = {
+      id: block.id,
+      path: block.path,
+      lineStart: Number(block.lineStart),
+      lineEnd: Number.isFinite(Number(block.lineEnd)) ? Number(block.lineEnd) : Number(block.lineStart),
+      expiresAt: Date.now() + 3e3
+    };
   }
   rememberTextTap(index, point, event) {
     this.lastTextTap = {
@@ -16005,6 +16088,21 @@ ${selected}
       ].filter(Boolean);
       return !candidateElements.some((candidateElement) => movingElements.has(candidateElement) || Array.from(movingElements).some((moving) => moving.contains?.(candidateElement) || candidateElement.contains?.(moving)));
     });
+    const noteFlowCandidateByMarkdownId = /* @__PURE__ */ new Map();
+    for (const candidate of noteFlowCandidates) {
+      const rawTarget = candidate.inlineElement || candidate.sourceElement || candidate.element;
+      const target = this.canonicalMarkdownFlowTarget(rawTarget);
+      const blockId = target?.dataset?.noteDrawMarkdownBlockId || this.findMarkdownBlockRecordForElement(target)?.id;
+      if (!blockId) {
+        continue;
+      }
+      const rect = this.noteFlowCandidateRect(candidate, "inline");
+      const area = rect ? Math.max(1, rect.right - rect.left) * Math.max(1, rect.bottom - rect.top) : Number.POSITIVE_INFINITY;
+      const current2 = noteFlowCandidateByMarkdownId.get(blockId);
+      if (!current2 || area < current2.area) {
+        noteFlowCandidateByMarkdownId.set(blockId, { candidate, area });
+      }
+    }
     const markdownCandidateByElement = new Map(markdownCandidates.map((entry) => [entry.element, entry]));
     const markdownBlockRecords = new Map(this.markdownBlockRecords().map((item) => [item.id, item]));
     const snapshot = {
@@ -16016,6 +16114,7 @@ ${selected}
       markdownCandidateByElement,
       markdownBlockRecords,
       noteFlowCandidates,
+      noteFlowCandidateByMarkdownId: new Map(Array.from(noteFlowCandidateByMarkdownId, ([id, value]) => [id, value.candidate])),
       noteFlowDropIndex: createNoteFlowDropIndex(noteFlowCandidates),
       rowMetrics: /* @__PURE__ */ new Map()
     };
@@ -16215,10 +16314,20 @@ ${selected}
         if (!block || block.floating) {
           continue;
         }
-        memberEntries.push({ id, rect });
+        const liveSpan = element.classList?.contains("notedraw-md-inline-grid-item") ? Number.parseInt(element.style?.getPropertyValue?.("--notedraw-md-inline-span"), 10) : Number.NaN;
+        memberEntries.push({
+          id,
+          rect,
+          span: Number.isFinite(liveSpan) ? liveSpan : block.span
+        });
       }
     }
-    memberEntries.push({ id: targetId, rect: targetRect });
+    const targetLiveSpan = target?.classList?.contains("notedraw-md-inline-grid-item") ? Number.parseInt(target.style?.getPropertyValue?.("--notedraw-md-inline-span"), 10) : Number.NaN;
+    memberEntries.push({
+      id: targetId,
+      rect: targetRect,
+      span: Number.isFinite(targetLiveSpan) ? targetLiveSpan : targetBlock?.span
+    });
     memberEntries.sort((left, right) => Number(left.rect?.left) - Number(right.rect?.left) || Number(left.rect?.top) - Number(right.rect?.top) || left.id.localeCompare(right.id));
     const orderedMemberIds = Array.from(new Set(memberEntries.map((entry) => entry.id)));
     const memberIds = orderedMemberIds.filter((id) => id !== targetId);
@@ -16244,7 +16353,11 @@ ${selected}
       targetId,
       movingItemCount,
       movingMarkdownIds,
-      movingStrokeCount
+      movingStrokeCount,
+      preferredSpanById: new Map(memberEntries.map((entry) => [
+        entry.id,
+        clamp10(Math.round(Number(entry.span) || 12), 1, 12)
+      ]))
     };
     geometry?.rowMetrics?.set(target, result);
     return result;
@@ -16256,6 +16369,19 @@ ${selected}
       Number(row?.movingItemCount) || 0,
       1
     );
+    const preferredSpanById = new Map(row?.preferredSpanById instanceof Map ? row.preferredSpanById : []);
+    if (targetBlock?.id && !preferredSpanById.has(targetBlock.id)) {
+      preferredSpanById.set(targetBlock.id, targetBlock.span || 12);
+    }
+    for (const state of moving) {
+      const id = state?.block?.id || state?.id;
+      if (id) {
+        preferredSpanById.set(id, state?.block?.span || state?.span || 12);
+      }
+    }
+    for (let index = 0; index < Math.max(0, knownMovingCount - movingIds.length); index += 1) {
+      preferredSpanById.set(`__notedraw-inline-extra-${index}__`, 12);
+    }
     return allocateInlineRow({
       existingIds: row?.orderedMemberIds || [
         ...row?.memberIds || [],
@@ -16264,7 +16390,8 @@ ${selected}
       movingIds,
       targetId: targetBlock?.id || row?.targetId || "__notedraw-inline-target__",
       side,
-      extraMovingCount: Math.max(0, knownMovingCount - movingIds.length)
+      extraMovingCount: Math.max(0, knownMovingCount - movingIds.length),
+      preferredSpanById
     });
   }
   markdownInlineRowSpan(allocation, id, fallback = 12) {
@@ -16748,7 +16875,8 @@ ${selected}
         inlineBoundary: previewedPlacement.inlineBoundary,
         flowOrder: previewedPlacement.flowOrder,
         noteFlowBoundary: previewedPlacement.noteFlowBoundary,
-        candidate: previewedPlacement.candidate
+        candidate: previewedPlacement.candidate,
+        previewCandidates: previewedPlacement.previewCandidates
       } : null;
     }
     const preserveMarkdownDomPreview = didMove && Boolean(this.dragNoteFlowDomPreview) && Boolean(this.dragMarkdownLastValidDrop?.element?.isConnected);
@@ -16836,7 +16964,9 @@ ${selected}
           }
         }
       }
-      const flowedIndexes = resolvedDropPlacement ? this.reflowNoteFlowElementsAfterDrag(movedIndexes, resolvedDropPlacement) : [];
+      const flowedIndexes = resolvedDropPlacement ? this.reflowNoteFlowElementsAfterDrag(movedIndexes, resolvedDropPlacement, {
+        candidates: resolvedDropPlacement.previewCandidates
+      }) : [];
       const affectedIndexes = Array.from(/* @__PURE__ */ new Set([...movedIndexes, ...flowedIndexes]));
       const droppedNoteFlowIndexes = new Set(this.draggedNoteFlowIndexes(movedIndexes));
       for (const index of affectedIndexes) {
@@ -19321,6 +19451,14 @@ ${selected}
     const blockElement = block ? this.markdownBlockElement(block) || editable : editable;
     return this.markdownElementContainsClientPoint(blockElement, clientPoint) ? blockElement : null;
   }
+  canonicalMarkdownFlowTarget(rawTarget) {
+    const candidate = isConcreteMarkdownBlockElement(rawTarget) ? rawTarget : findNoteFlowInlineMeasureElement(rawTarget);
+    if (!candidate) {
+      return null;
+    }
+    const block = this.findMarkdownBlockRecordForElement(candidate);
+    return this.markdownBlockElement(block) || candidate.closest?.(".notedraw-md-block") || candidate;
+  }
   ensureMarkdownBlockRecord(element) {
     if (!element || this.surfaceType !== "preview") {
       return null;
@@ -19551,6 +19689,10 @@ ${selected}
       const group = String(block?.explicitLineGroup || "");
       return !group || String(element?.dataset?.noteDrawExplicitLineGroup || "") === group;
     };
+    const pendingIdentity = this.pendingMarkdownIdentityRefresh?.expiresAt > Date.now() ? this.pendingMarkdownIdentityRefresh : null;
+    if (!pendingIdentity) {
+      this.pendingMarkdownIdentityRefresh = null;
+    }
     const identityMatches = (block, element) => {
       if (!element || !explicitGroupMatches(block, element)) {
         return false;
@@ -19570,6 +19712,18 @@ ${selected}
       const exactKey = `${block.path}\0${block.lineStart}\0${block.textHint}`;
       const hintKey = `${block.path}\0${block.textHint}`;
       let element = previousMatches ? previous : takeUnused(idCandidates.get(block.id), block) || takeUnused(exactCandidates.get(exactKey), block) || takeUnused(hintCandidates.get(hintKey), block);
+      if (!element && pendingIdentity?.id === block.id && pendingIdentity.path === block.path) {
+        element = candidates.find((candidate) => {
+          if (used.has(candidate) || !explicitGroupMatches(block, candidate)) {
+            return false;
+          }
+          const meta2 = candidateMeta.get(candidate);
+          return meta2?.path === block.path && Number(meta2.info?.lineStart) === pendingIdentity.lineStart && Number(meta2.info?.lineEnd ?? meta2.info?.lineStart) === pendingIdentity.lineEnd;
+        }) || null;
+        if (element) {
+          this.pendingMarkdownIdentityRefresh = null;
+        }
+      }
       if (!element) {
         const blockHint = normalizeRenderedText2(block.textHint);
         const scored = candidates.map((candidate, candidateOrder) => {
@@ -19613,6 +19767,11 @@ ${selected}
       element.toggleClass("is-selected", this.selectedMarkdownBlockIds.has(block.id));
       element.toggleClass("is-locked", Boolean(block.locked));
       element.toggleClass("is-floating", Boolean(block.floating && block.floatBox));
+      const liveInlineSpan = element.classList?.contains("notedraw-md-inline-grid-item") ? Number.parseInt(element.style?.getPropertyValue?.("--notedraw-md-inline-span"), 10) : Number.NaN;
+      if (!block.floating && Number.isFinite(liveInlineSpan) && liveInlineSpan >= 1 && liveInlineSpan < 12 && (!Number.isFinite(Number(block.span)) || Number(block.span) >= 12)) {
+        block.span = liveInlineSpan;
+        block.noteFlowAutoSpan = false;
+      }
       this.applyMarkdownBlockFlowPresentation(block, element);
       this.applyMarkdownBlockWidthPresentation(block, element);
       setNoteDrawCssProps(element, {
@@ -20908,7 +21067,7 @@ ${selected}
     }
     const candidate = placement.candidate;
     const rawTarget = candidate.inlineElement || candidate.sourceElement || findNoteFlowInlineMeasureElement(candidate.element);
-    const target = isConcreteMarkdownBlockElement(rawTarget) ? rawTarget : findNoteFlowInlineMeasureElement(candidate.element);
+    const target = this.canonicalMarkdownFlowTarget(rawTarget);
     const targetBlock = this.findMarkdownBlockRecordForElement(target);
     const row = drop?.row;
     const moving = this.draggedNoteFlowMarkdownStates();
@@ -21094,9 +21253,13 @@ ${selected}
     const drop = options.drop || this.syncMarkdownDropFromNoteFlowPlacement(resolved);
     this.applyDraggedNoteFlowAnchorDomPreview(resolved, drop);
     const markdownDomPreview = this.applyDraggedMarkdownDomPreview(drop);
-    const liveResolved = resolved;
+    const liveResolved = this.remeasureDraggedNoteFlowPlacement(resolved);
     this.snapDraggedSelectionToNoteFlowPlacement(liveResolved, movedIndexes);
-    const previewCandidates = this.dragDropGeometrySnapshot()?.noteFlowCandidates || this.noteFlowCandidates();
+    const candidateBlockKey = liveResolved.candidate?.blockKey || noteFlowBlockKey(liveResolved.candidate, this.file?.path || "");
+    const previewCandidates = (this.dragDropGeometrySnapshot()?.noteFlowCandidates || this.noteFlowCandidates()).map((candidate) => {
+      const blockKey = candidate.blockKey || noteFlowBlockKey(candidate, this.file?.path || "");
+      return candidateBlockKey && blockKey === candidateBlockKey ? liveResolved.candidate : candidate;
+    });
     const flowedIndexes = this.reflowNoteFlowElementsAfterDrag(movedIndexes, liveResolved, {
       preview: true,
       candidates: previewCandidates
@@ -21146,7 +21309,10 @@ ${selected}
     }
     this.invalidateSelectionFrameSnapshot();
     this.requestRender(this.selectionHasDomStrokes() ? "interaction" : false);
-    this.dragNoteFlowLastAppliedPlacement = placement;
+    this.dragNoteFlowLastAppliedPlacement = {
+      ...liveResolved,
+      previewCandidates
+    };
     return affectedIndexes;
   }
   refreshDraggedNoteFlowPreviewCandidate(candidate) {
@@ -21158,6 +21324,35 @@ ${selected}
     const candidates = this.noteFlowCandidates();
     const blockKey = candidate.blockKey || noteFlowBlockKey(candidate, this.file?.path || "");
     return candidates.find((item) => item.sourceElement === sourceElement && item.start === candidate.start && item.end === candidate.end) || candidates.find((item) => item.element === element && item.blockKey === blockKey) || candidates.find((item) => item.blockKey === blockKey) || null;
+  }
+  remeasureDraggedNoteFlowPlacement(placement) {
+    const candidate = placement?.candidate;
+    if (!candidate) {
+      return placement;
+    }
+    const owner = candidate.element || this.noteFlowLayoutElement(candidate.sourceElement);
+    const inlineElement = candidate.inlineElement || findNoteFlowInlineMeasureElement(candidate.sourceElement || owner);
+    const rowRect = this.markdownElementVisibleClientRect(owner) || this.markdownElementVisibleClientRect(candidate.sourceElement);
+    const inlineRect = this.markdownElementVisibleClientRect(inlineElement) || rowRect;
+    if (!rowRect || !inlineRect) {
+      return placement;
+    }
+    return {
+      ...placement,
+      boundary: placement.horizontalSide ? inlineRect.top : placement.side === "after" ? rowRect.bottom : rowRect.top,
+      candidate: {
+        ...candidate,
+        left: rowRect.left,
+        right: rowRect.right,
+        top: rowRect.top,
+        bottom: rowRect.bottom,
+        inlineElement,
+        inlineLeft: inlineRect.left,
+        inlineRight: inlineRect.right,
+        inlineTop: inlineRect.top,
+        inlineBottom: inlineRect.bottom
+      }
+    };
   }
   draggedNoteFlowIndexes(indexes = this.dragStrokeOriginalPoints?.keys?.() || []) {
     return Array.from(indexes || []).filter((index) => {
@@ -21229,15 +21424,44 @@ ${selected}
     const geometry = this.dragDropGeometrySnapshot();
     const previousPlacement = this.dragNoteFlowPlacement;
     let placement = selectNoteFlowDropPlacementFromIndex(geometry?.noteFlowDropIndex, { dropY: Number(clientY) });
+    let directMarkdownEntry = null;
+    let directMarkdownArea = Number.POSITIVE_INFINITY;
+    for (const entry of geometry?.markdownCandidates || []) {
+      const rect = entry.rect;
+      if (Number(clientX) < rect.left || Number(clientX) > rect.right || Number(clientY) < rect.top || Number(clientY) > rect.bottom) {
+        continue;
+      }
+      const area = rect.width * rect.height;
+      if (area < directMarkdownArea) {
+        directMarkdownEntry = entry;
+        directMarkdownArea = area;
+      }
+    }
+    const directMarkdownBlock = directMarkdownEntry ? this.findMarkdownBlockRecordForElement(directMarkdownEntry.element) : null;
+    const directNoteFlowCandidate = directMarkdownBlock?.id ? geometry?.noteFlowCandidateByMarkdownId?.get(directMarkdownBlock.id) : null;
+    if (directNoteFlowCandidate) {
+      const directRect = this.noteFlowCandidateRect(directNoteFlowCandidate, "inline") || directMarkdownEntry.rect;
+      const side = Number(clientY) >= (directRect.top + directRect.bottom) / 2 ? "after" : "before";
+      placement = {
+        candidate: directNoteFlowCandidate,
+        side,
+        line: side === "after" ? directNoteFlowCandidate.end : directNoteFlowCandidate.start,
+        boundary: side === "after" ? directRect.bottom : directRect.top
+      };
+    }
     let keptPreviousInline = false;
     if (previousPlacement?.horizontalSide && previousPlacement.candidate) {
       const previousCandidate = this.refreshDraggedNoteFlowPreviewCandidate(previousPlacement.candidate) || previousPlacement.candidate;
+      const previousKey = previousPlacement.candidate.blockKey || noteFlowBlockKey(previousPlacement.candidate, this.file?.path || "");
+      const freshKey = placement?.candidate ? placement.candidate.blockKey || noteFlowBlockKey(placement.candidate, this.file?.path || "") : "";
+      const freshRect = placement?.candidate ? this.noteFlowCandidateRect(placement.candidate, "inline") : null;
+      const enteredDifferentCandidate = Boolean(freshRect && freshKey && previousKey && freshKey !== previousKey && Number(clientY) >= freshRect.top && Number(clientY) <= freshRect.bottom);
       const previousRect = this.noteFlowCandidateRect(previousPlacement.candidate, "inline") || (previousCandidate ? this.noteFlowCandidateRect(previousCandidate, "inline") : null);
       const previousHeight = previousRect ? Math.max(1, previousRect.bottom - previousRect.top) : 0;
       const verticalTolerance = Math.max(48, previousHeight * 1.1);
       const lane = geometry?.laneRect;
       const remainsInLane = !lane || Number(clientX) >= Number(lane.left) - 32 && Number(clientX) <= Number(lane.right) + 32;
-      if (previousRect && remainsInLane && Number(clientY) >= previousRect.top - verticalTolerance && Number(clientY) <= previousRect.bottom + verticalTolerance) {
+      if (!enteredDifferentCandidate && previousRect && remainsInLane && Number(clientY) >= previousRect.top - verticalTolerance && Number(clientY) <= previousRect.bottom + verticalTolerance) {
         placement = {
           candidate: previousCandidate,
           side: previousPlacement.side,
@@ -21419,7 +21643,7 @@ ${selected}
     }
     const candidate = placement.candidate;
     const rawTarget = candidate.inlineElement || candidate.sourceElement || findNoteFlowInlineMeasureElement(candidate.element);
-    const target = isConcreteMarkdownBlockElement(rawTarget) ? rawTarget : findNoteFlowInlineMeasureElement(candidate.element);
+    const target = this.canonicalMarkdownFlowTarget(rawTarget);
     const movingElements = new Set(Array.from(this.dragMarkdownOriginalElements.values()).map((state) => state.element));
     if (!target?.isConnected || movingElements.has(target) || Array.from(movingElements).some((element) => element.contains?.(target) || target.contains?.(element))) {
       this.dragMarkdownLastValidDrop = null;
@@ -21468,7 +21692,7 @@ ${selected}
   prepareMarkdownAnchorForInlineNoteFlow(placement) {
     const candidate = placement?.candidate;
     const rawTarget = candidate?.inlineElement || candidate?.sourceElement || findNoteFlowInlineMeasureElement(candidate?.element);
-    const target = isConcreteMarkdownBlockElement(rawTarget) ? rawTarget : findNoteFlowInlineMeasureElement(candidate?.element);
+    const target = this.canonicalMarkdownFlowTarget(rawTarget);
     if (!target?.isConnected) {
       return false;
     }
@@ -21571,7 +21795,8 @@ ${selected}
       boundary: placement?.boundary !== null && placement?.boundary !== void 0 && Number.isFinite(Number(placement.boundary)) ? Number(placement.boundary) : null,
       inlineBoundary: placement?.inlineBoundary !== null && placement?.inlineBoundary !== void 0 && Number.isFinite(Number(placement.inlineBoundary)) ? Number(placement.inlineBoundary) : null,
       flowOrder: Number.isFinite(Number(placement?.flowOrder)) ? Number(placement.flowOrder) : null,
-      noteFlowBoundary: placement?.noteFlowBoundary === true
+      noteFlowBoundary: placement?.noteFlowBoundary === true,
+      previewCandidates: Array.isArray(placement?.previewCandidates) ? placement.previewCandidates : null
     } : null;
   }
   snapDraggedSelectionToNoteFlowPlacement(placement, indexes) {
@@ -22394,6 +22619,7 @@ ${selected}
       baseMinY: target.targetBox.y,
       originalMinY: target.targetBox.y,
       rowKey: target.rowKey,
+      overlapGroup: isNoteFlowInkStroke(target.stroke) ? `ink:${target.rowKey}` : "",
       gap: Math.min(8, target.noteFlow.gap)
     })), { gap: 6 });
     const inlineItems = targets.filter((target) => target.placementMode === "inline").map((target) => ({
@@ -23895,6 +24121,32 @@ ${selected}
       height: bottom - top
     };
   }
+  markdownElementTextClientRect(element, limitRect = null) {
+    if (!element?.ownerDocument?.createRange) {
+      return null;
+    }
+    try {
+      const range = element.ownerDocument.createRange();
+      range.selectNodeContents(element);
+      const rects = Array.from(range.getClientRects?.() || []).filter((rect) => {
+        if (!(rect.width > 0.5 && rect.height > 0.5)) {
+          return false;
+        }
+        return !limitRect || Math.min(rect.bottom, limitRect.bottom) - Math.max(rect.top, limitRect.top) > 0.5;
+      });
+      if (!rects.length) {
+        return null;
+      }
+      const left = Math.min(...rects.map((rect) => rect.left));
+      const right = Math.max(...rects.map((rect) => rect.right));
+      const top = Math.min(...rects.map((rect) => rect.top));
+      const bottom = Math.max(...rects.map((rect) => rect.bottom));
+      return { left, right, top, bottom, width: right - left, height: bottom - top };
+    } catch (error) {
+      void error;
+      return null;
+    }
+  }
   markdownElementCanvasBounds(element, { forSelection = false } = {}) {
     if (!element?.isConnected || !this.canvas) {
       return null;
@@ -23910,11 +24162,22 @@ ${selected}
     let bottom = elementRect.bottom;
     if (forSelection) {
       const visibleRect = this.markdownElementVisibleClientRect(element) || elementRect;
-      left = visibleRect.left;
-      right = visibleRect.right;
-      top = visibleRect.top;
-      bottom = visibleRect.bottom;
-      left -= Math.max(4, Math.min(8, visibleRect.height * 0.18));
+      const contentElement = findNoteFlowInlineMeasureElement(element);
+      const contentRect = contentElement && contentElement !== element ? contentElement.getBoundingClientRect?.() : null;
+      const textRect = this.markdownElementTextClientRect(contentElement || element, visibleRect);
+      if (contentRect?.width > 0 && contentRect?.height > 0) {
+        left = contentRect.left;
+        right = contentRect.right;
+        top = Math.max(visibleRect.top, textRect?.top ?? contentRect.top);
+        bottom = Math.min(visibleRect.bottom, textRect?.bottom ?? contentRect.bottom);
+      } else {
+        left = visibleRect.left;
+        right = visibleRect.right;
+        top = textRect ? Math.max(visibleRect.top, textRect.top) : visibleRect.top;
+        bottom = textRect ? Math.min(visibleRect.bottom, textRect.bottom) : visibleRect.bottom;
+      }
+      left = Math.min(left, visibleRect.left);
+      left -= Math.max(7, Math.min(14, Math.max(1, bottom - top) * 0.22));
       const checkboxRect = this.markdownTaskCheckboxRect(element, visibleRect);
       if (checkboxRect) {
         left = Math.min(left, checkboxRect.left);
