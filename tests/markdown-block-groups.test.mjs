@@ -59,7 +59,7 @@ test("Markdown blocks and inserted ink share the real NoteFlow row contract", as
   assert.match(source, /const movingItemCount = Math\.max\(1, movingMarkdownCount \+ movingStrokeCount\)[\s\S]*const itemCount = movingItemCount \+ 1/);
 });
 
-test("top-level H1 H2 and H3 blocks use a local grid row instead of the virtualized reading root", async () => {
+test("all Markdown block types use stable inline lanes inside renderer-owned collections", async () => {
   const [source, styles] = await Promise.all([
     readFile(sourceUrl, "utf8"),
     readFile(stylesUrl, "utf8")
@@ -67,14 +67,19 @@ test("top-level H1 H2 and H3 blocks use a local grid row instead of the virtuali
   const rows = source.slice(source.indexOf("  isOwnedMarkdownGridRow("), source.indexOf("  findMarkdownBlockRecordForElement("));
   const preview = source.slice(source.indexOf("  applyDraggedNoteFlowAnchorDomPreview("), source.indexOf("  restoreDraggedNoteFlowLivePreview("));
 
+  assert.match(rows, /markdownBlockInlineLane\(element\)/);
+  assert.match(rows, /\.markdown-preview-section,\.markdown-rendered,\.callout-content,\.contains-task-list,ul,ol,\.el-ul,\.el-ol/);
+  assert.match(rows, /markdownBlockLayoutLane\(element\)/);
   assert.match(rows, /notedraw-md-grid-row/);
   assert.match(rows, /if \(!isNoteFlowCollectionBlock\(current\)\) \{\s*return current/);
   assert.match(rows, /current\.insertBefore\(row, flowElement\)/);
   assert.match(rows, /previousRow \|\| nextRow/);
-  assert.match(preview, /ensureMarkdownBlockGridRow\(\{ \.\.\.targetBlock, span: drop\.row\.span \}, target, \{ preview: true \}\)/);
+  assert.match(preview, /applyDraggedMarkdownInlinePresentation\(target, drop\.row\.span\)[\s\S]*ensureMarkdownBlockGridRow\(\{ \.\.\.targetBlock, span: drop\.row\.span \}, target, \{ preview: true \}\)/);
+  assert.match(preview, /applyDraggedMarkdownInlinePresentation\(dragElement, drop\.row\.span\)/);
   assert.match(styles, /\.notedraw-md-grid-row \{/);
+  assert.match(styles, /\.notedraw-md-inline-grid-item \{/);
 
-  for (const heading of ["h1", "h2", "h3"]) {
+  for (const kind of ["h1", "h2", "h3", "paragraph", "task", "link", "image", "embed"]) {
     assert.equal(resolveDragDropHorizontalIntent({
       clientX: 760,
       targetLeft: 120,
@@ -82,7 +87,7 @@ test("top-level H1 H2 and H3 blocks use a local grid row instead of the virtuali
       laneLeft: 100,
       laneRight: 900,
       horizontalRoom: true,
-      heading
+      kind
     }), "inline-right");
   }
 });
@@ -303,7 +308,7 @@ test("restored files never rebind stale Markdown records by line number", async 
 
 test("parallel Markdown preview measures the full content lane before deciding column capacity", async () => {
   const source = await readFile(sourceUrl, "utf8");
-  const metrics = source.slice(source.indexOf("  markdownDropRowMetrics("), source.indexOf("  markdownDropIncludesHeading(", source.indexOf("  markdownDropRowMetrics(")));
+  const metrics = source.slice(source.indexOf("  markdownDropRowMetrics("), source.indexOf("  async commitDraggedMarkdownBlocks(", source.indexOf("  markdownDropRowMetrics(")));
 
   assert.match(metrics, /const laneWidth = geometry\?\.laneRect[\s\S]*Number\(geometry\.laneRect\.right\) - Number\(geometry\.laneRect\.left\)/);
   assert.match(metrics, /const measuredLaneWidth = this\.dragContentLaneRect[\s\S]*this\.layoutMeasureEl\?\.clientWidth/);
@@ -445,7 +450,7 @@ test("NoteFlow dragging previews the same snapped and packed placement committed
   assert.match(placementSource, /const targetChanged = previous\?\.candidate\?\.sourceElement !== flowTarget[\s\S]*const boundaryJitter = [\s\S]*const presentationChanged = targetChanged \|\| boundaryJitter \|\| previous\?\.flowOrder !== flowOrder/);
   assert.match(placementSource, /const previousRect = this\.noteFlowCandidateRect\(previousPlacement\.candidate, "inline"\)/);
   assert.doesNotMatch(placementSource, /debounceZone|dragNoteFlowRebuildSince/);
-  assert.match(placementSource, /const inlineRow = this\.markdownDropRowMetrics\(inlineTarget, movingElements\)[\s\S]*const equalLaneWidth = Math\.max\([\s\S]*MIN_INLINE_NOTE_FLOW_ITEM_WIDTH_PX[\s\S]*inlineRow\.totalCount[\s\S]*const inlineEdgeBand = clamp\(targetHeight \* 0\.10, 2, 6\)[\s\S]*const inlineCaptureBand = clamp\(targetHeight \* 0\.85, 28, 72\)[\s\S]*const sameInlineCandidate[\s\S]*const inlineRowHit = sameInlineCandidate[\s\S]*targetRect\.top - inlineCaptureBand[\s\S]*targetRect\.bottom \+ inlineCaptureBand[\s\S]*const horizontalRoom = !this\.markdownDropIncludesHeading\(inlineTarget\)[\s\S]*inlineRowHit[\s\S]*inlineRow\.canFit/);
+  assert.match(placementSource, /const inlineRow = this\.markdownDropRowMetrics\(inlineTarget, movingElements\)[\s\S]*const equalLaneWidth = Math\.max\([\s\S]*MIN_INLINE_NOTE_FLOW_ITEM_WIDTH_PX[\s\S]*inlineRow\.totalCount[\s\S]*const inlineEdgeBand = clamp\(targetHeight \* 0\.10, 2, 6\)[\s\S]*const inlineCaptureBand = clamp\(targetHeight \* 0\.85, 28, 72\)[\s\S]*const sameInlineCandidate[\s\S]*const inlineRowHit = sameInlineCandidate[\s\S]*targetRect\.top - inlineCaptureBand[\s\S]*targetRect\.bottom \+ inlineCaptureBand[\s\S]*const horizontalRoom = inlineRowHit[\s\S]*inlineRow\.canFit/);
   assert.doesNotMatch(placementSource, /rightIntentRatio:/);
   assert.match(placementSource, /const horizontalSide = intent === "inline-right" \? "right"[\s\S]*: keptPreviousInline[\s\S]*\? previousPlacement\.horizontalSide[\s\S]*: null/);
   assert.match(dragSource, /createComment\("notedraw-note-flow-drag-origin"\)[\s\S]*state\.domMarker = marker/);
@@ -518,7 +523,7 @@ test("reading-view double clicks are consumed before Obsidian can switch to sour
   const source = await readFile(sourceUrl, "utf8");
   const handler = source.slice(source.indexOf("  onPreviewDoubleClick("), source.indexOf("  rememberTextTap(", source.indexOf("  onPreviewDoubleClick(")));
 
-  assert.match(handler, /this\.surfaceType !== "preview"/);
+  assert.match(handler, /this\.isReadingPreviewGesture\(event\)/);
   assert.match(handler, /if \(this\.active\) \{[\s\S]*this\.onCanvasDoubleClick\(event\)/);
   assert.match(handler, /event\.preventDefault\(\);[\s\S]*event\.stopImmediatePropagation\?\.\(\)/);
 });

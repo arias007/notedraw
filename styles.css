@@ -665,11 +665,8 @@
   min-width: 0;
 }
 
-/* Side-by-side heading blocks: Obsidian gives the first heading a large top
-   margin (1.5em) and any heading that follows another heading a small one
-   (0.5em), so two headings packed side-by-side sit at different heights.
-   Normalize the heading margin inside non-full-width grid items so packed
-   headings share the same baseline. */
+/* Obsidian gives adjacent headings different top margins. Normalize them only
+   while they share a NoteFlow row so mixed Markdown block types align. */
 .notedraw-md-grid > .notedraw-md-grid-item:not([style*="span 12"]):not([style*="1 / -1"]) > :is(h1, h2, h3, h4, h5, h6),
 .notedraw-md-grid > .el-h1:not([style*="span 12"]):not([style*="1 / -1"]) > h1,
 .notedraw-md-grid > .el-h2:not([style*="span 12"]):not([style*="1 / -1"]) > h2,
@@ -732,6 +729,25 @@
   transform: translate(var(--notedraw-md-drag-x, 0px), var(--notedraw-md-drag-y, 0px));
   pointer-events: none;
   opacity: 0.84;
+}
+
+/* Obsidian-owned Markdown collections keep their native children. Inline
+   packing works for headings, text, tasks, media and embeds without moving
+   those nodes into transient wrappers that a renderer can later discard. */
+.notedraw-md-inline-grid-item {
+  display: inline-block !important;
+  /* Inline-block whitespace between renderer nodes is real layout width.
+     Reserve the same small gap used by the grid path so two 6-span blocks,
+     and larger mixed rows, stay on one line instead of wrapping at 100%. */
+  width: calc(100% * var(--notedraw-md-inline-span, 12) / 12 - 6px) !important;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  vertical-align: top;
+}
+
+.notedraw-md-inline-grid-item > :is(h1, h2, h3, h4, h5, h6) {
+  margin-top: 0.5em !important;
 }
 
 .notedraw-md-block.notedraw-note-flow-peer-animating {

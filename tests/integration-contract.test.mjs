@@ -457,7 +457,7 @@ test("selection tool previews and commits exact NoteFlow Markdown insertion targ
   assert.doesNotMatch(previewFrameSource, /requestAnimationFrame|setTimeout/);
   assert.match(dropSource, /notedraw-text-sort-target-before[\s\S]*notedraw-text-sort-target-after[\s\S]*notedraw-text-sort-target-left[\s\S]*notedraw-text-sort-target-right/);
   assert.match(dropSource, /noteDrawDropSide[\s\S]*noteDrawDropLine/);
-  assert.match(dropSource, /const inlineRow = this\.markdownDropRowMetrics\(inlineTarget, movingElements\)[\s\S]*const equalLaneWidth = Math\.max\([\s\S]*inlineRow\.totalCount[\s\S]*const inlineRowHit = sameInlineCandidate[\s\S]*const horizontalRoom = !this\.markdownDropIncludesHeading\(inlineTarget\)[\s\S]*inlineRowHit[\s\S]*movingLaneCount > 0[\s\S]*inlineRow\.canFit/);
+  assert.match(dropSource, /const inlineRow = this\.markdownDropRowMetrics\(inlineTarget, movingElements\)[\s\S]*const equalLaneWidth = Math\.max\([\s\S]*inlineRow\.totalCount[\s\S]*const inlineRowHit = sameInlineCandidate[\s\S]*const horizontalRoom = inlineRowHit[\s\S]*movingLaneCount > 0[\s\S]*inlineRow\.canFit/);
   assert.match(dropSource, /noteFlowCandidateRect\(placement\.candidate, "inline"\)/);
   assert.match(dropSource, /noteFlowCandidateRect\([\s\S]*horizontalSide \? "inline" : "row"/);
   assert.match(dropSource, /const intent = resolveDragDropHorizontalIntent\([\s\S]*horizontalRoom[\s\S]*\);[\s\S]*const horizontalSide = intent === "inline-right" \? "right"[\s\S]*: keptPreviousInline[\s\S]*\? previousPlacement\.horizontalSide[\s\S]*: null[\s\S]*const leftSnap = intent === "line-start"/);
@@ -522,8 +522,12 @@ test("reading double-click stays in preview and source view exposes the Markdown
   assert.match(source, /setIcon\(this\.editMarkdownButton, "file-pen-line"\)/);
   assert.match(source, /this\.editMarkdownButton\?\.classList\.toggle\("is-active", this\.toolMode === TOOL_EDIT_MD\)/);
   assert.match(source, /this\.previewEl\.addEventListener\("dblclick", this\.onPreviewDoubleClick, true\)/);
-  assert.match(source, /onPreviewDoubleClick\(event\)[\s\S]*this\.surfaceType !== "preview"[\s\S]*this\.onCanvasDoubleClick\(event\)[\s\S]*stopImmediatePropagation/);
+  assert.match(source, /this\.previewGestureWindow\.addEventListener\("mousedown", this\.onPreviewSecondPress, true\)/);
+  assert.match(source, /this\.previewGestureWindow\.addEventListener\("dblclick", this\.onPreviewDoubleClick, true\)/);
+  assert.match(source, /onPreviewDoubleClick\(event\)[\s\S]*isReadingPreviewGesture\(event\)[\s\S]*this\.onCanvasDoubleClick\(event\)[\s\S]*stopImmediatePropagation/);
+  assert.match(source, /onPreviewSecondPress\(event\)[\s\S]*Number\(event\.detail\) < 2[\s\S]*stopImmediatePropagation/);
   assert.match(source, /this\.previewEl\?\.removeEventListener\("dblclick", this\.onPreviewDoubleClick, true\)/);
+  assert.match(source, /this\.previewGestureWindow\?\.removeEventListener\("dblclick", this\.onPreviewDoubleClick, true\)/);
 });
 
 test("source Markdown editing exposes formatting for CodeMirror and embedded Markdown", async () => {

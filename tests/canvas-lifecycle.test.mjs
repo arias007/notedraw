@@ -50,12 +50,13 @@ test("background tabs cannot leave the initial canvas resize pending forever", a
   assert.match(scheduleSource, /cancelResizeFrame\(\)[\s\S]*window\.cancelAnimationFrame\(this\.resizeFrameId\)[\s\S]*window\.clearTimeout\(this\.resizeFallbackTimer\)/);
 });
 
-test("hidden or alternate surfaces release cached reading controllers", async () => {
+test("hidden reading controllers survive source mode while alternate or detached surfaces are released", async () => {
   const source = await readFile(sourceUrl, "utf8");
 
-  assert.match(source, /if \(isSourceMode\(view\) && sourceVisible && !previewVisible\) \{\s*for \(const rootPreview of findRootPreviewsForView\(view\)\) \{[\s\S]*controller\?\.destroy\?\.\(\);\s*resetDormantRootPreview\(view, rootPreview\);/s);
+  assert.match(source, /if \(isSourceMode\(view\) && sourceVisible && !previewVisible\) \{[\s\S]*controller\.syncFloatingControlClasses\?\.\(\);/s);
   assert.match(source, /sourceController\?\.syncFloatingControlClasses\(\);\s*if \(!previewVisible\) \{\s*if \(alternateSurfaceVisible\)[\s\S]*controller\.destroy\(\);[\s\S]*continue;/s);
-  assert.match(source, /if \(!isMarkdownPreviewVisible\(view, preview\)\) \{[\s\S]*alternateSurfaceVisible \|\| sourceVisible[\s\S]*existingController\.destroy\(\);[\s\S]*this\.scheduleWebviewSync\(\);[\s\S]*return;/s);
+  assert.match(source, /if \(!isMarkdownPreviewVisible\(view, preview\)\) \{[\s\S]*alternateSurfaceVisible && !sourceVisible[\s\S]*existingController\.destroy\(\);[\s\S]*this\.scheduleWebviewSync\(\);[\s\S]*return;/s);
+  assert.match(source, /if \(isSourceMode\(view\) && sourceVisible && !previewVisible\) \{[\s\S]*controller\.previewEl\?\.isConnected[\s\S]*controller\.syncFloatingControlClasses\?\.\(\);[\s\S]*controller\?\.destroy\?\.\(\);/s);
   assert.match(source, /previewController\?\.plugin === this && view\.file && previewController\.file\?\.path !== view\.file\.path[\s\S]*previewController\.destroy\(\);\s*previewController = null/);
   assert.match(source, /previewController\.file\?\.path !== view\.file\?\.path/s);
   assert.match(source, /previewController = this\.resolveLivePreviewController\(view\)/);

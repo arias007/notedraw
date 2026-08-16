@@ -52,6 +52,7 @@ import {
   matchRenderedTextToMarkdown,
   resolveRenderedMarkdownSourceTarget
 } from "./markdown-anchors.mjs";
+import { preservesAllMovedMarkdownBlocks } from "./markdown-reorder.mjs";
 import {
   clientPointInRect,
   markdownClientRectsOverlap,
@@ -1611,7 +1612,7 @@ var NoteDrawPlugin = class extends Plugin {
       if (!isMarkdownPreviewVisible(view, preview)) {
         const alternateSurfaceVisible = hasVisibleAlternateWorkspaceSurface(view, preview);
         const sourceVisible = isSourceMode(view) && isMarkdownSourceVisible(view);
-        if ((alternateSurfaceVisible || sourceVisible) && existingController?.plugin === this && existingController.surfaceType === "preview") {
+        if (alternateSurfaceVisible && !sourceVisible && existingController?.plugin === this && existingController.surfaceType === "preview") {
           existingController.destroy();
         }
         if (alternateSurfaceVisible) {
@@ -3665,8 +3666,15 @@ var NoteDrawPlugin = class extends Plugin {
         for (const rootPreview of findRootPreviewsForView(view)) {
           this.clearPreviewRenderRecovery(rootPreview);
           const controller = this.controllers.get(rootPreview) || rootPreview._noteDrawController;
-          controller?.destroy?.();
-          resetDormantRootPreview(view, rootPreview);
+          if (controller?.plugin === this && controller.previewEl?.isConnected) {
+            // Keep the hidden reading controller alive while the user edits.
+            // Destroying it clears the inline heading layout, so returning to
+            // reading view briefly renders the saved parallel row vertically.
+            controller.syncFloatingControlClasses?.();
+          } else {
+            controller?.destroy?.();
+            resetDormantRootPreview(view, rootPreview);
+          }
         }
         continue;
       }
@@ -5391,6 +5399,9 @@ var NoteDrawPlugin = class extends Plugin {
     const separatorBefore = before && !before.endsWith("\n\n") ? before.endsWith("\n") ? "\n" : "\n\n" : "";
     const separatorAfter = after && !after.startsWith("\n\n") ? after.startsWith("\n") ? "\n" : "\n\n" : "";
     const nextSource = `${before}${separatorBefore}${joined}${separatorAfter}${after}`;
+    if (!preservesAllMovedMarkdownBlocks(nextSource, blocks)) {
+      return false;
+    }
     if (nextSource === source) {
       return { changed: false, before: source, after: source };
     }
@@ -5738,6 +5749,7 @@ var PreviewDrawingController = class {
     this.onPreviewContextMenu = this.onPreviewContextMenu.bind(this);
     this.onCanvasDoubleClick = this.onCanvasDoubleClick.bind(this);
     this.onPreviewDoubleClick = this.onPreviewDoubleClick.bind(this);
+    this.onPreviewSecondPress = this.onPreviewSecondPress.bind(this);
     this.onWheel = this.onWheel.bind(this);
     this.onResize = this.onResize.bind(this);
     this.onScroll = this.onScroll.bind(this);
@@ -6002,6 +6014,9 @@ var PreviewDrawingController = class {
     this.previewEl.addEventListener("contextmenu", this.onPreviewContextMenu, true);
     this.previewEl.addEventListener("dblclick", this.onPreviewDoubleClick, true);
     this.previewEl.addEventListener("click", this.onHeadingCollapseIndicatorClick, true);
+    this.previewGestureWindow = activeDocument.defaultView || window;
+    this.previewGestureWindow.addEventListener("mousedown", this.onPreviewSecondPress, true);
+    this.previewGestureWindow.addEventListener("dblclick", this.onPreviewDoubleClick, true);
     if (this.usesVisualReadingZoom()) {
       this.previewEl.addEventListener("pointerdown", this.onReadingTouchPointerDown, true);
       this.previewEl.addEventListener("pointermove", this.onReadingTouchPointerMove, true);
@@ -6465,6 +6480,9 @@ var PreviewDrawingController = class {
     this.previewEl?.removeEventListener("contextmenu", this.onPreviewContextMenu, true);
     this.previewEl?.removeEventListener("dblclick", this.onPreviewDoubleClick, true);
     this.previewEl?.removeEventListener("click", this.onHeadingCollapseIndicatorClick, true);
+    this.previewGestureWindow?.removeEventListener("mousedown", this.onPreviewSecondPress, true);
+    this.previewGestureWindow?.removeEventListener("dblclick", this.onPreviewDoubleClick, true);
+    this.previewGestureWindow = null;
     this.previewEl?.removeEventListener("pointerdown", this.onReadingTouchPointerDown, true);
     this.previewEl?.removeEventListener("pointermove", this.onReadingTouchPointerMove, true);
     this.previewEl?.removeEventListener("pointerup", this.onReadingTouchPointerFinish, true);
@@ -10387,11 +10405,27 @@ var PreviewDrawingController = class {
     }
   }
   onPreviewDoubleClick(event) {
-    if (this.surfaceType !== "preview" || event.button !== void 0 && event.button !== 0) {
+    if (!this.isReadingPreviewGesture(event) || event.button !== void 0 && event.button !== 0) {
       return;
     }
     if (this.active) {
       this.onCanvasDoubleClick(event);
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation?.();
+  }
+  isReadingPreviewGesture(event) {
+    const target = event?.target;
+    return this.surfaceType === "preview"
+      && !isSourceMode(this.view)
+      && Boolean(target && this.previewEl?.isConnected && this.previewEl.contains?.(target));
+  }
+  onPreviewSecondPress(event) {
+    if (!this.isReadingPreviewGesture(event)
+      || event.button !== void 0 && event.button !== 0
+      || Number(event.detail) < 2) {
+      return;
     }
     event.preventDefault();
     event.stopPropagation();
@@ -12538,7 +12572,7 @@ var PreviewDrawingController = class {
       return this.dragMarkdownLastValidDrop ? { ...this.dragMarkdownLastValidDrop } : null;
     }
     const row = this.markdownDropRowMetrics(target, movingElements);
-    const horizontalRoom = !this.markdownDropIncludesHeading(target) && row.canFit;
+    const horizontalRoom = row.canFit;
     const intent = forcedIntent || resolveDragDropHorizontalIntent({
       clientX,
       targetLeft: rect.left,
@@ -12585,12 +12619,12 @@ var PreviewDrawingController = class {
     }
     const movingMarkdownCount = movingElements.size || this.dragMarkdownOriginalElements?.size || 0;
     const targetRect = geometry?.markdownCandidateByElement?.get(target)?.rect || target?.getBoundingClientRect?.();
-    const parent = this.markdownBlockGridContainer(target);
+    const parent = this.markdownBlockLayoutLane(target);
     const memberIds = [];
     if (parent && targetRect?.height > 0) {
       const blockRecords = geometry?.markdownBlockRecords || new Map(this.markdownBlockRecords().map((item) => [item.id, item]));
       for (const [id, element] of this.markdownBlockElements.entries()) {
-        if (!element?.isConnected || element === target || movingElements.has(element) || this.markdownBlockGridContainer(element) !== parent) {
+        if (!element?.isConnected || element === target || movingElements.has(element) || this.markdownBlockLayoutLane(element) !== parent) {
           continue;
         }
         const rect = geometry?.markdownCandidateByElement?.get(element)?.rect || element.getBoundingClientRect();
@@ -12632,15 +12666,6 @@ var PreviewDrawingController = class {
     };
     geometry?.rowMetrics?.set(target, result);
     return result;
-  }
-  markdownDropIncludesHeading(target, moving = null) {
-    // Headings are ordinary Markdown blocks for NoteFlow layout. Treating
-    // them as a vertical-only special case made the same horizontal gesture
-    // behave differently depending on the block type and caused the preview
-    // to jump when a heading was crossed.
-    void target;
-    void moving;
-    return false;
   }
   async commitDraggedMarkdownBlocks(drop, drawingHistoryBefore) {
     const moving = Array.isArray(drop?.moving) ? drop.moving.filter((state) => state?.element && state?.block) : [];
@@ -12699,8 +12724,7 @@ var PreviewDrawingController = class {
       targetBlock.lineStart = lockedTarget.line;
       targetBlock.lineEnd = lockedTarget.endLine ?? lockedTarget.line;
     }
-    const requestedHorizontal = (drop.side === "left" || drop.side === "right")
-      && !this.markdownDropIncludesHeading(target, moving);
+    const requestedHorizontal = drop.side === "left" || drop.side === "right";
     const horizontal = requestedHorizontal && row.canFit;
     const effectiveSide = horizontal ? drop.side : drop.side === "right" ? "after" : drop.side === "left" ? "before" : drop.side;
     if (horizontal && targetBlock) {
@@ -15645,6 +15669,10 @@ var PreviewDrawingController = class {
       this.releaseMarkdownBlockGridRow(flowElement);
       return null;
     }
+    if (this.markdownBlockInlineLane(flowElement)) {
+      this.releaseMarkdownBlockGridRow(flowElement);
+      return null;
+    }
     const current = flowElement.parentElement;
     if (!current || !this.previewEl?.contains?.(current)) {
       return null;
@@ -15704,11 +15732,50 @@ var PreviewDrawingController = class {
       return null;
     }
     // Never turn Obsidian's virtualized section/sizer into a grid. Top-level
-    // side-by-side blocks are placed in a small NoteDraw-owned row wrapper.
+    // side-by-side blocks use an inline-block lane and keep their DOM order.
     return isNoteFlowCollectionBlock(container) ? null : container;
+  }
+  markdownBlockInlineLane(element) {
+    const flowElement = this.markdownBlockFlowElement(element);
+    let container = flowElement?.parentElement;
+    if (this.isOwnedMarkdownGridRow(container)) {
+      container = container.parentElement;
+    }
+    if (!container || !this.previewEl?.contains?.(container)) {
+      return null;
+    }
+    return container.matches?.(".markdown-preview-section,.markdown-rendered,.callout-content,.contains-task-list,ul,ol,.el-ul,.el-ol")
+      ? container
+      : null;
+  }
+  markdownBlockLayoutLane(element) {
+    return this.markdownBlockInlineLane(element) || this.markdownBlockGridContainer(element);
+  }
+  applyDraggedMarkdownInlinePresentation(element, span) {
+    const flowElement = this.markdownBlockFlowElement(element) || element;
+    if (!flowElement?.isConnected || !this.markdownBlockInlineLane(flowElement)) {
+      return false;
+    }
+    this.setDraggedNoteFlowDomClass(flowElement, "notedraw-md-inline-grid-item", true);
+    this.setDraggedNoteFlowDomClass(flowElement, "notedraw-md-grid-item", false);
+    this.setDraggedNoteFlowDomStyle(flowElement, "--notedraw-md-inline-span", String(clamp(Math.round(Number(span) || 12), 1, 12)));
+    this.setDraggedNoteFlowDomStyle(flowElement, "grid-column", null);
+    return true;
   }
   applyMarkdownBlockFlowPresentation(block, element) {
     const flowElement = this.markdownBlockFlowElement(element);
+    const inlineSpan = clamp(Math.round(Number(block?.span) || 12), 1, 12);
+    const inlineLane = !block?.floating ? this.markdownBlockInlineLane(flowElement) : null;
+    if (inlineLane && inlineSpan < 12) {
+      this.releaseMarkdownBlockGridRow(flowElement);
+      flowElement.classList.add("notedraw-md-inline-grid-item");
+      flowElement.classList.remove("notedraw-md-grid-item");
+      flowElement.style.setProperty("--notedraw-md-inline-span", String(inlineSpan));
+      flowElement.style.removeProperty("grid-column");
+      return flowElement;
+    }
+    flowElement?.classList?.remove("notedraw-md-inline-grid-item");
+    flowElement?.style?.removeProperty("--notedraw-md-inline-span");
     const gridContainer = this.ensureMarkdownBlockGridRow(block, element)
       || this.markdownBlockGridContainer(element);
     element?.style?.removeProperty("grid-column");
@@ -15729,7 +15796,9 @@ var PreviewDrawingController = class {
       return;
     }
     flowElement.classList.remove("notedraw-md-grid-item", "is-notedraw-md-dragging");
+    flowElement.classList.remove("notedraw-md-inline-grid-item");
     flowElement.style.removeProperty("grid-column");
+    flowElement.style.removeProperty("--notedraw-md-inline-span");
     flowElement.style.removeProperty("--notedraw-md-drag-x");
     flowElement.style.removeProperty("--notedraw-md-drag-y");
   }
@@ -17474,7 +17543,9 @@ var PreviewDrawingController = class {
     const targetBlock = this.findMarkdownBlockRecordForElement(target);
     const intendedSpan = drop?.row?.canFit ? drop.row.span : targetBlock?.span;
     if (targetBlock && Number(intendedSpan) < 12) {
-      this.ensureMarkdownBlockGridRow({ ...targetBlock, span: intendedSpan }, target, { preview: true });
+      if (!this.applyDraggedMarkdownInlinePresentation(target, intendedSpan)) {
+        this.ensureMarkdownBlockGridRow({ ...targetBlock, span: intendedSpan }, target, { preview: true });
+      }
     }
     const flowElement = this.markdownBlockFlowElement(target) || target;
     const parent = flowElement?.parentElement;
@@ -17497,6 +17568,10 @@ var PreviewDrawingController = class {
       if (!memberFlow?.isConnected || memberFlow.parentNode !== parent) {
         continue;
       }
+      if (this.applyDraggedMarkdownInlinePresentation(memberFlow, span)) {
+        this.setDraggedNoteFlowDomStyle(element, "width", null);
+        continue;
+      }
       this.setDraggedNoteFlowDomClass(memberFlow, "notedraw-md-grid-item", true);
       this.setDraggedNoteFlowDomStyle(memberFlow, "grid-column", `span ${span}`);
       this.setDraggedNoteFlowDomStyle(element, "width", null);
@@ -17512,7 +17587,9 @@ var PreviewDrawingController = class {
     }
     const targetBlock = this.findMarkdownBlockRecordForElement(target);
     if ((drop.side === "left" || drop.side === "right") && drop.row?.canFit && targetBlock) {
-      this.ensureMarkdownBlockGridRow({ ...targetBlock, span: drop.row.span }, target, { preview: true });
+      if (!this.applyDraggedMarkdownInlinePresentation(target, drop.row.span)) {
+        this.ensureMarkdownBlockGridRow({ ...targetBlock, span: drop.row.span }, target, { preview: true });
+      }
     }
     const targetFlow = this.markdownBlockFlowElement(target) || target;
     const parent = targetFlow?.parentNode;
@@ -17520,8 +17597,7 @@ var PreviewDrawingController = class {
       return false;
     }
     const horizontal = (drop.side === "left" || drop.side === "right")
-      && drop.row?.canFit
-      && !this.markdownDropIncludesHeading(target);
+      && drop.row?.canFit;
     const ordered = moving.slice().sort((a, b) => a.clientRect.top - b.clientRect.top || a.clientRect.left - b.clientRect.left);
     let reference = drop.side === "after" || drop.side === "right" ? targetFlow.nextSibling : targetFlow;
     for (const state of ordered) {
@@ -17533,6 +17609,9 @@ var PreviewDrawingController = class {
       dragElement.classList?.add?.("is-notedraw-md-dragging");
       this.setDraggedNoteFlowDomStyle(dragElement, "--notedraw-md-drag-x", "0px");
       this.setDraggedNoteFlowDomStyle(dragElement, "--notedraw-md-drag-y", "0px");
+      if (horizontal && this.applyDraggedMarkdownInlinePresentation(dragElement, drop.row.span)) {
+        continue;
+      }
       this.setDraggedNoteFlowDomClass(dragElement, "notedraw-md-grid-item", true);
       this.setDraggedNoteFlowDomStyle(dragElement, "grid-column", `span ${horizontal ? drop.row.span : 12}`);
     }
@@ -17543,6 +17622,10 @@ var PreviewDrawingController = class {
         const element = this.markdownBlockElements.get(id);
         const flowElement = this.markdownBlockFlowElement(element) || element;
         if (!flowElement?.isConnected || flowElement.parentNode !== parent) {
+          continue;
+        }
+        if (this.applyDraggedMarkdownInlinePresentation(flowElement, drop.row.span)) {
+          this.setDraggedNoteFlowDomStyle(element, "width", null);
           continue;
         }
         this.setDraggedNoteFlowDomClass(flowElement, "notedraw-md-grid-item", true);
@@ -17932,8 +18015,7 @@ var PreviewDrawingController = class {
         && Number(clientY) <= targetRect.bottom + inlineCaptureBand
       : Number(clientY) >= targetRect.top + inlineEdgeBand
         && Number(clientY) <= targetRect.bottom - inlineEdgeBand;
-    const horizontalRoom = !this.markdownDropIncludesHeading(inlineTarget)
-      && inlineRowHit
+    const horizontalRoom = inlineRowHit
       && movingLaneCount > 0
       && inlineRow.canFit;
     const intent = resolveDragDropHorizontalIntent({
@@ -18278,9 +18360,7 @@ var PreviewDrawingController = class {
       path,
       line,
       side,
-      horizontalSide: placement?.horizontalSide && !this.markdownDropIncludesHeading(
-        placement.candidate?.inlineElement || placement.candidate?.sourceElement || placement.candidate?.element
-      ) ? placement.horizontalSide : null,
+      horizontalSide: placement?.horizontalSide || null,
       leftSnap: placement?.leftSnap === true,
       boundary: placement?.boundary !== null && placement?.boundary !== undefined && Number.isFinite(Number(placement.boundary))
         ? Number(placement.boundary)
