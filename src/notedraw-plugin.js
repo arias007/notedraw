@@ -328,6 +328,10 @@ var I18N = {
     note: "Note",
     mindMap: "Mind map from file",
     chooseMindMapFile: "Choose a note for the mind map",
+    chooseButtonCommand: "Choose an Obsidian command for this button",
+    buttonCommand: "Button command",
+    commandAssigned: "Button command assigned: {name}",
+    commandUnavailable: "Button command is unavailable: {name}",
     affectSourceNote: "Affect source note",
     openSourceNote: "Open source note",
     sourceNoteUpdated: "Source note updated",
@@ -503,6 +507,10 @@ var I18N = {
     note: "笔记",
     mindMap: "从文件提取思维导图",
     chooseMindMapFile: "选择要提取思维导图的笔记",
+    chooseButtonCommand: "选择这个按钮要执行的 Obsidian 命令",
+    buttonCommand: "按钮命令",
+    commandAssigned: "已绑定按钮命令：{name}",
+    commandUnavailable: "按钮命令不可用：{name}",
     affectSourceNote: "影响笔记",
     openSourceNote: "跳转源笔记",
     sourceNoteUpdated: "源笔记已同步",
@@ -1472,6 +1480,36 @@ var NoteDrawFileSuggestModal = class extends FuzzySuggestModal {
     this.onModalClose?.(this);
   }
 };
+var NoteDrawCommandSuggestModal = class extends FuzzySuggestModal {
+  constructor(app, onChoose, options = {}) {
+    super(app);
+    this.onChoose = onChoose;
+    this.onModalClose = options.onClose;
+    this.setPlaceholder(I18N[detectNoteDrawLanguage(app)]?.chooseButtonCommand || I18N.en.chooseButtonCommand);
+  }
+  getItems() {
+    const source = this.app.commands?.listCommands?.() || this.app.commands?.commands || {};
+    const entries = Array.isArray(source)
+      ? source.map((command) => [command?.id, command])
+      : Object.entries(source);
+    return entries
+      .map(([id, command]) => ({
+        id: String(command?.id || id || "").trim(),
+        name: String(command?.name || command?.id || id || "").trim()
+      }))
+      .filter((command) => command.id && command.name)
+      .sort((left, right) => left.name.localeCompare(right.name));
+  }
+  getItemText(command) {
+    return `${command?.name || command?.id || ""} (${command?.id || ""})`;
+  }
+  onChooseItem(command) {
+    this.onChoose?.(command);
+  }
+  onClose() {
+    this.onModalClose?.(this);
+  }
+};
 var NoteDrawPlugin = class extends Plugin {
   async onload() {
     const savedSettings = await this.loadData();
@@ -1513,6 +1551,7 @@ var NoteDrawPlugin = class extends Plugin {
     this.floatingControlsSyncTimer = null;
     this.mindMapPickerTimer = null;
     this.mindMapFileModal = null;
+    this.buttonCommandModal = null;
     this.webviewMutationObserver = null;
     this.onElementLinkClick = this.onElementLinkClick.bind(this);
     this.api = this.createPublicApi();
@@ -1716,6 +1755,8 @@ var NoteDrawPlugin = class extends Plugin {
     }
     this.mindMapFileModal?.close?.();
     this.mindMapFileModal = null;
+    this.buttonCommandModal?.close?.();
+    this.buttonCommandModal = null;
     this.webviewMutationObserver?.disconnect();
     this.webviewMutationObserver = null;
     this.apiListeners?.clear();
@@ -1812,6 +1853,34 @@ var NoteDrawPlugin = class extends Plugin {
       }
     });
     this.mindMapFileModal = modal;
+    modal.open();
+  }
+  openButtonCommandPicker(requestedController, index) {
+    const requestedIndex = Number(index);
+    const requestedPath = normalizeVaultPath(requestedController?.file?.path || "");
+    const previousModal = this.buttonCommandModal;
+    this.buttonCommandModal = null;
+    previousModal?.close?.();
+    const modal = new NoteDrawCommandSuggestModal(this.app, (command) => {
+      const target = !requestedController?.destroyed && requestedController?.previewEl?.isConnected
+        ? requestedController
+        : this.getAllControllers().find((controller) => (
+          controller?.previewEl?.isConnected
+          && normalizeVaultPath(controller.file?.path || "") === requestedPath
+          && !controller.embeddedSurface
+        ));
+      if (!target || !Number.isInteger(requestedIndex)) {
+        return;
+      }
+      target.setSelectedButtonCommand(requestedIndex, command);
+    }, {
+      onClose: (closedModal) => {
+        if (this.buttonCommandModal === closedModal) {
+          this.buttonCommandModal = null;
+        }
+      }
+    });
+    this.buttonCommandModal = modal;
     modal.open();
   }
   async saveSettings() {
@@ -7617,7 +7686,8 @@ var PreviewDrawingController = class {
         items: [
           { id: "image", labelKey: "image", icon: "image" },
           { id: "video", labelKey: "video", icon: "film" },
-          { id: "attachment", labelKey: "file", icon: "paperclip" }
+          { id: "attachment", labelKey: "file", icon: "paperclip" },
+          { id: "button", labelKey: "button", icon: "square" }
         ]
       },
       {
@@ -7673,6 +7743,7 @@ var PreviewDrawingController = class {
   createSelectionMenu() {
     const actions = [
       { icon: "list-filter", key: "selectFloatingOnly", action: () => this.cycleSelectionFilter() },
+      { icon: "terminal", key: "buttonCommand", action: () => this.openSelectedButtonCommandPicker() },
       { icon: "copy", key: "copyElement", action: () => this.copySelectedElements() },
       { icon: "clipboard-paste", key: "pasteElement", action: () => this.pasteCopiedElements() },
       { icon: "external-link", key: "openSourceNote", action: () => void this.openSelectedMindMapSource() },
@@ -7682,7 +7753,7 @@ var PreviewDrawingController = class {
       { icon: "move-down", key: "moveBackward", action: () => this.reorderSelectedStrokes("backward") },
       { icon: "send-to-back", key: "sendToBack", action: () => this.reorderSelectedStrokes("back") },
       { icon: "group", key: "selectRelatedElements", action: () => this.selectRelatedElements() },
-      { icon: "box-select", key: "boxElements", action: () => this.toggleSelectedElementBox() },
+      { icon: "box-select", key: "boxElements", action: () => this.toggleSelectedBoxOrButtonStyle() },
       { icon: "lock", key: "lockElement", action: () => this.toggleSelectedStrokeLock() }
     ];
     for (const item of actions) {
@@ -7721,6 +7792,8 @@ var PreviewDrawingController = class {
     pasteButton?.toggleAttribute("disabled", !this.plugin.elementClipboard?.strokes?.length);
     const sourceButton = this.selectionMenu.querySelector('[data-note-draw-title-key="openSourceNote"]');
     sourceButton?.toggleAttribute("hidden", !this.selectedMindMapSource());
+    const commandButton = this.selectionMenu.querySelector('[data-note-draw-title-key="buttonCommand"]');
+    commandButton?.toggleAttribute("hidden", !this.selectedButtonCommandIndex());
     const filterContext = this.selectionFilterContext();
     const filterButton = this.selectionMenu.querySelector('[data-note-draw-title-key="selectFloatingOnly"], [data-note-draw-title-key="selectMarkdownOnly"], [data-note-draw-title-key="selectAllElements"]');
     if (filterButton) {
@@ -7750,17 +7823,78 @@ var PreviewDrawingController = class {
       flowModeButton.toggleAttribute("hidden", !this.supportsNoteFlow() || flowSelection.total === 0);
     }
     const selectedBox = this.selectedWholeElementGroups().find((group) => group.boxed);
-    const boxButton = this.selectionMenu.querySelector('[data-note-draw-title-key="boxElements"], [data-note-draw-title-key="fillBoxElements"], [data-note-draw-title-key="unboxElements"]');
+    const boxButton = this.selectionMenu.querySelector('[data-note-draw-title-key="boxElements"], [data-note-draw-title-key="fillBoxElements"], [data-note-draw-title-key="unboxElements"], [data-note-draw-title-key="outlineButton"]');
     if (boxButton) {
-      const key = !selectedBox
+      const buttonIndex = this.getSelectedMarkdownBlocks().length === 0 && this.getSelectedStrokeIndexes().length === 1
+        ? this.getSelectedStrokeIndexes()[0]
+        : -1;
+      const selectedButton = buttonIndex >= 0 ? this.drawingData?.strokes?.[buttonIndex] : null;
+      const key = selectedButton?.uiRole === "button" && !selectedButton.groupId
+        ? normalizeButtonStyle(selectedButton.buttonStyle) === "solid" ? "outlineButton" : "fillBoxElements"
+        : !selectedBox
         ? "boxElements"
         : selectedBox.backgroundColor
           ? "unboxElements"
           : "fillBoxElements";
       boxButton.dataset.noteDrawTitleKey = key;
       this.plugin.setAccessibleLabel(boxButton, key);
-      setIcon(boxButton, key === "boxElements" ? "box-select" : key === "fillBoxElements" ? "square" : "package-open");
+      setIcon(boxButton, key === "boxElements" ? "box-select" : key === "unboxElements" ? "package-open" : "square");
     }
+  }
+  selectedButtonCommandIndex() {
+    const indexes = this.getSelectedStrokeIndexes();
+    if (this.getSelectedMarkdownBlocks().length !== 0 || indexes.length !== 1) {
+      return -1;
+    }
+    const stroke = this.drawingData?.strokes?.[indexes[0]];
+    return stroke?.uiRole === "button" && isTextLikeStroke(stroke) ? indexes[0] : -1;
+  }
+  toggleSelectedBoxOrButtonStyle() {
+    const index = this.getSelectedMarkdownBlocks().length === 0 && this.getSelectedStrokeIndexes().length === 1
+      ? this.getSelectedStrokeIndexes()[0]
+      : -1;
+    const stroke = index >= 0 ? this.drawingData?.strokes?.[index] : null;
+    if (stroke?.uiRole === "button" && !stroke.groupId) {
+      const historyBefore = this.captureDrawingHistorySnapshot();
+      stroke.buttonStyle = normalizeButtonStyle(stroke.buttonStyle) === "solid" ? "outline" : "solid";
+      stroke.boxed = true;
+      this.redoStack = [];
+      this.invalidateStaticCache();
+      this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
+      this.recordDrawingHistory(historyBefore);
+      this.syncSelectionMenuButtons();
+      this.render();
+      return true;
+    }
+    this.toggleSelectedElementBox();
+    return true;
+  }
+  openSelectedButtonCommandPicker() {
+    const index = this.selectedButtonCommandIndex();
+    if (index < 0) {
+      return false;
+    }
+    this.hideSelectionMenu();
+    this.plugin.openButtonCommandPicker(this, index);
+    return true;
+  }
+  setSelectedButtonCommand(index, command) {
+    const stroke = this.drawingData?.strokes?.[Number(index)];
+    if (!stroke || stroke.uiRole !== "button" || !command?.id) {
+      return false;
+    }
+    const historyBefore = this.captureDrawingHistorySnapshot();
+    stroke.commandId = String(command.id);
+    stroke.commandName = String(command.name || command.id);
+    this.redoStack = [];
+    this.invalidateStaticCache();
+    this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
+    this.recordDrawingHistory(historyBefore);
+    this.setSelectedStrokes(Number(index));
+    this.syncSelectionMenuButtons();
+    this.render();
+    new Notice(this.plugin.t("commandAssigned", { name: stroke.commandName }));
+    return true;
   }
   selectedFlowModeElements() {
     const strokes = this.getSelectedStrokeIndexes().filter((index) => {
@@ -12045,6 +12179,7 @@ var PreviewDrawingController = class {
     }
     if (pending.type === "select-stroke") {
       this.setSelectedStrokes(pending.index);
+      this.executeButtonCommand(pending.index);
     } else if (pending.type === "toggle-stroke") {
       this.toggleStrokeSelection(pending.index);
     } else if (pending.type === "enter-stroke-group") {
@@ -12066,8 +12201,27 @@ var PreviewDrawingController = class {
     } else if (pending.type === "edit-markdown-or-drag") {
       return this.startTextEdit(pending.editable || pending.element, pending.clientPoint || null);
     } else if (pending.type === "edit-stroke-or-drag") {
-      this.editFloatingTextStroke(pending.index);
+      if (!this.executeButtonCommand(pending.index)) {
+        this.editFloatingTextStroke(pending.index);
+      }
     }
+  }
+  executeButtonCommand(index) {
+    const stroke = this.drawingData?.strokes?.[Number(index)];
+    const commandId = stroke?.uiRole === "button" ? String(stroke.commandId || "").trim() : "";
+    if (!commandId) {
+      return false;
+    }
+    try {
+      const executed = this.plugin.app.commands?.executeCommandById?.(commandId);
+      if (executed === false) {
+        new Notice(this.plugin.t("commandUnavailable", { name: stroke.commandName || commandId }));
+      }
+    } catch (error) {
+      console.error(`[${PLUGIN_ID}] Failed to execute button command`, error);
+      new Notice(this.plugin.t("commandUnavailable", { name: stroke.commandName || commandId }));
+    }
+    return true;
   }
   finishPendingSelectionTap(event) {
     const pending = this.pendingSelectionTap;
@@ -25447,6 +25601,8 @@ function normalizeStroke(stroke) {
     file: Boolean(stroke?.file),
     uiRole: normalizeUiRole(stroke?.uiRole),
     buttonStyle: normalizeButtonStyle(stroke?.buttonStyle),
+    commandId: typeof stroke?.commandId === "string" ? stroke.commandId.trim() : "",
+    commandName: typeof stroke?.commandName === "string" ? stroke.commandName.trim() : "",
     snap: Boolean(stroke?.snap),
     locked: Boolean(stroke?.locked),
     groupId: typeof stroke?.groupId === "string" ? stroke.groupId : "",

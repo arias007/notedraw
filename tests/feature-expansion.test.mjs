@@ -442,7 +442,7 @@ test("mind map import creates editable NoteDraw nodes and magnetically bound con
   assert.match(source, /ctx\.quadraticCurveTo\(points\[1\]\.x, points\[1\]\.y, points\[2\]\.x, points\[2\]\.y\)/);
 });
 
-test("text and links keeps only text, outline and solid rectangles, and the magnetic arrow in one group", async () => {
+test("text controls keep drawing presets grouped and expose command buttons in Import", async () => {
   const source = await readFile(sourceUrl, "utf8");
   const panelStart = source.indexOf("  createTextPanel() {");
   const panelSource = source.slice(panelStart, source.indexOf("  scheduleMindMapFilePicker()", panelStart));
@@ -452,7 +452,7 @@ test("text and links keeps only text, outline and solid rectangles, and the magn
   assert.match(panelSource, /\{ id: "rectangle", labelKey: "outlineButton", icon: "square" \}/);
   assert.match(panelSource, /\{ id: "circle", labelKey: "pillButton", icon: "square" \}/);
   assert.match(panelSource, /\{ id: "arrow", labelKey: "arrow", icon: "move-up-right" \}/);
-  assert.doesNotMatch(panelSource, /labelKey: "buttonGroup"|id: "title"|id: "code"|id: "file"|id: "button"|id: "buttonPrimary"|id: "arrowUp"|id: "arrowDown"|id: "arrowLeft"|id: "arrowRight"/);
+  assert.match(panelSource, /labelKey: "importGroup"[\s\S]*\{ id: "button", labelKey: "button", icon: "square" \}/);
   assert.match(source, /title: "plain"[\s\S]*code: "plain"[\s\S]*file: "plain"[\s\S]*button: "plain"/);
   assert.match(source, /startConnectorGesture\(event, point, routed\)/);
   assert.match(source, /findSnapElementIdAtPoint\(point/);
@@ -461,6 +461,24 @@ test("text and links keeps only text, outline and solid rectangles, and the magn
   assert.match(source, /ensureSnapElementIds\(\)/);
   assert.match(source, /buttonStyle: preset === "circle" \? "solid" : "pill"/);
   assert.match(source, /this\.syncBoundConnectors\(\)/);
+  assert.match(source, /commandId: typeof stroke\?\.commandId === "string"/);
+  assert.match(source, /\{ icon: "terminal", key: "buttonCommand", action: \(\) => this\.openSelectedButtonCommandPicker\(\) \}/);
+  assert.match(source, /openButtonCommandPicker\(requestedController, index\)/);
+  assert.match(source, /executeCommandById\?\.\(commandId\)/);
+});
+
+test("command buttons preserve editing and execute only after a completed selection tap", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const pendingSource = source.slice(source.indexOf("  applyPendingSelectionTap(pending)"), source.indexOf("  startSelectionDrag(", source.indexOf("  applyPendingSelectionTap(pending)")));
+  const pointerSource = source.slice(source.indexOf("  onPointerDown(event, routed = false)"), source.indexOf("  startConnectorGesture(", source.indexOf("  onPointerDown(event, routed = false)")));
+
+  assert.match(pendingSource, /this\.setSelectedStrokes\(pending\.index\);\s*this\.executeButtonCommand\(pending\.index\)/);
+  assert.match(pendingSource, /if \(!this\.executeButtonCommand\(pending\.index\)\) \{\s*this\.editFloatingTextStroke\(pending\.index\)/);
+  assert.match(source, /if \(event\.detail >= 2 \|\| repeatedSelectionTap\) \{\s*this\.editFloatingTextStroke\(hitStrokeIndex\)/);
+  assert.match(source, /class extends FuzzySuggestModal/);
+  assert.match(source, /chooseButtonCommand/);
+  assert.match(source, /setSelectedButtonCommand\(index, command\)/);
+  assert.doesNotMatch(pointerSource, /executeButtonCommand\(hitStrokeIndex\)/);
 });
 
 test("connector dragging caches snap geometry and ordinary renders skip legacy recovery scans", async () => {
