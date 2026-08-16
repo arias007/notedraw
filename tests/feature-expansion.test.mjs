@@ -21,6 +21,10 @@ test("default brushes remain separate from opt-in fountain and watercolor varian
   ]);
 
   assert.match(source, /this\.brushVariants = \{\s*\[BRUSH_PEN\]: this\.runtimeSettings\.lastPenVariant,\s*\[BRUSH_WATERCOLOR\]: this\.runtimeSettings\.lastWatercolorVariant/);
+  assert.match(source, /this\.brushVariantSettings = createBrushVariantSettings\(this\.runtimeSettings\.brushVariantSettings, this\.brushSettings\)/);
+  assert.match(source, /return this\.brushSettingsFor\(this\.brushMode, this\.currentBrushVariant\(\)\)/);
+  assert.match(source, /noteDrawSettings\.brushVariantSettings = cloneBrushVariantSettings\(this\.brushVariantSettings\)/);
+  assert.match(source, /this\.currentBrushVariant\(\) === BRUSH_VARIANT_DEFAULT/);
   assert.match(source, /variant: this\.currentBrushVariant\(\)/);
   assert.match(source, /\[PEN_VARIANT_FOUNTAIN, PEN_VARIANT_NOTE\]\.includes\(normalizeBrushVariant\(BRUSH_PEN, stroke\.variant\)\)/);
   assert.match(source, /straightenWatercolorPoints\(stroke\.points/);
@@ -170,8 +174,8 @@ test("the long-press menu filters overlapping selections without changing elemen
 
   assert.match(source, /\{ icon: "list-filter", key: "selectFloatingOnly", action: \(\) => this\.cycleSelectionFilter\(\) \}/);
   assert.match(source, /selectFloatingOnly: "只选悬浮元素"/);
-  assert.match(source, /selectMarkdownOnly: "只选 MD 和插入元素"/);
-  assert.match(source, /selectAllElements: "选择全部重叠元素"/);
+  assert.match(source, /selectMarkdownOnly: "只选插入元素"/);
+  assert.match(source, /selectAllElements: "恢复全部选择"/);
   assert.match(source, /filterButton\.toggleAttribute\("hidden", !filterContext\.snapshot\.hasMixedSelection\)/);
   assert.doesNotMatch(source, /dockMarkdownBlock|放回笔记流|放回筆記流/);
   assert.match(filterSource, /selectionMatchesFilterMode\([\s\S]*createSelectionFilterSnapshot/);
@@ -530,7 +534,7 @@ test("fountain rendering stays continuous and palette ranges cover fine through 
   assert.match(source, /function paletteSliderToOpacity\(value\)/);
   assert.match(fountainSource, /ctx\.beginPath\(\)[\s\S]*ctx\.quadraticCurveTo\([\s\S]*ctx\.fill\(\)/);
   assert.doesNotMatch(fountainSource, /ctx\.arc\(/);
-  assert.match(fountainSource, /ctx\.lineWidth = Math\.max\(0\.7,[\s\S]*ctx\.stroke\(\)/);
+  assert.doesNotMatch(fountainSource, /ctx\.stroke\(\)/);
 });
 
 test("main workspace views remount drawings and header controls after internal rerenders", async () => {

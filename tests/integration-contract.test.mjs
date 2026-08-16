@@ -453,8 +453,8 @@ test("selection tool previews and commits exact NoteFlow Markdown insertion targ
   const frozenRestoreSource = source.slice(frozenRestoreStart, source.indexOf("  clearNoteFlowLayout()", frozenRestoreStart));
 
   assert.match(source, /selectNoteFlowDropPlacement/);
-  assert.match(dropSource, /this\.toolMode === TOOL_SELECT[\s\S]*applyDraggedNoteFlowPlacementFrame\(clientX, clientY\)[\s\S]*updateDraggedNoteFlowPlacement\(Number\(clientX\), Number\(clientY\)\)/);
-  assert.doesNotMatch(previewFrameSource, /requestAnimationFrame|setTimeout/);
+  assert.match(dropSource, /this\.toolMode === TOOL_SELECT[\s\S]*applyDraggedNoteFlowPlacementFrame\(clientX, clientY\)[\s\S]*window\.requestAnimationFrame\(\(\) => \{[\s\S]*updateDraggedNoteFlowPlacement\(Number\(pendingX\), Number\(pendingY\)\)/);
+  assert.doesNotMatch(previewFrameSource, /setTimeout/);
   assert.match(dropSource, /notedraw-text-sort-target-before[\s\S]*notedraw-text-sort-target-after[\s\S]*notedraw-text-sort-target-left[\s\S]*notedraw-text-sort-target-right/);
   assert.match(dropSource, /noteDrawDropSide[\s\S]*noteDrawDropLine/);
   assert.match(dropSource, /const inlineRow = this\.markdownDropRowMetrics\(inlineTarget, movingElements\)[\s\S]*const equalLaneWidth = Math\.max\([\s\S]*inlineRow\.totalCount[\s\S]*const inlineRowHit = sameInlineCandidate[\s\S]*const horizontalRoom = inlineRowHit[\s\S]*movingLaneCount > 0[\s\S]*inlineRow\.canFit/);
@@ -581,6 +581,8 @@ test("selection requires a completed tap before moving an element and reserves r
   assert.match(source, /startPendingSelectionTap\(event, action\)/);
   assert.match(source, /pointerDistance\(pending\.startClient, \{ x: event\.clientX, y: event\.clientY \}\)/);
   assert.match(source, /if \(pending && !pending\.moved && movedDistance <= this\.tapDistancePx\(\)\)/);
+  assert.match(source, /const canBecomeAreaSelection = \[[\s\S]*"select-stroke"[\s\S]*"select-markdown"[\s\S]*"select-group"/);
+  assert.match(source, /this\.startSelectionDrag\(event, pending\.startPoint \|\| this\.eventToPoint\(event\), \{[\s\S]*startClient: pending\.startClient[\s\S]*this\.updateSelectionDrag\(event\)/);
 });
 
 test("NoteFlow resize updates stable geometry and remeasures row reservations before layout", async () => {

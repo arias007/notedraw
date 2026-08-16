@@ -2800,6 +2800,40 @@ function selectionMatchesFilterMode(snapshot, mode, strokeIndexes, markdownBlock
   return expected.strokeIndexes.length === actualStrokes.length && expected.markdownBlockIds.length === actualBlocks.length && expected.strokeIndexes.every((index, position) => index === actualStrokes[position]) && expected.markdownBlockIds.every((id, position) => id === actualBlocks[position]);
 }
 
+// src/selection-relations.mjs
+function boundsOverlapArea(left, right, minimumOverlap = 0.5) {
+  return Math.min(left.maxX, right.maxX) - Math.max(left.minX, right.minX) > minimumOverlap && Math.min(left.maxY, right.maxY) - Math.max(left.minY, right.minY) > minimumOverlap;
+}
+function connectorTouches(left, right) {
+  const leftTargets = new Set([left.connector?.fromId, left.connector?.toId].filter(Boolean));
+  const rightTargets = new Set([right.connector?.fromId, right.connector?.toId].filter(Boolean));
+  return Boolean(
+    right.elementId && leftTargets.has(right.elementId) || left.elementId && rightTargets.has(left.elementId) || Array.from(leftTargets).some((id) => rightTargets.has(id))
+  );
+}
+function expandRelatedSelection(candidates, initialKeys) {
+  const candidateList = Array.from(candidates || []).filter((candidate) => candidate?.key);
+  const candidateByKey = new Map(candidateList.map((candidate) => [candidate.key, candidate]));
+  const relatedKeys = new Set(Array.from(initialKeys || []).filter((key) => candidateByKey.has(key)));
+  const queue = Array.from(relatedKeys).map((key) => candidateByKey.get(key));
+  while (queue.length) {
+    const current = queue.shift();
+    for (const candidate of candidateList) {
+      if (relatedKeys.has(candidate.key)) {
+        continue;
+      }
+      const sameGroup = Boolean(current.groupId && current.groupId === candidate.groupId);
+      const overlaps = Boolean(current.bounds && candidate.bounds && boundsOverlapArea(current.bounds, candidate.bounds));
+      if (!sameGroup && !overlaps && !connectorTouches(current, candidate)) {
+        continue;
+      }
+      relatedKeys.add(candidate.key);
+      queue.push(candidate);
+    }
+  }
+  return relatedKeys;
+}
+
 // src/text-layout.mjs
 function finite5(value, fallback = 0) {
   const number = Number(value);
@@ -4305,8 +4339,8 @@ var I18N = {
     unlockElement: "Unlock",
     copyElement: "Copy element/link",
     selectFloatingOnly: "Select floating elements only",
-    selectMarkdownOnly: "Select Markdown and inserted elements only",
-    selectAllElements: "Select all overlapping elements",
+    selectMarkdownOnly: "Select inserted elements only",
+    selectAllElements: "Restore full selection",
     copyElementLink: "Copy element link",
     pasteElement: "Paste",
     insertIntoNote: "Insert into note flow",
@@ -4480,8 +4514,8 @@ var I18N = {
     unlockElement: "\u89E3\u9501",
     copyElement: "\u590D\u5236\u5143\u7D20/\u94FE\u63A5",
     selectFloatingOnly: "\u53EA\u9009\u60AC\u6D6E\u5143\u7D20",
-    selectMarkdownOnly: "\u53EA\u9009 MD \u548C\u63D2\u5165\u5143\u7D20",
-    selectAllElements: "\u9009\u62E9\u5168\u90E8\u91CD\u53E0\u5143\u7D20",
+    selectMarkdownOnly: "\u53EA\u9009\u63D2\u5165\u5143\u7D20",
+    selectAllElements: "\u6062\u590D\u5168\u90E8\u9009\u62E9",
     copyElementLink: "\u590D\u5236\u5143\u7D20\u94FE\u63A5",
     pasteElement: "\u7C98\u8D34\u5143\u7D20",
     insertIntoNote: "\u63D2\u5165\u7B14\u8BB0",
@@ -4506,8 +4540,8 @@ var I18N = {
     editWebviewDraw: "\u7DE8\u8F2F\u7DB2\u9801 / \u5857\u9D09",
     selectDrawings: "\u9078\u64C7\u5143\u7D20",
     selectFloatingOnly: "\u53EA\u9078\u6D6E\u52D5\u5143\u7D20",
-    selectMarkdownOnly: "\u53EA\u9078 MD \u548C\u63D2\u5165\u5143\u7D20",
-    selectAllElements: "\u9078\u64C7\u5168\u90E8\u91CD\u758A\u5143\u7D20",
+    selectMarkdownOnly: "\u53EA\u9078\u63D2\u5165\u5143\u7D20",
+    selectAllElements: "\u6062\u5FA9\u5168\u90E8\u9078\u64C7",
     editMarkdownTool: "\u7DE8\u8F2F MD",
     convertToNoteFlow: "\u8F49\u70BA NoteFlow \u5143\u7D20",
     convertToFloating: "\u8F49\u70BA\u6D6E\u52D5\u5143\u7D20",
@@ -5139,6 +5173,7 @@ var DEFAULT_SETTINGS = {
   defaultWatercolorColor: "#3b82f6",
   defaultWatercolorWidth: 9,
   defaultWatercolorOpacity: 0.45,
+  brushVariantSettings: {},
   lastToolMode: TOOL_DRAW,
   lastBrushMode: BRUSH_PEN,
   lastPenVariant: BRUSH_VARIANT_DEFAULT,
@@ -9273,18 +9308,19 @@ var PreviewDrawingController = class {
     };
     this.brushSettings = {
       [BRUSH_PEN]: {
-        color: "#e53935",
-        width: 3,
-        opacity: DEFAULT_PEN_OPACITY,
+        color: this.runtimeSettings.defaultPenColor,
+        width: this.runtimeSettings.defaultPenWidth,
+        opacity: this.runtimeSettings.defaultPenOpacity,
         count: 1
       },
       [BRUSH_WATERCOLOR]: {
-        color: "#3b82f6",
-        width: 9,
-        opacity: 0.45,
+        color: this.runtimeSettings.defaultWatercolorColor,
+        width: this.runtimeSettings.defaultWatercolorWidth,
+        opacity: this.runtimeSettings.defaultWatercolorOpacity,
         count: 1
       }
     };
+    this.brushVariantSettings = createBrushVariantSettings(this.runtimeSettings.brushVariantSettings, this.brushSettings);
     this.selectedStrokeIndex = -1;
     this.selectedStrokeIndexes = /* @__PURE__ */ new Set();
     this.selectedMarkdownBlockIds = /* @__PURE__ */ new Set();
@@ -9941,6 +9977,11 @@ var PreviewDrawingController = class {
       this.brushSettings[BRUSH_WATERCOLOR].color = settings.defaultWatercolorColor;
       this.brushSettings[BRUSH_WATERCOLOR].width = settings.defaultWatercolorWidth;
       this.brushSettings[BRUSH_WATERCOLOR].opacity = settings.defaultWatercolorOpacity;
+    }
+    if (this.brushVariantSettings) {
+      this.brushVariantSettings = createBrushVariantSettings(settings.brushVariantSettings, this.brushSettings);
+      this.brushVariantSettings[BRUSH_PEN][BRUSH_VARIANT_DEFAULT] = { ...this.brushSettings[BRUSH_PEN] };
+      this.brushVariantSettings[BRUSH_WATERCOLOR][BRUSH_VARIANT_DEFAULT] = { ...this.brushSettings[BRUSH_WATERCOLOR] };
     }
     this.syncCurrentBrushFields?.();
     this.syncPaletteInputs?.();
@@ -11140,6 +11181,7 @@ var PreviewDrawingController = class {
         [BRUSH_PEN]: { ...this.brushSettings[BRUSH_PEN] },
         [BRUSH_WATERCOLOR]: { ...this.brushSettings[BRUSH_WATERCOLOR] }
       },
+      brushVariantSettings: cloneBrushVariantSettings(this.brushVariantSettings),
       toolMode: this.toolMode,
       paletteOpen: this.paletteOpen,
       textPanelOpen: this.textPanelOpen,
@@ -11161,6 +11203,9 @@ var PreviewDrawingController = class {
       if (state.brushSettings?.[mode]) {
         this.brushSettings[mode] = { ...this.brushSettings[mode], ...state.brushSettings[mode] };
       }
+    }
+    if (state.brushVariantSettings) {
+      this.brushVariantSettings = createBrushVariantSettings(state.brushVariantSettings, this.brushSettings);
     }
     this.toolMode = state.toolMode || this.toolMode;
     this.paletteOpen = Boolean(state.paletteOpen) && this.toolMode !== TOOL_EDIT_MD && (this.toolMode !== TOOL_SELECT || this.hasHybridSelection());
@@ -11225,7 +11270,19 @@ var PreviewDrawingController = class {
     if (!this.brushSettings[this.brushMode]) {
       this.brushMode = BRUSH_PEN;
     }
-    return this.brushSettings[this.brushMode];
+    return this.brushSettingsFor(this.brushMode, this.currentBrushVariant());
+  }
+  brushSettingsFor(mode, variant = this.brushVariants?.[mode]) {
+    var _a, _b;
+    const normalizedMode = mode === BRUSH_WATERCOLOR ? BRUSH_WATERCOLOR : BRUSH_PEN;
+    const normalizedVariant = normalizeBrushVariant(normalizedMode, variant);
+    this.brushVariantSettings || (this.brushVariantSettings = createBrushVariantSettings(null, this.brushSettings));
+    (_a = this.brushVariantSettings)[normalizedMode] || (_a[normalizedMode] = {});
+    (_b = this.brushVariantSettings[normalizedMode])[normalizedVariant] || (_b[normalizedVariant] = normalizeBrushToolSettings(
+      null,
+      this.brushSettings[normalizedMode]
+    ));
+    return this.brushVariantSettings[normalizedMode][normalizedVariant];
   }
   currentBrushVariant() {
     const variant = normalizeBrushVariant(this.brushMode, this.brushVariants[this.brushMode]);
@@ -11291,14 +11348,17 @@ var PreviewDrawingController = class {
   persistCurrentBrushSettings() {
     const settings = this.currentBrushSettings();
     const noteDrawSettings = this.plugin?.noteDrawSettings || {};
-    if (this.brushMode === BRUSH_WATERCOLOR) {
+    noteDrawSettings.brushVariantSettings = cloneBrushVariantSettings(this.brushVariantSettings);
+    if (this.brushMode === BRUSH_WATERCOLOR && this.currentBrushVariant() === BRUSH_VARIANT_DEFAULT) {
       noteDrawSettings.defaultWatercolorColor = settings.color;
       noteDrawSettings.defaultWatercolorWidth = settings.width;
       noteDrawSettings.defaultWatercolorOpacity = settings.opacity;
-    } else {
+      this.brushSettings[BRUSH_WATERCOLOR] = { ...settings };
+    } else if (this.brushMode === BRUSH_PEN && this.currentBrushVariant() === BRUSH_VARIANT_DEFAULT) {
       noteDrawSettings.defaultPenColor = settings.color;
       noteDrawSettings.defaultPenWidth = settings.width;
       noteDrawSettings.defaultPenOpacity = settings.opacity;
+      this.brushSettings[BRUSH_PEN] = { ...settings };
     }
     this.plugin.noteDrawSettings = noteDrawSettings;
     this.plugin.scheduleSettingsSave?.();
@@ -11318,8 +11378,8 @@ var PreviewDrawingController = class {
     const penActive = this.toolMode === TOOL_DRAW && this.brushMode === BRUSH_PEN;
     const watercolorActive = this.toolMode === TOOL_DRAW && this.brushMode === BRUSH_WATERCOLOR;
     const sourceMarkdownEditActive = this.surfaceType === "source" && this.toolMode === TOOL_EDIT_MD;
-    this.applyBrushButtonState(this.penButton, this.brushSettings?.[BRUSH_PEN], penActive);
-    this.applyBrushButtonState(this.watercolorButton, this.brushSettings?.[BRUSH_WATERCOLOR], watercolorActive);
+    this.applyBrushButtonState(this.penButton, this.brushSettingsFor(BRUSH_PEN), penActive);
+    this.applyBrushButtonState(this.watercolorButton, this.brushSettingsFor(BRUSH_WATERCOLOR), watercolorActive);
     this.textButton?.classList.toggle("is-active", this.toolMode === TOOL_TEXT || this.textPanelOpen);
     this.textButton?.toggleAttribute("hidden", false);
     this.selectButton?.classList.toggle("is-active", this.toolMode === TOOL_SELECT);
@@ -15630,6 +15690,15 @@ ${selected}
       return;
     }
     const canBecomeElementDrag = pending.type === "edit-markdown-or-drag" || pending.type === "edit-stroke-or-drag";
+    const canBecomeAreaSelection = [
+      "select-stroke",
+      "toggle-stroke",
+      "select-markdown",
+      "toggle-markdown",
+      "select-group",
+      "enter-stroke-group",
+      "enter-markdown-group"
+    ].includes(pending.type);
     const activationDistance = canBecomeElementDrag ? this.selectedDragActivationDistancePx(event.pointerType) : this.tapDistancePx();
     if (pointerDistance(pending.startClient, { x: event.clientX, y: event.clientY }) > activationDistance) {
       pending.moved = true;
@@ -15641,6 +15710,14 @@ ${selected}
           startClient: pending.startClient
         });
         this.moveSelectedStroke(event);
+        return;
+      }
+      if (canBecomeAreaSelection) {
+        this.pendingSelectionTap = null;
+        this.startSelectionDrag(event, pending.startPoint || this.eventToPoint(event), {
+          startClient: pending.startClient
+        });
+        this.updateSelectionDrag(event);
         return;
       }
     }
@@ -15705,13 +15782,13 @@ ${selected}
       this.releasePointerCapture(pointerId);
     }
   }
-  startSelectionDrag(event, point) {
+  startSelectionDrag(event, point, options = {}) {
     this.endTextEdit();
     this.cancelCurrentStroke();
     this.selectingStrokes = true;
     this.selectionStartPoint = point;
     this.selectionCurrentPoint = point;
-    this.pointerStartClient = { x: event.clientX, y: event.clientY };
+    this.pointerStartClient = options.startClient ? { x: options.startClient.x, y: options.startClient.y } : { x: event.clientX, y: event.clientY };
     this.activePointerId = event.pointerId;
     this.previewEl.addClass("is-selecting-strokes");
     try {
@@ -16678,43 +16755,60 @@ ${selected}
   }
   selectRelatedElements() {
     const selectedIndexes = this.getSelectedStrokeIndexes();
-    if (!selectedIndexes.length) {
+    const selectedMarkdownIds = this.getSelectedMarkdownBlocks().map((block) => block.id);
+    if (!selectedIndexes.length && !selectedMarkdownIds.length) {
       return false;
     }
     const strokes = this.drawingData?.strokes || [];
-    const relatedIndexes = new Set(selectedIndexes);
-    const relatedIds = this.connectorTargetIdsForStrokeIndexes(selectedIndexes);
-    let changed = true;
-    while (changed) {
-      changed = false;
-      for (let index = 0; index < strokes.length; index += 1) {
-        const stroke = strokes[index];
-        const elementId = strokeElementId(stroke);
-        const connector = normalizeConnector(stroke?.connector);
-        const connectorMatches = connector && (relatedIds.has(connector.fromId) || relatedIds.has(connector.toId));
-        const elementMatches = elementId && relatedIds.has(elementId);
-        if (!connectorMatches && !elementMatches) {
-          continue;
-        }
-        if (!relatedIndexes.has(index)) {
-          relatedIndexes.add(index);
-          changed = true;
-        }
-        if (elementId && !relatedIds.has(elementId)) {
-          relatedIds.add(elementId);
-          changed = true;
-        }
-        if (connector?.fromId && !relatedIds.has(connector.fromId)) {
-          relatedIds.add(connector.fromId);
-          changed = true;
-        }
-        if (connector?.toId && !relatedIds.has(connector.toId)) {
-          relatedIds.add(connector.toId);
-          changed = true;
-        }
+    const candidates = [];
+    for (let index = 0; index < strokes.length; index += 1) {
+      const stroke = strokes[index];
+      if (!this.isStrokeVisibleOnSurface(stroke)) {
+        continue;
       }
+      const connector = normalizeConnector(stroke?.connector);
+      const candidate = {
+        key: `stroke:${index}`,
+        type: "stroke",
+        index,
+        groupId: String(stroke?.groupId || ""),
+        elementId: strokeElementId(stroke),
+        connector,
+        bounds: getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight())
+      };
+      candidates.push(candidate);
     }
-    this.setSelectedStrokes(Array.from(relatedIndexes).sort((a, b) => a - b));
+    for (const block of this.markdownBlockRecords()) {
+      const element = this.markdownBlockElementOrFallback(block);
+      const bounds = this.markdownElementCanvasBounds(element, { forSelection: true });
+      if (!bounds) {
+        continue;
+      }
+      const candidate = {
+        key: `markdown:${block.id}`,
+        type: "markdown",
+        id: block.id,
+        groupId: String(block.groupId || ""),
+        elementId: block.id,
+        connector: null,
+        bounds
+      };
+      candidates.push(candidate);
+    }
+    const relatedKeys = expandRelatedSelection(candidates, [
+      ...selectedIndexes.map((index) => `stroke:${index}`),
+      ...selectedMarkdownIds.map((id) => `markdown:${id}`)
+    ]);
+    const relatedIndexes = candidates.filter((candidate) => candidate.type === "stroke" && relatedKeys.has(candidate.key)).map((candidate) => candidate.index);
+    const relatedMarkdownIds = candidates.filter((candidate) => candidate.type === "markdown" && relatedKeys.has(candidate.key)).map((candidate) => candidate.id);
+    this.selectionFilterCycle = null;
+    this.selectedStrokeIndexes = new Set(relatedIndexes);
+    this.selectedStrokeIndex = relatedIndexes.length ? relatedIndexes.at(-1) : -1;
+    this.selectedMarkdownBlockIds = new Set(relatedMarkdownIds);
+    this.invalidateSelectionFrameSnapshot();
+    this.invalidateStaticCache();
+    this.syncPaletteInputs();
+    this.updateToolButtons();
     this.showSelectionMenu();
     this.render();
     return true;
@@ -16858,12 +16952,17 @@ ${selected}
     let requestedDropPlacement = null;
     let settleNoteFlowImmediately = false;
     if (didMove && this.usesDraggedNoteFlowPlacement()) {
+      const pendingDropClientX = this.dragNoteFlowDropClientX;
+      const pendingDropClientY = this.dragNoteFlowDropClientY;
       if (this.dragNoteFlowDropFrameId !== null) {
         window.cancelAnimationFrame(this.dragNoteFlowDropFrameId);
         this.dragNoteFlowDropFrameId = null;
       }
       this.dragNoteFlowDropClientX = null;
       this.dragNoteFlowDropClientY = null;
+      if (Number.isFinite(Number(pendingDropClientX)) && Number.isFinite(Number(pendingDropClientY))) {
+        this.updateDraggedNoteFlowPlacement(Number(pendingDropClientX), Number(pendingDropClientY));
+      }
       const previewedPlacement = this.dragNoteFlowLastAppliedPlacement || this.dragNoteFlowPlacement;
       requestedDropPlacement = previewedPlacement ? {
         path: previewedPlacement.path,
@@ -17940,7 +18039,9 @@ ${selected}
     if (!this.ctx) {
       return;
     }
-    this.refreshMarkdownBlockPresentation();
+    if (this.getSelectedMarkdownBlocks().length || this.usesDraggedNoteFlowPlacement()) {
+      this.refreshMarkdownBlockPresentation();
+    }
     const embedIndexes = this.getSelectedStrokeIndexes().filter((index) => {
       const stroke = this.drawingData.strokes[index];
       return isEmbedStroke(stroke) || isRichTextStroke(stroke);
@@ -18437,25 +18538,6 @@ ${selected}
     }
     ctx.closePath();
     ctx.fill();
-    ctx.strokeStyle = strokePaletteColor(stroke, this.penColor);
-    ctx.lineWidth = Math.max(0.7, Math.min(1.05, Number(stroke.width || this.penWidth) * 0.13));
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    ctx.beginPath();
-    ctx.moveTo(centers[0].x, centers[0].y);
-    for (let index = 1; index < centers.length - 1; index += 1) {
-      const midpoint = {
-        x: (centers[index].x + centers[index + 1].x) / 2,
-        y: (centers[index].y + centers[index + 1].y) / 2
-      };
-      if (typeof ctx.quadraticCurveTo === "function") {
-        ctx.quadraticCurveTo(centers[index].x, centers[index].y, midpoint.x, midpoint.y);
-      } else {
-        ctx.lineTo(midpoint.x, midpoint.y);
-      }
-    }
-    ctx.lineTo(centers.at(-1).x, centers.at(-1).y);
-    ctx.stroke();
     ctx.restore();
   }
   drawImageStrokeOn(ctx, stroke) {
@@ -21405,13 +21487,22 @@ ${selected}
       this.clearDraggedNoteFlowPlacement();
       return null;
     }
+    this.dragNoteFlowDropClientX = Number(clientX);
+    this.dragNoteFlowDropClientY = Number(clientY);
     if (this.dragNoteFlowDropFrameId !== null) {
-      window.cancelAnimationFrame(this.dragNoteFlowDropFrameId);
-      this.dragNoteFlowDropFrameId = null;
+      return this.dragNoteFlowPlacement;
     }
-    this.dragNoteFlowDropClientX = null;
-    this.dragNoteFlowDropClientY = null;
-    return this.updateDraggedNoteFlowPlacement(Number(clientX), Number(clientY));
+    this.dragNoteFlowDropFrameId = window.requestAnimationFrame(() => {
+      this.dragNoteFlowDropFrameId = null;
+      const pendingX = this.dragNoteFlowDropClientX;
+      const pendingY = this.dragNoteFlowDropClientY;
+      this.dragNoteFlowDropClientX = null;
+      this.dragNoteFlowDropClientY = null;
+      if (Number.isFinite(Number(pendingX)) && Number.isFinite(Number(pendingY))) {
+        this.updateDraggedNoteFlowPlacement(Number(pendingX), Number(pendingY));
+      }
+    });
+    return this.dragNoteFlowPlacement;
   }
   updateDraggedNoteFlowPlacement(clientX, clientY, options = {}) {
     if (!this.usesDraggedNoteFlowPlacement() || !Number.isFinite(Number(clientX)) || !Number.isFinite(Number(clientY))) {
@@ -25013,7 +25104,8 @@ var NoteDrawSettingTab = class extends import_obsidian.PluginSettingTab {
             defaultPenOpacity: DEFAULT_SETTINGS.defaultPenOpacity,
             defaultWatercolorColor: DEFAULT_SETTINGS.defaultWatercolorColor,
             defaultWatercolorWidth: DEFAULT_SETTINGS.defaultWatercolorWidth,
-            defaultWatercolorOpacity: DEFAULT_SETTINGS.defaultWatercolorOpacity
+            defaultWatercolorOpacity: DEFAULT_SETTINGS.defaultWatercolorOpacity,
+            brushVariantSettings: {}
           });
           await this.plugin.saveSettings();
           this.refreshSettingsView();
@@ -25479,6 +25571,20 @@ function sanitizeSettings(settings) {
     defaultWatercolorColor: isCssColor(input.defaultWatercolorColor) ? input.defaultWatercolorColor : DEFAULT_SETTINGS.defaultWatercolorColor,
     defaultWatercolorWidth: clamp10(Number(input.defaultWatercolorWidth ?? DEFAULT_SETTINGS.defaultWatercolorWidth), MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH),
     defaultWatercolorOpacity: clamp10(Number(input.defaultWatercolorOpacity ?? DEFAULT_SETTINGS.defaultWatercolorOpacity), 0, 1),
+    brushVariantSettings: createBrushVariantSettings(input.brushVariantSettings, {
+      [BRUSH_PEN]: {
+        color: isCssColor(input.defaultPenColor) ? input.defaultPenColor : DEFAULT_SETTINGS.defaultPenColor,
+        width: clamp10(Number(input.defaultPenWidth ?? DEFAULT_SETTINGS.defaultPenWidth), MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH),
+        opacity: clamp10(Number(input.defaultPenOpacity ?? DEFAULT_SETTINGS.defaultPenOpacity), 0, 1),
+        count: 1
+      },
+      [BRUSH_WATERCOLOR]: {
+        color: isCssColor(input.defaultWatercolorColor) ? input.defaultWatercolorColor : DEFAULT_SETTINGS.defaultWatercolorColor,
+        width: clamp10(Number(input.defaultWatercolorWidth ?? DEFAULT_SETTINGS.defaultWatercolorWidth), MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH),
+        opacity: clamp10(Number(input.defaultWatercolorOpacity ?? DEFAULT_SETTINGS.defaultWatercolorOpacity), 0, 1),
+        count: 1
+      }
+    }),
     lastToolMode: normalizeToolMode(input.lastToolMode),
     lastBrushMode: input.lastBrushMode === BRUSH_WATERCOLOR ? BRUSH_WATERCOLOR : BRUSH_PEN,
     lastPenVariant: normalizeBrushVariant(BRUSH_PEN, input.lastPenVariant),
@@ -27370,6 +27476,41 @@ function normalizeBrushVariant(brush, variant) {
     return [WATERCOLOR_VARIANT_TEXT, WATERCOLOR_VARIANT_STRAIGHT].includes(value) ? value : BRUSH_VARIANT_DEFAULT;
   }
   return [PEN_VARIANT_FOUNTAIN, PEN_VARIANT_NOTE].includes(value) ? value : BRUSH_VARIANT_DEFAULT;
+}
+function brushVariantsForMode(mode) {
+  return mode === BRUSH_WATERCOLOR ? [BRUSH_VARIANT_DEFAULT, WATERCOLOR_VARIANT_TEXT, WATERCOLOR_VARIANT_STRAIGHT] : [BRUSH_VARIANT_DEFAULT, PEN_VARIANT_FOUNTAIN, PEN_VARIANT_NOTE];
+}
+function normalizeBrushToolSettings(value, fallback = {}) {
+  const input = value || {};
+  return {
+    color: isCssColor(input.color) ? input.color : isCssColor(fallback.color) ? fallback.color : "#e53935",
+    width: clamp10(Number(input.width ?? fallback.width ?? DEFAULT_SETTINGS.defaultPenWidth), MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH),
+    opacity: clamp10(Number(input.opacity ?? fallback.opacity ?? DEFAULT_PEN_OPACITY), 0, 1),
+    count: Math.max(1, Math.round(Number(input.count ?? fallback.count ?? 1)))
+  };
+}
+function createBrushVariantSettings(value, fallbacks = {}) {
+  const input = value || {};
+  const result = {};
+  for (const mode of [BRUSH_PEN, BRUSH_WATERCOLOR]) {
+    result[mode] = {};
+    for (const variant of brushVariantsForMode(mode)) {
+      result[mode][variant] = normalizeBrushToolSettings(input?.[mode]?.[variant], fallbacks?.[mode]);
+    }
+  }
+  return result;
+}
+function cloneBrushVariantSettings(value) {
+  const result = {};
+  for (const mode of [BRUSH_PEN, BRUSH_WATERCOLOR]) {
+    result[mode] = {};
+    for (const variant of brushVariantsForMode(mode)) {
+      if (value?.[mode]?.[variant]) {
+        result[mode][variant] = { ...value[mode][variant] };
+      }
+    }
+  }
+  return result;
 }
 function normalizeToolMode(value) {
   return [TOOL_DRAW, TOOL_SELECT, TOOL_EDIT_MD, TOOL_TEXT].includes(value) ? value : TOOL_DRAW;

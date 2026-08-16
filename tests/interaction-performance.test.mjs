@@ -19,7 +19,7 @@ test("high-frequency interaction frames avoid a full Markdown remap", async () =
 
   assert.match(requestSource, /refreshDom === "interaction"/);
   assert.match(requestSource, /shouldRefreshDom[\s\S]*this\.render\(\)[\s\S]*shouldRefreshInteraction[\s\S]*this\.renderInteractionFrame\(\)/);
-  assert.match(interactionSource, /this\.refreshMarkdownBlockPresentation\(\)/);
+  assert.match(interactionSource, /if \(this\.getSelectedMarkdownBlocks\(\)\.length \|\| this\.usesDraggedNoteFlowPlacement\(\)\) \{[\s\S]*this\.refreshMarkdownBlockPresentation\(\)/);
   assert.match(interactionSource, /this\.updateEmbedLayer\(\{ indexes: embedIndexes \}\)/);
   assert.doesNotMatch(interactionSource, /syncMarkdownBlockPresentation|querySelectorAll/);
   assert.match(fullRenderSource, /this\.syncMarkdownBlockPresentation\(\)/);
