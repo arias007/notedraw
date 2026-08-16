@@ -14,6 +14,22 @@ test("embedded Markdown edits stage changes until editing ends", async () => {
   assert.match(source, /this\.textCommitBarrier\.wait\(\)/);
 });
 
+test("embedded Markdown editing freezes its initial geometry without running a layout repair", async () => {
+  const [source, styles] = await Promise.all([
+    readFile(sourceUrl, "utf8"),
+    readFile(stylesUrl, "utf8")
+  ]);
+  const editSource = source.slice(source.indexOf("  captureEmbeddedEditorLayout("), source.indexOf("  focusSourceEditorAt(", source.indexOf("  captureEmbeddedEditorLayout(")));
+  const mutationSource = source.slice(source.indexOf("this.markdownRenderObserver = new MutationObserver"), source.indexOf("this.markdownRenderObserver.observe"));
+
+  assert.match(editSource, /offsetWidth[\s\S]*offsetHeight/);
+  assert.match(editSource, /stabilizeEmbeddedEditor\(element, editorLayoutLock\)/);
+  assert.match(editSource, /requestAnimationFrame[\s\S]*requestAnimationFrame\(restoreFrame\)/);
+  assert.match(editSource, /clearEmbeddedEditorStability\(element\)/);
+  assert.match(mutationSource, /this\.currentEditorEmbedded[\s\S]*mutations\.every[\s\S]*return;/);
+  assert.match(styles, /\.notedraw-editing\.notedraw-editing-embedded-stable[\s\S]*width: var\(--notedraw-editing-stable-width\);[\s\S]*min-height: var\(--notedraw-editing-stable-height\);[\s\S]*overflow-anchor: none/);
+});
+
 test("default brushes remain separate from opt-in fountain and watercolor variants", async () => {
   const [source, styles] = await Promise.all([
     readFile(sourceUrl, "utf8"),

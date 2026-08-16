@@ -297,6 +297,72 @@ function uniqueSourceCandidates(candidates) {
   });
 }
 
+function normalizeEmbedDestination(value) {
+  let target = String(value || "").trim().replace(/^!/, "");
+  const wiki = target.match(/^\[\[([\s\S]+)\]\]$/);
+  if (wiki) {
+    target = wiki[1];
+  }
+  target = target.split("|")[0].trim().replace(/^<|>$/g, "");
+  try {
+    target = decodeURIComponent(target);
+  } catch {
+    // Keep the original destination when it is not URI encoded.
+  }
+  return target.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\.md(?=#|$)/i, "").toLowerCase();
+}
+
+function embedDestinations(sourceText) {
+  const text = String(sourceText || "");
+  const destinations = [];
+  for (const match of text.matchAll(/!\[\[([^\]]+)\]\]/g)) {
+    destinations.push(normalizeEmbedDestination(match[1]));
+  }
+  for (const match of text.matchAll(/!\[[^\]]*\]\(\s*(?:<([^>]+)>|([^\s)]+))(?:\s+["'][^"']*["'])?\s*\)/g)) {
+    destinations.push(normalizeEmbedDestination(match[1] || match[2]));
+  }
+  return destinations.filter(Boolean);
+}
+
+export function resolveMarkdownEmbedSourceTarget(source, embedDestination, sourceInfo = {}, sourceIndex = null) {
+  const expected = normalizeEmbedDestination(embedDestination);
+  if (!expected) {
+    return null;
+  }
+  const expectedPath = expected.split("#")[0];
+  const candidates = uniqueSourceCandidates(indexedCandidates(source, sourceIndex).filter((candidate) => {
+    return embedDestinations(candidate.sourceText).some((destination) => {
+      return destination === expected || destination.split("#")[0] === expectedPath;
+    });
+  }));
+  if (!candidates.length) {
+    return null;
+  }
+  const exact = candidates.filter((candidate) => embedDestinations(candidate.sourceText).includes(expected));
+  const matches = exact.length ? exact : candidates;
+  const lineStart = sourceInfo?.lineStart === null || sourceInfo?.lineStart === undefined || sourceInfo?.lineStart === ""
+    ? Number.NaN
+    : Number(sourceInfo.lineStart);
+  const lineEnd = sourceInfo?.lineEnd === null || sourceInfo?.lineEnd === undefined || sourceInfo?.lineEnd === ""
+    ? Number.NaN
+    : Number(sourceInfo.lineEnd);
+  const ranked = matches.map((candidate) => ({
+    candidate,
+    distance: candidateDistanceFromRange(
+      candidate,
+      Number.isFinite(lineStart) ? lineStart : Number.NaN,
+      Number.isFinite(lineEnd) ? lineEnd : lineStart
+    )
+  })).sort((a, b) => a.distance - b.distance || a.candidate.lineStart - b.candidate.lineStart);
+  if (ranked.length > 1 && ranked[0].distance === ranked[1].distance) {
+    return null;
+  }
+  if (matches.length > 1 && !Number.isFinite(lineStart)) {
+    return null;
+  }
+  return sourceTarget(ranked[0].candidate, ranked[0].candidate.sourceText);
+}
+
 function sourceTarget(candidate, renderedText) {
   return candidate ? {
     start: candidate.start,

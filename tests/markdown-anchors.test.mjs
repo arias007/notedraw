@@ -4,6 +4,7 @@ import {
   createMarkdownSourceIndex,
   findRenderedMarkdownSourceTargets,
   matchRenderedTextToMarkdown,
+  resolveMarkdownEmbedSourceTarget,
   resolveRenderedMarkdownSourceTarget
 } from "../src/markdown-anchors.mjs";
 
@@ -22,6 +23,35 @@ test("rendered embed text matches a single Markdown line expanded by br tags", (
   const match = matchRenderedTextToMarkdown(source, "第一段\n第二段\n第三段");
 
   assert.deepEqual(match, { lineStart: 0, lineEnd: 0, confidence: 1 });
+});
+
+test("embedded note moves resolve the host embed token instead of rendered child text", () => {
+  const source = [
+    "# 宿主笔记",
+    "",
+    "![[资料/项目说明.md|项目说明]]",
+    "",
+    "结尾"
+  ].join("\n");
+  const target = resolveMarkdownEmbedSourceTarget(source, "资料/项目说明", {
+    lineStart: 2,
+    lineEnd: 2
+  }, createMarkdownSourceIndex(source));
+
+  assert.equal(target?.line, 2);
+  assert.equal(target?.text, "![[资料/项目说明.md|项目说明]]");
+  assert.notEqual(target?.text, "被嵌入笔记渲染出的正文");
+});
+
+test("duplicate embedded notes use the host line and keep heading destinations distinct", () => {
+  const source = [
+    "![[项目#概览]]",
+    "正文",
+    "![[项目#任务|任务区]]"
+  ].join("\n");
+
+  assert.equal(resolveMarkdownEmbedSourceTarget(source, "项目#任务", { lineStart: 2 })?.line, 2);
+  assert.equal(resolveMarkdownEmbedSourceTarget(source, "项目", {}) , null);
 });
 
 test("rendered headings and list items map to their Markdown source lines", () => {

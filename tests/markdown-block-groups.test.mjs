@@ -793,7 +793,8 @@ test("Markdown drop settlement remaps rendered blocks without auto-persisting st
   assert.match(annotationSource, /annotateRenderedMarkdownLines\([\s\S]*\{ force \}/);
   assert.match(annotationSource, /if \(force\) \{\s*this\.noteFlowMarkdownAnnotationComplete = true/);
   assert.match(source, /const sourceIndexes = new Map\([\s\S]*createMarkdownSourceIndex\(source\)/);
-  assert.match(source, /resolveSourceDropTarget\(source, state\.sourceInfo, state\.sourceText, sourceIndex\)/);
+  assert.match(source, /resolveSourceDropTarget\(source, state\.sourceInfo, state\.sourceText, sourceIndex, state\.embedDestination\)/);
+  assert.match(source, /markdownDragSourceIdentity\(element\)[\s\S]*embedDestination: sourceIdentity\.embedDestination/);
   assert.match(presentationSource, /markdownMetadataChanged[\s\S]*block\.lineStart !== info\.lineStart/);
   assert.doesNotMatch(presentationSource, /scheduleDrawingSave\(this\.file, this\.drawingData, \{ userOperation: true \}\)/);
 });

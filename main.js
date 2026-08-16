@@ -1360,6 +1360,64 @@ function uniqueSourceCandidates(candidates) {
     return true;
   });
 }
+function normalizeEmbedDestination(value) {
+  let target = String(value || "").trim().replace(/^!/, "");
+  const wiki = target.match(/^\[\[([\s\S]+)\]\]$/);
+  if (wiki) {
+    target = wiki[1];
+  }
+  target = target.split("|")[0].trim().replace(/^<|>$/g, "");
+  try {
+    target = decodeURIComponent(target);
+  } catch {
+  }
+  return target.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\.md(?=#|$)/i, "").toLowerCase();
+}
+function embedDestinations(sourceText) {
+  const text = String(sourceText || "");
+  const destinations = [];
+  for (const match of text.matchAll(/!\[\[([^\]]+)\]\]/g)) {
+    destinations.push(normalizeEmbedDestination(match[1]));
+  }
+  for (const match of text.matchAll(/!\[[^\]]*\]\(\s*(?:<([^>]+)>|([^\s)]+))(?:\s+["'][^"']*["'])?\s*\)/g)) {
+    destinations.push(normalizeEmbedDestination(match[1] || match[2]));
+  }
+  return destinations.filter(Boolean);
+}
+function resolveMarkdownEmbedSourceTarget(source, embedDestination, sourceInfo = {}, sourceIndex = null) {
+  const expected = normalizeEmbedDestination(embedDestination);
+  if (!expected) {
+    return null;
+  }
+  const expectedPath = expected.split("#")[0];
+  const candidates = uniqueSourceCandidates(indexedCandidates(source, sourceIndex).filter((candidate) => {
+    return embedDestinations(candidate.sourceText).some((destination) => {
+      return destination === expected || destination.split("#")[0] === expectedPath;
+    });
+  }));
+  if (!candidates.length) {
+    return null;
+  }
+  const exact = candidates.filter((candidate) => embedDestinations(candidate.sourceText).includes(expected));
+  const matches = exact.length ? exact : candidates;
+  const lineStart = sourceInfo?.lineStart === null || sourceInfo?.lineStart === void 0 || sourceInfo?.lineStart === "" ? Number.NaN : Number(sourceInfo.lineStart);
+  const lineEnd = sourceInfo?.lineEnd === null || sourceInfo?.lineEnd === void 0 || sourceInfo?.lineEnd === "" ? Number.NaN : Number(sourceInfo.lineEnd);
+  const ranked = matches.map((candidate) => ({
+    candidate,
+    distance: candidateDistanceFromRange(
+      candidate,
+      Number.isFinite(lineStart) ? lineStart : Number.NaN,
+      Number.isFinite(lineEnd) ? lineEnd : lineStart
+    )
+  })).sort((a, b) => a.distance - b.distance || a.candidate.lineStart - b.candidate.lineStart);
+  if (ranked.length > 1 && ranked[0].distance === ranked[1].distance) {
+    return null;
+  }
+  if (matches.length > 1 && !Number.isFinite(lineStart)) {
+    return null;
+  }
+  return sourceTarget(ranked[0].candidate, ranked[0].candidate.sourceText);
+}
 function sourceTarget(candidate, renderedText) {
   return candidate ? {
     start: candidate.start,
@@ -9343,6 +9401,7 @@ var PreviewDrawingController = class {
     this.currentEditor = null;
     this.currentEditorFile = null;
     this.currentEditorEmbedded = false;
+    this.currentEditorLayoutLock = null;
     this.textCommitBarrier = createAsyncCommitBarrier((error) => {
       console.error(`[${PLUGIN_ID}] Failed to settle an edit before history navigation`, error);
     });
@@ -9952,6 +10011,9 @@ var PreviewDrawingController = class {
     if (typeof MutationObserver !== "undefined") {
       this.markdownRenderObserver = new MutationObserver((mutations) => {
         if (mutations.some((mutation) => isMarkdownContentMutation(mutation))) {
+          if (this.currentEditorEmbedded && this.currentEditor && mutations.every((mutation) => mutation.target === this.currentEditor || this.currentEditor.contains?.(mutation.target))) {
+            return;
+          }
           this.noteFlowMarkdownAnnotationComplete = false;
           if (this.draggingStroke || this.resizingSelection || this.pointerDown) {
             return;
@@ -11704,6 +11766,7 @@ var PreviewDrawingController = class {
     }
     const mode = nextSelectionFilterMode(context.mode);
     const selection = selectionForFilterMode(context.snapshot, mode);
+    const previousMarkdownIds = new Set(this.selectedMarkdownBlockIds || []);
     const validMarkdownIds = new Set(this.markdownBlockRecords().map((block) => block.id));
     this.selectionFilterCycle = { mode, snapshot: context.snapshot };
     this.selectedStrokeIndexes = new Set(selection.strokeIndexes);
@@ -11714,7 +11777,10 @@ var PreviewDrawingController = class {
     this.syncPaletteInputs();
     this.updateToolButtons();
     this.syncSelectionMenuButtons();
-    this.render();
+    const touchedMarkdownIds = /* @__PURE__ */ new Set([...previousMarkdownIds, ...this.selectedMarkdownBlockIds]);
+    this.refreshMarkdownBlockPresentation(touchedMarkdownIds);
+    this.updateEmbedLayer();
+    this.renderCanvas();
     return true;
   }
   selectedMindMapSource() {
@@ -16037,12 +16103,14 @@ ${selected}
       const element = this.markdownBlockElement(block);
       const flowElement = this.markdownBlockFlowElement(element) || element;
       const clientRect = this.markdownElementVisibleClientRect(element) || element.getBoundingClientRect();
+      const sourceIdentity = markdownDragSourceIdentity(element);
       return [block.id, {
         block,
         element,
         dragElement: block.floating ? element : flowElement,
-        sourceInfo: getSourceInfo(element),
-        sourceText: element.innerText,
+        sourceInfo: sourceIdentity.sourceInfo,
+        sourceText: sourceIdentity.sourceText,
+        embedDestination: sourceIdentity.embedDestination,
         span: block.span,
         noteFlowAutoSpan: Boolean(block.noteFlowAutoSpan),
         widthScale: normalizeMarkdownBlockWidthScale(block.widthScale),
@@ -16074,7 +16142,7 @@ ${selected}
     }) || null;
     for (const state of this.dragMarkdownOriginalElements.values()) {
       state.lockedTargetPromise = this.dragMarkdownSourcePromise && this.dragMarkdownSourceIndexPromise ? Promise.all([this.dragMarkdownSourcePromise, this.dragMarkdownSourceIndexPromise]).then(([source, sourceIndex]) => {
-        return source ? resolveSourceDropTarget(source, state.sourceInfo, state.sourceText, sourceIndex) : null;
+        return source ? resolveSourceDropTarget(source, state.sourceInfo, state.sourceText, sourceIndex, state.embedDestination) : null;
       }) : Promise.resolve(null);
     }
     const markdownClientRects = Array.from(this.dragMarkdownOriginalElements.values()).map((state) => state.clientRect);
@@ -16390,19 +16458,20 @@ ${selected}
       return null;
     }
     const targetBlock = this.findMarkdownBlockRecordForElement(target);
-    const rawInfo = getSourceInfo(target);
+    const sourceIdentity = markdownDragSourceIdentity(target);
+    const rawInfo = sourceIdentity.sourceInfo;
     const targetInfo = {
       ...rawInfo,
       lineStart: rawInfo.lineStart ?? targetBlock?.lineStart ?? null,
       lineEnd: rawInfo.lineEnd ?? targetBlock?.lineEnd ?? rawInfo.lineStart ?? targetBlock?.lineStart ?? null
     };
-    const targetText = String(target.innerText || "");
-    const targetFile = this.plugin.resolveEditableFile(target, this.file);
+    const targetText = sourceIdentity.sourceText;
+    const targetFile = this.file;
     const path = normalizeVaultPath(targetFile?.path || "");
     const sourcePromise = path === normalizeVaultPath(this.file?.path) && this.dragMarkdownSourcePromise ? this.dragMarkdownSourcePromise : path ? this.plugin.app.vault.read(targetFile).catch(() => null) : Promise.resolve(null);
     const sourceIndexPromise = path === normalizeVaultPath(this.file?.path) && this.dragMarkdownSourceIndexPromise ? this.dragMarkdownSourceIndexPromise : sourcePromise.then((source) => source ? createMarkdownSourceIndex(source) : null);
     const lockedTargetPromise = path && targetText ? Promise.all([sourcePromise, sourceIndexPromise]).then(([source, sourceIndex]) => {
-      return source ? resolveSourceDropTarget(source, targetInfo, targetText, sourceIndex) : null;
+      return source ? resolveSourceDropTarget(source, targetInfo, targetText, sourceIndex, sourceIdentity.embedDestination) : null;
     }) : Promise.resolve(null);
     return {
       element: target,
@@ -16411,6 +16480,7 @@ ${selected}
       blockId: targetBlock?.id || target.dataset?.noteDrawMarkdownBlockId || "",
       targetInfo,
       targetText,
+      embedDestination: sourceIdentity.embedDestination,
       row: row ? { ...row } : null,
       lockedTargetPromise
     };
@@ -24834,6 +24904,84 @@ ${selected}
     element?.style?.removeProperty("--notedraw-editing-flow-top");
     element?.style?.removeProperty("--notedraw-editing-flow-bottom");
   }
+  captureEmbeddedEditorLayout(element) {
+    if (!this.currentEditorEmbedded || !element?.isConnected) {
+      return null;
+    }
+    const rect = element.getBoundingClientRect?.();
+    if (!rect?.width || !rect?.height) {
+      return null;
+    }
+    const scrollers = [];
+    const seen = /* @__PURE__ */ new Set();
+    let current = element.parentElement;
+    while (current) {
+      if (!seen.has(current) && (current === this.scrollContainer || current.scrollHeight > current.clientHeight + 1 || current.scrollWidth > current.clientWidth + 1)) {
+        seen.add(current);
+        scrollers.push({ element: current, top: Number(current.scrollTop) || 0, left: Number(current.scrollLeft) || 0 });
+      }
+      current = current.parentElement;
+    }
+    return {
+      element,
+      scrollers,
+      width: Math.max(1, Number(element.offsetWidth) || rect.width),
+      height: Math.max(1, Number(element.offsetHeight) || rect.height),
+      frameIds: []
+    };
+  }
+  restoreEmbeddedEditorViewport(lock = this.currentEditorLayoutLock) {
+    if (!lock || lock !== this.currentEditorLayoutLock) {
+      return;
+    }
+    for (const scroll of lock.scrollers) {
+      if (!scroll.element?.isConnected) {
+        continue;
+      }
+      if (Math.abs((Number(scroll.element.scrollTop) || 0) - scroll.top) > 0.25) {
+        scroll.element.scrollTop = scroll.top;
+      }
+      if (Math.abs((Number(scroll.element.scrollLeft) || 0) - scroll.left) > 0.25) {
+        scroll.element.scrollLeft = scroll.left;
+      }
+    }
+  }
+  stabilizeEmbeddedEditor(element, capturedLock = null) {
+    const lock = capturedLock || this.captureEmbeddedEditorLayout(element);
+    this.currentEditorLayoutLock = lock;
+    if (!lock) {
+      return;
+    }
+    element.addClass("notedraw-editing-embedded-stable");
+    setNoteDrawCssProps(element, {
+      "--notedraw-editing-stable-width": `${lock.width}px`,
+      "--notedraw-editing-stable-height": `${lock.height}px`
+    });
+    this.restoreEmbeddedEditorViewport(lock);
+    const restoreFrame = () => {
+      if (lock !== this.currentEditorLayoutLock) {
+        return;
+      }
+      this.restoreEmbeddedEditorViewport(lock);
+      this.positionFormatToolbar();
+    };
+    if (typeof window.requestAnimationFrame === "function") {
+      lock.frameIds.push(window.requestAnimationFrame(() => {
+        restoreFrame();
+        lock.frameIds.push(window.requestAnimationFrame(restoreFrame));
+      }));
+    }
+  }
+  clearEmbeddedEditorStability(element) {
+    const lock = this.currentEditorLayoutLock;
+    for (const frameId of lock?.frameIds || []) {
+      window.cancelAnimationFrame?.(frameId);
+    }
+    element?.removeClass?.("notedraw-editing-embedded-stable");
+    element?.style?.removeProperty("--notedraw-editing-stable-width");
+    element?.style?.removeProperty("--notedraw-editing-stable-height");
+    this.currentEditorLayoutLock = null;
+  }
   startTextEdit(element, clientPoint = null) {
     if (!element?.isConnected || this.surfaceType !== "webview" && !this.previewEl?.contains?.(element)) {
       const block = this.findMarkdownBlockRecordForElement(element);
@@ -24861,10 +25009,15 @@ ${selected}
     if (saveToVault) {
       this.plugin.prepareTextEditState(this.currentEditorFile, element.innerText, element, this);
     }
+    const editorLayoutLock = this.captureEmbeddedEditorLayout(element);
+    this.currentEditorLayoutLock = editorLayoutLock;
     element.contentEditable = "true";
     element.spellcheck = true;
     element.addClass("notedraw-editing");
     this.applyTextEditingFlowClip(element);
+    if (editorLayoutLock) {
+      this.stabilizeEmbeddedEditor(element, editorLayoutLock);
+    }
     this.previewEl.addClass("is-native-text-editing");
     this.formatToolbar?.addClass("is-visible");
     element.focus();
@@ -24979,6 +25132,7 @@ ${selected}
     element.querySelector(":scope > .notedraw-text-sort-handle")?.remove();
     element.contentEditable = "false";
     this.clearTextEditingFlowClip(element);
+    this.clearEmbeddedEditorStability(element);
     element.removeClass("notedraw-editing");
     this.previewEl.removeClass("is-native-text-editing");
     this.formatToolbar?.removeClass("is-visible");
@@ -28512,6 +28666,31 @@ function getSourceInfo(element) {
     sourceText: typeof element._noteDrawSourceText === "string" ? element._noteDrawSourceText : null
   };
 }
+function markdownDragSourceIdentity(element) {
+  const embed = findMarkdownEmbedBlockElement(element);
+  const owner = embed?.matches?.(".internal-embed") ? embed : embed?.closest?.(".internal-embed") || embed?.querySelector?.(".internal-embed");
+  const embedDestination = owner?.getAttribute?.("data-src") || owner?.getAttribute?.("data-path") || owner?.getAttribute?.("src") || "";
+  if (!embedDestination) {
+    return {
+      sourceInfo: getSourceInfo(element),
+      sourceText: String(renderedMarkdownIdentityText(element) || ""),
+      embedDestination: ""
+    };
+  }
+  const hostLineElement = owner.closest?.("[data-line]");
+  const hostLine = parseDataLine(hostLineElement?.getAttribute?.("data-line"));
+  return {
+    sourceInfo: {
+      lineStart: hostLine,
+      lineEnd: hostLine,
+      dataLine: hostLine,
+      dataLineScope: "self",
+      sourceText: null
+    },
+    sourceText: `![[${embedDestination}]]`,
+    embedDestination
+  };
+}
 function resolveSourceEditTarget(source, sourceInfo, originalText) {
   const normalizedOriginal = normalizeRenderedText2(originalText);
   if (!normalizedOriginal) {
@@ -28536,8 +28715,8 @@ function resolveSourceEditTarget(source, sourceInfo, originalText) {
   }
   return match ? createTextEditTarget(match, sourceInfo, originalText) : null;
 }
-function resolveSourceDropTarget(source, sourceInfo, originalText, sourceIndex = null) {
-  const stableTarget = resolveRenderedMarkdownSourceTarget(source, originalText, sourceInfo, sourceIndex);
+function resolveSourceDropTarget(source, sourceInfo, originalText, sourceIndex = null, embedDestination = "") {
+  const stableTarget = embedDestination ? resolveMarkdownEmbedSourceTarget(source, embedDestination, sourceInfo, sourceIndex) : resolveRenderedMarkdownSourceTarget(source, originalText, sourceInfo, sourceIndex);
   return stableTarget ? createTextEditTarget(stableTarget, sourceInfo, originalText) : null;
 }
 function resolveLockedTarget(source, target, baselineText) {

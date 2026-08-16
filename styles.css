@@ -604,6 +604,13 @@
   user-select: text;
 }
 
+.notedraw-shell .notedraw-editing.notedraw-editing-embedded-stable {
+  box-sizing: border-box;
+  width: var(--notedraw-editing-stable-width);
+  min-height: var(--notedraw-editing-stable-height);
+  overflow-anchor: none;
+}
+
 .notedraw-shell .notedraw-md-block.notedraw-editing {
   outline-offset: -1px;
 }
