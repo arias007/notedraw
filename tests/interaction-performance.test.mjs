@@ -75,14 +75,3 @@ test("ordinary drags stay light while NoteFlow resize reflows once per animation
   assert.match(finishSource, /const resizedMarkdownBlocks = Boolean\(this\.resizeSelectionOriginalMarkdownBlocks\?\.size\)/);
   assert.match(finishSource, /if \(resizedMarkdownBlocks \|\| resizedNoteFlowStrokes\)/);
 });
-
-test("selection filter cycles redraw only selection presentation without normalizing layout", async () => {
-  const source = await readFile(sourceUrl, "utf8");
-  const start = source.indexOf("  cycleSelectionFilter() {");
-  const cycleSource = source.slice(start, source.indexOf("  selectedMindMapSource", start));
-
-  assert.doesNotMatch(cycleSource, /syncMarkdownBlockPresentation/);
-  assert.doesNotMatch(cycleSource, /this\.render\(\)|scheduleDrawingSave|recordDrawingHistory|toggleSelectedFlowMode/);
-  assert.match(cycleSource, /this\.refreshMarkdownBlockPresentation\(touchedMarkdownIds\);\s*this\.updateEmbedLayer\(\);\s*this\.renderCanvas\(\);/);
-  assert.doesNotMatch(cycleSource, /\.noteFlow\s*=|\.floating\s*=|\.floatBox\s*=|\.groupId\s*=/);
-});

@@ -74,15 +74,6 @@ import {
   fitSelectionFrameToCanvas,
   resolveSelectedDrawGesture
 } from "./selection-draw-gesture.mjs";
-import {
-  SELECTION_FILTER_ALL,
-  SELECTION_FILTER_FLOATING,
-  SELECTION_FILTER_MARKDOWN,
-  createSelectionFilterSnapshot,
-  nextSelectionFilterMode,
-  selectionForFilterMode,
-  selectionMatchesFilterMode
-} from "./selection-filter.mjs";
 import { expandRelatedSelection } from "./selection-relations.mjs";
 import {
   computeTextLayout,
@@ -115,6 +106,7 @@ import {
   noteFlowBlockKey,
   noteFlowPlacementRowKey,
   noteFlowRowReservation,
+  noteFlowSettledRowExtent,
   noteFlowReservedRowTop,
   noteFlowSurfaceRepairLimits,
   normalizeFrozenNoteFlowLayout,
@@ -429,9 +421,6 @@ var I18N = {
     lockElement: "Lock",
     unlockElement: "Unlock",
     copyElement: "Copy element/link",
-    selectFloatingOnly: "Select floating elements only",
-    selectMarkdownOnly: "Select inserted elements only",
-    selectAllElements: "Restore full selection",
     copyElementLink: "Copy element link",
     pasteElement: "Paste",
     insertIntoNote: "Insert into note flow",
@@ -608,9 +597,6 @@ var I18N = {
     lockElement: "锁定",
     unlockElement: "解锁",
     copyElement: "复制元素/链接",
-    selectFloatingOnly: "只选悬浮元素",
-    selectMarkdownOnly: "只选插入元素",
-    selectAllElements: "恢复全部选择",
     copyElementLink: "复制元素链接",
     pasteElement: "粘贴元素",
     insertIntoNote: "插入笔记",
@@ -634,9 +620,6 @@ var I18N = {
     editTextDrawHidden: "編輯文字 / 塗鴉（塗鴉已隱藏）",
     editWebviewDraw: "編輯網頁 / 塗鴉",
     selectDrawings: "選擇元素",
-    selectFloatingOnly: "只選浮動元素",
-    selectMarkdownOnly: "只選插入元素",
-    selectAllElements: "恢復全部選擇",
     editMarkdownTool: "編輯 MD",
     convertToNoteFlow: "轉為 NoteFlow 元素",
     convertToFloating: "轉為浮動元素",
@@ -5556,7 +5539,6 @@ var PreviewDrawingController = class {
     this.selectedStrokeIndexes = /* @__PURE__ */ new Set();
     this.selectedMarkdownBlockIds = /* @__PURE__ */ new Set();
     this.enteredElementGroupIds = /* @__PURE__ */ new Set();
-    this.selectionFilterCycle = null;
     this.selectionFrameSnapshot = null;
     this.selectionFrameAwaitingMarkdownSync = null;
     this.embedRepairTimer = null;
@@ -6418,7 +6400,6 @@ var PreviewDrawingController = class {
     this.selectedStrokeIndex = -1;
     this.selectedStrokeIndexes.clear();
     this.selectedMarkdownBlockIds.clear();
-    this.selectionFilterCycle = null;
     this.selectionFrameSnapshot = null;
     this.clearMarkdownBlockPresentation();
     this.embedNodes.forEach((node) => node.remove());
@@ -7749,7 +7730,6 @@ var PreviewDrawingController = class {
   }
   createSelectionMenu() {
     const actions = [
-      { icon: "list-filter", key: "selectFloatingOnly", action: () => this.cycleSelectionFilter() },
       { icon: "terminal", key: "buttonCommand", action: () => this.openSelectedButtonCommandPicker() },
       { icon: "copy", key: "copyElement", action: () => this.copySelectedElements() },
       { icon: "clipboard-paste", key: "pasteElement", action: () => this.pasteCopiedElements() },
@@ -7801,21 +7781,6 @@ var PreviewDrawingController = class {
     sourceButton?.toggleAttribute("hidden", !this.selectedMindMapSource());
     const commandButton = this.selectionMenu.querySelector('[data-note-draw-title-key="buttonCommand"]');
     commandButton?.toggleAttribute("hidden", this.selectedButtonCommandIndex() < 0);
-    const filterContext = this.selectionFilterContext();
-    const filterButton = this.selectionMenu.querySelector('[data-note-draw-title-key="selectFloatingOnly"], [data-note-draw-title-key="selectMarkdownOnly"], [data-note-draw-title-key="selectAllElements"]');
-    if (filterButton) {
-      const nextMode = nextSelectionFilterMode(filterContext.mode);
-      const key = nextMode === SELECTION_FILTER_FLOATING
-        ? "selectFloatingOnly"
-        : nextMode === SELECTION_FILTER_MARKDOWN
-          ? "selectMarkdownOnly"
-          : "selectAllElements";
-      filterButton.dataset.noteDrawTitleKey = key;
-      filterButton.dataset.noteDrawSelectionFilter = filterContext.mode;
-      this.plugin.setAccessibleLabel(filterButton, key);
-      setIcon(filterButton, nextMode === SELECTION_FILTER_FLOATING ? "layers-2" : nextMode === SELECTION_FILTER_MARKDOWN ? "file-text" : "layers-3");
-      filterButton.toggleAttribute("hidden", !filterContext.snapshot.hasMixedSelection);
-    }
     const flowSelection = this.selectedFlowModeElements();
     const flowModeButton = this.selectionMenu.querySelector('[data-note-draw-title-key="toggleFlowMode"], [data-note-draw-title-key="convertToNoteFlow"], [data-note-draw-title-key="convertToFloating"]');
     if (flowModeButton) {
@@ -7919,49 +7884,6 @@ var PreviewDrawingController = class {
       floatingCount: total - noteFlowCount,
       total
     };
-  }
-  selectionFilterContext() {
-    const strokeIndexes = this.getSelectedStrokeIndexes();
-    const markdownBlockIds = this.getSelectedMarkdownBlocks().map((block) => block.id);
-    if (this.selectionFilterCycle
-      && selectionMatchesFilterMode(
-        this.selectionFilterCycle.snapshot,
-        this.selectionFilterCycle.mode,
-        strokeIndexes,
-        markdownBlockIds
-      )) {
-      return this.selectionFilterCycle;
-    }
-    return {
-      mode: SELECTION_FILTER_ALL,
-      snapshot: createSelectionFilterSnapshot(this.drawingData?.strokes, strokeIndexes, markdownBlockIds)
-    };
-  }
-  cycleSelectionFilter() {
-    const context = this.selectionFilterContext();
-    if (!context.snapshot.hasMixedSelection) {
-      this.selectionFilterCycle = null;
-      this.syncSelectionMenuButtons();
-      return false;
-    }
-    const mode = nextSelectionFilterMode(context.mode);
-    const selection = selectionForFilterMode(context.snapshot, mode);
-    const previousMarkdownIds = new Set(this.selectedMarkdownBlockIds || []);
-    const validMarkdownIds = new Set(this.markdownBlockRecords().map((block) => block.id));
-    this.selectionFilterCycle = { mode, snapshot: context.snapshot };
-    this.selectedStrokeIndexes = new Set(selection.strokeIndexes);
-    this.selectedStrokeIndex = selection.strokeIndexes.length ? selection.strokeIndexes[selection.strokeIndexes.length - 1] : -1;
-    this.selectedMarkdownBlockIds = new Set(selection.markdownBlockIds.filter((id) => validMarkdownIds.has(id)));
-    this.invalidateSelectionFrameSnapshot();
-    this.invalidateStaticCache();
-    this.syncPaletteInputs();
-    this.updateToolButtons();
-    this.syncSelectionMenuButtons();
-    const touchedMarkdownIds = new Set([...previousMarkdownIds, ...this.selectedMarkdownBlockIds]);
-    this.refreshMarkdownBlockPresentation(touchedMarkdownIds);
-    this.updateEmbedLayer();
-    this.renderCanvas();
-    return true;
   }
   selectedMindMapSource() {
     for (const index of this.getSelectedStrokeIndexes()) {
@@ -13377,7 +13299,6 @@ var PreviewDrawingController = class {
     ]);
     const relatedIndexes = candidates.filter((candidate) => candidate.type === "stroke" && relatedKeys.has(candidate.key)).map((candidate) => candidate.index);
     const relatedMarkdownIds = candidates.filter((candidate) => candidate.type === "markdown" && relatedKeys.has(candidate.key)).map((candidate) => candidate.id);
-    this.selectionFilterCycle = null;
     this.selectedStrokeIndexes = new Set(relatedIndexes);
     this.selectedStrokeIndex = relatedIndexes.length ? relatedIndexes.at(-1) : -1;
     this.selectedMarkdownBlockIds = new Set(relatedMarkdownIds);
@@ -13561,7 +13482,8 @@ var PreviewDrawingController = class {
         flowOrder: previewedPlacement.flowOrder,
         noteFlowBoundary: previewedPlacement.noteFlowBoundary,
         candidate: previewedPlacement.candidate,
-        previewCandidates: previewedPlacement.previewCandidates
+        previewCandidates: previewedPlacement.previewCandidates,
+        previewRowOffsets: previewedPlacement.previewRowOffsets
       } : null;
     }
     const preserveMarkdownDomPreview = didMove
@@ -13686,6 +13608,9 @@ var PreviewDrawingController = class {
             : this.captureNoteFlowAnchor(stroke, {
               placement: droppedNoteFlowIndexes.has(index) ? resolvedDropPlacement : null,
               preservePlacement: !droppedNoteFlowIndexes.has(index),
+              rowOffset: droppedNoteFlowIndexes.has(index)
+                ? resolvedDropPlacement?.previewRowOffsets?.[index]
+                : null,
               preserveBoxGeometry: droppedNoteFlowIndexes.has(index)
                 ? resolvedDropPlacement?.horizontalSide
                   ? null
@@ -15751,7 +15676,6 @@ var PreviewDrawingController = class {
     if (!groupId) {
       return false;
     }
-    this.selectionFilterCycle = null;
     this.selectedStrokeIndexes = new Set(this.groupMemberStrokeIndexes(groupId));
     const strokes = this.getSelectedStrokeIndexes();
     this.selectedStrokeIndex = strokes.length ? strokes[strokes.length - 1] : -1;
@@ -16835,7 +16759,6 @@ var PreviewDrawingController = class {
     if (!block) {
       return null;
     }
-    this.selectionFilterCycle = null;
     const next = additive ? new Set(this.selectedMarkdownBlockIds) : /* @__PURE__ */ new Set();
     if (toggle && next.has(block.id)) {
       next.delete(block.id);
@@ -16881,7 +16804,6 @@ var PreviewDrawingController = class {
     }
   }
   setSelectedStrokes(indexes, options = {}) {
-    this.selectionFilterCycle = null;
     const normalized = Array.isArray(indexes) ? indexes : [indexes];
     this.selectedStrokeIndexes = new Set(
       normalized.map((index) => Number(index)).filter((index) => Number.isInteger(index) && index >= 0 && index < this.drawingData.strokes.length)
@@ -16913,7 +16835,6 @@ var PreviewDrawingController = class {
     this.setSelectedStrokes(Array.from(next), { preserveMarkdown: true });
   }
   clearSelectedStrokes() {
-    this.selectionFilterCycle = null;
     this.selectedStrokeIndexes.clear();
     this.selectedStrokeIndex = -1;
     this.selectedMarkdownBlockIds.clear();
@@ -18264,7 +18185,8 @@ var PreviewDrawingController = class {
     this.requestRender(this.selectionHasDomStrokes() ? "interaction" : false);
     this.dragNoteFlowLastAppliedPlacement = {
       ...liveResolved,
-      previewCandidates
+      previewCandidates,
+      previewRowOffsets: this.captureDraggedNoteFlowPreviewRowOffsets(liveResolved, movedIndexes)
     };
     return affectedIndexes;
   }
@@ -18912,7 +18834,10 @@ var PreviewDrawingController = class {
         : null,
       flowOrder: Number.isFinite(Number(placement?.flowOrder)) ? Number(placement.flowOrder) : null,
       noteFlowBoundary: placement?.noteFlowBoundary === true,
-      previewCandidates: Array.isArray(placement?.previewCandidates) ? placement.previewCandidates : null
+      previewCandidates: Array.isArray(placement?.previewCandidates) ? placement.previewCandidates : null,
+      previewRowOffsets: placement?.previewRowOffsets && typeof placement.previewRowOffsets === "object"
+        ? placement.previewRowOffsets
+        : null
     } : null;
   }
   snapDraggedSelectionToNoteFlowPlacement(placement, indexes) {
@@ -18981,6 +18906,31 @@ var PreviewDrawingController = class {
     }
     this.invalidateStaticCache();
     return Math.abs(deltaY) >= 0.25 || Math.abs(deltaX) >= 0.25;
+  }
+  captureDraggedNoteFlowPreviewRowOffsets(placement, indexes) {
+    const canvasRect = this.noteFlowCanvasRect();
+    if (!placement?.candidate || !canvasRect || canvasRect.height <= 1) {
+      return null;
+    }
+    const targetRect = this.noteFlowCandidateRect(placement.candidate, placement.horizontalSide ? "inline" : "row");
+    const boundary = placement.horizontalSide
+      ? targetRect?.top
+      : Number.isFinite(Number(placement.boundary))
+        ? Number(placement.boundary)
+        : placement.side === "after"
+          ? placement.candidate.bottom
+          : placement.candidate.top;
+    if (!Number.isFinite(Number(boundary))) {
+      return null;
+    }
+    const scaleY = canvasRect.height / Math.max(1, this.canvasRenderHeight);
+    const anchorCanvasY = this.canvasWindowTop
+      + (Number(boundary) - canvasRect.top) / Math.max(0.0001, scaleY);
+    return Object.fromEntries(Array.from(indexes || []).flatMap((index) => {
+      const stroke = this.drawingData?.strokes?.[index];
+      const bounds = getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight());
+      return bounds ? [[index, Math.max(0, bounds.minY - anchorCanvasY)]] : [];
+    }));
   }
   captureNoteFlowAnchor(stroke, options = {}) {
     const previous = normalizeNoteFlow(stroke?.noteFlow);
@@ -19087,9 +19037,13 @@ var PreviewDrawingController = class {
       flowOrder: Number.isFinite(Number(options.placement?.flowOrder))
         ? Number(options.placement.flowOrder)
         : Number.isFinite(Number(previous?.flowOrder)) ? Number(previous.flowOrder) : null,
-      rowOffset: Number.isFinite(anchorCanvasY)
-        ? Math.max(0, bounds.minY - anchorCanvasY)
-        : Math.max(0, Number(previous?.rowOffset) || 0),
+      rowOffset: options.rowOffset !== null
+        && options.rowOffset !== undefined
+        && Number.isFinite(Number(options.rowOffset))
+        ? Math.max(0, Number(options.rowOffset))
+        : Number.isFinite(anchorCanvasY)
+          ? Math.max(0, bounds.minY - anchorCanvasY)
+          : Math.max(0, Number(previous?.rowOffset) || 0),
       boxLeftRatio: (bounds.minX - Number(contentFrame?.left || 0)) / contentWidth,
       boxWidthRatio: preservedBox?.boxWidthRatio > 0
         ? preservedBox.boxWidthRatio
@@ -19886,7 +19840,11 @@ var PreviewDrawingController = class {
       if (target.rowKey) {
         const extent = target.placementMode === "inline"
           ? Math.max(0, targetY + target.targetBox.height - Number(target.anchorCanvasBounds?.maxY ?? targetY))
-          : targetY + target.targetBox.height - target.targetBox.y;
+          : noteFlowSettledRowExtent({
+            rowOffset: target.noteFlow.rowOffset,
+            boxHeight: target.targetBox.height,
+            displacement: targetY - target.targetBox.y
+          });
         settledRowExtents.set(target.rowKey, Math.max(
           settledRowExtents.get(target.rowKey) || 0,
           extent
@@ -20251,7 +20209,7 @@ var PreviewDrawingController = class {
       const settledOffset = ownerNoteFlow?.placementMode === "inline"
         ? settledExtent > 0 ? settledExtent + ownerGap : 0
         : noteFlowRowReservation({
-          rowOffset: ownerNoteFlow?.rowOffset,
+          rowOffset: 0,
           boxHeight: settledExtent,
           gap: ownerGap
         });
@@ -20673,19 +20631,19 @@ var PreviewDrawingController = class {
           ? currentNoteFlow.boxHeightRatio * Math.max(1, contentFrame.width)
           : liveHeight;
       const settledRowKey = noteFlowPlacementRowKey(currentNoteFlow, this.file?.path || "");
-      const settledExtent = this.noteFlowSettledRowExtents.get(settledRowKey) || 0;
-      // During resize the map above was rebuilt from this frame, so this
-      // extent is allowed to shrink with the live box. Outside resize the
-      // settled extent remains the stabilizing floor for ordinary layout.
-      const settledHeight = Math.max(stableHeight, settledExtent);
+      const measuredExtent = this.noteFlowSettledRowExtents.get(settledRowKey);
+      const settledExtent = Number.isFinite(measuredExtent)
+        ? measuredExtent
+        : Math.max(0, Number(currentNoteFlow.rowOffset) || 0) + stableHeight;
       // The reservation belongs to the logical row, like a Markdown block's
-      // grid row. It is derived from stable box geometry, never from an anchor
-      // that may already contain our padding, so repeated layout is idempotent.
+      // grid row. settledExtent already includes each member's row offset and
+      // the union of overlapping note-pen strokes, so adding rowOffset again
+      // would make every new stroke grow the row even inside existing bounds.
       const required = currentNoteFlow.placementMode === "inline"
         ? settledExtent > 0 ? settledExtent + currentNoteFlow.gap : 0
         : noteFlowRowReservation({
-          rowOffset: currentNoteFlow.rowOffset,
-          boxHeight: settledHeight,
+          rowOffset: 0,
+          boxHeight: settledExtent,
           gap: currentNoteFlow.gap
         });
       if (!(required > 0)) {

@@ -1910,17 +1910,404 @@ function resolveSelectedDrawGesture({
   return SELECTED_DRAW_GESTURE_DRAW_OR_DESELECT;
 }
 
-// src/note-flow-layout.mjs
+// src/selection-relations.mjs
+function boundsOverlapArea(left, right, minimumOverlap = 0.5) {
+  return Math.min(left.maxX, right.maxX) - Math.max(left.minX, right.minX) > minimumOverlap && Math.min(left.maxY, right.maxY) - Math.max(left.minY, right.minY) > minimumOverlap;
+}
+function connectorTouches(left, right) {
+  const leftTargets = new Set([left.connector?.fromId, left.connector?.toId].filter(Boolean));
+  const rightTargets = new Set([right.connector?.fromId, right.connector?.toId].filter(Boolean));
+  return Boolean(
+    right.elementId && leftTargets.has(right.elementId) || left.elementId && rightTargets.has(left.elementId) || Array.from(leftTargets).some((id) => rightTargets.has(id))
+  );
+}
+function expandRelatedSelection(candidates, initialKeys) {
+  const candidateList = Array.from(candidates || []).filter((candidate) => candidate?.key);
+  const candidateByKey = new Map(candidateList.map((candidate) => [candidate.key, candidate]));
+  const relatedKeys = new Set(Array.from(initialKeys || []).filter((key) => candidateByKey.has(key)));
+  const queue = Array.from(relatedKeys).map((key) => candidateByKey.get(key));
+  while (queue.length) {
+    const current = queue.shift();
+    for (const candidate of candidateList) {
+      if (relatedKeys.has(candidate.key)) {
+        continue;
+      }
+      const sameGroup = Boolean(current.groupId && current.groupId === candidate.groupId);
+      const overlaps = Boolean(current.bounds && candidate.bounds && boundsOverlapArea(current.bounds, candidate.bounds));
+      if (!sameGroup && !overlaps && !connectorTouches(current, candidate)) {
+        continue;
+      }
+      relatedKeys.add(candidate.key);
+      queue.push(candidate);
+    }
+  }
+  return relatedKeys;
+}
+
+// src/text-layout.mjs
 function finite4(value, fallback = 0) {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
 }
 function clamp5(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+function placeFloatingTextEditor({
+  anchorX,
+  anchorY,
+  width,
+  height,
+  viewportWidth,
+  viewportHeight,
+  viewportOffsetLeft = 0,
+  viewportOffsetTop = 0,
+  contentInsetX = 0,
+  contentInsetY = 0,
+  margin = 8,
+  anchorVisible = true
+} = {}) {
+  const leftEdge = finite4(viewportOffsetLeft) + Math.max(0, finite4(margin, 8));
+  const topEdge = finite4(viewportOffsetTop) + Math.max(0, finite4(margin, 8));
+  const rightEdge = finite4(viewportOffsetLeft) + Math.max(1, finite4(viewportWidth, 1)) - Math.max(0, finite4(margin, 8));
+  const bottomEdge = finite4(viewportOffsetTop) + Math.max(1, finite4(viewportHeight, 1)) - Math.max(0, finite4(margin, 8));
+  const editorWidth = Math.min(Math.max(1, finite4(width, 1)), Math.max(1, rightEdge - leftEdge));
+  const editorHeight = Math.min(Math.max(1, finite4(height, 1)), Math.max(1, bottomEdge - topEdge));
+  const centered = !anchorVisible;
+  const desiredLeft = centered ? leftEdge + (rightEdge - leftEdge - editorWidth) / 2 : finite4(anchorX) - Math.max(0, finite4(contentInsetX));
+  const desiredTop = centered ? topEdge + (bottomEdge - topEdge - editorHeight) / 2 : finite4(anchorY) - Math.max(0, finite4(contentInsetY));
+  return {
+    left: clamp5(desiredLeft, leftEdge, Math.max(leftEdge, rightEdge - editorWidth)),
+    top: clamp5(desiredTop, topEdge, Math.max(topEdge, bottomEdge - editorHeight)),
+    width: editorWidth,
+    height: editorHeight,
+    centered
+  };
+}
+function splitOverlongToken(token, maxWidth, measureText) {
+  const chunks = [];
+  let current = "";
+  for (const character of Array.from(token)) {
+    const candidate = current + character;
+    if (current && measureText(candidate) > maxWidth) {
+      chunks.push(current);
+      current = character;
+    } else {
+      current = candidate;
+    }
+  }
+  if (current || !chunks.length) {
+    chunks.push(current);
+  }
+  return chunks;
+}
+function wrapTextLines(text, maxWidth, measureText) {
+  const width = Math.max(1, finite4(maxWidth, 1));
+  const measure = typeof measureText === "function" ? measureText : (value) => String(value || "").length;
+  const output = [];
+  for (const paragraph of String(text ?? "").replace(/\r\n?/g, "\n").split("\n")) {
+    if (!paragraph) {
+      output.push("");
+      continue;
+    }
+    if (measure(paragraph) <= width) {
+      output.push(paragraph);
+      continue;
+    }
+    const tokens = paragraph.match(/\s+|[^\s]+/gu) || [paragraph];
+    let line = "";
+    for (const token of tokens) {
+      const candidate = line + token;
+      if (line && measure(candidate) > width) {
+        output.push(line.trimEnd());
+        line = token.trimStart();
+      } else {
+        line = candidate;
+      }
+      if (measure(line) <= width) {
+        continue;
+      }
+      const chunks = splitOverlongToken(line, width, measure);
+      output.push(...chunks.slice(0, -1));
+      line = chunks[chunks.length - 1];
+    }
+    output.push(line.trimEnd());
+  }
+  return output.length ? output : [""];
+}
+function computeTextLayout({
+  text,
+  fontSize = 18,
+  textWidth = null,
+  maxWidth = Infinity,
+  padded = false,
+  measureText
+} = {}) {
+  const size = clamp5(finite4(fontSize, 18), 10, 72);
+  const measure = typeof measureText === "function" ? (value) => Math.max(0, finite4(measureText(String(value ?? "")), 0)) : (value) => Array.from(String(value ?? "")).length * size * 0.62;
+  const paragraphs = String(text ?? "").replace(/\r\n?/g, "\n").split("\n");
+  const naturalWidth = Math.max(size, ...paragraphs.map((line) => measure(line)));
+  const availableWidth = Math.max(size, finite4(maxWidth, naturalWidth));
+  const requested = Number(textWidth);
+  const hasRequestedWidth = Number.isFinite(requested) && requested > 0;
+  const wrapWidth = clamp5(hasRequestedWidth ? requested : naturalWidth, size, availableWidth);
+  const lines = wrapTextLines(text, wrapWidth, measure);
+  const measuredWidth = Math.max(size, ...lines.map((line) => measure(line)));
+  const contentWidth = hasRequestedWidth ? wrapWidth : Math.min(wrapWidth, measuredWidth);
+  const lineHeight = Math.max(size + 2, size * 1.28);
+  const contentHeight = Math.max(lineHeight, lines.length * lineHeight);
+  const paddingX = padded ? Math.max(8, size * 0.45) : 0;
+  const paddingY = padded ? Math.max(4, size * 0.26) : 0;
+  return {
+    lines,
+    fontSize: size,
+    lineHeight,
+    contentWidth,
+    contentHeight,
+    paddingX,
+    paddingY,
+    width: contentWidth + paddingX * 2,
+    height: contentHeight + paddingY * 2
+  };
+}
+
+// src/viewport-gesture.mjs
+function finite5(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+function clamp6(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+function calculatePinchPanScroll({
+  scrollLeft = 0,
+  scrollTop = 0,
+  previousCenter = null,
+  nextCenter = null,
+  zoomRatio = 1,
+  originX = 0,
+  originY = 0,
+  movementEpsilon = 0.35,
+  maxScrollLeft = Number.POSITIVE_INFINITY,
+  maxScrollTop = Number.POSITIVE_INFINITY
+} = {}) {
+  const previous = previousCenter || nextCenter || { x: 0, y: 0 };
+  const next = nextCenter || previousCenter || { x: 0, y: 0 };
+  const ratio = Math.max(0.01, finite5(zoomRatio, 1));
+  const epsilon = Math.max(0, finite5(movementEpsilon, 0.35));
+  const previousX = finite5(previous.x);
+  const previousY = finite5(previous.y);
+  const nextX = Math.abs(finite5(next.x) - previousX) < epsilon ? previousX : finite5(next.x);
+  const nextY = Math.abs(finite5(next.y) - previousY) < epsilon ? previousY : finite5(next.y);
+  const stableOriginX = finite5(originX);
+  const stableOriginY = finite5(originY);
+  const maxLeft = Math.max(0, finite5(maxScrollLeft, Number.MAX_SAFE_INTEGER));
+  const maxTop = Math.max(0, finite5(maxScrollTop, Number.MAX_SAFE_INTEGER));
+  return {
+    left: clamp6((finite5(scrollLeft) + previousX) * ratio + (1 - ratio) * stableOriginX - nextX, 0, maxLeft),
+    top: clamp6((finite5(scrollTop) + previousY) * ratio + (1 - ratio) * stableOriginY - nextY, 0, maxTop)
+  };
+}
+function resolveMultiTouchGestureMode({
+  mode = "undecided",
+  initialDistance = 0,
+  distance = 0,
+  minimumDistanceChange = 8,
+  minimumScaleChange = 0.04,
+  centerMovement = 0,
+  minimumPinchDominance = 1.25
+} = {}) {
+  if (mode === "pinch") {
+    return "pinch";
+  }
+  const initial = Math.max(0, finite5(initialDistance));
+  const current = Math.max(0, finite5(distance));
+  if (!(initial > 0) || !(current > 0)) {
+    return "pan";
+  }
+  const threshold = Math.max(
+    Math.max(0, finite5(minimumDistanceChange, 8)),
+    initial * Math.max(0, finite5(minimumScaleChange, 0.04))
+  );
+  const distanceChange = Math.abs(current - initial);
+  if (distanceChange < threshold) {
+    return "pan";
+  }
+  const translation = Math.max(0, finite5(centerMovement));
+  const dominance = Math.max(1, finite5(minimumPinchDominance, 1.25));
+  return translation > 0 && translation >= distanceChange * dominance ? "pan" : "pinch";
+}
+function calculateReadingZoomMargin(baseMargin, targetHeight, zoom) {
+  const base = Number.isFinite(Number(baseMargin)) ? Number(baseMargin) : 0;
+  const height = Math.max(1, Number.isFinite(Number(targetHeight)) ? Number(targetHeight) : 1);
+  const scale = Math.max(0.01, Number.isFinite(Number(zoom)) ? Number(zoom) : 1);
+  return scale < 1 ? base - height * (1 - scale) : base;
+}
+function calculateVisualZoomLogicalWindow({
+  scrollTop = 0,
+  viewportHeight = 0,
+  zoom = 1,
+  origin = 0
+} = {}) {
+  const scale = Math.max(0.01, finite5(zoom, 1));
+  const visualTop = Math.max(0, finite5(scrollTop));
+  const logicalTop = Math.max(0, (visualTop - finite5(origin) * (scale - 1)) / scale);
+  const logicalHeight = Math.max(0, finite5(viewportHeight)) / scale;
+  return {
+    top: logicalTop,
+    bottom: logicalTop + logicalHeight,
+    height: logicalHeight
+  };
+}
+
+// src/reading-layout.mjs
+function finite6(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+function captureInitialReadingLayout(previewEl, sizer, renderer = null) {
+  const previewRect = previewEl?.getBoundingClientRect?.();
+  const sizerRect = sizer?.getBoundingClientRect?.();
+  const sections = Array.isArray(renderer?.sections) ? renderer.sections : [];
+  return {
+    previewWidth: Math.max(0, finite6(previewEl?.clientWidth, previewRect?.width)),
+    sizerHeight: Math.max(
+      0,
+      finite6(sizer?.scrollHeight),
+      finite6(sizer?.offsetHeight),
+      finite6(sizerRect?.height)
+    ),
+    sectionCount: sections.length,
+    renderedSectionCount: sections.filter((section) => section?.shown !== false && section?.el?.isConnected).length,
+    measuredSectionCount: sections.filter((section) => finite6(section?.height) > 0).length
+  };
+}
+function initialReadingLayoutSignature(metrics = {}) {
+  return [
+    Math.round(finite6(metrics.previewWidth)),
+    Math.round(finite6(metrics.sizerHeight)),
+    Math.max(0, Math.round(finite6(metrics.sectionCount))),
+    Math.max(0, Math.round(finite6(metrics.renderedSectionCount))),
+    Math.max(0, Math.round(finite6(metrics.measuredSectionCount)))
+  ].join(":");
+}
+function isInitialReadingLayoutUsable(metrics = {}) {
+  const sectionCount = Math.max(0, Math.round(finite6(metrics.sectionCount)));
+  return finite6(metrics.previewWidth) > 8 && finite6(metrics.sizerHeight) > 0 && (sectionCount === 0 || finite6(metrics.renderedSectionCount) > 0);
+}
+async function waitForStableReadingLayout(readMetrics, {
+  requestFrame,
+  shouldAbort = () => false,
+  stableFrames = 3,
+  maxFrames = 24
+} = {}) {
+  if (typeof readMetrics !== "function" || typeof requestFrame !== "function") {
+    return false;
+  }
+  const requiredStableFrames = Math.max(1, Math.round(finite6(stableFrames, 3)));
+  const frameLimit = Math.max(requiredStableFrames, Math.round(finite6(maxFrames, 24)));
+  let previousSignature = "";
+  let stableCount = 0;
+  let lastUsable = false;
+  for (let frame = 0; frame < frameLimit; frame += 1) {
+    await requestFrame();
+    if (shouldAbort()) {
+      return false;
+    }
+    const metrics = readMetrics();
+    lastUsable = isInitialReadingLayoutUsable(metrics);
+    if (!lastUsable) {
+      previousSignature = "";
+      stableCount = 0;
+      continue;
+    }
+    const signature = initialReadingLayoutSignature(metrics);
+    stableCount = signature === previousSignature ? stableCount + 1 : 1;
+    previousSignature = signature;
+    if (stableCount >= requiredStableFrames) {
+      return true;
+    }
+  }
+  return lastUsable;
+}
+
+// src/reading-touch-guard.mjs
+function finite7(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+function createReadingTouchGuardState() {
+  return {
+    active: null,
+    lastTouchAt: 0,
+    suppressUntil: 0
+  };
+}
+function beginReadingTouch(state, { id, x, y, now } = {}) {
+  state.active = {
+    id,
+    x: finite7(x),
+    y: finite7(y),
+    moved: false
+  };
+  state.lastTouchAt = finite7(now);
+}
+function moveReadingTouch(state, { id, x, y, now } = {}, threshold = 10) {
+  const active = state?.active;
+  if (!active || active.id !== id) {
+    return false;
+  }
+  const distance = Math.hypot(finite7(x) - active.x, finite7(y) - active.y);
+  if (distance >= Math.max(1, finite7(threshold, 10))) {
+    active.moved = true;
+  }
+  state.lastTouchAt = finite7(now);
+  return active.moved;
+}
+function finishReadingTouch(state, { id, now } = {}, suppressMs = 380) {
+  const active = state?.active;
+  if (!active || active.id !== id) {
+    return false;
+  }
+  const moved = Boolean(active.moved);
+  const timestamp = finite7(now);
+  state.active = null;
+  state.lastTouchAt = timestamp;
+  if (moved) {
+    state.suppressUntil = Math.max(state.suppressUntil, timestamp + Math.max(0, finite7(suppressMs, 380)));
+  }
+  return moved;
+}
+function recordReadingTouchScroll(state, { now } = {}, {
+  recentTouchMs = 900,
+  suppressMs = 380
+} = {}) {
+  const timestamp = finite7(now);
+  const touchIsRecent = Boolean(state?.active) || state?.lastTouchAt > 0 && timestamp - state.lastTouchAt <= Math.max(0, finite7(recentTouchMs, 900));
+  if (!touchIsRecent) {
+    return false;
+  }
+  if (state.active) {
+    state.active.moved = true;
+  }
+  state.lastTouchAt = timestamp;
+  state.suppressUntil = Math.max(state.suppressUntil, timestamp + Math.max(0, finite7(suppressMs, 380)));
+  return true;
+}
+function shouldSuppressReadingClick(state, now) {
+  return finite7(now) < finite7(state?.suppressUntil);
+}
+
+// src/note-flow-layout.mjs
+function finite8(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+function clamp7(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
 function normalizeBounds(bounds) {
-  const minY = finite4(bounds?.minY, 0);
-  const maxY = Math.max(minY, finite4(bounds?.maxY, minY));
+  const minY = finite8(bounds?.minY, 0);
+  const maxY = Math.max(minY, finite8(bounds?.maxY, minY));
   return { ...bounds, minY, maxY };
 }
 function stabilizeNoteFlowBounds({
@@ -1933,25 +2320,25 @@ function stabilizeNoteFlowBounds({
   const current = normalizeBounds(bounds);
   const box = layout?.box;
   const sourceFrame = layout?.sourceFrame;
-  const sourceContentWidth = finite4(sourceFrame?.contentWidth, 0);
-  const boxY = finite4(box?.y, Number.NaN);
-  const boxHeight = finite4(box?.height, Number.NaN);
+  const sourceContentWidth = finite8(sourceFrame?.contentWidth, 0);
+  const boxY = finite8(box?.y, Number.NaN);
+  const boxHeight = finite8(box?.height, Number.NaN);
   if (!(sourceContentWidth > 0) || !Number.isFinite(boxY) || !(boxHeight >= 0)) {
     return {
       bounds: current,
       runaway: false,
-      referenceHeight: Math.max(1, finite4(viewportHeight, 1))
+      referenceHeight: Math.max(1, finite8(viewportHeight, 1))
     };
   }
-  const widthScale = clamp5(finite4(contentWidth, sourceContentWidth) / sourceContentWidth, 0.2, 5);
+  const widthScale = clamp7(finite8(contentWidth, sourceContentWidth) / sourceContentWidth, 0.2, 5);
   const sameContentLane = widthScale >= 0.82 && widthScale <= 1.2;
-  const positionScale = sameContentLane ? 1 : clamp5(1 / widthScale, 0.48, 2.2);
-  const heightScale = sameContentLane ? widthScale : clamp5(Math.max(positionScale, widthScale), 0.42, 2.8);
+  const positionScale = sameContentLane ? 1 : clamp7(1 / widthScale, 0.48, 2.2);
+  const heightScale = sameContentLane ? widthScale : clamp7(Math.max(positionScale, widthScale), 0.42, 2.8);
   const stableMinY = Math.max(0, boxY * positionScale);
   const stableMaxY = Math.max(stableMinY, stableMinY + boxHeight * heightScale);
-  const sourceDocumentHeight = Math.max(1, finite4(sourceFrame?.documentHeight, 1) * positionScale);
-  const referenceHeight = Math.max(1, finite4(viewportHeight, 1), sourceDocumentHeight, stableMaxY);
-  const viewport = Math.max(1, finite4(viewportHeight, 1));
+  const sourceDocumentHeight = Math.max(1, finite8(sourceFrame?.documentHeight, 1) * positionScale);
+  const referenceHeight = Math.max(1, finite8(viewportHeight, 1), sourceDocumentHeight, stableMaxY);
+  const viewport = Math.max(1, finite8(viewportHeight, 1));
   const runawayThreshold = Math.max(viewport * 4, stableMaxY * 4, stableMaxY + viewport * 2);
   const runaway = current.minY > runawayThreshold || current.maxY > runawayThreshold;
   return {
@@ -1961,8 +2348,8 @@ function stabilizeNoteFlowBounds({
   };
 }
 function noteFlowSurfaceRepairLimits(referenceHeight, viewportHeight) {
-  const viewport = Math.max(1, finite4(viewportHeight, 1));
-  const stableHeight = Math.ceil(clamp5(Math.max(viewport, finite4(referenceHeight, viewport) * 1.5), viewport, 2e5));
+  const viewport = Math.max(1, finite8(viewportHeight, 1));
+  const stableHeight = Math.ceil(clamp7(Math.max(viewport, finite8(referenceHeight, viewport) * 1.5), viewport, 2e5));
   return {
     stableHeight,
     runawayThreshold: Math.max(8e3, stableHeight * 4)
@@ -1973,8 +2360,8 @@ function selectNoteFlowInsertionPlacement(candidates, {
   strokeBottom = strokeTop,
   tolerance = 4
 } = {}) {
-  const top = finite4(strokeTop, Number.NaN);
-  const bottom = Math.max(top, finite4(strokeBottom, top));
+  const top = finite8(strokeTop, Number.NaN);
+  const bottom = Math.max(top, finite8(strokeBottom, top));
   if (!Number.isFinite(top) || !Number.isFinite(bottom)) {
     return null;
   }
@@ -1982,16 +2369,16 @@ function selectNoteFlowInsertionPlacement(candidates, {
     return candidate && Number.isFinite(Number(candidate.top)) && Number.isFinite(Number(candidate.bottom)) && Number.isFinite(Number(candidate.start));
   }).map((candidate, index) => ({
     ...candidate,
-    top: finite4(candidate.top),
-    bottom: Math.max(finite4(candidate.top), finite4(candidate.bottom)),
-    start: finite4(candidate.start),
-    end: Math.max(finite4(candidate.start), finite4(candidate.end, candidate.start)),
+    top: finite8(candidate.top),
+    bottom: Math.max(finite8(candidate.top), finite8(candidate.bottom)),
+    start: finite8(candidate.start),
+    end: Math.max(finite8(candidate.start), finite8(candidate.end, candidate.start)),
     order: Number.isFinite(Number(candidate.order)) ? Number(candidate.order) : index
   })).sort((a, b) => a.top - b.top || a.bottom - b.bottom || a.order - b.order);
   if (!ordered.length) {
     return null;
   }
-  const threshold = Math.max(0, finite4(tolerance, 4));
+  const threshold = Math.max(0, finite8(tolerance, 4));
   const preciseOverlap = ordered.filter((candidate) => {
     const precise = Boolean(candidate.lineSpacer) || candidate.start === candidate.end || Math.abs(candidate.top - top) <= threshold;
     return precise && candidate.bottom >= top - threshold && candidate.top <= bottom + threshold;
@@ -2015,10 +2402,10 @@ function createNoteFlowDropIndex(candidates) {
     return candidate && Number.isFinite(Number(candidate.top)) && Number.isFinite(Number(candidate.bottom)) && Number.isFinite(Number(candidate.start));
   }).map((candidate, index) => ({
     ...candidate,
-    top: finite4(candidate.top),
-    bottom: Math.max(finite4(candidate.top), finite4(candidate.bottom)),
-    start: finite4(candidate.start),
-    end: Math.max(finite4(candidate.start), finite4(candidate.end, candidate.start)),
+    top: finite8(candidate.top),
+    bottom: Math.max(finite8(candidate.top), finite8(candidate.bottom)),
+    start: finite8(candidate.start),
+    end: Math.max(finite8(candidate.start), finite8(candidate.end, candidate.start)),
     order: Number.isFinite(Number(candidate.order)) ? Number(candidate.order) : index
   }));
   return ordered.flatMap((candidate) => {
@@ -2045,7 +2432,7 @@ function createNoteFlowDropIndex(candidates) {
   });
 }
 function selectNoteFlowDropPlacementFromIndex(index, { dropY } = {}) {
-  const y = finite4(dropY, Number.NaN);
+  const y = finite8(dropY, Number.NaN);
   if (!Number.isFinite(y)) {
     return null;
   }
@@ -2073,7 +2460,7 @@ function selectNoteFlowPositionAnchor(candidates, {
   tolerance = 4,
   maxOrderExclusive = Number.POSITIVE_INFINITY
 } = {}) {
-  const top = finite4(strokeTop, Number.NaN);
+  const top = finite8(strokeTop, Number.NaN);
   if (!Number.isFinite(top)) {
     return null;
   }
@@ -2082,11 +2469,11 @@ function selectNoteFlowPositionAnchor(candidates, {
     return candidate && Number.isFinite(Number(candidate.bottom)) && Number.isFinite(Number(candidate.end));
   }).map((candidate, index) => ({
     ...candidate,
-    bottom: finite4(candidate.bottom),
-    end: finite4(candidate.end),
+    bottom: finite8(candidate.bottom),
+    end: finite8(candidate.end),
     order: Number.isFinite(Number(candidate.order)) ? Number(candidate.order) : index
   })).filter((candidate) => {
-    return candidate.bottom <= top + finite4(tolerance, 4) && candidate.order < orderLimit;
+    return candidate.bottom <= top + finite8(tolerance, 4) && candidate.order < orderLimit;
   }).sort((a, b) => b.bottom - a.bottom || b.end - a.end || b.order - a.order);
   if (!above.length) {
     return null;
@@ -2108,7 +2495,7 @@ function selectExactNoteFlowPositionAnchor(candidates, {
   const ordered = Array.isArray(candidates) ? candidates : [];
   const candidateOrder = Number.isFinite(Number(candidate.order)) ? Number(candidate.order) : ordered.indexOf(candidate);
   return selectNoteFlowPositionAnchor(ordered, {
-    strokeTop: finite4(candidate.top, Number.NaN) - 1e-3,
+    strokeTop: finite8(candidate.top, Number.NaN) - 1e-3,
     maxOrderExclusive: candidateOrder >= 0 ? candidateOrder : Number.POSITIVE_INFINITY
   });
 }
@@ -2121,15 +2508,15 @@ function selectStoredNoteFlowAnchorCandidate(candidates, {
     return candidate && Number.isFinite(Number(candidate.top)) && Number.isFinite(Number(candidate.bottom));
   }).map((candidate, order) => ({
     ...candidate,
-    top: finite4(candidate.top),
-    bottom: Math.max(finite4(candidate.top), finite4(candidate.bottom)),
+    top: finite8(candidate.top),
+    bottom: Math.max(finite8(candidate.top), finite8(candidate.bottom)),
     order: Number.isFinite(Number(candidate.order)) ? Number(candidate.order) : order
   }));
   if (ordered.length <= 1 || !Number.isFinite(Number(strokeTop))) {
     return ordered.sort((a, b) => a.bottom - a.top - (b.bottom - b.top) || a.order - b.order)[0] || null;
   }
-  const top = finite4(strokeTop);
-  const threshold = Math.max(0, finite4(tolerance, 4));
+  const top = finite8(strokeTop);
+  const threshold = Math.max(0, finite8(tolerance, 4));
   if (side === "after") {
     const above = ordered.filter((candidate) => candidate.bottom <= top + threshold).sort((a, b) => b.bottom - a.bottom || a.order - b.order);
     if (above.length) {
@@ -2152,18 +2539,18 @@ function selectNoteFlowAvoidanceCandidate(candidates, {
   strokeBottom,
   tolerance = 4
 } = {}) {
-  const top = finite4(strokeTop, Number.NaN);
-  const bottom = finite4(strokeBottom, Number.NaN);
+  const top = finite8(strokeTop, Number.NaN);
+  const bottom = finite8(strokeBottom, Number.NaN);
   if (!Number.isFinite(top) || !Number.isFinite(bottom)) {
     return null;
   }
-  const threshold = Math.max(0, finite4(tolerance, 4));
+  const threshold = Math.max(0, finite8(tolerance, 4));
   const ordered = (Array.isArray(candidates) ? candidates : []).filter((candidate) => {
     return candidate && Number.isFinite(Number(candidate.top)) && Number.isFinite(Number(candidate.bottom));
   }).map((candidate, order) => ({
     ...candidate,
-    top: finite4(candidate.top),
-    bottom: Math.max(finite4(candidate.top), finite4(candidate.bottom)),
+    top: finite8(candidate.top),
+    bottom: Math.max(finite8(candidate.top), finite8(candidate.bottom)),
     order: Number.isFinite(Number(candidate.order)) ? Number(candidate.order) : order
   }));
   const preciseOverlap = ordered.filter((candidate) => {
@@ -2188,11 +2575,11 @@ function selectNoteFlowAvoidanceCandidate(candidates, {
   return fullyCoveredBlock || null;
 }
 function pointBounds(points, canvasWidth, canvasHeight) {
-  const width = Math.max(1, finite4(canvasWidth, 1));
-  const height = Math.max(1, finite4(canvasHeight, 1));
+  const width = Math.max(1, finite8(canvasWidth, 1));
+  const height = Math.max(1, finite8(canvasHeight, 1));
   const coordinates = (Array.isArray(points) ? points : []).map((point) => ({
-    x: finite4(point?.x, Number.NaN) * width,
-    y: finite4(point?.y, Number.NaN) * height
+    x: finite8(point?.x, Number.NaN) * width,
+    y: finite8(point?.y, Number.NaN) * height
   })).filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
   if (!coordinates.length) {
     return null;
@@ -2207,14 +2594,14 @@ function stabilizeNoteFlowPointProjection(previousPoints, projectedPoints, {
   canvasHeight,
   threshold = 0.65
 } = {}) {
-  const width = Math.max(1, finite4(canvasWidth, 1));
-  const height = Math.max(1, finite4(canvasHeight, 1));
+  const width = Math.max(1, finite8(canvasWidth, 1));
+  const height = Math.max(1, finite8(canvasHeight, 1));
   const previous = pointBounds(previousPoints, width, height);
   const projected = pointBounds(projectedPoints, width, height);
   if (!previous || !projected) {
     return Array.isArray(projectedPoints) ? projectedPoints.map((point) => ({ ...point })) : [];
   }
-  const limit = Math.max(0, finite4(threshold, 0.65));
+  const limit = Math.max(0, finite8(threshold, 0.65));
   const deltaX = Math.abs(projected.minX - previous.minX) < limit ? previous.minX - projected.minX : 0;
   const deltaY = Math.abs(projected.minY - previous.minY) < limit ? previous.minY - projected.minY : 0;
   if (!deltaX && !deltaY) {
@@ -2222,8 +2609,8 @@ function stabilizeNoteFlowPointProjection(previousPoints, projectedPoints, {
   }
   return projectedPoints.map((point) => ({
     ...point,
-    x: clamp5(finite4(point?.x, 0) + deltaX / width, 0, 1),
-    y: clamp5(finite4(point?.y, 0) + deltaY / height, 0, 1)
+    x: clamp7(finite8(point?.x, 0) + deltaX / width, 0, 1),
+    y: clamp7(finite8(point?.y, 0) + deltaY / height, 0, 1)
   }));
 }
 function projectNoteFlowDocumentPoint(sourcePoint, projectedPoint, {
@@ -2235,7 +2622,7 @@ function projectNoteFlowDocumentPoint(sourcePoint, projectedPoint, {
   }
   return {
     ...projectedPoint,
-    y: clamp5(absoluteY / Math.max(1, finite4(canvasHeight, 1)), 0, 1)
+    y: clamp7(absoluteY / Math.max(1, finite8(canvasHeight, 1)), 0, 1)
   };
 }
 function preserveAbsoluteNoteFlowPoints(points, {
@@ -2244,14 +2631,14 @@ function preserveAbsoluteNoteFlowPoints(points, {
   nextWidth,
   nextHeight
 } = {}) {
-  const oldWidth = Math.max(1, finite4(previousWidth, 1));
-  const oldHeight = Math.max(1, finite4(previousHeight, 1));
-  const width = Math.max(1, finite4(nextWidth, oldWidth));
-  const height = Math.max(1, finite4(nextHeight, oldHeight));
+  const oldWidth = Math.max(1, finite8(previousWidth, 1));
+  const oldHeight = Math.max(1, finite8(previousHeight, 1));
+  const width = Math.max(1, finite8(nextWidth, oldWidth));
+  const height = Math.max(1, finite8(nextHeight, oldHeight));
   return (Array.isArray(points) ? points : []).map((point) => ({
     ...point,
-    x: clamp5(finite4(point?.x, 0) * oldWidth / width, 0, 1),
-    y: clamp5(finite4(point?.y, 0) * oldHeight / height, 0, 1)
+    x: clamp7(finite8(point?.x, 0) * oldWidth / width, 0, 1),
+    y: clamp7(finite8(point?.y, 0) * oldHeight / height, 0, 1)
   }));
 }
 function hasStableNoteFlowAnchor(noteFlow) {
@@ -2287,7 +2674,7 @@ function canonicalNoteFlowGapPlacement(candidates, { anchor, side } = {}) {
   const blockKey = anchor.blockKey || noteFlowBlockKey(anchor, path);
   const ordered = [];
   const seen = /* @__PURE__ */ new Set();
-  for (const candidate of (Array.isArray(candidates) ? candidates : []).filter((item) => normalizeNoteFlowPath(item?.path || "") === path).sort((a, b) => finite4(a?.order, Number.POSITIVE_INFINITY) - finite4(b?.order, Number.POSITIVE_INFINITY) || finite4(a?.top) - finite4(b?.top))) {
+  for (const candidate of (Array.isArray(candidates) ? candidates : []).filter((item) => normalizeNoteFlowPath(item?.path || "") === path).sort((a, b) => finite8(a?.order, Number.POSITIVE_INFINITY) - finite8(b?.order, Number.POSITIVE_INFINITY) || finite8(a?.top) - finite8(b?.top))) {
     const key = candidate.blockKey || noteFlowBlockKey(candidate, path);
     if (!key || seen.has(key)) {
       continue;
@@ -2298,14 +2685,14 @@ function canonicalNoteFlowGapPlacement(candidates, { anchor, side } = {}) {
   const anchorIndex = ordered.findIndex((candidate) => candidate === anchor || (candidate.blockKey || noteFlowBlockKey(candidate, path)) === blockKey);
   const canonicalAnchor = side === "before" && anchorIndex > 0 ? ordered[anchorIndex - 1] : anchor;
   const canonicalSide = canonicalAnchor === anchor ? side : "after";
-  const line = canonicalSide === "after" ? finite4(canonicalAnchor.end, canonicalAnchor.start) : finite4(canonicalAnchor.start, canonicalAnchor.end);
+  const line = canonicalSide === "after" ? finite8(canonicalAnchor.end, canonicalAnchor.start) : finite8(canonicalAnchor.start, canonicalAnchor.end);
   return Number.isFinite(line) ? {
     anchor: canonicalAnchor,
     path: normalizeNoteFlowPath(canonicalAnchor.path || path),
     line,
     side: canonicalSide,
-    blockStart: finite4(canonicalAnchor.blockStart, canonicalAnchor.start),
-    blockEnd: finite4(canonicalAnchor.blockEnd, canonicalAnchor.end),
+    blockStart: finite8(canonicalAnchor.blockStart, canonicalAnchor.start),
+    blockEnd: finite8(canonicalAnchor.blockEnd, canonicalAnchor.end),
     blockKey: canonicalAnchor.blockKey || noteFlowBlockKey(canonicalAnchor, path)
   } : null;
 }
@@ -2353,7 +2740,10 @@ function noteFlowNeedsActivationRepair(strokes, frozenLayout) {
   });
 }
 function noteFlowRowReservation({ rowOffset = 0, boxHeight = 0, gap = 12 } = {}) {
-  return Math.max(0, finite4(rowOffset)) + Math.max(0, finite4(boxHeight)) + Math.max(0, finite4(gap, 12));
+  return Math.max(0, finite8(rowOffset)) + Math.max(0, finite8(boxHeight)) + Math.max(0, finite8(gap, 12));
+}
+function noteFlowSettledRowExtent({ rowOffset = 0, boxHeight = 0, displacement = 0 } = {}) {
+  return Math.max(0, finite8(rowOffset)) + Math.max(0, finite8(displacement)) + Math.max(0, finite8(boxHeight));
 }
 function resizeNoteFlowGeometry(noteFlow, {
   originalBounds,
@@ -2361,27 +2751,27 @@ function resizeNoteFlowGeometry(noteFlow, {
   contentLeft = 0,
   contentWidth
 } = {}) {
-  const laneWidth = finite4(contentWidth);
-  const originalTop = finite4(originalBounds?.minY, Number.NaN);
-  const minX = finite4(resizedBounds?.minX, Number.NaN);
-  const minY = finite4(resizedBounds?.minY, Number.NaN);
-  const maxX = finite4(resizedBounds?.maxX, Number.NaN);
-  const maxY = finite4(resizedBounds?.maxY, Number.NaN);
+  const laneWidth = finite8(contentWidth);
+  const originalTop = finite8(originalBounds?.minY, Number.NaN);
+  const minX = finite8(resizedBounds?.minX, Number.NaN);
+  const minY = finite8(resizedBounds?.minY, Number.NaN);
+  const maxX = finite8(resizedBounds?.maxX, Number.NaN);
+  const maxY = finite8(resizedBounds?.maxY, Number.NaN);
   if (laneWidth < 24 || ![originalTop, minX, minY, maxX, maxY].every(Number.isFinite)) {
     return null;
   }
   const width = Math.max(2, maxX - minX);
   const height = Math.max(2, maxY - minY);
   return {
-    rowOffset: clamp5(Math.max(0, finite4(noteFlow?.rowOffset) + minY - originalTop), 0, 2e5),
-    boxLeftRatio: clamp5((minX - finite4(contentLeft)) / laneWidth, -2, 3),
-    boxWidthRatio: clamp5(width / laneWidth, 2 / laneWidth, 5),
-    boxHeightRatio: clamp5(height / laneWidth, 2 / laneWidth, 5)
+    rowOffset: clamp7(Math.max(0, finite8(noteFlow?.rowOffset) + minY - originalTop), 0, 2e5),
+    boxLeftRatio: clamp7((minX - finite8(contentLeft)) / laneWidth, -2, 3),
+    boxWidthRatio: clamp7(width / laneWidth, 2 / laneWidth, 5),
+    boxHeightRatio: clamp7(height / laneWidth, 2 / laneWidth, 5)
   };
 }
 function noteFlowReservedRowTop({ side, anchorTop, anchorBottom, applied = 0, scale = 1 } = {}) {
-  const visualApplied = Math.max(0, finite4(applied)) * Math.max(0.01, finite4(scale, 1));
-  return side === "after" ? finite4(anchorBottom) - visualApplied : finite4(anchorTop);
+  const visualApplied = Math.max(0, finite8(applied)) * Math.max(0.01, finite8(scale, 1));
+  return side === "after" ? finite8(anchorBottom) - visualApplied : finite8(anchorTop);
 }
 function projectStableNoteFlowBox({
   boxLeftRatio,
@@ -2394,74 +2784,74 @@ function projectStableNoteFlowBox({
   minWidth = 24,
   y = 0
 } = {}) {
-  const safeCanvasWidth = Math.max(2, finite4(canvasWidth, 2));
-  const measuredContentWidth = finite4(contentWidth, 0);
-  const minimumStableWidth = clamp5(Math.max(2, finite4(minWidth, 24)), 2, safeCanvasWidth);
+  const safeCanvasWidth = Math.max(2, finite8(canvasWidth, 2));
+  const measuredContentWidth = finite8(contentWidth, 0);
+  const minimumStableWidth = clamp7(Math.max(2, finite8(minWidth, 24)), 2, safeCanvasWidth);
   const laneWidth = measuredContentWidth >= minimumStableWidth ? measuredContentWidth : safeCanvasWidth;
-  const surfaceWidth = Math.max(2, finite4(canvasWidth, laneWidth));
-  const width = clamp5(Math.max(
+  const surfaceWidth = Math.max(2, finite8(canvasWidth, laneWidth));
+  const width = clamp7(Math.max(
     minimumStableWidth,
-    finite4(boxWidthRatio) * laneWidth,
-    finite4(fallbackWidth)
+    finite8(boxWidthRatio) * laneWidth,
+    finite8(fallbackWidth)
   ), minimumStableWidth, surfaceWidth);
-  const height = Math.max(2, finite4(boxHeightRatio) * laneWidth);
+  const height = Math.max(2, finite8(boxHeightRatio) * laneWidth);
   return {
-    x: clamp5(finite4(contentLeft) + finite4(boxLeftRatio) * laneWidth, 0, Math.max(0, surfaceWidth - width)),
-    y: Math.max(0, finite4(y)),
+    x: clamp7(finite8(contentLeft) + finite8(boxLeftRatio) * laneWidth, 0, Math.max(0, surfaceWidth - width)),
+    y: Math.max(0, finite8(y)),
     width,
     height
   };
 }
 function projectNoteFlowPointsToBox(points, sourceBounds, targetBox, { canvasWidth, canvasHeight } = {}) {
-  const width = Math.max(1, finite4(canvasWidth, 1));
-  const height = Math.max(1, finite4(canvasHeight, 1));
-  const sourceLeft = finite4(sourceBounds?.minX);
-  const sourceTop = finite4(sourceBounds?.minY);
-  const sourceWidth = Math.max(1e-3, finite4(sourceBounds?.maxX) - sourceLeft);
-  const sourceHeight = Math.max(1e-3, finite4(sourceBounds?.maxY) - sourceTop);
-  const targetLeft = finite4(targetBox?.x);
-  const targetTop = finite4(targetBox?.y);
-  const targetWidth = Math.max(2, finite4(targetBox?.width, 2));
-  const targetHeight = Math.max(2, finite4(targetBox?.height, 2));
+  const width = Math.max(1, finite8(canvasWidth, 1));
+  const height = Math.max(1, finite8(canvasHeight, 1));
+  const sourceLeft = finite8(sourceBounds?.minX);
+  const sourceTop = finite8(sourceBounds?.minY);
+  const sourceWidth = Math.max(1e-3, finite8(sourceBounds?.maxX) - sourceLeft);
+  const sourceHeight = Math.max(1e-3, finite8(sourceBounds?.maxY) - sourceTop);
+  const targetLeft = finite8(targetBox?.x);
+  const targetTop = finite8(targetBox?.y);
+  const targetWidth = Math.max(2, finite8(targetBox?.width, 2));
+  const targetHeight = Math.max(2, finite8(targetBox?.height, 2));
   return (Array.isArray(points) ? points : []).map((point) => {
-    const x = clamp5(finite4(point?.x) * width, 0, width);
-    const y = clamp5(finite4(point?.y) * height, 0, height);
+    const x = clamp7(finite8(point?.x) * width, 0, width);
+    const y = clamp7(finite8(point?.y) * height, 0, height);
     return {
       ...point,
-      x: clamp5((targetLeft + (x - sourceLeft) / sourceWidth * targetWidth) / width, 0, 1),
-      y: clamp5((targetTop + (y - sourceTop) / sourceHeight * targetHeight) / height, 0, 1)
+      x: clamp7((targetLeft + (x - sourceLeft) / sourceWidth * targetWidth) / width, 0, 1),
+      y: clamp7((targetTop + (y - sourceTop) / sourceHeight * targetHeight) / height, 0, 1)
     };
   });
 }
 function translateNoteFlowPointsToRow(points, sourceBounds, rowY, { canvasWidth, canvasHeight } = {}) {
-  const width = Math.max(1, finite4(canvasWidth, 1));
-  const height = Math.max(1, finite4(canvasHeight, 1));
-  const sourceTop = finite4(sourceBounds?.minY, Number.NaN);
-  const targetTop = finite4(rowY, Number.NaN);
+  const width = Math.max(1, finite8(canvasWidth, 1));
+  const height = Math.max(1, finite8(canvasHeight, 1));
+  const sourceTop = finite8(sourceBounds?.minY, Number.NaN);
+  const targetTop = finite8(rowY, Number.NaN);
   if (!Number.isFinite(sourceTop) || !Number.isFinite(targetTop)) {
     return Array.isArray(points) ? points.map((point) => ({ ...point })) : [];
   }
   const dy = targetTop - sourceTop;
   return (Array.isArray(points) ? points : []).map((point) => ({
     ...point,
-    x: clamp5(finite4(point?.x) * width, 0, width) / width,
-    y: clamp5(finite4(point?.y) * height + dy, 0, height) / height
+    x: clamp7(finite8(point?.x) * width, 0, width) / width,
+    y: clamp7(finite8(point?.y) * height + dy, 0, height) / height
   }));
 }
 function selectOwnedBlankSpaceCandidate(candidates, { clientX, clientY } = {}) {
-  const x = finite4(clientX, Number.NaN);
-  const y = finite4(clientY, Number.NaN);
+  const x = finite8(clientX, Number.NaN);
+  const y = finite8(clientY, Number.NaN);
   if (!Number.isFinite(x) || !Number.isFinite(y)) {
     return null;
   }
   return (Array.isArray(candidates) ? candidates : []).map((candidate, order) => {
     const rect = candidate?.rect;
-    const left = finite4(rect?.left, Number.NaN);
-    const right = finite4(rect?.right, Number.NaN);
-    const top = finite4(rect?.top, Number.NaN);
-    const bottom = finite4(rect?.bottom, Number.NaN);
-    const applied = Math.max(0, finite4(candidate?.applied));
-    const scale = Math.max(0.01, finite4(candidate?.scale, 1));
+    const left = finite8(rect?.left, Number.NaN);
+    const right = finite8(rect?.right, Number.NaN);
+    const top = finite8(rect?.top, Number.NaN);
+    const bottom = finite8(rect?.bottom, Number.NaN);
+    const applied = Math.max(0, finite8(candidate?.applied));
+    const scale = Math.max(0.01, finite8(candidate?.scale, 1));
     if (![left, right, top, bottom].every(Number.isFinite) || right <= left || bottom <= top || applied <= 0) {
       return null;
     }
@@ -2484,7 +2874,7 @@ function normalizeFrozenNoteFlowLayout(value) {
     const line = Number(item?.line);
     const property = item?.property === "padding-bottom" || item?.side === "after" ? "padding-bottom" : "padding-top";
     const side = property === "padding-bottom" ? "after" : "before";
-    const offset = clamp5(finite4(item?.offset), 0, 2e5);
+    const offset = clamp7(finite8(item?.offset), 0, 2e5);
     if (!path || !Number.isFinite(line) || line < 0 || offset <= 0) {
       continue;
     }
@@ -2524,12 +2914,12 @@ function shouldPlaceStrokeBelowMarkdown(stroke) {
   return Boolean(stroke?.belowMarkdown || stroke?.noteFlow?.enabled);
 }
 function reflowNoteFlowRectangles(items, { gap = 6 } = {}) {
-  const defaultGap = Math.max(0, finite4(gap, 6));
+  const defaultGap = Math.max(0, finite8(gap, 6));
   const normalized = (Array.isArray(items) ? items : []).map((item, order) => {
-    const minX = finite4(item?.minX, Number.NaN);
-    const maxX = finite4(item?.maxX, Number.NaN);
-    const minY = finite4(item?.minY, Number.NaN);
-    const maxY = finite4(item?.maxY, Number.NaN);
+    const minX = finite8(item?.minX, Number.NaN);
+    const maxX = finite8(item?.maxX, Number.NaN);
+    const minY = finite8(item?.minY, Number.NaN);
+    const maxY = finite8(item?.maxY, Number.NaN);
     if (![minX, maxX, minY, maxY].every(Number.isFinite) || maxX < minX || maxY < minY) {
       return null;
     }
@@ -2540,10 +2930,10 @@ function reflowNoteFlowRectangles(items, { gap = 6 } = {}) {
       maxX,
       minY,
       maxY,
-      baseMinY: finite4(item?.baseMinY, minY),
-      originalMinY: finite4(item?.originalMinY, minY),
+      baseMinY: finite8(item?.baseMinY, minY),
+      originalMinY: finite8(item?.originalMinY, minY),
       height: Math.max(0, maxY - minY),
-      gap: Math.max(0, finite4(item?.gap, defaultGap)),
+      gap: Math.max(0, finite8(item?.gap, defaultGap)),
       moved: Boolean(item?.moved),
       rowKey: typeof item?.rowKey === "string" ? item.rowKey : "",
       overlapGroup: typeof item?.overlapGroup === "string" ? item.overlapGroup : "",
@@ -2657,15 +3047,15 @@ function packNoteFlowInlineRectangles(items, {
   gap = 6,
   minItemWidth = 24
 } = {}) {
-  const left = finite4(laneLeft, 0);
-  const right = Math.max(left, finite4(laneRight, left));
-  const clearance = Math.max(0, finite4(gap, 6));
-  const minimumWidth = Math.max(1, finite4(minItemWidth, 24));
+  const left = finite8(laneLeft, 0);
+  const right = Math.max(left, finite8(laneRight, left));
+  const clearance = Math.max(0, finite8(gap, 6));
+  const minimumWidth = Math.max(1, finite8(minItemWidth, 24));
   const normalizeRect2 = (rect, index = -1) => {
-    const minX = finite4(rect?.minX, Number.NaN);
-    const maxX = finite4(rect?.maxX, Number.NaN);
-    const minY = finite4(rect?.minY, Number.NaN);
-    const maxY = finite4(rect?.maxY, Number.NaN);
+    const minX = finite8(rect?.minX, Number.NaN);
+    const maxX = finite8(rect?.maxX, Number.NaN);
+    const minY = finite8(rect?.minY, Number.NaN);
+    const maxY = finite8(rect?.maxY, Number.NaN);
     return [minX, maxX, minY, maxY].every(Number.isFinite) && maxX >= minX && maxY >= minY ? { ...rect, index, minX, maxX, minY, maxY } : null;
   };
   const fixedAnchor = normalizeRect2(anchor);
@@ -2796,453 +3186,6 @@ function packNoteFlowInlineRectangles(items, {
       scaleX
     }));
   });
-}
-
-// src/selection-filter.mjs
-var SELECTION_FILTER_ALL = "all";
-var SELECTION_FILTER_FLOATING = "floating";
-var SELECTION_FILTER_MARKDOWN = "markdown";
-function uniqueIndexes(indexes, strokeCount) {
-  return Array.from(new Set((indexes || []).map(Number).filter((index) => {
-    return Number.isInteger(index) && index >= 0 && index < strokeCount;
-  }))).sort((a, b) => a - b);
-}
-function uniqueIds2(ids) {
-  return Array.from(new Set((ids || []).map((id) => String(id || "")).filter(Boolean))).sort();
-}
-function createSelectionFilterSnapshot(strokes, strokeIndexes, markdownBlockIds) {
-  const sourceStrokes = Array.isArray(strokes) ? strokes : [];
-  const allStrokeIndexes = uniqueIndexes(strokeIndexes, sourceStrokes.length);
-  const allMarkdownBlockIds = uniqueIds2(markdownBlockIds);
-  const floatingStrokeIndexes = allStrokeIndexes.filter((index) => !shouldPlaceStrokeBelowMarkdown(sourceStrokes[index]));
-  const markdownStrokeIndexes = allStrokeIndexes.filter((index) => shouldPlaceStrokeBelowMarkdown(sourceStrokes[index]));
-  return {
-    allStrokeIndexes,
-    allMarkdownBlockIds,
-    floatingStrokeIndexes,
-    markdownStrokeIndexes,
-    hasMixedSelection: floatingStrokeIndexes.length > 0 && markdownStrokeIndexes.length + allMarkdownBlockIds.length > 0
-  };
-}
-function nextSelectionFilterMode(mode) {
-  if (mode === SELECTION_FILTER_FLOATING) {
-    return SELECTION_FILTER_MARKDOWN;
-  }
-  if (mode === SELECTION_FILTER_MARKDOWN) {
-    return SELECTION_FILTER_ALL;
-  }
-  return SELECTION_FILTER_FLOATING;
-}
-function selectionForFilterMode(snapshot, mode) {
-  if (!snapshot) {
-    return { strokeIndexes: [], markdownBlockIds: [] };
-  }
-  if (mode === SELECTION_FILTER_FLOATING) {
-    return { strokeIndexes: snapshot.floatingStrokeIndexes, markdownBlockIds: [] };
-  }
-  if (mode === SELECTION_FILTER_MARKDOWN) {
-    return {
-      strokeIndexes: snapshot.markdownStrokeIndexes,
-      markdownBlockIds: snapshot.allMarkdownBlockIds
-    };
-  }
-  return {
-    strokeIndexes: snapshot.allStrokeIndexes,
-    markdownBlockIds: snapshot.allMarkdownBlockIds
-  };
-}
-function selectionMatchesFilterMode(snapshot, mode, strokeIndexes, markdownBlockIds) {
-  const expected = selectionForFilterMode(snapshot, mode);
-  const actualStrokes = uniqueIndexes(strokeIndexes, Number.MAX_SAFE_INTEGER);
-  const actualBlocks = uniqueIds2(markdownBlockIds);
-  return expected.strokeIndexes.length === actualStrokes.length && expected.markdownBlockIds.length === actualBlocks.length && expected.strokeIndexes.every((index, position) => index === actualStrokes[position]) && expected.markdownBlockIds.every((id, position) => id === actualBlocks[position]);
-}
-
-// src/selection-relations.mjs
-function boundsOverlapArea(left, right, minimumOverlap = 0.5) {
-  return Math.min(left.maxX, right.maxX) - Math.max(left.minX, right.minX) > minimumOverlap && Math.min(left.maxY, right.maxY) - Math.max(left.minY, right.minY) > minimumOverlap;
-}
-function connectorTouches(left, right) {
-  const leftTargets = new Set([left.connector?.fromId, left.connector?.toId].filter(Boolean));
-  const rightTargets = new Set([right.connector?.fromId, right.connector?.toId].filter(Boolean));
-  return Boolean(
-    right.elementId && leftTargets.has(right.elementId) || left.elementId && rightTargets.has(left.elementId) || Array.from(leftTargets).some((id) => rightTargets.has(id))
-  );
-}
-function expandRelatedSelection(candidates, initialKeys) {
-  const candidateList = Array.from(candidates || []).filter((candidate) => candidate?.key);
-  const candidateByKey = new Map(candidateList.map((candidate) => [candidate.key, candidate]));
-  const relatedKeys = new Set(Array.from(initialKeys || []).filter((key) => candidateByKey.has(key)));
-  const queue = Array.from(relatedKeys).map((key) => candidateByKey.get(key));
-  while (queue.length) {
-    const current = queue.shift();
-    for (const candidate of candidateList) {
-      if (relatedKeys.has(candidate.key)) {
-        continue;
-      }
-      const sameGroup = Boolean(current.groupId && current.groupId === candidate.groupId);
-      const overlaps = Boolean(current.bounds && candidate.bounds && boundsOverlapArea(current.bounds, candidate.bounds));
-      if (!sameGroup && !overlaps && !connectorTouches(current, candidate)) {
-        continue;
-      }
-      relatedKeys.add(candidate.key);
-      queue.push(candidate);
-    }
-  }
-  return relatedKeys;
-}
-
-// src/text-layout.mjs
-function finite5(value, fallback = 0) {
-  const number = Number(value);
-  return Number.isFinite(number) ? number : fallback;
-}
-function clamp6(value, min, max) {
-  return Math.min(max, Math.max(min, value));
-}
-function placeFloatingTextEditor({
-  anchorX,
-  anchorY,
-  width,
-  height,
-  viewportWidth,
-  viewportHeight,
-  viewportOffsetLeft = 0,
-  viewportOffsetTop = 0,
-  contentInsetX = 0,
-  contentInsetY = 0,
-  margin = 8,
-  anchorVisible = true
-} = {}) {
-  const leftEdge = finite5(viewportOffsetLeft) + Math.max(0, finite5(margin, 8));
-  const topEdge = finite5(viewportOffsetTop) + Math.max(0, finite5(margin, 8));
-  const rightEdge = finite5(viewportOffsetLeft) + Math.max(1, finite5(viewportWidth, 1)) - Math.max(0, finite5(margin, 8));
-  const bottomEdge = finite5(viewportOffsetTop) + Math.max(1, finite5(viewportHeight, 1)) - Math.max(0, finite5(margin, 8));
-  const editorWidth = Math.min(Math.max(1, finite5(width, 1)), Math.max(1, rightEdge - leftEdge));
-  const editorHeight = Math.min(Math.max(1, finite5(height, 1)), Math.max(1, bottomEdge - topEdge));
-  const centered = !anchorVisible;
-  const desiredLeft = centered ? leftEdge + (rightEdge - leftEdge - editorWidth) / 2 : finite5(anchorX) - Math.max(0, finite5(contentInsetX));
-  const desiredTop = centered ? topEdge + (bottomEdge - topEdge - editorHeight) / 2 : finite5(anchorY) - Math.max(0, finite5(contentInsetY));
-  return {
-    left: clamp6(desiredLeft, leftEdge, Math.max(leftEdge, rightEdge - editorWidth)),
-    top: clamp6(desiredTop, topEdge, Math.max(topEdge, bottomEdge - editorHeight)),
-    width: editorWidth,
-    height: editorHeight,
-    centered
-  };
-}
-function splitOverlongToken(token, maxWidth, measureText) {
-  const chunks = [];
-  let current = "";
-  for (const character of Array.from(token)) {
-    const candidate = current + character;
-    if (current && measureText(candidate) > maxWidth) {
-      chunks.push(current);
-      current = character;
-    } else {
-      current = candidate;
-    }
-  }
-  if (current || !chunks.length) {
-    chunks.push(current);
-  }
-  return chunks;
-}
-function wrapTextLines(text, maxWidth, measureText) {
-  const width = Math.max(1, finite5(maxWidth, 1));
-  const measure = typeof measureText === "function" ? measureText : (value) => String(value || "").length;
-  const output = [];
-  for (const paragraph of String(text ?? "").replace(/\r\n?/g, "\n").split("\n")) {
-    if (!paragraph) {
-      output.push("");
-      continue;
-    }
-    if (measure(paragraph) <= width) {
-      output.push(paragraph);
-      continue;
-    }
-    const tokens = paragraph.match(/\s+|[^\s]+/gu) || [paragraph];
-    let line = "";
-    for (const token of tokens) {
-      const candidate = line + token;
-      if (line && measure(candidate) > width) {
-        output.push(line.trimEnd());
-        line = token.trimStart();
-      } else {
-        line = candidate;
-      }
-      if (measure(line) <= width) {
-        continue;
-      }
-      const chunks = splitOverlongToken(line, width, measure);
-      output.push(...chunks.slice(0, -1));
-      line = chunks[chunks.length - 1];
-    }
-    output.push(line.trimEnd());
-  }
-  return output.length ? output : [""];
-}
-function computeTextLayout({
-  text,
-  fontSize = 18,
-  textWidth = null,
-  maxWidth = Infinity,
-  padded = false,
-  measureText
-} = {}) {
-  const size = clamp6(finite5(fontSize, 18), 10, 72);
-  const measure = typeof measureText === "function" ? (value) => Math.max(0, finite5(measureText(String(value ?? "")), 0)) : (value) => Array.from(String(value ?? "")).length * size * 0.62;
-  const paragraphs = String(text ?? "").replace(/\r\n?/g, "\n").split("\n");
-  const naturalWidth = Math.max(size, ...paragraphs.map((line) => measure(line)));
-  const availableWidth = Math.max(size, finite5(maxWidth, naturalWidth));
-  const requested = Number(textWidth);
-  const hasRequestedWidth = Number.isFinite(requested) && requested > 0;
-  const wrapWidth = clamp6(hasRequestedWidth ? requested : naturalWidth, size, availableWidth);
-  const lines = wrapTextLines(text, wrapWidth, measure);
-  const measuredWidth = Math.max(size, ...lines.map((line) => measure(line)));
-  const contentWidth = hasRequestedWidth ? wrapWidth : Math.min(wrapWidth, measuredWidth);
-  const lineHeight = Math.max(size + 2, size * 1.28);
-  const contentHeight = Math.max(lineHeight, lines.length * lineHeight);
-  const paddingX = padded ? Math.max(8, size * 0.45) : 0;
-  const paddingY = padded ? Math.max(4, size * 0.26) : 0;
-  return {
-    lines,
-    fontSize: size,
-    lineHeight,
-    contentWidth,
-    contentHeight,
-    paddingX,
-    paddingY,
-    width: contentWidth + paddingX * 2,
-    height: contentHeight + paddingY * 2
-  };
-}
-
-// src/viewport-gesture.mjs
-function finite6(value, fallback = 0) {
-  const number = Number(value);
-  return Number.isFinite(number) ? number : fallback;
-}
-function clamp7(value, min, max) {
-  return Math.min(Math.max(value, min), max);
-}
-function calculatePinchPanScroll({
-  scrollLeft = 0,
-  scrollTop = 0,
-  previousCenter = null,
-  nextCenter = null,
-  zoomRatio = 1,
-  originX = 0,
-  originY = 0,
-  movementEpsilon = 0.35,
-  maxScrollLeft = Number.POSITIVE_INFINITY,
-  maxScrollTop = Number.POSITIVE_INFINITY
-} = {}) {
-  const previous = previousCenter || nextCenter || { x: 0, y: 0 };
-  const next = nextCenter || previousCenter || { x: 0, y: 0 };
-  const ratio = Math.max(0.01, finite6(zoomRatio, 1));
-  const epsilon = Math.max(0, finite6(movementEpsilon, 0.35));
-  const previousX = finite6(previous.x);
-  const previousY = finite6(previous.y);
-  const nextX = Math.abs(finite6(next.x) - previousX) < epsilon ? previousX : finite6(next.x);
-  const nextY = Math.abs(finite6(next.y) - previousY) < epsilon ? previousY : finite6(next.y);
-  const stableOriginX = finite6(originX);
-  const stableOriginY = finite6(originY);
-  const maxLeft = Math.max(0, finite6(maxScrollLeft, Number.MAX_SAFE_INTEGER));
-  const maxTop = Math.max(0, finite6(maxScrollTop, Number.MAX_SAFE_INTEGER));
-  return {
-    left: clamp7((finite6(scrollLeft) + previousX) * ratio + (1 - ratio) * stableOriginX - nextX, 0, maxLeft),
-    top: clamp7((finite6(scrollTop) + previousY) * ratio + (1 - ratio) * stableOriginY - nextY, 0, maxTop)
-  };
-}
-function resolveMultiTouchGestureMode({
-  mode = "undecided",
-  initialDistance = 0,
-  distance = 0,
-  minimumDistanceChange = 8,
-  minimumScaleChange = 0.04,
-  centerMovement = 0,
-  minimumPinchDominance = 1.25
-} = {}) {
-  if (mode === "pinch") {
-    return "pinch";
-  }
-  const initial = Math.max(0, finite6(initialDistance));
-  const current = Math.max(0, finite6(distance));
-  if (!(initial > 0) || !(current > 0)) {
-    return "pan";
-  }
-  const threshold = Math.max(
-    Math.max(0, finite6(minimumDistanceChange, 8)),
-    initial * Math.max(0, finite6(minimumScaleChange, 0.04))
-  );
-  const distanceChange = Math.abs(current - initial);
-  if (distanceChange < threshold) {
-    return "pan";
-  }
-  const translation = Math.max(0, finite6(centerMovement));
-  const dominance = Math.max(1, finite6(minimumPinchDominance, 1.25));
-  return translation > 0 && translation >= distanceChange * dominance ? "pan" : "pinch";
-}
-function calculateReadingZoomMargin(baseMargin, targetHeight, zoom) {
-  const base = Number.isFinite(Number(baseMargin)) ? Number(baseMargin) : 0;
-  const height = Math.max(1, Number.isFinite(Number(targetHeight)) ? Number(targetHeight) : 1);
-  const scale = Math.max(0.01, Number.isFinite(Number(zoom)) ? Number(zoom) : 1);
-  return scale < 1 ? base - height * (1 - scale) : base;
-}
-function calculateVisualZoomLogicalWindow({
-  scrollTop = 0,
-  viewportHeight = 0,
-  zoom = 1,
-  origin = 0
-} = {}) {
-  const scale = Math.max(0.01, finite6(zoom, 1));
-  const visualTop = Math.max(0, finite6(scrollTop));
-  const logicalTop = Math.max(0, (visualTop - finite6(origin) * (scale - 1)) / scale);
-  const logicalHeight = Math.max(0, finite6(viewportHeight)) / scale;
-  return {
-    top: logicalTop,
-    bottom: logicalTop + logicalHeight,
-    height: logicalHeight
-  };
-}
-
-// src/reading-layout.mjs
-function finite7(value, fallback = 0) {
-  const number = Number(value);
-  return Number.isFinite(number) ? number : fallback;
-}
-function captureInitialReadingLayout(previewEl, sizer, renderer = null) {
-  const previewRect = previewEl?.getBoundingClientRect?.();
-  const sizerRect = sizer?.getBoundingClientRect?.();
-  const sections = Array.isArray(renderer?.sections) ? renderer.sections : [];
-  return {
-    previewWidth: Math.max(0, finite7(previewEl?.clientWidth, previewRect?.width)),
-    sizerHeight: Math.max(
-      0,
-      finite7(sizer?.scrollHeight),
-      finite7(sizer?.offsetHeight),
-      finite7(sizerRect?.height)
-    ),
-    sectionCount: sections.length,
-    renderedSectionCount: sections.filter((section) => section?.shown !== false && section?.el?.isConnected).length,
-    measuredSectionCount: sections.filter((section) => finite7(section?.height) > 0).length
-  };
-}
-function initialReadingLayoutSignature(metrics = {}) {
-  return [
-    Math.round(finite7(metrics.previewWidth)),
-    Math.round(finite7(metrics.sizerHeight)),
-    Math.max(0, Math.round(finite7(metrics.sectionCount))),
-    Math.max(0, Math.round(finite7(metrics.renderedSectionCount))),
-    Math.max(0, Math.round(finite7(metrics.measuredSectionCount)))
-  ].join(":");
-}
-function isInitialReadingLayoutUsable(metrics = {}) {
-  const sectionCount = Math.max(0, Math.round(finite7(metrics.sectionCount)));
-  return finite7(metrics.previewWidth) > 8 && finite7(metrics.sizerHeight) > 0 && (sectionCount === 0 || finite7(metrics.renderedSectionCount) > 0);
-}
-async function waitForStableReadingLayout(readMetrics, {
-  requestFrame,
-  shouldAbort = () => false,
-  stableFrames = 3,
-  maxFrames = 24
-} = {}) {
-  if (typeof readMetrics !== "function" || typeof requestFrame !== "function") {
-    return false;
-  }
-  const requiredStableFrames = Math.max(1, Math.round(finite7(stableFrames, 3)));
-  const frameLimit = Math.max(requiredStableFrames, Math.round(finite7(maxFrames, 24)));
-  let previousSignature = "";
-  let stableCount = 0;
-  let lastUsable = false;
-  for (let frame = 0; frame < frameLimit; frame += 1) {
-    await requestFrame();
-    if (shouldAbort()) {
-      return false;
-    }
-    const metrics = readMetrics();
-    lastUsable = isInitialReadingLayoutUsable(metrics);
-    if (!lastUsable) {
-      previousSignature = "";
-      stableCount = 0;
-      continue;
-    }
-    const signature = initialReadingLayoutSignature(metrics);
-    stableCount = signature === previousSignature ? stableCount + 1 : 1;
-    previousSignature = signature;
-    if (stableCount >= requiredStableFrames) {
-      return true;
-    }
-  }
-  return lastUsable;
-}
-
-// src/reading-touch-guard.mjs
-function finite8(value, fallback = 0) {
-  const number = Number(value);
-  return Number.isFinite(number) ? number : fallback;
-}
-function createReadingTouchGuardState() {
-  return {
-    active: null,
-    lastTouchAt: 0,
-    suppressUntil: 0
-  };
-}
-function beginReadingTouch(state, { id, x, y, now } = {}) {
-  state.active = {
-    id,
-    x: finite8(x),
-    y: finite8(y),
-    moved: false
-  };
-  state.lastTouchAt = finite8(now);
-}
-function moveReadingTouch(state, { id, x, y, now } = {}, threshold = 10) {
-  const active = state?.active;
-  if (!active || active.id !== id) {
-    return false;
-  }
-  const distance = Math.hypot(finite8(x) - active.x, finite8(y) - active.y);
-  if (distance >= Math.max(1, finite8(threshold, 10))) {
-    active.moved = true;
-  }
-  state.lastTouchAt = finite8(now);
-  return active.moved;
-}
-function finishReadingTouch(state, { id, now } = {}, suppressMs = 380) {
-  const active = state?.active;
-  if (!active || active.id !== id) {
-    return false;
-  }
-  const moved = Boolean(active.moved);
-  const timestamp = finite8(now);
-  state.active = null;
-  state.lastTouchAt = timestamp;
-  if (moved) {
-    state.suppressUntil = Math.max(state.suppressUntil, timestamp + Math.max(0, finite8(suppressMs, 380)));
-  }
-  return moved;
-}
-function recordReadingTouchScroll(state, { now } = {}, {
-  recentTouchMs = 900,
-  suppressMs = 380
-} = {}) {
-  const timestamp = finite8(now);
-  const touchIsRecent = Boolean(state?.active) || state?.lastTouchAt > 0 && timestamp - state.lastTouchAt <= Math.max(0, finite8(recentTouchMs, 900));
-  if (!touchIsRecent) {
-    return false;
-  }
-  if (state.active) {
-    state.active.moved = true;
-  }
-  state.lastTouchAt = timestamp;
-  state.suppressUntil = Math.max(state.suppressUntil, timestamp + Math.max(0, finite8(suppressMs, 380)));
-  return true;
-}
-function shouldSuppressReadingClick(state, now) {
-  return finite8(now) < finite8(state?.suppressUntil);
 }
 
 // src/preview-lifecycle.mjs
@@ -4400,9 +4343,6 @@ var I18N = {
     lockElement: "Lock",
     unlockElement: "Unlock",
     copyElement: "Copy element/link",
-    selectFloatingOnly: "Select floating elements only",
-    selectMarkdownOnly: "Select inserted elements only",
-    selectAllElements: "Restore full selection",
     copyElementLink: "Copy element link",
     pasteElement: "Paste",
     insertIntoNote: "Insert into note flow",
@@ -4579,9 +4519,6 @@ var I18N = {
     lockElement: "\u9501\u5B9A",
     unlockElement: "\u89E3\u9501",
     copyElement: "\u590D\u5236\u5143\u7D20/\u94FE\u63A5",
-    selectFloatingOnly: "\u53EA\u9009\u60AC\u6D6E\u5143\u7D20",
-    selectMarkdownOnly: "\u53EA\u9009\u63D2\u5165\u5143\u7D20",
-    selectAllElements: "\u6062\u590D\u5168\u90E8\u9009\u62E9",
     copyElementLink: "\u590D\u5236\u5143\u7D20\u94FE\u63A5",
     pasteElement: "\u7C98\u8D34\u5143\u7D20",
     insertIntoNote: "\u63D2\u5165\u7B14\u8BB0",
@@ -4605,9 +4542,6 @@ var I18N = {
     editTextDrawHidden: "\u7DE8\u8F2F\u6587\u5B57 / \u5857\u9D09\uFF08\u5857\u9D09\u5DF2\u96B1\u85CF\uFF09",
     editWebviewDraw: "\u7DE8\u8F2F\u7DB2\u9801 / \u5857\u9D09",
     selectDrawings: "\u9078\u64C7\u5143\u7D20",
-    selectFloatingOnly: "\u53EA\u9078\u6D6E\u52D5\u5143\u7D20",
-    selectMarkdownOnly: "\u53EA\u9078\u63D2\u5165\u5143\u7D20",
-    selectAllElements: "\u6062\u5FA9\u5168\u90E8\u9078\u64C7",
     editMarkdownTool: "\u7DE8\u8F2F MD",
     convertToNoteFlow: "\u8F49\u70BA NoteFlow \u5143\u7D20",
     convertToFloating: "\u8F49\u70BA\u6D6E\u52D5\u5143\u7D20",
@@ -9442,7 +9376,6 @@ var PreviewDrawingController = class {
     this.selectedStrokeIndexes = /* @__PURE__ */ new Set();
     this.selectedMarkdownBlockIds = /* @__PURE__ */ new Set();
     this.enteredElementGroupIds = /* @__PURE__ */ new Set();
-    this.selectionFilterCycle = null;
     this.selectionFrameSnapshot = null;
     this.selectionFrameAwaitingMarkdownSync = null;
     this.embedRepairTimer = null;
@@ -10290,7 +10223,6 @@ var PreviewDrawingController = class {
     this.selectedStrokeIndex = -1;
     this.selectedStrokeIndexes.clear();
     this.selectedMarkdownBlockIds.clear();
-    this.selectionFilterCycle = null;
     this.selectionFrameSnapshot = null;
     this.clearMarkdownBlockPresentation();
     this.embedNodes.forEach((node) => node.remove());
@@ -11589,7 +11521,6 @@ var PreviewDrawingController = class {
   }
   createSelectionMenu() {
     const actions = [
-      { icon: "list-filter", key: "selectFloatingOnly", action: () => this.cycleSelectionFilter() },
       { icon: "terminal", key: "buttonCommand", action: () => this.openSelectedButtonCommandPicker() },
       { icon: "copy", key: "copyElement", action: () => this.copySelectedElements() },
       { icon: "clipboard-paste", key: "pasteElement", action: () => this.pasteCopiedElements() },
@@ -11641,17 +11572,6 @@ var PreviewDrawingController = class {
     sourceButton?.toggleAttribute("hidden", !this.selectedMindMapSource());
     const commandButton = this.selectionMenu.querySelector('[data-note-draw-title-key="buttonCommand"]');
     commandButton?.toggleAttribute("hidden", this.selectedButtonCommandIndex() < 0);
-    const filterContext = this.selectionFilterContext();
-    const filterButton = this.selectionMenu.querySelector('[data-note-draw-title-key="selectFloatingOnly"], [data-note-draw-title-key="selectMarkdownOnly"], [data-note-draw-title-key="selectAllElements"]');
-    if (filterButton) {
-      const nextMode = nextSelectionFilterMode(filterContext.mode);
-      const key = nextMode === SELECTION_FILTER_FLOATING ? "selectFloatingOnly" : nextMode === SELECTION_FILTER_MARKDOWN ? "selectMarkdownOnly" : "selectAllElements";
-      filterButton.dataset.noteDrawTitleKey = key;
-      filterButton.dataset.noteDrawSelectionFilter = filterContext.mode;
-      this.plugin.setAccessibleLabel(filterButton, key);
-      (0, import_obsidian.setIcon)(filterButton, nextMode === SELECTION_FILTER_FLOATING ? "layers-2" : nextMode === SELECTION_FILTER_MARKDOWN ? "file-text" : "layers-3");
-      filterButton.toggleAttribute("hidden", !filterContext.snapshot.hasMixedSelection);
-    }
     const flowSelection = this.selectedFlowModeElements();
     const flowModeButton = this.selectionMenu.querySelector('[data-note-draw-title-key="toggleFlowMode"], [data-note-draw-title-key="convertToNoteFlow"], [data-note-draw-title-key="convertToFloating"]');
     if (flowModeButton) {
@@ -11740,48 +11660,6 @@ var PreviewDrawingController = class {
       floatingCount: total - noteFlowCount,
       total
     };
-  }
-  selectionFilterContext() {
-    const strokeIndexes = this.getSelectedStrokeIndexes();
-    const markdownBlockIds = this.getSelectedMarkdownBlocks().map((block) => block.id);
-    if (this.selectionFilterCycle && selectionMatchesFilterMode(
-      this.selectionFilterCycle.snapshot,
-      this.selectionFilterCycle.mode,
-      strokeIndexes,
-      markdownBlockIds
-    )) {
-      return this.selectionFilterCycle;
-    }
-    return {
-      mode: SELECTION_FILTER_ALL,
-      snapshot: createSelectionFilterSnapshot(this.drawingData?.strokes, strokeIndexes, markdownBlockIds)
-    };
-  }
-  cycleSelectionFilter() {
-    const context = this.selectionFilterContext();
-    if (!context.snapshot.hasMixedSelection) {
-      this.selectionFilterCycle = null;
-      this.syncSelectionMenuButtons();
-      return false;
-    }
-    const mode = nextSelectionFilterMode(context.mode);
-    const selection = selectionForFilterMode(context.snapshot, mode);
-    const previousMarkdownIds = new Set(this.selectedMarkdownBlockIds || []);
-    const validMarkdownIds = new Set(this.markdownBlockRecords().map((block) => block.id));
-    this.selectionFilterCycle = { mode, snapshot: context.snapshot };
-    this.selectedStrokeIndexes = new Set(selection.strokeIndexes);
-    this.selectedStrokeIndex = selection.strokeIndexes.length ? selection.strokeIndexes[selection.strokeIndexes.length - 1] : -1;
-    this.selectedMarkdownBlockIds = new Set(selection.markdownBlockIds.filter((id) => validMarkdownIds.has(id)));
-    this.invalidateSelectionFrameSnapshot();
-    this.invalidateStaticCache();
-    this.syncPaletteInputs();
-    this.updateToolButtons();
-    this.syncSelectionMenuButtons();
-    const touchedMarkdownIds = /* @__PURE__ */ new Set([...previousMarkdownIds, ...this.selectedMarkdownBlockIds]);
-    this.refreshMarkdownBlockPresentation(touchedMarkdownIds);
-    this.updateEmbedLayer();
-    this.renderCanvas();
-    return true;
   }
   selectedMindMapSource() {
     for (const index of this.getSelectedStrokeIndexes()) {
@@ -17008,7 +16886,6 @@ ${selected}
     ]);
     const relatedIndexes = candidates.filter((candidate) => candidate.type === "stroke" && relatedKeys.has(candidate.key)).map((candidate) => candidate.index);
     const relatedMarkdownIds = candidates.filter((candidate) => candidate.type === "markdown" && relatedKeys.has(candidate.key)).map((candidate) => candidate.id);
-    this.selectionFilterCycle = null;
     this.selectedStrokeIndexes = new Set(relatedIndexes);
     this.selectedStrokeIndex = relatedIndexes.length ? relatedIndexes.at(-1) : -1;
     this.selectedMarkdownBlockIds = new Set(relatedMarkdownIds);
@@ -17182,7 +17059,8 @@ ${selected}
         flowOrder: previewedPlacement.flowOrder,
         noteFlowBoundary: previewedPlacement.noteFlowBoundary,
         candidate: previewedPlacement.candidate,
-        previewCandidates: previewedPlacement.previewCandidates
+        previewCandidates: previewedPlacement.previewCandidates,
+        previewRowOffsets: previewedPlacement.previewRowOffsets
       } : null;
     }
     const preserveMarkdownDomPreview = didMove && Boolean(this.dragNoteFlowDomPreview) && Boolean(this.dragMarkdownLastValidDrop?.element?.isConnected);
@@ -17282,6 +17160,7 @@ ${selected}
           stroke.noteFlow = rejectedDrop ? { ...this.dragStrokeOriginalNoteFlows.get(index) } : this.captureNoteFlowAnchor(stroke, {
             placement: droppedNoteFlowIndexes.has(index) ? resolvedDropPlacement : null,
             preservePlacement: !droppedNoteFlowIndexes.has(index),
+            rowOffset: droppedNoteFlowIndexes.has(index) ? resolvedDropPlacement?.previewRowOffsets?.[index] : null,
             preserveBoxGeometry: droppedNoteFlowIndexes.has(index) ? resolvedDropPlacement?.horizontalSide ? null : this.dragStrokeOriginalNoteFlows.get(index) : null
           });
         }
@@ -19266,7 +19145,6 @@ ${selected}
     if (!groupId) {
       return false;
     }
-    this.selectionFilterCycle = null;
     this.selectedStrokeIndexes = new Set(this.groupMemberStrokeIndexes(groupId));
     const strokes = this.getSelectedStrokeIndexes();
     this.selectedStrokeIndex = strokes.length ? strokes[strokes.length - 1] : -1;
@@ -20267,7 +20145,6 @@ ${selected}
     if (!block) {
       return null;
     }
-    this.selectionFilterCycle = null;
     const next = additive ? new Set(this.selectedMarkdownBlockIds) : /* @__PURE__ */ new Set();
     if (toggle && next.has(block.id)) {
       next.delete(block.id);
@@ -20313,7 +20190,6 @@ ${selected}
     }
   }
   setSelectedStrokes(indexes, options = {}) {
-    this.selectionFilterCycle = null;
     const normalized = Array.isArray(indexes) ? indexes : [indexes];
     this.selectedStrokeIndexes = new Set(
       normalized.map((index) => Number(index)).filter((index) => Number.isInteger(index) && index >= 0 && index < this.drawingData.strokes.length)
@@ -20345,7 +20221,6 @@ ${selected}
     this.setSelectedStrokes(Array.from(next), { preserveMarkdown: true });
   }
   clearSelectedStrokes() {
-    this.selectionFilterCycle = null;
     this.selectedStrokeIndexes.clear();
     this.selectedStrokeIndex = -1;
     this.selectedMarkdownBlockIds.clear();
@@ -21600,7 +21475,8 @@ ${selected}
     this.requestRender(this.selectionHasDomStrokes() ? "interaction" : false);
     this.dragNoteFlowLastAppliedPlacement = {
       ...liveResolved,
-      previewCandidates
+      previewCandidates,
+      previewRowOffsets: this.captureDraggedNoteFlowPreviewRowOffsets(liveResolved, movedIndexes)
     };
     return affectedIndexes;
   }
@@ -22094,7 +21970,8 @@ ${selected}
       inlineBoundary: placement?.inlineBoundary !== null && placement?.inlineBoundary !== void 0 && Number.isFinite(Number(placement.inlineBoundary)) ? Number(placement.inlineBoundary) : null,
       flowOrder: Number.isFinite(Number(placement?.flowOrder)) ? Number(placement.flowOrder) : null,
       noteFlowBoundary: placement?.noteFlowBoundary === true,
-      previewCandidates: Array.isArray(placement?.previewCandidates) ? placement.previewCandidates : null
+      previewCandidates: Array.isArray(placement?.previewCandidates) ? placement.previewCandidates : null,
+      previewRowOffsets: placement?.previewRowOffsets && typeof placement.previewRowOffsets === "object" ? placement.previewRowOffsets : null
     } : null;
   }
   snapDraggedSelectionToNoteFlowPlacement(placement, indexes) {
@@ -22149,6 +22026,24 @@ ${selected}
     }
     this.invalidateStaticCache();
     return Math.abs(deltaY) >= 0.25 || Math.abs(deltaX) >= 0.25;
+  }
+  captureDraggedNoteFlowPreviewRowOffsets(placement, indexes) {
+    const canvasRect = this.noteFlowCanvasRect();
+    if (!placement?.candidate || !canvasRect || canvasRect.height <= 1) {
+      return null;
+    }
+    const targetRect = this.noteFlowCandidateRect(placement.candidate, placement.horizontalSide ? "inline" : "row");
+    const boundary = placement.horizontalSide ? targetRect?.top : Number.isFinite(Number(placement.boundary)) ? Number(placement.boundary) : placement.side === "after" ? placement.candidate.bottom : placement.candidate.top;
+    if (!Number.isFinite(Number(boundary))) {
+      return null;
+    }
+    const scaleY = canvasRect.height / Math.max(1, this.canvasRenderHeight);
+    const anchorCanvasY = this.canvasWindowTop + (Number(boundary) - canvasRect.top) / Math.max(1e-4, scaleY);
+    return Object.fromEntries(Array.from(indexes || []).flatMap((index) => {
+      const stroke = this.drawingData?.strokes?.[index];
+      const bounds = getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight());
+      return bounds ? [[index, Math.max(0, bounds.minY - anchorCanvasY)]] : [];
+    }));
   }
   captureNoteFlowAnchor(stroke, options = {}) {
     const previous = normalizeNoteFlow(stroke?.noteFlow);
@@ -22223,7 +22118,7 @@ ${selected}
       inlineSide: placementMode === "inline" ? options.placement?.horizontalSide || previous?.inlineSide || "right" : null,
       leftSnap: placementMode === "row" ? options.placement?.leftSnap === true || !options.placement && previous?.leftSnap === true : false,
       flowOrder: Number.isFinite(Number(options.placement?.flowOrder)) ? Number(options.placement.flowOrder) : Number.isFinite(Number(previous?.flowOrder)) ? Number(previous.flowOrder) : null,
-      rowOffset: Number.isFinite(anchorCanvasY) ? Math.max(0, bounds.minY - anchorCanvasY) : Math.max(0, Number(previous?.rowOffset) || 0),
+      rowOffset: options.rowOffset !== null && options.rowOffset !== void 0 && Number.isFinite(Number(options.rowOffset)) ? Math.max(0, Number(options.rowOffset)) : Number.isFinite(anchorCanvasY) ? Math.max(0, bounds.minY - anchorCanvasY) : Math.max(0, Number(previous?.rowOffset) || 0),
       boxLeftRatio: (bounds.minX - Number(contentFrame?.left || 0)) / contentWidth,
       boxWidthRatio: preservedBox?.boxWidthRatio > 0 ? preservedBox.boxWidthRatio : Math.max(2 / contentWidth, (bounds.maxX - bounds.minX) / contentWidth),
       boxHeightRatio: preservedBox?.boxHeightRatio > 0 ? preservedBox.boxHeightRatio : Math.max(2 / contentWidth, (bounds.maxY - bounds.minY) / contentWidth),
@@ -22947,7 +22842,11 @@ ${selected}
       const settled = settledByIndex.get(target.index);
       const targetY = settled?.minY ?? target.targetBox.y;
       if (target.rowKey) {
-        const extent = target.placementMode === "inline" ? Math.max(0, targetY + target.targetBox.height - Number(target.anchorCanvasBounds?.maxY ?? targetY)) : targetY + target.targetBox.height - target.targetBox.y;
+        const extent = target.placementMode === "inline" ? Math.max(0, targetY + target.targetBox.height - Number(target.anchorCanvasBounds?.maxY ?? targetY)) : noteFlowSettledRowExtent({
+          rowOffset: target.noteFlow.rowOffset,
+          boxHeight: target.targetBox.height,
+          displacement: targetY - target.targetBox.y
+        });
         settledRowExtents.set(target.rowKey, Math.max(
           settledRowExtents.get(target.rowKey) || 0,
           extent
@@ -23295,7 +23194,7 @@ ${selected}
       const ownerGap = Math.max(0, Number(ownerNoteFlow?.gap) || 0);
       const settledExtent = this.noteFlowSettledRowExtents.get(rowKey) || 0;
       const settledOffset = ownerNoteFlow?.placementMode === "inline" ? settledExtent > 0 ? settledExtent + ownerGap : 0 : noteFlowRowReservation({
-        rowOffset: ownerNoteFlow?.rowOffset,
+        rowOffset: 0,
         boxHeight: settledExtent,
         gap: ownerGap
       });
@@ -23674,11 +23573,11 @@ ${selected}
       );
       const stableHeight = this.resizingSelection ? liveHeight : currentNoteFlow.boxHeightRatio > 0 ? currentNoteFlow.boxHeightRatio * Math.max(1, contentFrame.width) : liveHeight;
       const settledRowKey = noteFlowPlacementRowKey(currentNoteFlow, this.file?.path || "");
-      const settledExtent = this.noteFlowSettledRowExtents.get(settledRowKey) || 0;
-      const settledHeight = Math.max(stableHeight, settledExtent);
+      const measuredExtent = this.noteFlowSettledRowExtents.get(settledRowKey);
+      const settledExtent = Number.isFinite(measuredExtent) ? measuredExtent : Math.max(0, Number(currentNoteFlow.rowOffset) || 0) + stableHeight;
       const required = currentNoteFlow.placementMode === "inline" ? settledExtent > 0 ? settledExtent + currentNoteFlow.gap : 0 : noteFlowRowReservation({
-        rowOffset: currentNoteFlow.rowOffset,
-        boxHeight: settledHeight,
+        rowOffset: 0,
+        boxHeight: settledExtent,
         gap: currentNoteFlow.gap
       });
       if (!(required > 0)) {

@@ -184,21 +184,13 @@ test("structured element clipboard supports long-press actions, commands, and cr
   assert.match(source, /\{ icon: "clipboard-paste", key: "pasteElement"/);
 });
 
-test("the long-press menu filters overlapping selections without changing element data", async () => {
+test("the obsolete selection filter is absent while flow conversion remains available", async () => {
   const source = await readFile(sourceUrl, "utf8");
-  const filterSource = source.slice(source.indexOf("  selectionFilterContext()"), source.indexOf("  selectedMindMapSource()"));
 
-  assert.match(source, /\{ icon: "list-filter", key: "selectFloatingOnly", action: \(\) => this\.cycleSelectionFilter\(\) \}/);
-  assert.match(source, /selectFloatingOnly: "只选悬浮元素"/);
-  assert.match(source, /selectMarkdownOnly: "只选插入元素"/);
-  assert.match(source, /selectAllElements: "恢复全部选择"/);
-  assert.match(source, /filterButton\.toggleAttribute\("hidden", !filterContext\.snapshot\.hasMixedSelection\)/);
+  assert.doesNotMatch(source, /selection-filter|selectionFilterCycle|selectionFilterContext|cycleSelectionFilter/);
+  assert.doesNotMatch(source, /selectFloatingOnly|selectMarkdownOnly|selectAllElements|list-filter/);
   assert.doesNotMatch(source, /dockMarkdownBlock|放回笔记流|放回筆記流/);
-  assert.match(filterSource, /selectionMatchesFilterMode\([\s\S]*createSelectionFilterSnapshot/);
-  assert.match(filterSource, /nextSelectionFilterMode\(context\.mode\)[\s\S]*selectionForFilterMode\(context\.snapshot, mode\)/);
-  assert.match(filterSource, /this\.selectedStrokeIndexes = new Set\(selection\.strokeIndexes\)/);
-  assert.match(filterSource, /this\.selectedMarkdownBlockIds = new Set\(selection\.markdownBlockIds\.filter/);
-  assert.doesNotMatch(filterSource, /scheduleDrawingSave|recordDrawingHistory|expandSelectedGroups|hideSelectionMenu/);
+  assert.match(source, /\{ icon: "repeat-2", key: "toggleFlowMode", action: \(\) => this\.toggleSelectedFlowMode\(\) \}/);
 });
 
 test("element links are portable, multi-select aware, and routed through the active NoteDraw surface", async () => {
@@ -256,7 +248,7 @@ test("reading-only note pen and selected elements can reserve Markdown flow spac
   assert.match(source, /toggleSelectedFlowMode\(\)/);
   assert.match(source, /selectedFlowModeElements\(\)/);
   assert.match(source, /convertToFloating[\s\S]*convertToNoteFlow[\s\S]*toggleFlowMode/);
-  const selectionMenuSource = source.slice(source.indexOf("  createSelectionMenu()"), source.indexOf("  selectionFilterContext()", source.indexOf("  createSelectionMenu()")));
+  const selectionMenuSource = source.slice(source.indexOf("  createSelectionMenu()"), source.indexOf("  selectedButtonCommandIndex()", source.indexOf("  createSelectionMenu()")));
   assert.doesNotMatch(selectionMenuSource, /floatMarkdownBlock|toggleSelectedMarkdownFloating|toggleSelectedNoteFlow/);
   assert.match(source, /const placementMode = value\.placementMode === "inline" \? "inline" : "row"/);
   assert.match(source, /belowMarkdown: Boolean\(noteFlow\)/);
@@ -277,9 +269,9 @@ test("reading-only note pen and selected elements can reserve Markdown flow spac
   assert.match(flowLayout, /const nextValue = `\$\{appliedValue\}px`/);
   assert.match(flowLayout, /const property = side === "after" \? "padding-bottom" : "padding-top"/);
   assert.match(flowLayout, /anchor\.top < strokeTop - 4/);
-  assert.match(flowLayout, /const settledExtent = this\.noteFlowSettledRowExtents\.get\(settledRowKey\) \|\| 0;[\s\S]*const settledHeight = Math\.max\(stableHeight, settledExtent\)/);
+  assert.match(flowLayout, /const measuredExtent = this\.noteFlowSettledRowExtents\.get\(settledRowKey\);[\s\S]*Math\.max\(0, Number\(currentNoteFlow\.rowOffset\) \|\| 0\) \+ stableHeight/);
   assert.match(flowLayout, /currentNoteFlow\.placementMode === "inline"[\s\S]*settledExtent > 0 \? settledExtent \+ currentNoteFlow\.gap : 0[\s\S]*noteFlowRowReservation/);
-  assert.match(flowLayout, /noteFlowRowReservation\(\{[\s\S]*rowOffset: currentNoteFlow\.rowOffset[\s\S]*boxHeight: settledHeight/);
+  assert.match(flowLayout, /noteFlowRowReservation\(\{[\s\S]*rowOffset: 0,[\s\S]*boxHeight: settledExtent/);
   assert.match(flowLayout, /state\.applied = Math\.max\(0, appliedValue - state\.base\)/);
   assert.match(flowLayout, /stabilizeNoteFlowBounds\(\{/);
   assert.match(flowLayout, /preferCurrent: Boolean\(normalizeNoteFlow\(stroke\.noteFlow\)\?\.positionBasis\)[\s\S]*this\.resizingSelection/);

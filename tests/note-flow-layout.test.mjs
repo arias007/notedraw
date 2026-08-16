@@ -11,6 +11,7 @@ import {
   noteFlowPlacementRowKey,
   noteFlowRequiredOffset,
   noteFlowRowReservation,
+  noteFlowSettledRowExtent,
   noteFlowReservedRowTop,
   noteFlowNeedsActivationRepair,
   noteFlowSurfaceRepairLimits,
@@ -137,6 +138,16 @@ test("overlapping note pen strokes reserve one union row instead of pushing each
     { id: "pen-b", minY: 95, maxY: 135 },
     { id: "next", minY: 141, maxY: 171 }
   ]);
+});
+
+test("a note-pen stroke inside the existing union does not grow the settled row", () => {
+  const existing = noteFlowSettledRowExtent({ rowOffset: 20, boxHeight: 60 });
+  const contained = noteFlowSettledRowExtent({ rowOffset: 40, boxHeight: 25 });
+  assert.equal(Math.max(existing, contained), 80);
+
+  const extended = noteFlowSettledRowExtent({ rowOffset: 40, boxHeight: 55 });
+  assert.equal(Math.max(existing, extended), 95);
+  assert.equal(Math.max(existing, extended) - existing, 15);
 });
 
 test("a newly inserted inline element shrinks into the remaining row width", () => {

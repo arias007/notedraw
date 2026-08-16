@@ -503,7 +503,7 @@ test("selection tool previews and commits exact NoteFlow Markdown insertion targ
   assert.match(reservedRowSource, /createElementLayout\([\s\S]*bounds:[\s\S]*targetBox\.x[\s\S]*relations: \[\]/);
   assert.match(frozenRestoreSource, /const effectiveOffset = hasSettledMeasurement \? settledOffset : record\.offset/);
   assert.match(frozenRestoreSource, /alignNoteFlowStrokesToReservedRows\(\)/);
-  assert.match(frozenRestoreSource, /alignNoteFlowStrokesToReservedRows\(candidates, \{ measureOnly: true \}\)[\s\S]*const settledExtent = this\.noteFlowSettledRowExtents\.get\(rowKey\) \|\| 0;[\s\S]*ownerNoteFlow\?\.placementMode === "inline"[\s\S]*noteFlowRowReservation\(\{[\s\S]*rowOffset: ownerNoteFlow\?\.rowOffset[\s\S]*boxHeight: settledExtent/);
+  assert.match(frozenRestoreSource, /alignNoteFlowStrokesToReservedRows\(candidates, \{ measureOnly: true \}\)[\s\S]*const settledExtent = this\.noteFlowSettledRowExtents\.get\(rowKey\) \|\| 0;[\s\S]*ownerNoteFlow\?\.placementMode === "inline"[\s\S]*noteFlowRowReservation\(\{[\s\S]*rowOffset: 0,[\s\S]*boxHeight: settledExtent/);
   assert.match(flowLayoutSource, /const settledRowExtentsChanged = this\.alignNoteFlowStrokesToReservedRows\(candidates, \{ measureOnly: true \}\)/);
   assert.match(flowLayoutSource, /alignNoteFlowStrokesToReservedRows\(\)/);
   assert.match(finishSource, /if \(!affectsNoteFlow\) \{[\s\S]*scheduleDrawingSave/);
@@ -603,7 +603,7 @@ test("NoteFlow resize updates stable geometry and remeasures row reservations be
   assert.match(finishSource, /alignNoteFlowStrokesToReservedRows\(null, \{ measureOnly: true \}\);\s*this\.scheduleNoteFlowLayout\(\{ operation: true \}\)/);
   assert.match(cancelSource, /stroke\.noteFlow = original\.noteFlow \? \{ \.\.\.original\.noteFlow \} : null/);
   assert.match(alignSource, /const measureOnly = options\.measureOnly === true[\s\S]*if \(measureOnly\) \{\s*return extentsChanged;/);
-  assert.match(flowSource, /alignNoteFlowStrokesToReservedRows\(candidates, \{ measureOnly: true \}\)[\s\S]*boxHeight: settledHeight/);
+  assert.match(flowSource, /alignNoteFlowStrokesToReservedRows\(candidates, \{ measureOnly: true \}\)[\s\S]*const measuredExtent = this\.noteFlowSettledRowExtents\.get\(settledRowKey\)[\s\S]*boxHeight: settledExtent/);
   assert.match(flowSource, /const canLayoutDuringResize = this\.resizingSelection[\s\S]*hasStableNoteFlowAnchor\(noteFlow\)[\s\S]*Number\.isFinite\(Number\(noteFlow\?\.line\)\)/);
   assert.match(flowSource, /noteFlowMarkdownAnnotationComplete && !canLayoutDuringResize/);
 });

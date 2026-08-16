@@ -572,6 +572,12 @@ export function noteFlowRowReservation({ rowOffset = 0, boxHeight = 0, gap = 12 
     + Math.max(0, finite(gap, 12));
 }
 
+export function noteFlowSettledRowExtent({ rowOffset = 0, boxHeight = 0, displacement = 0 } = {}) {
+  return Math.max(0, finite(rowOffset))
+    + Math.max(0, finite(displacement))
+    + Math.max(0, finite(boxHeight));
+}
+
 export function resizeNoteFlowGeometry(noteFlow, {
   originalBounds,
   resizedBounds,
