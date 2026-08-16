@@ -17034,8 +17034,10 @@ ${selected}
       this.beginNoteFlowScrollStability();
     }
     let requestedDropPlacement = null;
+    let previewCommitStates = null;
     let settleNoteFlowImmediately = false;
     if (didMove && this.usesDraggedNoteFlowPlacement()) {
+      const visiblePreviewPlacement = this.dragNoteFlowLastAppliedPlacement;
       const pendingDropClientX = this.dragNoteFlowDropClientX;
       const pendingDropClientY = this.dragNoteFlowDropClientY;
       if (this.dragNoteFlowDropFrameId !== null) {
@@ -17044,10 +17046,10 @@ ${selected}
       }
       this.dragNoteFlowDropClientX = null;
       this.dragNoteFlowDropClientY = null;
-      if (Number.isFinite(Number(pendingDropClientX)) && Number.isFinite(Number(pendingDropClientY))) {
+      if (!visiblePreviewPlacement && Number.isFinite(Number(pendingDropClientX)) && Number.isFinite(Number(pendingDropClientY))) {
         this.updateDraggedNoteFlowPlacement(Number(pendingDropClientX), Number(pendingDropClientY));
       }
-      const previewedPlacement = this.dragNoteFlowLastAppliedPlacement || this.dragNoteFlowPlacement;
+      const previewedPlacement = visiblePreviewPlacement || this.dragNoteFlowLastAppliedPlacement || this.dragNoteFlowPlacement;
       requestedDropPlacement = previewedPlacement ? {
         path: previewedPlacement.path,
         line: previewedPlacement.line,
@@ -17062,6 +17064,19 @@ ${selected}
         previewCandidates: previewedPlacement.previewCandidates,
         previewRowOffsets: previewedPlacement.previewRowOffsets
       } : null;
+      if (requestedDropPlacement) {
+        const previewIndexes = /* @__PURE__ */ new Set([
+          ...Array.from(this.dragStrokeOriginalPoints?.keys?.() || []),
+          ...Array.from(this.dragNoteFlowLivePreviewOriginals?.keys?.() || [])
+        ]);
+        previewCommitStates = new Map(Array.from(previewIndexes).flatMap((index) => {
+          const stroke = this.drawingData?.strokes?.[index];
+          return stroke ? [[index, {
+            points: stroke.points.map((point) => ({ ...point })),
+            noteFlow: stroke.noteFlow ? { ...stroke.noteFlow } : null
+          }]] : [];
+        }));
+      }
     }
     const preserveMarkdownDomPreview = didMove && Boolean(this.dragNoteFlowDomPreview) && Boolean(this.dragMarkdownLastValidDrop?.element?.isConnected);
     const committedDomPreview = preserveMarkdownDomPreview ? this.dragNoteFlowDomPreview : null;
@@ -17131,14 +17146,30 @@ ${selected}
         this.noteFlowAvoidanceAnchors.clear();
       }
       this.resetDragDropGeometry();
-      const resolvedDropPlacement = affectsNoteFlow ? this.resolveDraggedNoteFlowPlacement(requestedDropPlacement, movedIndexes) : null;
+      let resolvedDropPlacement = affectsNoteFlow ? this.resolveDraggedNoteFlowPlacement(requestedDropPlacement, movedIndexes) : null;
+      if (resolvedDropPlacement && previewCommitStates?.size) {
+        const refreshedCandidate = this.refreshDraggedNoteFlowPreviewCandidate(resolvedDropPlacement.candidate) || resolvedDropPlacement.candidate;
+        resolvedDropPlacement = this.remeasureDraggedNoteFlowPlacement({
+          ...resolvedDropPlacement,
+          candidate: refreshedCandidate
+        });
+      }
       if (resolvedDropPlacement?.horizontalSide) {
         this.prepareMarkdownAnchorForInlineNoteFlow(resolvedDropPlacement);
         this.allowMarkdownPresentationDuringDrag = true;
         this.syncMarkdownBlockPresentation();
         this.allowMarkdownPresentationDuringDrag = false;
       }
-      if (resolvedDropPlacement) {
+      if (resolvedDropPlacement && previewCommitStates?.size) {
+        for (const [index, state] of previewCommitStates) {
+          const stroke = this.drawingData?.strokes?.[index];
+          if (!stroke) {
+            continue;
+          }
+          stroke.points = state.points.map((point) => ({ ...point }));
+          stroke.noteFlow = state.noteFlow ? { ...state.noteFlow } : null;
+        }
+      } else if (resolvedDropPlacement) {
         this.snapDraggedSelectionToNoteFlowPlacement(resolvedDropPlacement, movedIndexes);
       } else if (affectsNoteFlow) {
         for (const index of movedNoteFlowIndexes) {
@@ -17148,21 +17179,33 @@ ${selected}
           }
         }
       }
-      const flowedIndexes = resolvedDropPlacement ? this.reflowNoteFlowElementsAfterDrag(movedIndexes, resolvedDropPlacement, {
+      const flowedIndexes = resolvedDropPlacement && !previewCommitStates?.size ? this.reflowNoteFlowElementsAfterDrag(movedIndexes, resolvedDropPlacement, {
         candidates: resolvedDropPlacement.previewCandidates
       }) : [];
-      const affectedIndexes = Array.from(/* @__PURE__ */ new Set([...movedIndexes, ...flowedIndexes]));
+      const affectedIndexes = Array.from(/* @__PURE__ */ new Set([
+        ...movedIndexes,
+        ...flowedIndexes,
+        ...Array.from(previewCommitStates?.keys?.() || [])
+      ]));
       const droppedNoteFlowIndexes = new Set(this.draggedNoteFlowIndexes(movedIndexes));
       for (const index of affectedIndexes) {
         const stroke = this.drawingData.strokes[index];
         if (stroke?.noteFlow?.enabled) {
           const rejectedDrop = droppedNoteFlowIndexes.has(index) && !resolvedDropPlacement;
-          stroke.noteFlow = rejectedDrop ? { ...this.dragStrokeOriginalNoteFlows.get(index) } : this.captureNoteFlowAnchor(stroke, {
-            placement: droppedNoteFlowIndexes.has(index) ? resolvedDropPlacement : null,
-            preservePlacement: !droppedNoteFlowIndexes.has(index),
-            rowOffset: droppedNoteFlowIndexes.has(index) ? resolvedDropPlacement?.previewRowOffsets?.[index] : null,
-            preserveBoxGeometry: droppedNoteFlowIndexes.has(index) ? resolvedDropPlacement?.horizontalSide ? null : this.dragStrokeOriginalNoteFlows.get(index) : null
-          });
+          if (rejectedDrop) {
+            stroke.noteFlow = { ...this.dragStrokeOriginalNoteFlows.get(index) };
+          } else if (droppedNoteFlowIndexes.has(index)) {
+            stroke.noteFlow = this.captureNoteFlowAnchor(stroke, {
+              placement: droppedNoteFlowIndexes.has(index) ? resolvedDropPlacement : null,
+              preservePlacement: !droppedNoteFlowIndexes.has(index),
+              rowOffset: droppedNoteFlowIndexes.has(index) ? previewCommitStates?.size ? null : resolvedDropPlacement?.previewRowOffsets?.[index] : null,
+              preserveBoxGeometry: droppedNoteFlowIndexes.has(index) ? resolvedDropPlacement?.horizontalSide ? null : this.dragStrokeOriginalNoteFlows.get(index) : null
+            });
+          } else if (!previewCommitStates?.has(index)) {
+            stroke.noteFlow = this.captureNoteFlowAnchor(stroke, {
+              preservePlacement: true
+            });
+          }
         }
       }
       this.reconcileAutoNoteFlowMarkdownSpans();
@@ -21154,6 +21197,28 @@ ${selected}
     }
     return height;
   }
+  clearDraggedNoteFlowOriginReservationPreview(indexes) {
+    const moved = new Set(indexes || []);
+    if (!moved.size) {
+      return false;
+    }
+    let changed = false;
+    for (const [element, states] of this.noteFlowStyledElements || []) {
+      for (const state of states.values()) {
+        if (!moved.has(state.ownerStrokeIndex)) {
+          continue;
+        }
+        this.setDraggedNoteFlowDomStyle(
+          element,
+          state.styleProperty || state.property,
+          state.value || null,
+          state.priority || ""
+        );
+        changed = true;
+      }
+    }
+    return changed;
+  }
   applyDraggedNoteFlowReservationPreview(placement, indexes, reservationHeight = null) {
     if (!placement?.candidate || placement.horizontalSide) {
       return false;
@@ -21181,20 +21246,6 @@ ${selected}
     reservationProperties.add(styleProperty);
     this.setDraggedNoteFlowDomStyle(target, styleProperty, `${Math.ceil(base + applied)}px`, "important");
     this.setDraggedNoteFlowDomClass(target, "notedraw-note-flow-anchor", true);
-    const moved = new Set(indexes || []);
-    for (const [element, states] of this.noteFlowStyledElements || []) {
-      for (const state of states.values()) {
-        if (!moved.has(state.ownerStrokeIndex) || element === target && state.styleProperty === styleProperty) {
-          continue;
-        }
-        this.setDraggedNoteFlowDomStyle(
-          element,
-          state.styleProperty || state.property,
-          state.value || null,
-          state.priority || ""
-        );
-      }
-    }
     return true;
   }
   restoreDraggedNoteFlowReservationStyles() {
@@ -21390,6 +21441,7 @@ ${selected}
       this.restoreDraggedNoteFlowLivePreview();
     }
     const movedIndexes = Array.from(this.dragStrokeOriginalPoints?.keys?.() || []);
+    this.clearDraggedNoteFlowOriginReservationPreview(movedIndexes);
     const resolved = this.resolveDraggedNoteFlowPlacement(placement, movedIndexes);
     if (!resolved) {
       return [];
@@ -21463,7 +21515,11 @@ ${selected}
       }
     }
     if (strokePoints) {
-      this.animateDraggedNoteFlowStrokeShifts(strokePoints, affectedIndexes);
+      const movedSet = new Set(movedIndexes);
+      this.animateDraggedNoteFlowStrokeShifts(
+        strokePoints,
+        affectedIndexes.filter((index) => !movedSet.has(index))
+      );
     }
     if (this.dragNoteFlowPreviewElementIds.size) {
       this.syncBoundConnectors({ elementIds: new Set(this.dragNoteFlowPreviewElementIds) });

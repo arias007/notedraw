@@ -13454,8 +13454,14 @@ var PreviewDrawingController = class {
       this.beginNoteFlowScrollStability();
     }
     let requestedDropPlacement = null;
+    let previewCommitStates = null;
     let settleNoteFlowImmediately = false;
     if (didMove && this.usesDraggedNoteFlowPlacement()) {
+      // The last applied preview is the exact result visible at pointer-up.
+      // Do not resolve the same pointer again against the preview-mutated DOM:
+      // reservations can move the candidate index underneath a stationary
+      // pointer and make release select a different row near the document top.
+      const visiblePreviewPlacement = this.dragNoteFlowLastAppliedPlacement;
       const pendingDropClientX = this.dragNoteFlowDropClientX;
       const pendingDropClientY = this.dragNoteFlowDropClientY;
       if (this.dragNoteFlowDropFrameId !== null) {
@@ -13464,13 +13470,17 @@ var PreviewDrawingController = class {
       }
       this.dragNoteFlowDropClientX = null;
       this.dragNoteFlowDropClientY = null;
-      if (Number.isFinite(Number(pendingDropClientX)) && Number.isFinite(Number(pendingDropClientY))) {
+      if (!visiblePreviewPlacement
+        && Number.isFinite(Number(pendingDropClientX))
+        && Number.isFinite(Number(pendingDropClientY))) {
         this.updateDraggedNoteFlowPlacement(Number(pendingDropClientX), Number(pendingDropClientY));
       }
       // Commit the placement that was actually previewed (WYSIWYG). The
       // preview must already show the final position; recomputing here would
       // apply a placement the user never saw and flash after release.
-      const previewedPlacement = this.dragNoteFlowLastAppliedPlacement || this.dragNoteFlowPlacement;
+      const previewedPlacement = visiblePreviewPlacement
+        || this.dragNoteFlowLastAppliedPlacement
+        || this.dragNoteFlowPlacement;
       requestedDropPlacement = previewedPlacement ? {
         path: previewedPlacement.path,
         line: previewedPlacement.line,
@@ -13485,6 +13495,19 @@ var PreviewDrawingController = class {
         previewCandidates: previewedPlacement.previewCandidates,
         previewRowOffsets: previewedPlacement.previewRowOffsets
       } : null;
+      if (requestedDropPlacement) {
+        const previewIndexes = new Set([
+          ...Array.from(this.dragStrokeOriginalPoints?.keys?.() || []),
+          ...Array.from(this.dragNoteFlowLivePreviewOriginals?.keys?.() || [])
+        ]);
+        previewCommitStates = new Map(Array.from(previewIndexes).flatMap((index) => {
+          const stroke = this.drawingData?.strokes?.[index];
+          return stroke ? [[index, {
+            points: stroke.points.map((point) => ({ ...point })),
+            noteFlow: stroke.noteFlow ? { ...stroke.noteFlow } : null
+          }]] : [];
+        }));
+      }
     }
     const preserveMarkdownDomPreview = didMove
       && Boolean(this.dragNoteFlowDomPreview)
@@ -13575,16 +13598,37 @@ var PreviewDrawingController = class {
         this.noteFlowAvoidanceAnchors.clear();
       }
       this.resetDragDropGeometry();
-      const resolvedDropPlacement = affectsNoteFlow
+      let resolvedDropPlacement = affectsNoteFlow
         ? this.resolveDraggedNoteFlowPlacement(requestedDropPlacement, movedIndexes)
         : null;
+      if (resolvedDropPlacement && previewCommitStates?.size) {
+        const refreshedCandidate = this.refreshDraggedNoteFlowPreviewCandidate(resolvedDropPlacement.candidate)
+          || resolvedDropPlacement.candidate;
+        resolvedDropPlacement = this.remeasureDraggedNoteFlowPlacement({
+          ...resolvedDropPlacement,
+          candidate: refreshedCandidate
+        });
+      }
       if (resolvedDropPlacement?.horizontalSide) {
         this.prepareMarkdownAnchorForInlineNoteFlow(resolvedDropPlacement);
         this.allowMarkdownPresentationDuringDrag = true;
         this.syncMarkdownBlockPresentation();
         this.allowMarkdownPresentationDuringDrag = false;
       }
-      if (resolvedDropPlacement) {
+      if (resolvedDropPlacement && previewCommitStates?.size) {
+        // Commit the exact geometry produced by the last live preview. The
+        // preview restore above is only for temporary DOM styles; rebuilding
+        // stroke geometry from those restored rectangles gives a different
+        // result from what the user released over.
+        for (const [index, state] of previewCommitStates) {
+          const stroke = this.drawingData?.strokes?.[index];
+          if (!stroke) {
+            continue;
+          }
+          stroke.points = state.points.map((point) => ({ ...point }));
+          stroke.noteFlow = state.noteFlow ? { ...state.noteFlow } : null;
+        }
+      } else if (resolvedDropPlacement) {
         this.snapDraggedSelectionToNoteFlowPlacement(resolvedDropPlacement, movedIndexes);
       } else if (affectsNoteFlow) {
         for (const index of movedNoteFlowIndexes) {
@@ -13594,22 +13638,33 @@ var PreviewDrawingController = class {
           }
         }
       }
-      const flowedIndexes = resolvedDropPlacement ? this.reflowNoteFlowElementsAfterDrag(movedIndexes, resolvedDropPlacement, {
+      const flowedIndexes = resolvedDropPlacement && !previewCommitStates?.size ? this.reflowNoteFlowElementsAfterDrag(movedIndexes, resolvedDropPlacement, {
         candidates: resolvedDropPlacement.previewCandidates
       }) : [];
-      const affectedIndexes = Array.from(new Set([...movedIndexes, ...flowedIndexes]));
+      const affectedIndexes = Array.from(new Set([
+        ...movedIndexes,
+        ...flowedIndexes,
+        ...Array.from(previewCommitStates?.keys?.() || [])
+      ]));
       const droppedNoteFlowIndexes = new Set(this.draggedNoteFlowIndexes(movedIndexes));
       for (const index of affectedIndexes) {
         const stroke = this.drawingData.strokes[index];
         if (stroke?.noteFlow?.enabled) {
           const rejectedDrop = droppedNoteFlowIndexes.has(index) && !resolvedDropPlacement;
-          stroke.noteFlow = rejectedDrop
-            ? { ...this.dragStrokeOriginalNoteFlows.get(index) }
-            : this.captureNoteFlowAnchor(stroke, {
+          if (rejectedDrop) {
+            stroke.noteFlow = { ...this.dragStrokeOriginalNoteFlows.get(index) };
+          } else if (droppedNoteFlowIndexes.has(index)) {
+            stroke.noteFlow = this.captureNoteFlowAnchor(stroke, {
               placement: droppedNoteFlowIndexes.has(index) ? resolvedDropPlacement : null,
               preservePlacement: !droppedNoteFlowIndexes.has(index),
               rowOffset: droppedNoteFlowIndexes.has(index)
-                ? resolvedDropPlacement?.previewRowOffsets?.[index]
+                ? previewCommitStates?.size
+                  // The preview reservation has been removed, so derive the
+                  // offset from the exact committed points against the fresh
+                  // row boundary. Reusing the preview offset would shift the
+                  // stroke by one reserved row after pointer-up.
+                  ? null
+                  : resolvedDropPlacement?.previewRowOffsets?.[index]
                 : null,
               preserveBoxGeometry: droppedNoteFlowIndexes.has(index)
                 ? resolvedDropPlacement?.horizontalSide
@@ -13617,6 +13672,11 @@ var PreviewDrawingController = class {
                   : this.dragStrokeOriginalNoteFlows.get(index)
                 : null
             });
+          } else if (!previewCommitStates?.has(index)) {
+            stroke.noteFlow = this.captureNoteFlowAnchor(stroke, {
+              preservePlacement: true
+            });
+          }
         }
       }
       this.reconcileAutoNoteFlowMarkdownSpans();
@@ -17809,6 +17869,28 @@ var PreviewDrawingController = class {
     }
     return height;
   }
+  clearDraggedNoteFlowOriginReservationPreview(indexes) {
+    const moved = new Set(indexes || []);
+    if (!moved.size) {
+      return false;
+    }
+    let changed = false;
+    for (const [element, states] of this.noteFlowStyledElements || []) {
+      for (const state of states.values()) {
+        if (!moved.has(state.ownerStrokeIndex)) {
+          continue;
+        }
+        this.setDraggedNoteFlowDomStyle(
+          element,
+          state.styleProperty || state.property,
+          state.value || null,
+          state.priority || ""
+        );
+        changed = true;
+      }
+    }
+    return changed;
+  }
   applyDraggedNoteFlowReservationPreview(placement, indexes, reservationHeight = null) {
     if (!placement?.candidate || placement.horizontalSide) {
       return false;
@@ -17850,20 +17932,6 @@ var PreviewDrawingController = class {
     reservationProperties.add(styleProperty);
     this.setDraggedNoteFlowDomStyle(target, styleProperty, `${Math.ceil(base + applied)}px`, "important");
     this.setDraggedNoteFlowDomClass(target, "notedraw-note-flow-anchor", true);
-    const moved = new Set(indexes || []);
-    for (const [element, states] of this.noteFlowStyledElements || []) {
-      for (const state of states.values()) {
-        if (!moved.has(state.ownerStrokeIndex) || element === target && state.styleProperty === styleProperty) {
-          continue;
-        }
-        this.setDraggedNoteFlowDomStyle(
-          element,
-          state.styleProperty || state.property,
-          state.value || null,
-          state.priority || ""
-        );
-      }
-    }
     return true;
   }
   restoreDraggedNoteFlowReservationStyles() {
@@ -18088,6 +18156,10 @@ var PreviewDrawingController = class {
       this.restoreDraggedNoteFlowLivePreview();
     }
     const movedIndexes = Array.from(this.dragStrokeOriginalPoints?.keys?.() || []);
+    // Remove the moving strokes' old row reservation before measuring the new
+    // target. Otherwise every target below the origin is measured one old-row
+    // height too low and jumps upward as soon as the origin reservation clears.
+    this.clearDraggedNoteFlowOriginReservationPreview(movedIndexes);
     const resolved = this.resolveDraggedNoteFlowPlacement(placement, movedIndexes);
     if (!resolved) {
       return [];
@@ -18170,7 +18242,14 @@ var PreviewDrawingController = class {
       }
     }
     if (strokePoints) {
-      this.animateDraggedNoteFlowStrokeShifts(strokePoints, affectedIndexes);
+      // The selected element must remain exactly under the pointer. Animating
+      // it makes the visible stroke lag behind its hit-test geometry and every
+      // pointer frame restarts that lag. Only displaced peers need easing.
+      const movedSet = new Set(movedIndexes);
+      this.animateDraggedNoteFlowStrokeShifts(
+        strokePoints,
+        affectedIndexes.filter((index) => !movedSet.has(index))
+      );
     }
     if (this.dragNoteFlowPreviewElementIds.size) {
       this.syncBoundConnectors({ elementIds: new Set(this.dragNoteFlowPreviewElementIds) });
