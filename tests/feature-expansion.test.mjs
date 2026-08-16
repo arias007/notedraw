@@ -478,6 +478,8 @@ test("command buttons preserve editing and execute only after a completed select
   assert.match(source, /class extends FuzzySuggestModal/);
   assert.match(source, /chooseButtonCommand/);
   assert.match(source, /setSelectedButtonCommand\(index, command\)/);
+  assert.match(source, /commandButton\?\.toggleAttribute\("hidden", this\.selectedButtonCommandIndex\(\) < 0\)/);
+  assert.doesNotMatch(source, /commandButton\?\.toggleAttribute\("hidden", !this\.selectedButtonCommandIndex\(\)\)/);
   assert.doesNotMatch(pointerSource, /executeButtonCommand\(hitStrokeIndex\)/);
 });
 

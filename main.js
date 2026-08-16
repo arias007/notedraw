@@ -11578,7 +11578,7 @@ var PreviewDrawingController = class {
     const sourceButton = this.selectionMenu.querySelector('[data-note-draw-title-key="openSourceNote"]');
     sourceButton?.toggleAttribute("hidden", !this.selectedMindMapSource());
     const commandButton = this.selectionMenu.querySelector('[data-note-draw-title-key="buttonCommand"]');
-    commandButton?.toggleAttribute("hidden", !this.selectedButtonCommandIndex());
+    commandButton?.toggleAttribute("hidden", this.selectedButtonCommandIndex() < 0);
     const filterContext = this.selectionFilterContext();
     const filterButton = this.selectionMenu.querySelector('[data-note-draw-title-key="selectFloatingOnly"], [data-note-draw-title-key="selectMarkdownOnly"], [data-note-draw-title-key="selectAllElements"]');
     if (filterButton) {
