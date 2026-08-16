@@ -196,6 +196,10 @@ test("reading text edits avoid placeholder breaks and support undo, redo, and bl
   assert.match(source, /\["div", "p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "blockquote", "td", "th", "figcaption", "caption"\]\.includes\(tag\)/);
   assert.match(source, /await this\.plugin\.undoControllerHistory\(this\)/);
   assert.match(source, /await this\.plugin\.redoControllerHistory\(this\)/);
+  assert.match(source, /applyControllerHistoryEntry\(entry, "before", controller\)/);
+  assert.match(source, /applyControllerHistoryEntry\(entry, "after", controller\)/);
+  assert.match(source, /refreshControllerAfterMarkdownHistory\(controller\)[\s\S]*scheduleMarkdownAnnotationRefresh\(\{ layout: controller\.hasNoteFlowElements\(\), delay: 0, force: true \}\)[\s\S]*scheduleEmbedRepair\(0\)/);
+  assert.doesNotMatch(source.slice(source.indexOf("  refreshControllerAfterMarkdownHistory("), source.indexOf("  async applyControllerHistoryEntry(", source.indexOf("  refreshControllerAfterMarkdownHistory("))), /rerender/);
   assert.match(source, /recordMarkdownHistory\(file, before, after/);
   assert.match(source, /const result = await this\.saveTextBlock\(file, originalText, editedText, sourceInfo, target\)/);
   assert.match(source, /controller\?\.recordMarkdownHistory\(file, result\.history\.before, result\.history\.after\)/);

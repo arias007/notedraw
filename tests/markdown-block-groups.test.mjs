@@ -799,6 +799,12 @@ test("Markdown drop settlement remaps rendered blocks without auto-persisting st
   assert.match(source, /const sourceIndexes = new Map\([\s\S]*createMarkdownSourceIndex\(source\)/);
   assert.match(source, /resolveSourceDropTarget\(source, state\.sourceInfo, state\.sourceText, sourceIndex, state\.embedDestination\)/);
   assert.match(source, /markdownDragSourceIdentity\(element\)[\s\S]*embedDestination: sourceIdentity\.embedDestination/);
+  assert.match(source, /hostLineElement = \(owner \|\| linkedFile \|\| element\)\.closest\?\.\("\[data-note-draw-line-start\],\[data-line\]"\)[\s\S]*parseInteger\(hostLineElement\?\.dataset\?\.noteDrawLineStart\)/);
+  assert.match(source, /const sourcePath = isMarkdownEmbedBlockElement\(element\)[\s\S]*normalizeVaultPath\(fallbackPath\)[\s\S]*resolveRenderedSourcePath/);
+  assert.match(source, /const embedIdentity = markdownDragSourceIdentity\(element\)[\s\S]*resolveMarkdownEmbedSourceTarget\(source, embedIdentity\.embedDestination, sourceInfo, sourceIndex\)/);
+  assert.match(source, /target\?\.matches\?\.\(MARKDOWN_EMBED_SELECTOR\)[\s\S]*target\?\.closest\?\.\(MARKDOWN_EMBED_SELECTOR\)[\s\S]*target\?\.querySelector\?\.\(MARKDOWN_EMBED_SELECTOR\)/);
+  assert.match(source, /linkedFileSelector = "\[data-cancip-inline-path\],\[data-file-path\],\[data-embed-path\]"[\s\S]*linkedFile\?\.getAttribute\?\.\("data-cancip-inline-path"\)/);
+  assert.match(source, /changed: result\.changed !== false,[\s\S]*before: result\.before,[\s\S]*after: result\.after/);
   assert.match(presentationSource, /markdownMetadataChanged[\s\S]*block\.lineStart !== info\.lineStart/);
   assert.doesNotMatch(presentationSource, /scheduleDrawingSave\(this\.file, this\.drawingData, \{ userOperation: true \}\)/);
 });

@@ -6134,7 +6134,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     if (!entry) {
       return false;
     }
-    if (!await this.applyControllerHistoryEntry(entry, "before")) {
+    if (!await this.applyControllerHistoryEntry(entry, "before", controller)) {
       state.undo.push(entry);
       return false;
     }
@@ -6147,14 +6147,27 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     if (!entry) {
       return false;
     }
-    if (!await this.applyControllerHistoryEntry(entry, "after")) {
+    if (!await this.applyControllerHistoryEntry(entry, "after", controller)) {
       state.redo.push(entry);
       return false;
     }
     state.undo.push(entry);
     return true;
   }
-  async applyControllerHistoryEntry(entry, direction) {
+  refreshControllerAfterMarkdownHistory(controller) {
+    if (!controller || controller.destroyed || !controller.previewEl?.isConnected) {
+      return;
+    }
+    window.setTimeout(() => {
+      if (controller.destroyed || !controller.previewEl?.isConnected) {
+        return;
+      }
+      controller.scheduleMarkdownAnnotationRefresh({ layout: controller.hasNoteFlowElements(), delay: 0, force: true });
+      controller.scheduleEmbedRepair(0);
+      controller.scheduleResize({ layout: false, measure: true });
+    }, 48);
+  }
+  async applyControllerHistoryEntry(entry, direction, controller = null) {
     if (entry.kind === "compound") {
       const markdownFile = getVaultFileByPath(this.app.vault, entry.markdownFile?.path);
       const drawingFile = getVaultFileByPath(this.app.vault, entry.drawingFile?.path) || entry.drawingFile;
@@ -6170,6 +6183,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       const data = cloneDrawingData(direction === "before" ? entry.drawingBefore : entry.drawingAfter, drawingFile);
       this.scheduleDrawingSave(drawingFile, data, { replace: true });
       this.emitApiEvent("markdown-changed", { file: markdownFile.path, history: direction });
+      this.refreshControllerAfterMarkdownHistory(controller);
       return true;
     }
     if (entry.kind === "drawing") {
@@ -6189,6 +6203,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       }
       await this.app.vault.modify(file2, String(entry[direction] || ""));
       this.emitApiEvent("markdown-changed", { file: file2.path, history: direction });
+      this.refreshControllerAfterMarkdownHistory(controller);
       return true;
     }
     return false;
@@ -16689,7 +16704,11 @@ ${selected}
     this.scheduleMarkdownAnnotationRefresh({ layout: hasNoteFlow, delay: 48, force: true });
     this.scheduleResize({ layout: false, measure: true });
     this.requestRender(this.selectionHasDomStrokes() ? "interaction" : false);
-    return true;
+    return {
+      changed: result.changed !== false,
+      before: result.before,
+      after: result.after
+    };
   }
   updateDraggedElementGroupMembership(event, strokeIndexes, markdownBlocks) {
     const point = this.pointToCanvas(this.eventToPoint(event));
@@ -25687,7 +25706,7 @@ function isMarkdownEmbedBlockElement(element) {
   );
 }
 function findMarkdownEmbedBlockElement(target, previewEl = null) {
-  const embed = target?.closest?.(MARKDOWN_EMBED_SELECTOR);
+  const embed = target?.matches?.(MARKDOWN_EMBED_SELECTOR) ? target : target?.closest?.(MARKDOWN_EMBED_SELECTOR) || target?.querySelector?.(MARKDOWN_EMBED_SELECTOR);
   if (!embed || previewEl && !previewEl.contains?.(embed)) {
     return null;
   }
@@ -26537,7 +26556,7 @@ function applyRenderedMarkdownLineMetadata(element, match) {
 }
 function annotateVisibleMarkdownElements(app, root, fallbackPath) {
   for (const element of collectNoteFlowMarkdownOwners(root)) {
-    const sourcePath = resolveRenderedSourcePath(app, element, fallbackPath);
+    const sourcePath = isMarkdownEmbedBlockElement(element) ? normalizeVaultPath(fallbackPath) : resolveRenderedSourcePath(app, element, fallbackPath);
     if (element.dataset.noteDrawSourcePath !== sourcePath) {
       delete element.dataset.noteDrawLineMapped;
       delete element.dataset.noteDrawInheritedLineStart;
@@ -26605,8 +26624,10 @@ async function annotateRenderedMarkdownLines(app, root, fallbackPath, options = 
     const renderedText = renderedMarkdownIdentityText(element);
     const sourceInfo = getSourceInfo(element);
     const used = usedTargets.get(path) || /* @__PURE__ */ new Set();
-    const sourceTargets = findRenderedMarkdownSourceTargets(source, renderedText, sourceIndex);
-    let target = resolveRenderedMarkdownSourceTarget(source, renderedText, sourceInfo, sourceIndex);
+    const embedIdentity = markdownDragSourceIdentity(element);
+    const embedTarget = embedIdentity.embedDestination ? resolveMarkdownEmbedSourceTarget(source, embedIdentity.embedDestination, sourceInfo, sourceIndex) : null;
+    const sourceTargets = embedTarget ? [embedTarget] : findRenderedMarkdownSourceTargets(source, renderedText, sourceIndex);
+    let target = embedTarget || resolveRenderedMarkdownSourceTarget(source, renderedText, sourceInfo, sourceIndex);
     if (!target || used.has(`${target.start}:${target.end}`)) {
       target = sourceTargets.find((candidate) => {
         return !used.has(`${candidate.start}:${candidate.end}`);
@@ -28624,7 +28645,9 @@ function getSourceInfo(element) {
 function markdownDragSourceIdentity(element) {
   const embed = findMarkdownEmbedBlockElement(element);
   const owner = embed?.matches?.(".internal-embed") ? embed : embed?.closest?.(".internal-embed") || embed?.querySelector?.(".internal-embed");
-  const embedDestination = owner?.getAttribute?.("data-src") || owner?.getAttribute?.("data-path") || owner?.getAttribute?.("src") || "";
+  const linkedFileSelector = "[data-cancip-inline-path],[data-file-path],[data-embed-path]";
+  const linkedFile = element?.matches?.(linkedFileSelector) ? element : element?.closest?.(linkedFileSelector) || element?.querySelector?.(linkedFileSelector);
+  const embedDestination = owner?.getAttribute?.("data-src") || owner?.getAttribute?.("data-path") || owner?.getAttribute?.("src") || linkedFile?.getAttribute?.("data-cancip-inline-path") || linkedFile?.getAttribute?.("data-file-path") || linkedFile?.getAttribute?.("data-embed-path") || "";
   if (!embedDestination) {
     return {
       sourceInfo: getSourceInfo(element),
@@ -28632,8 +28655,8 @@ function markdownDragSourceIdentity(element) {
       embedDestination: ""
     };
   }
-  const hostLineElement = owner.closest?.("[data-line]");
-  const hostLine = parseDataLine(hostLineElement?.getAttribute?.("data-line"));
+  const hostLineElement = (owner || linkedFile || element).closest?.("[data-note-draw-line-start],[data-line]");
+  const hostLine = parseInteger(hostLineElement?.dataset?.noteDrawLineStart) ?? parseDataLine(hostLineElement?.getAttribute?.("data-line"));
   return {
     sourceInfo: {
       lineStart: hostLine,

@@ -54,6 +54,49 @@ test("duplicate embedded notes use the host line and keep heading destinations d
   assert.equal(resolveMarkdownEmbedSourceTarget(source, "项目", {}) , null);
 });
 
+test("every draggable Markdown block kind resolves one stable host range", () => {
+  const source = [
+    "# 标题",
+    "",
+    "普通文字 [网页链接](https://example.com)",
+    "",
+    "- [ ] 待办任务",
+    "",
+    "| 名称 | 说明 |",
+    "| --- | --- |",
+    "| Markdown | 轻量标记 |",
+    "",
+    "```js",
+    "console.log(1)",
+    "```",
+    "",
+    "![工作簿](资料/工作簿.xlsx)",
+    "",
+    "![嵌入笔记](资料/项目说明.md)",
+    "",
+    "> 引用内容"
+  ].join("\n");
+  const index = createMarkdownSourceIndex(source);
+  const renderedCases = [
+    ["标题", 0, 0],
+    ["普通文字 网页链接", 2, 2],
+    ["待办任务", 4, 4],
+    ["名称\t说明\nMarkdown\t轻量标记", 6, 8],
+    ["console.log(1)", 10, 12],
+    ["引用内容", 18, 18]
+  ];
+  for (const [rendered, line, endLine] of renderedCases) {
+    const target = resolveRenderedMarkdownSourceTarget(source, rendered, {
+      lineStart: line,
+      lineEnd: endLine
+    }, index);
+    assert.equal(target?.line, line, rendered);
+    assert.equal(target?.endLine, endLine, rendered);
+  }
+  assert.equal(resolveMarkdownEmbedSourceTarget(source, "资料/工作簿.xlsx", { lineStart: 14 }, index)?.line, 14);
+  assert.equal(resolveMarkdownEmbedSourceTarget(source, "资料/项目说明.md", { lineStart: 16 }, index)?.line, 16);
+});
+
 test("rendered headings and list items map to their Markdown source lines", () => {
   const source = [
     "# 标题",
