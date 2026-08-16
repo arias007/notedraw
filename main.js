@@ -19206,10 +19206,13 @@ ${selected}
     if (this.isOwnedMarkdownGridRow(container)) {
       container = container.parentElement;
     }
-    if (!container || !this.previewEl?.contains?.(container)) {
-      return null;
+    while (container && this.previewEl?.contains?.(container)) {
+      if (container.matches?.(".markdown-preview-section,.markdown-rendered,.callout-content,.contains-task-list,ul,ol,.el-ul,.el-ol")) {
+        return container;
+      }
+      container = container.parentElement;
     }
-    return container.matches?.(".markdown-preview-section,.markdown-rendered,.callout-content,.contains-task-list,ul,ol,.el-ul,.el-ol") ? container : null;
+    return null;
   }
   markdownBlockLayoutLane(element) {
     return this.markdownBlockInlineLane(element) || this.markdownBlockGridContainer(element);
@@ -19565,7 +19568,6 @@ ${selected}
       const previousMeta = candidateMeta.get(previous);
       const previousMatches = previousMeta && !used.has(previous) && previousMeta.path === block.path && previous?.dataset?.noteDrawMarkdownBlockId === block.id && identityMatches(block, previous);
       const exactKey = `${block.path}\0${block.lineStart}\0${block.textHint}`;
-      const lineKey = `${block.path}\0${block.lineStart}`;
       const hintKey = `${block.path}\0${block.textHint}`;
       let element = previousMatches ? previous : takeUnused(idCandidates.get(block.id), block) || takeUnused(exactCandidates.get(exactKey), block) || takeUnused(hintCandidates.get(hintKey), block);
       if (!element) {
@@ -20304,8 +20306,10 @@ ${selected}
         continue;
       }
       element.classList.add("notedraw-note-flow-peer-animating");
-      element.style.setProperty("--notedraw-note-flow-peer-x", `${Math.round(x)}px`);
-      element.style.setProperty("--notedraw-note-flow-peer-y", `${Math.round(y)}px`);
+      setNoteDrawCssProps(element, {
+        "--notedraw-note-flow-peer-x": `${Math.round(x)}px`,
+        "--notedraw-note-flow-peer-y": `${Math.round(y)}px`
+      });
       this.dragNoteFlowPeerAnimatingElements.add(element);
       changed.push(element);
     }
@@ -20318,8 +20322,10 @@ ${selected}
         if (!element?.isConnected) {
           continue;
         }
-        element.style.setProperty("--notedraw-note-flow-peer-x", "0px");
-        element.style.setProperty("--notedraw-note-flow-peer-y", "0px");
+        setNoteDrawCssProps(element, {
+          "--notedraw-note-flow-peer-x": "0px",
+          "--notedraw-note-flow-peer-y": "0px"
+        });
         const timer = window.setTimeout(() => {
           element.classList.remove("notedraw-note-flow-peer-animating");
           element.style.removeProperty("--notedraw-note-flow-peer-x");
@@ -21290,7 +21296,6 @@ ${selected}
       laneWidth,
       draggedStrokeClientWidth + draggedMarkdownCount * equalLaneWidth + Math.max(0, movingLaneCount - 1) * 10
     );
-    const draggedClientHeight = draggedClientBounds ? Math.max(1, draggedClientBounds.bottom - draggedClientBounds.top) : targetRect.height;
     const minimumTargetWidth = Math.min(equalLaneWidth, laneWidth * 0.45);
     const projectedTargetRight = Math.max(
       targetRect.left + minimumTargetWidth,
@@ -22400,6 +22405,7 @@ ${selected}
       minY: target.targetBox.y,
       maxY: target.targetBox.y + target.targetBox.height,
       rowKey: target.rowKey,
+      overlapGroup: isNoteFlowInkStroke(target.stroke) ? `ink:${target.rowKey}` : "",
       anchor: target.anchor
     }));
     const inlinePacking = this.packInlineNoteFlowItems(inlineItems, candidates, {
@@ -23903,12 +23909,13 @@ ${selected}
     let top = elementRect.top;
     let bottom = elementRect.bottom;
     if (forSelection) {
-      const localHeight = Number(element.offsetHeight) || 0;
-      const visualScale = localHeight > 0 ? elementRect.height / localHeight : this.readingZoomScale();
-      const flowInsets = this.noteFlowAppliedVerticalInsets(element);
-      top += flowInsets.top * visualScale;
-      bottom -= flowInsets.bottom * visualScale;
-      const checkboxRect = this.markdownTaskCheckboxRect(element, elementRect);
+      const visibleRect = this.markdownElementVisibleClientRect(element) || elementRect;
+      left = visibleRect.left;
+      right = visibleRect.right;
+      top = visibleRect.top;
+      bottom = visibleRect.bottom;
+      left -= Math.max(4, Math.min(8, visibleRect.height * 0.18));
+      const checkboxRect = this.markdownTaskCheckboxRect(element, visibleRect);
       if (checkboxRect) {
         left = Math.min(left, checkboxRect.left);
         right = Math.max(right, checkboxRect.right);

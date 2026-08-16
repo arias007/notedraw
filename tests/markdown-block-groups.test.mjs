@@ -68,6 +68,7 @@ test("all Markdown block types use stable inline lanes inside renderer-owned col
   const preview = source.slice(source.indexOf("  applyDraggedNoteFlowAnchorDomPreview("), source.indexOf("  restoreDraggedNoteFlowLivePreview("));
 
   assert.match(rows, /markdownBlockInlineLane\(element\)/);
+  assert.match(rows, /while \(container && this\.previewEl\?\.contains\?\.\(container\)\)/);
   assert.match(rows, /\.markdown-preview-section,\.markdown-rendered,\.callout-content,\.contains-task-list,ul,ol,\.el-ul,\.el-ol/);
   assert.match(rows, /markdownBlockLayoutLane\(element\)/);
   assert.match(rows, /notedraw-md-grid-row/);
@@ -90,6 +91,14 @@ test("all Markdown block types use stable inline lanes inside renderer-owned col
       kind
     }), "inline-right");
   }
+});
+
+test("reading-view NoteFlow alignment keeps note-pen overlap groups intact", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const alignment = source.slice(source.indexOf("  alignNoteFlowStrokesToReservedRows("), source.indexOf("  scheduleNoteFlowLayout(", source.indexOf("  alignNoteFlowStrokesToReservedRows(")));
+
+  assert.match(alignment, /const inlineItems = targets\.filter\(\(target\) => target\.placementMode === "inline"\)/);
+  assert.match(alignment, /overlapGroup: isNoteFlowInkStroke\(target\.stroke\) \? `ink:\$\{target\.rowKey\}` : ""/);
 });
 
 test("legacy floating overlap repair requires a real two-dimensional collision", () => {
@@ -563,12 +572,12 @@ test("Markdown selection bounds exclude NoteFlow padding and include task checkb
   assert.match(source, /noteFlowAppliedVerticalInsets\(element\)/);
   assert.match(source, /input\.task-list-item-checkbox, input\[type='checkbox'\]/);
   assert.match(source, /listItem\.matches\?\.\("\.task-list-item, \[data-task\], \[data-task-status\]"\)/);
-  assert.match(source, /this\.markdownTaskCheckboxRect\(element, elementRect\)/);
+  assert.match(source, /const visibleRect = this\.markdownElementVisibleClientRect\(element\) \|\| elementRect/);
   // The task checkbox (left of the <li>) is enclosed by the selection frame
   // so the whole todo item is visibly selected.
   assert.match(source, /left = Math\.min\(left, checkboxRect\.left\)/);
-  assert.match(source, /top \+= flowInsets\.top \* visualScale/);
-  assert.match(source, /bottom -= flowInsets\.bottom \* visualScale/);
+  assert.match(source, /top = visibleRect\.top/);
+  assert.match(source, /bottom = visibleRect\.bottom/);
 });
 
 test("Double-clicking the bottom-right resize handle resets elements to best fit", async () => {

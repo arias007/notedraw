@@ -433,7 +433,7 @@ test("mind map import creates editable NoteDraw nodes and magnetically bound con
   assert.match(source, /openSelectedMindMapSource/);
   assert.match(source, /connector: \{\s*fromId: idMap\.get\(edge\.fromId\),\s*toId: idMap\.get\(edge\.toId\)/);
   assert.match(source, /syncBoundConnectors\(\)/);
-  assert.match(source, /buildBoundConnectorPoints\(fromBounds, toBounds/);
+  assert.match(source, /buildSnappedConnectorPoints\(\{[\s\S]*fromBounds,[\s\S]*toBounds,/);
   assert.match(source, /drawBoundConnectorOn\(ctx, stroke, alpha\)/);
   assert.match(source, /ctx\.quadraticCurveTo\(points\[1\]\.x, points\[1\]\.y, points\[2\]\.x, points\[2\]\.y\)/);
 });

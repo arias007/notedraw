@@ -1279,7 +1279,6 @@ var DEFAULT_SETTINGS = {
 };
 var MARKDOWN_TEXT_SELECTOR = "h1,h2,h3,h4,h5,h6,p,li,blockquote,td,th,.callout-content";
 var MARKDOWN_EMBED_SELECTOR = ".internal-embed,.markdown-embed,.markdown-embed-content";
-var MARKDOWN_HEADING_SELECTOR = "h1,h2,h3,h4,h5,h6,.el-h1,.el-h2,.el-h3,.el-h4,.el-h5,.el-h6";
 var NOTE_FLOW_RENDERED_OWNER_SELECTOR = [
   ".el-p",
   ".el-h1",
@@ -15786,12 +15785,17 @@ var PreviewDrawingController = class {
     if (this.isOwnedMarkdownGridRow(container)) {
       container = container.parentElement;
     }
-    if (!container || !this.previewEl?.contains?.(container)) {
-      return null;
+    // Obsidian may insert an inline wrapper around a task, heading, embed, or
+    // explicit line block when it refreshes reading view. Walk to the stable
+    // renderer-owned lane instead of treating that transient wrapper as a
+    // reason to discard a persisted parallel span.
+    while (container && this.previewEl?.contains?.(container)) {
+      if (container.matches?.(".markdown-preview-section,.markdown-rendered,.callout-content,.contains-task-list,ul,ol,.el-ul,.el-ol")) {
+        return container;
+      }
+      container = container.parentElement;
     }
-    return container.matches?.(".markdown-preview-section,.markdown-rendered,.callout-content,.contains-task-list,ul,ol,.el-ul,.el-ol")
-      ? container
-      : null;
+    return null;
   }
   markdownBlockLayoutLane(element) {
     return this.markdownBlockInlineLane(element) || this.markdownBlockGridContainer(element);
@@ -16167,7 +16171,6 @@ var PreviewDrawingController = class {
         && previous?.dataset?.noteDrawMarkdownBlockId === block.id
         && identityMatches(block, previous);
       const exactKey = `${block.path}\u0000${block.lineStart}\u0000${block.textHint}`;
-      const lineKey = `${block.path}\u0000${block.lineStart}`;
       const hintKey = `${block.path}\u0000${block.textHint}`;
       let element = previousMatches
         ? previous
@@ -16943,8 +16946,10 @@ var PreviewDrawingController = class {
         continue;
       }
       element.classList.add("notedraw-note-flow-peer-animating");
-      element.style.setProperty("--notedraw-note-flow-peer-x", `${Math.round(x)}px`);
-      element.style.setProperty("--notedraw-note-flow-peer-y", `${Math.round(y)}px`);
+      setNoteDrawCssProps(element, {
+        "--notedraw-note-flow-peer-x": `${Math.round(x)}px`,
+        "--notedraw-note-flow-peer-y": `${Math.round(y)}px`
+      });
       this.dragNoteFlowPeerAnimatingElements.add(element);
       changed.push(element);
     }
@@ -16957,8 +16962,10 @@ var PreviewDrawingController = class {
         if (!element?.isConnected) {
           continue;
         }
-        element.style.setProperty("--notedraw-note-flow-peer-x", "0px");
-        element.style.setProperty("--notedraw-note-flow-peer-y", "0px");
+        setNoteDrawCssProps(element, {
+          "--notedraw-note-flow-peer-x": "0px",
+          "--notedraw-note-flow-peer-y": "0px"
+        });
         const timer = window.setTimeout(() => {
           element.classList.remove("notedraw-note-flow-peer-animating");
           element.style.removeProperty("--notedraw-note-flow-peer-x");
@@ -18048,9 +18055,6 @@ var PreviewDrawingController = class {
         + draggedMarkdownCount * equalLaneWidth
         + Math.max(0, movingLaneCount - 1) * 10
     );
-    const draggedClientHeight = draggedClientBounds
-      ? Math.max(1, draggedClientBounds.bottom - draggedClientBounds.top)
-      : targetRect.height;
     const minimumTargetWidth = Math.min(equalLaneWidth, laneWidth * 0.45);
     const projectedTargetRight = Math.max(
       targetRect.left + minimumTargetWidth,
@@ -19384,6 +19388,7 @@ var PreviewDrawingController = class {
       minY: target.targetBox.y,
       maxY: target.targetBox.y + target.targetBox.height,
       rowKey: target.rowKey,
+      overlapGroup: isNoteFlowInkStroke(target.stroke) ? `ink:${target.rowKey}` : "",
       anchor: target.anchor
     }));
     const inlinePacking = this.packInlineNoteFlowItems(inlineItems, candidates, {
@@ -21020,12 +21025,19 @@ var PreviewDrawingController = class {
     let top = elementRect.top;
     let bottom = elementRect.bottom;
     if (forSelection) {
-      const localHeight = Number(element.offsetHeight) || 0;
-      const visualScale = localHeight > 0 ? elementRect.height / localHeight : this.readingZoomScale();
-      const flowInsets = this.noteFlowAppliedVerticalInsets(element);
-      top += flowInsets.top * visualScale;
-      bottom -= flowInsets.bottom * visualScale;
-      const checkboxRect = this.markdownTaskCheckboxRect(element, elementRect);
+      // Use the visible content rect, not the renderer owner's full box. The
+      // owner can include NoteFlow reservation space or neighbouring inline
+      // lines, which made selection frames much taller than their element.
+      const visibleRect = this.markdownElementVisibleClientRect(element) || elementRect;
+      left = visibleRect.left;
+      right = visibleRect.right;
+      top = visibleRect.top;
+      bottom = visibleRect.bottom;
+      // Heading collapse markers and list markers sit just outside the text
+      // box. Keep a small left-only capture band so the frame encloses them
+      // without adding the same excess height/width on every side.
+      left -= Math.max(4, Math.min(8, visibleRect.height * 0.18));
+      const checkboxRect = this.markdownTaskCheckboxRect(element, visibleRect);
       if (checkboxRect) {
         // The task checkbox renders in the list-marker zone left of the <li>.
         // Enclose it in the selection frame so the whole todo item (checkbox
@@ -25952,9 +25964,6 @@ function pointDistanceOnCanvas(a, b, width, height) {
     ((a?.x || 0) - (b?.x || 0)) * Math.max(1, width || 1),
     ((a?.y || 0) - (b?.y || 0)) * Math.max(1, height || 1)
   );
-}
-function buildBoundConnectorPoints(fromBounds, toBounds, canvasWidth, canvasHeight) {
-  return buildSnappedConnectorPoints({ fromBounds, toBounds, canvasWidth, canvasHeight });
 }
 function buildFreeConnectorPoints(fromPoint, toPoint, canvasWidth, canvasHeight) {
   const width = Math.max(1, Number(canvasWidth) || 1);
