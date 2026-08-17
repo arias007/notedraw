@@ -622,7 +622,7 @@ test("NoteFlow dragging previews the same snapped and packed placement committed
   assert.match(livePreviewSource, /if \(reuseAppliedPreview\) \{[\s\S]*resolveDraggedNoteFlowPlacement\(previousApplied, movedIndexes\)[\s\S]*snapDraggedSelectionToNoteFlowPlacement\(stableResolved, movedIndexes\)[\s\S]*dragNoteFlowLastAppliedPlacement = previousApplied;[\s\S]*return movedIndexes;/);
   assert.match(livePreviewSource, /this\.dragNoteFlowLastAppliedPlacement = \{[\s\S]*\.\.\.liveResolved,[\s\S]*previewCandidates,[\s\S]*previewRowOffsets: this\.captureDraggedNoteFlowPreviewRowOffsets/);
   assert.match(livePreviewSource, /const liveResolved = this\.remeasureDraggedNoteFlowPlacement\(resolved\)[\s\S]*snapDraggedSelectionToNoteFlowPlacement\(liveResolved, movedIndexes\)[\s\S]*dragDropGeometrySnapshot\(\)\?\.noteFlowCandidates[\s\S]*reflowNoteFlowElementsAfterDrag\(movedIndexes, liveResolved, \{[\s\S]*preview: true/);
-  assert.match(livePreviewSource, /const movedIndexes = Array\.from[\s\S]*clearDraggedNoteFlowOriginReservationPreview\(movedIndexes\)[\s\S]*resolveDraggedNoteFlowPlacement\(placement, movedIndexes\)/);
+  assert.match(livePreviewSource, /const movedIndexes = Array\.from[\s\S]*resolveDraggedNoteFlowPlacement\(placement, movedIndexes\)[\s\S]*draggedNoteFlowRemainsInOriginGap\(movedIndexes, resolved\)[\s\S]*clearDraggedNoteFlowOriginReservationPreview\(movedIndexes\)/);
   assert.doesNotMatch(livePreviewSource, /refreshDraggedNoteFlowPreviewCandidate\(resolved\.candidate\)/);
   assert.match(livePreviewSource, /rowOffset \+ bounds\.maxY - bounds\.minY[\s\S]*this\.draggedNoteFlowPreviewHeight\(movedIndexes\)/);
   assert.match(geometrySource, /current\.scrollKey === scrollKey[\s\S]*this\.draggingStroke[\s\S]*current\.layoutGeneration === this\.layoutRefreshGeneration/);
@@ -708,9 +708,18 @@ test("reading selection preserves live parallel spans and NoteFlow ink overlap i
   assert.match(presentationSource, /liveInlineSpan = element\.classList\?\.contains\("notedraw-md-inline-grid-item"\)/);
   assert.match(presentationSource, /block\.span = liveInlineSpan/);
   assert.match(presentationSource, /pendingIdentity\?\.id === block\.id[\s\S]*Number\(meta\.info\?\.lineStart\) === pendingIdentity\.lineStart/);
+  assert.doesNotMatch(presentationSource, /if \(element\) \{\s*this\.pendingMarkdownIdentityRefresh = null;/);
   assert.match(mutationSource, /identityMutationPending = this\.pendingMarkdownIdentityRefresh\?\.expiresAt > Date\.now\(\)/);
   assert.match(mutationSource, /editingLayout \|\| identityMutationPending[\s\S]*delay: identityMutationPending \? 0 : void 0,[\s\S]*force: identityMutationPending/);
   assert.match(alignmentSource, /rowKey: target\.rowKey,[\s\S]*overlapGroup: isNoteFlowInkStroke\(target\.stroke\)/);
+});
+
+test("same-row horizontal NoteFlow drag keeps the origin reservation until the row changes", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const preview = source.slice(source.indexOf("  applyDraggedNoteFlowLivePreview("), source.indexOf("  remeasureDraggedNoteFlowPlacement("));
+
+  assert.match(preview, /const resolved = this\.resolveDraggedNoteFlowPlacement\(placement, movedIndexes\)/);
+  assert.match(preview, /if \(!this\.draggedNoteFlowRemainsInOriginGap\(movedIndexes, resolved\)\) \{\s*this\.clearDraggedNoteFlowOriginReservationPreview\(movedIndexes\);/);
 });
 
 test("selection handle hit testing stays usable for narrow elements at visual zoom", async () => {

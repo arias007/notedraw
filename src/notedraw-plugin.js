@@ -105,6 +105,7 @@ import {
   hasStableNoteFlowAnchor,
   noteFlowAvoidanceReference,
   noteFlowBlockKey,
+  noteFlowPlacementGapKey,
   noteFlowPlacementRowKey,
   noteFlowRowReservation,
   noteFlowSettledRowExtent,
@@ -16648,9 +16649,6 @@ var PreviewDrawingController = class {
             && Number(meta.info?.lineStart) === pendingIdentity.lineStart
             && Number(meta.info?.lineEnd ?? meta.info?.lineStart) === pendingIdentity.lineEnd;
         }) || null;
-        if (element) {
-          this.pendingMarkdownIdentityRefresh = null;
-        }
       }
       if (!element) {
         const blockHint = normalizeRenderedText(block.textHint);
@@ -18004,6 +18002,24 @@ var PreviewDrawingController = class {
     }
     return changed;
   }
+  draggedNoteFlowRemainsInOriginGap(indexes, placement) {
+    const candidate = placement?.candidate;
+    const targetKey = noteFlowPlacementGapKey({
+      path: placement?.path || candidate?.path || this.file?.path || "",
+      line: placement?.line,
+      side: placement?.side,
+      blockStart: candidate?.blockStart ?? candidate?.start,
+      blockEnd: candidate?.blockEnd ?? candidate?.end
+    }, this.file?.path || "");
+    if (!targetKey) {
+      return false;
+    }
+    const moved = Array.from(indexes || []);
+    return moved.length > 0 && moved.every((index) => {
+      const original = this.dragStrokeOriginalNoteFlows?.get?.(index);
+      return noteFlowPlacementGapKey(original, this.file?.path || "") === targetKey;
+    });
+  }
   applyDraggedNoteFlowReservationPreview(placement, indexes, reservationHeight = null) {
     if (!placement?.candidate || placement.horizontalSide) {
       return false;
@@ -18269,13 +18285,15 @@ var PreviewDrawingController = class {
       this.restoreDraggedNoteFlowLivePreview();
     }
     const movedIndexes = Array.from(this.dragStrokeOriginalPoints?.keys?.() || []);
-    // Remove the moving strokes' old row reservation before measuring the new
-    // target. Otherwise every target below the origin is measured one old-row
-    // height too low and jumps upward as soon as the origin reservation clears.
-    this.clearDraggedNoteFlowOriginReservationPreview(movedIndexes);
     const resolved = this.resolveDraggedNoteFlowPlacement(placement, movedIndexes);
     if (!resolved) {
       return [];
+    }
+    // Horizontal movement inside the same Markdown gap still owns the same
+    // vertical reservation. Keep it in place so following NoteFlow/Markdown
+    // blocks cannot fill the row while the pointer has not left that row.
+    if (!this.draggedNoteFlowRemainsInOriginGap(movedIndexes, resolved)) {
+      this.clearDraggedNoteFlowOriginReservationPreview(movedIndexes);
     }
     if (reuseAppliedPreview) {
       // The DOM insertion, peer reflow, and row reservation already represent

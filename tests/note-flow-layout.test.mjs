@@ -8,6 +8,7 @@ import {
   hasStableNoteFlowAnchor,
   noteFlowAvoidanceReference,
   noteFlowBlockKey,
+  noteFlowPlacementGapKey,
   noteFlowPlacementRowKey,
   noteFlowRequiredOffset,
   noteFlowRowReservation,
@@ -50,6 +51,9 @@ test("inline NoteFlow rows stay distinct from the gap below the same Markdown bl
 
   assert.equal(noteFlowPlacementRowKey(base), "note.md\0" + "4\0" + "4\0after");
   assert.equal(noteFlowPlacementRowKey({ ...base, placementMode: "inline" }), "note.md\0" + "4\0" + "4\0after\0inline");
+  assert.equal(noteFlowPlacementGapKey(base), "note.md\0" + "4\0" + "4\0after");
+  assert.equal(noteFlowPlacementGapKey({ ...base, placementMode: "inline" }), noteFlowPlacementGapKey(base));
+  assert.notEqual(noteFlowPlacementGapKey({ ...base, line: 5, blockStart: 5, blockEnd: 5 }), noteFlowPlacementGapKey(base));
 });
 
 test("inline NoteFlow packs beside a Markdown block without overlap", () => {

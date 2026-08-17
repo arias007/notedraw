@@ -454,6 +454,14 @@ export function noteFlowPlacementRowKey(noteFlow, fallbackPath = "") {
     : "";
 }
 
+export function noteFlowPlacementGapKey(noteFlow, fallbackPath = "") {
+  const side = noteFlow?.side;
+  const blockKey = noteFlowBlockKey(noteFlow, fallbackPath);
+  return blockKey && ["before", "after"].includes(side)
+    ? `${blockKey}\0${side}`
+    : "";
+}
+
 export function canonicalNoteFlowGapPlacement(candidates, { anchor, side } = {}) {
   if (!anchor || !["before", "after"].includes(side)) {
     return null;

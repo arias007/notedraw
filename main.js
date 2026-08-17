@@ -2789,6 +2789,11 @@ function noteFlowPlacementRowKey(noteFlow, fallbackPath = "") {
   const placementMode = noteFlow?.placementMode === "inline" ? "inline" : "row";
   return blockKey && ["before", "after"].includes(side) ? `${blockKey}\0${side}${placementMode === "inline" ? "\0inline" : ""}` : "";
 }
+function noteFlowPlacementGapKey(noteFlow, fallbackPath = "") {
+  const side = noteFlow?.side;
+  const blockKey = noteFlowBlockKey(noteFlow, fallbackPath);
+  return blockKey && ["before", "after"].includes(side) ? `${blockKey}\0${side}` : "";
+}
 function canonicalNoteFlowGapPlacement(candidates, { anchor, side } = {}) {
   if (!anchor || !["before", "after"].includes(side)) {
     return null;
@@ -20134,9 +20139,6 @@ ${selected}
           const meta2 = candidateMeta.get(candidate);
           return meta2?.path === block.path && Number(meta2.info?.lineStart) === pendingIdentity.lineStart && Number(meta2.info?.lineEnd ?? meta2.info?.lineStart) === pendingIdentity.lineEnd;
         }) || null;
-        if (element) {
-          this.pendingMarkdownIdentityRefresh = null;
-        }
       }
       if (!element) {
         const blockHint = normalizeRenderedText2(block.textHint);
@@ -21423,6 +21425,24 @@ ${selected}
     }
     return changed;
   }
+  draggedNoteFlowRemainsInOriginGap(indexes, placement) {
+    const candidate = placement?.candidate;
+    const targetKey = noteFlowPlacementGapKey({
+      path: placement?.path || candidate?.path || this.file?.path || "",
+      line: placement?.line,
+      side: placement?.side,
+      blockStart: candidate?.blockStart ?? candidate?.start,
+      blockEnd: candidate?.blockEnd ?? candidate?.end
+    }, this.file?.path || "");
+    if (!targetKey) {
+      return false;
+    }
+    const moved = Array.from(indexes || []);
+    return moved.length > 0 && moved.every((index) => {
+      const original = this.dragStrokeOriginalNoteFlows?.get?.(index);
+      return noteFlowPlacementGapKey(original, this.file?.path || "") === targetKey;
+    });
+  }
   applyDraggedNoteFlowReservationPreview(placement, indexes, reservationHeight = null) {
     if (!placement?.candidate || placement.horizontalSide) {
       return false;
@@ -21645,10 +21665,12 @@ ${selected}
       this.restoreDraggedNoteFlowLivePreview();
     }
     const movedIndexes = Array.from(this.dragStrokeOriginalPoints?.keys?.() || []);
-    this.clearDraggedNoteFlowOriginReservationPreview(movedIndexes);
     const resolved = this.resolveDraggedNoteFlowPlacement(placement, movedIndexes);
     if (!resolved) {
       return [];
+    }
+    if (!this.draggedNoteFlowRemainsInOriginGap(movedIndexes, resolved)) {
+      this.clearDraggedNoteFlowOriginReservationPreview(movedIndexes);
     }
     if (reuseAppliedPreview) {
       const stableResolved = this.resolveDraggedNoteFlowPlacement(previousApplied, movedIndexes) || resolved;
