@@ -1692,17 +1692,26 @@ function shortestUsefulHint(...values) {
 function firstValue(records, property, predicate = Boolean) {
   return records.map((record) => record?.[property]).find(predicate);
 }
+function hasExplicitParallelMarkdownLayout(record) {
+  if (!record || record.floating) {
+    return false;
+  }
+  const span = Number(record.span);
+  const widthScale = Number(record.widthScale);
+  return Number.isFinite(span) && span > 0 && span < 12 || Number.isFinite(widthScale) && widthScale > 0 && widthScale < 0.999;
+}
 function mergeSemanticMarkdownBlocks(current, duplicate) {
   const records = [current, duplicate];
+  const layoutSource = hasExplicitParallelMarkdownLayout(current) ? current : hasExplicitParallelMarkdownLayout(duplicate) ? duplicate : null;
   const explicitFloating = records.find((record) => record?.floating && record?.floatingExplicit && record?.floatBox);
   const implicitFloating = records.every((record) => record?.floating && record?.floatBox) ? records.find((record) => record?.floatBox) : null;
   const floatingSource = explicitFloating || implicitFloating;
   return {
     ...current,
     textHint: shortestUsefulHint(current.textHint, duplicate.textHint),
-    span: Math.max(Number(current.span) || 1, Number(duplicate.span) || 1),
+    span: layoutSource ? Number(layoutSource.span) || 1 : Math.max(Number(current.span) || 1, Number(duplicate.span) || 1),
     noteFlowAutoSpan: Boolean(current.noteFlowAutoSpan && duplicate.noteFlowAutoSpan),
-    widthScale: Math.max(Number(current.widthScale) || 0, Number(duplicate.widthScale) || 0),
+    widthScale: layoutSource ? Number(layoutSource.widthScale) || 1 : Math.max(Number(current.widthScale) || 0, Number(duplicate.widthScale) || 0),
     minHeight: Math.max(Number(current.minHeight) || 0, Number(duplicate.minHeight) || 0),
     borderColor: firstValue(records, "borderColor") || "",
     backgroundColor: firstValue(records, "backgroundColor") || "",
@@ -9675,6 +9684,8 @@ var PreviewDrawingController = class {
     this.noteFlowAnchorRepairComplete = false;
     this.noteFlowAnchorRepairTimer = null;
     this.noteFlowActivationRepairAttempted = false;
+    this.noteFlowReadingRepairAttempted = false;
+    this.noteFlowReadingRepairPending = false;
     this.noteFlowLayoutIncomplete = false;
     this.noteFlowStyledElements = /* @__PURE__ */ new Map();
     this.noteFlowLineSpacers = /* @__PURE__ */ new Map();
@@ -10302,6 +10313,8 @@ var PreviewDrawingController = class {
     this.noteFlowAnchorRepairComplete = false;
     this.noteFlowPersistencePending = false;
     this.noteFlowActivationRepairAttempted = false;
+    this.noteFlowReadingRepairAttempted = false;
+    this.noteFlowReadingRepairPending = false;
     this.noteFlowLayoutIncomplete = false;
     this.markdownSourceRevisionChanged = false;
     this.noteFlowAvoidanceAnchors.clear();
@@ -10745,6 +10758,11 @@ var PreviewDrawingController = class {
         this.scheduleFrozenNoteFlowLayoutRestoreAfterMeasurement();
       }
       this.render();
+      if (!this.active && this.hasNoteFlowElements()) {
+        await this.prepareNoteFlowForReading().catch((error) => {
+          void error;
+        });
+      }
       if (this.markdownBlockRecords().length) {
         this.scheduleMarkdownAnnotationRefresh({ layout: false, delay: 0, force: true });
       }
@@ -11499,6 +11517,40 @@ var PreviewDrawingController = class {
     this.noteFlowOperationPending = true;
     this.scheduleMarkdownAnnotationRefresh({ layout: false, delay: 32 });
     return true;
+  }
+  async prepareNoteFlowForReading() {
+    if (this.destroyed || this.active || !this.drawingsLoaded || !this.drawingsVisible || !this.supportsNoteFlow() || this.noteFlowReadingRepairAttempted || !this.hasNoteFlowElements()) {
+      return false;
+    }
+    this.noteFlowReadingRepairAttempted = true;
+    this.noteFlowReadingRepairPending = true;
+    this.noteFlowPersistencePending = false;
+    this.noteFlowOperationPending = true;
+    const filePath = this.file?.path || "";
+    const generation = this.drawingLoadGeneration;
+    try {
+      this.applyReadingZoom();
+      annotateVisibleMarkdownElements(this.plugin.app, this.previewEl, filePath);
+      await annotateRenderedMarkdownLines(this.plugin.app, this.previewEl, filePath, { force: true });
+      if (this.destroyed || generation !== this.drawingLoadGeneration || this.file?.path !== filePath) {
+        return false;
+      }
+      this.noteFlowMarkdownAnnotationComplete = true;
+      const changed = this.applyNoteFlowLayout();
+      this.restoreFrozenNoteFlowLayout();
+      this.noteFlowOperationPending = false;
+      this.noteFlowPersistencePending = false;
+      this.noteFlowLayoutIncomplete = false;
+      if (changed) {
+        this.scheduleResize({ layout: false, measure: true });
+      }
+      this.render();
+      return changed;
+    } finally {
+      this.noteFlowReadingRepairPending = false;
+      this.noteFlowOperationPending = false;
+      this.noteFlowPersistencePending = false;
+    }
   }
   syncCurrentBrushFields() {
     const settings = this.currentBrushSettings();
@@ -23572,7 +23624,7 @@ ${selected}
   }
   applyNoteFlowLayout() {
     this.noteFlowLayoutIncomplete = false;
-    const editingNoteFlow = this.active && (this.noteFlowOperationPending || this.draggingStroke || this.resizingSelection || this.currentStroke?.noteFlow?.enabled);
+    const editingNoteFlow = this.active && (this.noteFlowOperationPending || this.draggingStroke || this.resizingSelection || this.currentStroke?.noteFlow?.enabled) || this.noteFlowReadingRepairPending;
     if (!editingNoteFlow || this.isReadingZoomInteractionActive()) {
       return false;
     }
@@ -24567,10 +24619,16 @@ ${selected}
     let bottom = elementRect.bottom;
     if (forSelection) {
       const visibleRect = this.markdownElementVisibleClientRect(element) || elementRect;
+      const includesReservedHeight = element.hasAttribute("data-note-draw-resized-height");
       const contentElement = findNoteFlowInlineMeasureElement(element);
       const contentRect = contentElement && contentElement !== element ? contentElement.getBoundingClientRect?.() : null;
       const textRect = this.markdownElementTextClientRect(contentElement || element, visibleRect);
-      if (contentRect?.width > 0 && contentRect?.height > 0) {
+      if (includesReservedHeight) {
+        left = visibleRect.left;
+        right = visibleRect.right;
+        top = visibleRect.top;
+        bottom = visibleRect.bottom;
+      } else if (contentRect?.width > 0 && contentRect?.height > 0) {
         left = contentRect.left;
         right = contentRect.right;
         top = Math.max(visibleRect.top, textRect?.top ?? contentRect.top);

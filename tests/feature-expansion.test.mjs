@@ -276,7 +276,7 @@ test("reading-only note pen and selected elements can reserve Markdown flow spac
   assert.match(flowLayout, /stabilizeNoteFlowBounds\(\{/);
   assert.match(flowLayout, /preferCurrent: Boolean\(normalizeNoteFlow\(stroke\.noteFlow\)\?\.positionBasis\)[\s\S]*this\.resizingSelection/);
   assert.match(flowLayout, /this\.repairRunawayNoteFlowSurface\(runawayReferenceHeight\)/);
-  assert.match(flowLayout, /const editingNoteFlow = this\.active && \(/);
+  assert.match(flowLayout, /const editingNoteFlow = \(this\.active && \([\s\S]*\)\) \|\| this\.noteFlowReadingRepairPending/);
   assert.match(flowLayout, /if \(!editingNoteFlow \|\| this\.isReadingZoomInteractionActive\(\)\) \{\s*return false;/);
   assert.match(flowLayout, /const hasStoredAnchor = hasStableNoteFlowAnchor\(currentNoteFlow\)/);
   assert.match(flowLayout, /const strokeNearViewport = strokeTop >= previewRect\.top - 64 && strokeTop <= previewRect\.bottom \+ 64/);

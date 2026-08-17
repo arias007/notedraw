@@ -25,8 +25,26 @@ function firstValue(records, property, predicate = Boolean) {
   return records.map((record) => record?.[property]).find(predicate);
 }
 
+function hasExplicitParallelMarkdownLayout(record) {
+  if (!record || record.floating) {
+    return false;
+  }
+  const span = Number(record.span);
+  const widthScale = Number(record.widthScale);
+  return (Number.isFinite(span) && span > 0 && span < 12)
+    || (Number.isFinite(widthScale) && widthScale > 0 && widthScale < 0.999);
+}
+
 function mergeSemanticMarkdownBlocks(current, duplicate) {
   const records = [current, duplicate];
+  // Re-rendered Markdown can create a fresh default owner (span=12) for a
+  // block that already has a user-confirmed parallel layout. The default
+  // owner must not erase that layout while the DOM is being rebuilt.
+  const layoutSource = hasExplicitParallelMarkdownLayout(current)
+    ? current
+    : hasExplicitParallelMarkdownLayout(duplicate)
+      ? duplicate
+      : null;
   const explicitFloating = records.find((record) => record?.floating && record?.floatingExplicit && record?.floatBox);
   const implicitFloating = records.every((record) => record?.floating && record?.floatBox)
     ? records.find((record) => record?.floatBox)
@@ -35,9 +53,13 @@ function mergeSemanticMarkdownBlocks(current, duplicate) {
   return {
     ...current,
     textHint: shortestUsefulHint(current.textHint, duplicate.textHint),
-    span: Math.max(Number(current.span) || 1, Number(duplicate.span) || 1),
+    span: layoutSource
+      ? Number(layoutSource.span) || 1
+      : Math.max(Number(current.span) || 1, Number(duplicate.span) || 1),
     noteFlowAutoSpan: Boolean(current.noteFlowAutoSpan && duplicate.noteFlowAutoSpan),
-    widthScale: Math.max(Number(current.widthScale) || 0, Number(duplicate.widthScale) || 0),
+    widthScale: layoutSource
+      ? Number(layoutSource.widthScale) || 1
+      : Math.max(Number(current.widthScale) || 0, Number(duplicate.widthScale) || 0),
     minHeight: Math.max(Number(current.minHeight) || 0, Number(duplicate.minHeight) || 0),
     borderColor: firstValue(records, "borderColor") || "",
     backgroundColor: firstValue(records, "backgroundColor") || "",

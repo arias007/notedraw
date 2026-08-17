@@ -64,6 +64,7 @@ test("hidden reading controllers survive source mode while alternate or detached
 
 test("root reading controllers wait for Markdown and clear only dormant preview geometry", async () => {
   const source = await readFile(sourceUrl, "utf8");
+  const initialLayout = source.slice(source.indexOf("  async prepareInitialReadingLayout()"), source.indexOf("  applySettings()"));
 
   assert.match(source, /if \(!isRootPreviewReady\(view, preview\)\) \{\s*existingController\?\.destroy\?\.\(\);\s*resetDormantRootPreview\(view, preview\);\s*return;/s);
   assert.match(source, /if \(!preview \|\| !view\?\.file\) \{/);
@@ -73,7 +74,7 @@ test("root reading controllers wait for Markdown and clear only dormant preview 
   assert.doesNotMatch(source, /resetDormantRootPreview[\s\S]{0,900}preview\.scrollTop = 0/);
   assert.match(source, /await this\.prepareInitialReadingLayout\(\);\s*if \(this\.destroyed \|\| !this\.previewEl\?\.isConnected\) \{\s*return;/);
   assert.match(source, /waitForStableReadingLayout[\s\S]*this\.responsiveLayoutSignature = "";/);
-  assert.doesNotMatch(source, /prepareInitialReadingLayout\(\)[\s\S]*await annotateRenderedMarkdownLines/);
+  assert.doesNotMatch(initialLayout, /await annotateRenderedMarkdownLines/);
 });
 
 test("reading virtualizer containers never become NoteFlow grid roots", async () => {

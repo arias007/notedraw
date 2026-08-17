@@ -52,10 +52,62 @@ test("Markdown block records keep one canonical owner per source range", () => {
   assert.equal(records.length, 1);
   assert.equal(records[0].id, "callout-inner");
   assert.equal(records[0].textHint, "This is a note.");
-  assert.equal(records[0].span, 12);
-  assert.equal(records[0].widthScale, 1);
+  assert.equal(records[0].span, 11);
+  assert.equal(records[0].widthScale, 0.4);
   assert.equal(records[0].minHeight, 40);
   assert.equal(records[0].contentScale, 1.2);
+});
+
+test("Markdown block dedupe preserves a parallel layout against a re-rendered default owner", () => {
+  const records = dedupeMarkdownBlockRecords([
+    {
+      id: "parallel-task",
+      path: "note.md",
+      lineStart: 20,
+      lineEnd: 20,
+      textHint: "- [ ] Parallel task",
+      span: 4,
+      widthScale: 1,
+      minHeight: 72,
+      noteFlowAutoSpan: false
+    },
+    {
+      id: "fresh-default-owner",
+      path: "note.md",
+      lineStart: 20,
+      lineEnd: 20,
+      textHint: "Parallel task",
+      span: 12,
+      widthScale: 1,
+      minHeight: 24,
+      noteFlowAutoSpan: false
+    }
+  ]);
+
+  assert.equal(records.length, 1);
+  assert.equal(records[0].span, 4);
+  assert.equal(records[0].widthScale, 1);
+  assert.equal(records[0].minHeight, 72);
+});
+
+test("reading view repairs NoteFlow once without activating the toolbar", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const load = source.slice(source.indexOf("  async ensureDrawingsLoaded()"), source.indexOf("  updateDrawingsVisibility("));
+  const repair = source.slice(source.indexOf("  async prepareNoteFlowForReading()"), source.indexOf("  syncCurrentBrushFields()"));
+  const layout = source.slice(source.indexOf("  applyNoteFlowLayout()"), source.indexOf("  markNoteFlowLayoutMutation()"));
+
+  assert.match(load, /!this\.active && this\.hasNoteFlowElements\(\)[\s\S]*await this\.prepareNoteFlowForReading\(\)/);
+  assert.match(repair, /this\.active[\s\S]*this\.noteFlowReadingRepairAttempted[\s\S]*annotateRenderedMarkdownLines[\s\S]*this\.applyNoteFlowLayout\(\)[\s\S]*this\.restoreFrozenNoteFlowLayout\(\)/);
+  assert.match(repair, /finally \{[\s\S]*this\.noteFlowReadingRepairPending = false;[\s\S]*this\.noteFlowOperationPending = false;/);
+  assert.match(layout, /\|\| this\.noteFlowReadingRepairPending/);
+});
+
+test("a user-resized Markdown block keeps its full reserved selection bounds", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const bounds = source.slice(source.indexOf("  markdownElementCanvasBounds("), source.indexOf("  getStrokeIndexesBounds("));
+
+  assert.match(bounds, /const includesReservedHeight = element\.hasAttribute\("data-note-draw-resized-height"\)/);
+  assert.match(bounds, /if \(includesReservedHeight\) \{[\s\S]*left = visibleRect\.left;[\s\S]*right = visibleRect\.right;[\s\S]*top = visibleRect\.top;[\s\S]*bottom = visibleRect\.bottom;/);
 });
 
 test("Markdown block record repair removes a repeated line-zero alias but preserves distinct groups", () => {
