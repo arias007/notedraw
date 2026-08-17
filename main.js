@@ -14498,21 +14498,44 @@ ${selected}
     if (!block || !Number.isFinite(Number(block.lineStart))) {
       return;
     }
-    const flowElement = this.markdownBlockFlowElement(element) || element;
-    const liveInlineSpan = flowElement?.classList?.contains("notedraw-md-inline-grid-item") ? Number.parseInt(flowElement.style?.getPropertyValue?.("--notedraw-md-inline-span"), 10) : Number.NaN;
-    const liveWidthPercent = Number.parseFloat(element?.style?.width || "");
-    const liveWidthScale = Number.isFinite(liveWidthPercent) && liveWidthPercent > 0 ? normalizeMarkdownBlockWidthScale(liveWidthPercent / 100) : normalizeMarkdownBlockWidthScale(block.widthScale);
-    const persistedSpan = Number(block.span);
-    const span = Number.isFinite(liveInlineSpan) && liveInlineSpan >= 1 && liveInlineSpan < 12 ? liveInlineSpan : Number.isFinite(persistedSpan) && persistedSpan >= 1 && persistedSpan < 12 ? persistedSpan : null;
+    const row = this.markdownDropRowMetrics(element);
+    const records = new Map(this.markdownBlockRecords().map((item) => [item.id, item]));
+    const rowIds = Array.from(/* @__PURE__ */ new Set([
+      ...row?.orderedMemberIds || [],
+      block.id
+    ])).filter((id) => records.has(id));
+    const members = rowIds.map((id, order) => {
+      const memberBlock = records.get(id);
+      const memberElement = id === block.id ? element : this.markdownBlockElement(memberBlock);
+      if (!memberBlock || !memberElement?.isConnected) {
+        return null;
+      }
+      const flowElement = this.markdownBlockFlowElement(memberElement) || memberElement;
+      const liveInlineSpan = flowElement.classList?.contains("notedraw-md-inline-grid-item") ? Number.parseInt(flowElement.style?.getPropertyValue?.("--notedraw-md-inline-span"), 10) : Number.NaN;
+      const liveWidthPercent = Number.parseFloat(memberElement.style?.width || "");
+      const persistedSpan = Number(memberBlock.span);
+      const span = Number.isFinite(liveInlineSpan) && liveInlineSpan >= 1 && liveInlineSpan < 12 ? liveInlineSpan : Number.isFinite(persistedSpan) && persistedSpan >= 1 && persistedSpan < 12 ? persistedSpan : null;
+      if (!(Number(span) >= 1 && Number(span) < 12)) {
+        return null;
+      }
+      return {
+        id: memberBlock.id,
+        path: memberBlock.path,
+        lineStart: Number(memberBlock.lineStart),
+        lineEnd: Number.isFinite(Number(memberBlock.lineEnd)) ? Number(memberBlock.lineEnd) : Number(memberBlock.lineStart),
+        textHint: normalizeRenderedText2(renderedMarkdownIdentityText(memberElement)).slice(0, 240),
+        flowElement,
+        span,
+        widthScale: Number.isFinite(liveWidthPercent) && liveWidthPercent > 0 ? normalizeMarkdownBlockWidthScale(liveWidthPercent / 100) : normalizeMarkdownBlockWidthScale(memberBlock.widthScale),
+        order
+      };
+    }).filter(Boolean);
+    if (!members.length) {
+      return;
+    }
     this.pendingMarkdownIdentityRefresh = {
-      id: block.id,
-      path: block.path,
-      lineStart: Number(block.lineStart),
-      lineEnd: Number.isFinite(Number(block.lineEnd)) ? Number(block.lineEnd) : Number(block.lineStart),
-      textHint: normalizeRenderedText2(renderedMarkdownIdentityText(element)).slice(0, 240),
-      flowElement,
-      span,
-      widthScale: liveWidthScale,
+      triggerId: block.id,
+      members,
       expiresAt: Date.now() + 3e3
     };
   }
@@ -14521,8 +14544,12 @@ ${selected}
     if (!pending || pending.expiresAt <= Date.now() || this.surfaceType !== "preview" || !this.previewEl?.isConnected) {
       return false;
     }
-    const block = this.markdownBlockRecords().find((item) => item.id === pending.id);
-    if (!block || block.floating || !(Number(pending.span) >= 1 && Number(pending.span) < 12)) {
+    const records = new Map(this.markdownBlockRecords().map((item) => [item.id, item]));
+    const members = (pending.members || []).filter((member) => {
+      const memberBlock = records.get(member.id);
+      return memberBlock && !memberBlock.floating && Number(member.span) >= 1 && Number(member.span) < 12;
+    });
+    if (!members.length) {
       return false;
     }
     const addedCandidates = [];
@@ -14545,7 +14572,7 @@ ${selected}
       }
     };
     for (const mutation of mutations || []) {
-      const replacedPendingFlow = Array.from(mutation?.removedNodes || []).some((node) => node === pending.flowElement || node?.contains?.(pending.flowElement) || pending.flowElement?.contains?.(node));
+      const replacedPendingFlow = members.some((member) => Array.from(mutation?.removedNodes || []).some((node) => node === member.flowElement || node?.contains?.(member.flowElement) || member.flowElement?.contains?.(node)));
       for (const node of mutation?.addedNodes || []) {
         if (node?.nodeType !== 1 || !this.previewEl.contains(node)) {
           continue;
@@ -14556,20 +14583,44 @@ ${selected}
         }
       }
     }
-    const candidateMeta = addedCandidates.map((element) => ({
+    const documentOrder = new Map(markdownBlockCandidateElements(this.previewEl).map((element, order) => [element, order]));
+    addedCandidates.sort((left, right) => (documentOrder.get(left) ?? Number.MAX_SAFE_INTEGER) - (documentOrder.get(right) ?? Number.MAX_SAFE_INTEGER));
+    directReplacementCandidates.sort((left, right) => (documentOrder.get(left) ?? Number.MAX_SAFE_INTEGER) - (documentOrder.get(right) ?? Number.MAX_SAFE_INTEGER));
+    const candidateMeta = addedCandidates.map((element, order) => ({
       element,
       id: element.dataset?.noteDrawMarkdownBlockId || "",
       path: normalizeVaultPath(element.dataset?.noteDrawSourcePath || this.file?.path || ""),
       info: getSourceInfo(element),
-      hint: normalizeRenderedText2(renderedMarkdownIdentityText(element)).slice(0, 240)
+      hint: normalizeRenderedText2(renderedMarkdownIdentityText(element)).slice(0, 240),
+      order
     }));
-    const matchingRange = candidateMeta.filter((meta) => meta.path === pending.path && Number(meta.info?.lineStart) === pending.lineStart && Number(meta.info?.lineEnd ?? meta.info?.lineStart) === pending.lineEnd);
-    const matchingHint = pending.textHint ? candidateMeta.filter((meta) => meta.path === pending.path && meta.hint === pending.textHint) : [];
-    const freshElement = candidateMeta.find((meta) => meta.id === pending.id)?.element || matchingRange[0]?.element || (directReplacementCandidates.length === 1 ? directReplacementCandidates[0] : null) || (matchingHint.length === 1 ? matchingHint[0].element : null);
-    if (freshElement) {
-      block.span = Number(pending.span);
-      block.widthScale = normalizeMarkdownBlockWidthScale(pending.widthScale);
+    const used = /* @__PURE__ */ new Set();
+    const matched = /* @__PURE__ */ new Map();
+    const takeUnique = (values) => values.length === 1 && !used.has(values[0].element) ? values[0].element : null;
+    for (const member of members) {
+      const matchingRange = candidateMeta.filter((meta) => !used.has(meta.element) && meta.path === member.path && Number(meta.info?.lineStart) === member.lineStart && Number(meta.info?.lineEnd ?? meta.info?.lineStart) === member.lineEnd);
+      const matchingHint = member.textHint ? candidateMeta.filter((meta) => !used.has(meta.element) && meta.path === member.path && meta.hint === member.textHint) : [];
+      const freshElement = candidateMeta.find((meta) => !used.has(meta.element) && meta.id === member.id)?.element || takeUnique(matchingRange) || takeUnique(matchingHint);
+      if (freshElement) {
+        used.add(freshElement);
+        matched.set(member.id, freshElement);
+      }
+    }
+    const unmatchedMembers = members.filter((member) => !matched.has(member.id)).sort((left, right) => left.order - right.order);
+    const unmatchedDirectCandidates = directReplacementCandidates.filter((element) => !used.has(element));
+    if (unmatchedMembers.length === unmatchedDirectCandidates.length) {
+      unmatchedMembers.forEach((member, index) => matched.set(member.id, unmatchedDirectCandidates[index]));
+    }
+    let restored = 0;
+    for (const member of members) {
+      const block = records.get(member.id);
+      block.span = Number(member.span);
+      block.widthScale = normalizeMarkdownBlockWidthScale(member.widthScale);
       block.noteFlowAutoSpan = false;
+      const freshElement = matched.get(member.id);
+      if (!freshElement) {
+        continue;
+      }
       freshElement.dataset.noteDrawMarkdownBlockId = block.id;
       freshElement.addClass("notedraw-md-block");
       freshElement.toggleClass("is-selected", this.selectedMarkdownBlockIds.has(block.id));
@@ -14586,16 +14637,14 @@ ${selected}
       });
       this.applyMarkdownBlockHeightPresentation(block, freshElement);
       this.markdownBlockElements.set(block.id, freshElement);
+      restored += 1;
+    }
+    if (restored > 0) {
+      if (members.some((member) => this.selectedMarkdownBlockIds.has(member.id))) {
+        this.invalidateSelectionFrameSnapshot();
+      }
       return true;
     }
-    const current = this.markdownBlockElements.get(block.id);
-    const currentSpan = current?.classList?.contains("notedraw-md-inline-grid-item") ? Number.parseInt(current.style?.getPropertyValue?.("--notedraw-md-inline-span"), 10) : Number.NaN;
-    if (current?.isConnected && currentSpan === Number(pending.span)) {
-      return false;
-    }
-    block.span = Number(pending.span);
-    block.widthScale = normalizeMarkdownBlockWidthScale(pending.widthScale);
-    block.noteFlowAutoSpan = false;
     this.syncMarkdownBlockPresentation();
     return true;
   }
@@ -20265,6 +20314,16 @@ ${selected}
     if (!pendingIdentity) {
       this.pendingMarkdownIdentityRefresh = null;
     }
+    const pendingIdentityMembers = new Map((pendingIdentity?.members || []).map((member) => [member.id, member]));
+    for (const [id, member] of pendingIdentityMembers) {
+      const block = this.markdownBlockRecords().find((item) => item.id === id);
+      if (!block || block.floating || !(Number(member.span) >= 1 && Number(member.span) < 12)) {
+        continue;
+      }
+      block.span = Number(member.span);
+      block.widthScale = normalizeMarkdownBlockWidthScale(member.widthScale);
+      block.noteFlowAutoSpan = false;
+    }
     const identityMatches = (block, element) => {
       if (!element || !explicitGroupMatches(block, element)) {
         return false;
@@ -20286,13 +20345,14 @@ ${selected}
       const rangeKey = `${block.path}\0${block.lineStart}\0${block.lineEnd ?? block.lineStart}\0${String(block.explicitLineGroup || "")}`;
       const hintKey = `${block.path}\0${block.textHint}`;
       let element = previousMatches ? previous : takeUnused(idCandidates.get(block.id), block) || takeUnusedRange(rangeCandidates.get(rangeKey), block) || takeUnused(exactCandidates.get(exactKey), block) || takeUnused(hintCandidates.get(hintKey), block);
-      if (!element && pendingIdentity?.id === block.id && pendingIdentity.path === block.path) {
+      const pendingMember = pendingIdentityMembers.get(block.id);
+      if (!element && pendingMember?.path === block.path) {
         element = candidates.find((candidate) => {
           if (used.has(candidate) || !explicitGroupMatches(block, candidate)) {
             return false;
           }
           const meta2 = candidateMeta.get(candidate);
-          return meta2?.path === block.path && Number(meta2.info?.lineStart) === pendingIdentity.lineStart && Number(meta2.info?.lineEnd ?? meta2.info?.lineStart) === pendingIdentity.lineEnd;
+          return meta2?.path === block.path && Number(meta2.info?.lineStart) === pendingMember.lineStart && Number(meta2.info?.lineEnd ?? meta2.info?.lineStart) === pendingMember.lineEnd;
         }) || null;
       }
       if (!element) {
@@ -24623,6 +24683,15 @@ ${selected}
       width: bounds.maxX - bounds.minX + padding * 2,
       height: bounds.maxY - bounds.minY + padding * 2
     };
+    const inlineLimits = this.selectedMarkdownInlineFrameLimitsCanvas();
+    if (Number.isFinite(inlineLimits.minX) && rect.x < inlineLimits.minX) {
+      rect.width -= inlineLimits.minX - rect.x;
+      rect.x = inlineLimits.minX;
+    }
+    if (Number.isFinite(inlineLimits.maxX) && rect.x + rect.width > inlineLimits.maxX) {
+      rect.width = inlineLimits.maxX - rect.x;
+    }
+    rect.width = Math.max(1, rect.width);
     this.selectionFrameSnapshot = { key, rect };
     return rect;
   }
@@ -24678,6 +24747,63 @@ ${selected}
       }
     }
     return Number.isFinite(minGap) ? minGap * pixelScale : Number.POSITIVE_INFINITY;
+  }
+  markdownInlineSelectionClientLimits(element, elementRect = null) {
+    const currentRect = elementRect || this.markdownElementVisibleClientRect(element) || element?.getBoundingClientRect?.();
+    const lane = this.markdownBlockLayoutLane(element);
+    if (!lane || !currentRect || currentRect.width <= 0 || currentRect.height <= 0) {
+      return { left: Number.NEGATIVE_INFINITY, right: Number.POSITIVE_INFINITY };
+    }
+    const currentBlock = this.findMarkdownBlockRecordForElement(element);
+    const selectedIds = this.selectedMarkdownBlockIds || /* @__PURE__ */ new Set();
+    const currentCenter = (currentRect.left + currentRect.right) / 2;
+    let left = Number.NEGATIVE_INFINITY;
+    let right = Number.POSITIVE_INFINITY;
+    for (const [id, peerElement] of this.markdownBlockElements.entries()) {
+      if (id === currentBlock?.id || selectedIds.has(id) || !peerElement?.isConnected || this.markdownBlockLayoutLane(peerElement) !== lane) {
+        continue;
+      }
+      const peerBlock = this.markdownBlockRecords().find((block) => block.id === id);
+      if (!peerBlock || peerBlock.floating || Number(peerBlock.span || 12) >= 12) {
+        continue;
+      }
+      const peerRect = this.markdownElementVisibleClientRect(peerElement) || peerElement.getBoundingClientRect?.();
+      if (!peerRect || peerRect.width <= 0 || peerRect.height <= 0 || Math.min(currentRect.bottom, peerRect.bottom) - Math.max(currentRect.top, peerRect.top) <= 1) {
+        continue;
+      }
+      const peerCenter = (peerRect.left + peerRect.right) / 2;
+      if (peerCenter < currentCenter) {
+        const boundary = peerRect.right <= currentRect.left ? (peerRect.right + currentRect.left) / 2 : (Math.max(peerRect.left, currentRect.left) + Math.min(peerRect.right, currentRect.right)) / 2;
+        left = Math.max(left, boundary);
+      } else if (peerCenter > currentCenter) {
+        const boundary = currentRect.right <= peerRect.left ? (currentRect.right + peerRect.left) / 2 : (Math.max(peerRect.left, currentRect.left) + Math.min(peerRect.right, currentRect.right)) / 2;
+        right = Math.min(right, boundary);
+      }
+    }
+    return { left, right };
+  }
+  selectedMarkdownInlineFrameLimitsCanvas() {
+    const canvasRect = this.canvas?.getBoundingClientRect?.();
+    if (!canvasRect || canvasRect.width <= 0) {
+      return { minX: Number.NEGATIVE_INFINITY, maxX: Number.POSITIVE_INFINITY };
+    }
+    let clientLeft = Number.NEGATIVE_INFINITY;
+    let clientRight = Number.POSITIVE_INFINITY;
+    for (const block of this.getSelectedMarkdownBlocks()) {
+      const element = this.markdownBlockElementOrFallback(block);
+      if (!element?.isConnected || block.floating || Number(block.span || 12) >= 12) {
+        continue;
+      }
+      const rect = this.markdownElementVisibleClientRect(element) || element.getBoundingClientRect?.();
+      const limits = this.markdownInlineSelectionClientLimits(element, rect);
+      clientLeft = Math.max(clientLeft, limits.left);
+      clientRight = Math.min(clientRight, limits.right);
+    }
+    const scaleX = this.canvasWidth() / canvasRect.width;
+    return {
+      minX: Number.isFinite(clientLeft) ? (clientLeft - canvasRect.left) * scaleX : Number.NEGATIVE_INFINITY,
+      maxX: Number.isFinite(clientRight) ? (clientRight - canvasRect.left) * scaleX : Number.POSITIVE_INFINITY
+    };
   }
   noteFlowAppliedVerticalInsets(element) {
     const insets = { top: 0, bottom: 0 };
@@ -24873,6 +24999,9 @@ ${selected}
         top = Math.min(top, checkboxRect.top);
         bottom = Math.max(bottom, checkboxRect.bottom);
       }
+      const inlineLimits = this.markdownInlineSelectionClientLimits(element, { left, right, top, bottom, width: right - left, height: bottom - top });
+      left = Math.max(left, inlineLimits.left);
+      right = Math.min(right, inlineLimits.right);
     }
     if (right <= left || bottom <= top) {
       return null;

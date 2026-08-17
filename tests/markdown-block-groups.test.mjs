@@ -707,19 +707,24 @@ test("reading selection preserves live parallel spans and NoteFlow ink overlap i
 
   assert.match(presentationSource, /liveInlineSpan = element\.classList\?\.contains\("notedraw-md-inline-grid-item"\)/);
   assert.match(presentationSource, /block\.span = liveInlineSpan/);
-  assert.match(presentationSource, /pendingIdentity\?\.id === block\.id[\s\S]*Number\(meta\.info\?\.lineStart\) === pendingIdentity\.lineStart/);
-  assert.match(source, /restorePendingMarkdownIdentityPresentation\(mutations = \[\]\)[\s\S]*block\.span = Number\(pending\.span\)[\s\S]*this\.syncMarkdownBlockPresentation\(\)/);
-  assert.match(source, /const flowElement = this\.markdownBlockFlowElement\(element\) \|\| element;[\s\S]*const liveInlineSpan = flowElement\?\.classList\?\.contains\("notedraw-md-inline-grid-item"\)[\s\S]*const liveWidthPercent = Number\.parseFloat\(element\?\.style\?\.width \|\| ""\)[\s\S]*textHint: normalizeRenderedText\(renderedMarkdownIdentityText\(element\)\)\.slice\(0, 240\),[\s\S]*flowElement,[\s\S]*span,[\s\S]*widthScale: liveWidthScale/);
+  assert.match(presentationSource, /const pendingIdentityMembers = new Map\(\(pendingIdentity\?\.members \|\| \[\]\)\.map/);
+  assert.match(presentationSource, /pendingMember\?\.path === block\.path[\s\S]*Number\(meta\.info\?\.lineStart\) === pendingMember\.lineStart/);
+  assert.match(source, /restorePendingMarkdownIdentityPresentation\(mutations = \[\]\)[\s\S]*const members = \(pending\.members \|\| \[\]\)[\s\S]*block\.span = Number\(member\.span\)[\s\S]*this\.syncMarkdownBlockPresentation\(\)/);
+  assert.match(source, /const row = this\.markdownDropRowMetrics\(element\);[\s\S]*const members = rowIds\.map[\s\S]*const flowElement = this\.markdownBlockFlowElement\(memberElement\) \|\| memberElement;[\s\S]*const liveInlineSpan = flowElement\.classList\?\.contains\("notedraw-md-inline-grid-item"\)[\s\S]*const liveWidthPercent = Number\.parseFloat\(memberElement\.style\?\.width \|\| ""\)[\s\S]*textHint: normalizeRenderedText\(renderedMarkdownIdentityText\(memberElement\)\)\.slice\(0, 240\),[\s\S]*flowElement,[\s\S]*span,[\s\S]*widthScale:/);
   const immediateRestoreSource = source.slice(source.indexOf("  restorePendingMarkdownIdentityPresentation("), source.indexOf("  rememberTextTap(", source.indexOf("  restorePendingMarkdownIdentityPresentation(")));
   assert.match(immediateRestoreSource, /mutation\?\.addedNodes/);
-  assert.match(immediateRestoreSource, /mutation\?\.removedNodes[\s\S]*node === pending\.flowElement/);
-  assert.match(immediateRestoreSource, /directReplacementCandidates\.length === 1/);
-  assert.match(immediateRestoreSource, /matchingHint\.length === 1/);
+  assert.match(immediateRestoreSource, /mutation\?\.removedNodes[\s\S]*node === member\.flowElement/);
+  assert.match(immediateRestoreSource, /const unmatchedMembers = members\.filter/);
+  assert.match(immediateRestoreSource, /unmatchedMembers\.length === unmatchedDirectCandidates\.length/);
+  assert.match(immediateRestoreSource, /const matchingHint = member\.textHint/);
   assert.match(immediateRestoreSource, /freshElement[\s\S]*applyMarkdownBlockFlowPresentation\(block, freshElement\)[\s\S]*applyMarkdownBlockWidthPresentation\(block, freshElement\)[\s\S]*applyMarkdownBlockHeightPresentation\(block, freshElement\)[\s\S]*markdownBlockElements\.set\(block\.id, freshElement\)/);
   assert.doesNotMatch(presentationSource, /if \(element\) \{\s*this\.pendingMarkdownIdentityRefresh = null;/);
   assert.match(mutationSource, /identityMutationPending = this\.pendingMarkdownIdentityRefresh\?\.expiresAt > Date\.now\(\)/);
   assert.match(mutationSource, /editingLayout \|\| identityMutationPending[\s\S]*delay: identityMutationPending \? 0 : void 0,[\s\S]*force: identityMutationPending/);
   assert.match(alignmentSource, /rowKey: target\.rowKey,[\s\S]*overlapGroup: isNoteFlowInkStroke\(target\.stroke\)/);
+  assert.match(source, /selectedMarkdownInlineFrameLimitsCanvas\(\)[\s\S]*markdownInlineSelectionClientLimits/);
+  assert.match(source, /markdownInlineSelectionClientLimits\(element, \{ left, right, top, bottom/);
+  assert.match(source, /rect\.width -= inlineLimits\.minX - rect\.x[\s\S]*rect\.width = inlineLimits\.maxX - rect\.x/);
 });
 
 test("same-row horizontal NoteFlow drag keeps the origin reservation until the row changes", async () => {
