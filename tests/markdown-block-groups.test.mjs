@@ -708,8 +708,14 @@ test("reading selection preserves live parallel spans and NoteFlow ink overlap i
   assert.match(presentationSource, /liveInlineSpan = element\.classList\?\.contains\("notedraw-md-inline-grid-item"\)/);
   assert.match(presentationSource, /block\.span = liveInlineSpan/);
   assert.match(presentationSource, /pendingIdentity\?\.id === block\.id[\s\S]*Number\(meta\.info\?\.lineStart\) === pendingIdentity\.lineStart/);
-  assert.match(source, /restorePendingMarkdownIdentityPresentation\(\)[\s\S]*block\.span = Number\(pending\.span\)[\s\S]*this\.syncMarkdownBlockPresentation\(\)/);
-  assert.match(source, /const liveInlineSpan = element\?\.classList\?\.contains\("notedraw-md-inline-grid-item"\)[\s\S]*span,[\s\S]*widthScale: normalizeMarkdownBlockWidthScale\(block\.widthScale\)/);
+  assert.match(source, /restorePendingMarkdownIdentityPresentation\(mutations = \[\]\)[\s\S]*block\.span = Number\(pending\.span\)[\s\S]*this\.syncMarkdownBlockPresentation\(\)/);
+  assert.match(source, /const flowElement = this\.markdownBlockFlowElement\(element\) \|\| element;[\s\S]*const liveInlineSpan = flowElement\?\.classList\?\.contains\("notedraw-md-inline-grid-item"\)[\s\S]*const liveWidthPercent = Number\.parseFloat\(element\?\.style\?\.width \|\| ""\)[\s\S]*textHint: normalizeRenderedText\(renderedMarkdownIdentityText\(element\)\)\.slice\(0, 240\),[\s\S]*flowElement,[\s\S]*span,[\s\S]*widthScale: liveWidthScale/);
+  const immediateRestoreSource = source.slice(source.indexOf("  restorePendingMarkdownIdentityPresentation("), source.indexOf("  rememberTextTap(", source.indexOf("  restorePendingMarkdownIdentityPresentation(")));
+  assert.match(immediateRestoreSource, /mutation\?\.addedNodes/);
+  assert.match(immediateRestoreSource, /mutation\?\.removedNodes[\s\S]*node === pending\.flowElement/);
+  assert.match(immediateRestoreSource, /directReplacementCandidates\.length === 1/);
+  assert.match(immediateRestoreSource, /matchingHint\.length === 1/);
+  assert.match(immediateRestoreSource, /freshElement[\s\S]*applyMarkdownBlockFlowPresentation\(block, freshElement\)[\s\S]*applyMarkdownBlockWidthPresentation\(block, freshElement\)[\s\S]*applyMarkdownBlockHeightPresentation\(block, freshElement\)[\s\S]*markdownBlockElements\.set\(block\.id, freshElement\)/);
   assert.doesNotMatch(presentationSource, /if \(element\) \{\s*this\.pendingMarkdownIdentityRefresh = null;/);
   assert.match(mutationSource, /identityMutationPending = this\.pendingMarkdownIdentityRefresh\?\.expiresAt > Date\.now\(\)/);
   assert.match(mutationSource, /editingLayout \|\| identityMutationPending[\s\S]*delay: identityMutationPending \? 0 : void 0,[\s\S]*force: identityMutationPending/);

@@ -10099,7 +10099,7 @@ var PreviewDrawingController = class {
             return;
           }
           if (this.pendingMarkdownIdentityRefresh?.expiresAt > Date.now()) {
-            this.restorePendingMarkdownIdentityPresentation();
+            this.restorePendingMarkdownIdentityPresentation(mutations);
           }
           this.scheduleMarkdownMutationSync();
         }
@@ -14498,7 +14498,10 @@ ${selected}
     if (!block || !Number.isFinite(Number(block.lineStart))) {
       return;
     }
-    const liveInlineSpan = element?.classList?.contains("notedraw-md-inline-grid-item") ? Number.parseInt(element.style?.getPropertyValue?.("--notedraw-md-inline-span"), 10) : Number.NaN;
+    const flowElement = this.markdownBlockFlowElement(element) || element;
+    const liveInlineSpan = flowElement?.classList?.contains("notedraw-md-inline-grid-item") ? Number.parseInt(flowElement.style?.getPropertyValue?.("--notedraw-md-inline-span"), 10) : Number.NaN;
+    const liveWidthPercent = Number.parseFloat(element?.style?.width || "");
+    const liveWidthScale = Number.isFinite(liveWidthPercent) && liveWidthPercent > 0 ? normalizeMarkdownBlockWidthScale(liveWidthPercent / 100) : normalizeMarkdownBlockWidthScale(block.widthScale);
     const persistedSpan = Number(block.span);
     const span = Number.isFinite(liveInlineSpan) && liveInlineSpan >= 1 && liveInlineSpan < 12 ? liveInlineSpan : Number.isFinite(persistedSpan) && persistedSpan >= 1 && persistedSpan < 12 ? persistedSpan : null;
     this.pendingMarkdownIdentityRefresh = {
@@ -14506,12 +14509,14 @@ ${selected}
       path: block.path,
       lineStart: Number(block.lineStart),
       lineEnd: Number.isFinite(Number(block.lineEnd)) ? Number(block.lineEnd) : Number(block.lineStart),
+      textHint: normalizeRenderedText2(renderedMarkdownIdentityText(element)).slice(0, 240),
+      flowElement,
       span,
-      widthScale: normalizeMarkdownBlockWidthScale(block.widthScale),
+      widthScale: liveWidthScale,
       expiresAt: Date.now() + 3e3
     };
   }
-  restorePendingMarkdownIdentityPresentation() {
+  restorePendingMarkdownIdentityPresentation(mutations = []) {
     const pending = this.pendingMarkdownIdentityRefresh;
     if (!pending || pending.expiresAt <= Date.now() || this.surfaceType !== "preview" || !this.previewEl?.isConnected) {
       return false;
@@ -14519,6 +14524,69 @@ ${selected}
     const block = this.markdownBlockRecords().find((item) => item.id === pending.id);
     if (!block || block.floating || !(Number(pending.span) >= 1 && Number(pending.span) < 12)) {
       return false;
+    }
+    const addedCandidates = [];
+    const directReplacementCandidates = [];
+    const seen = /* @__PURE__ */ new Set();
+    const addCandidate = (element, directReplacement = false) => {
+      if (!element?.isConnected || !this.previewEl.contains(element)) {
+        return;
+      }
+      if (seen.has(element)) {
+        if (directReplacement && !directReplacementCandidates.includes(element)) {
+          directReplacementCandidates.push(element);
+        }
+        return;
+      }
+      seen.add(element);
+      addedCandidates.push(element);
+      if (directReplacement) {
+        directReplacementCandidates.push(element);
+      }
+    };
+    for (const mutation of mutations || []) {
+      const replacedPendingFlow = Array.from(mutation?.removedNodes || []).some((node) => node === pending.flowElement || node?.contains?.(pending.flowElement) || pending.flowElement?.contains?.(node));
+      for (const node of mutation?.addedNodes || []) {
+        if (node?.nodeType !== 1 || !this.previewEl.contains(node)) {
+          continue;
+        }
+        addCandidate(markdownBlockCandidateElementForTarget(node, this.previewEl), replacedPendingFlow);
+        for (const candidate of markdownBlockCandidateElements(node)) {
+          addCandidate(candidate, replacedPendingFlow);
+        }
+      }
+    }
+    const candidateMeta = addedCandidates.map((element) => ({
+      element,
+      id: element.dataset?.noteDrawMarkdownBlockId || "",
+      path: normalizeVaultPath(element.dataset?.noteDrawSourcePath || this.file?.path || ""),
+      info: getSourceInfo(element),
+      hint: normalizeRenderedText2(renderedMarkdownIdentityText(element)).slice(0, 240)
+    }));
+    const matchingRange = candidateMeta.filter((meta) => meta.path === pending.path && Number(meta.info?.lineStart) === pending.lineStart && Number(meta.info?.lineEnd ?? meta.info?.lineStart) === pending.lineEnd);
+    const matchingHint = pending.textHint ? candidateMeta.filter((meta) => meta.path === pending.path && meta.hint === pending.textHint) : [];
+    const freshElement = candidateMeta.find((meta) => meta.id === pending.id)?.element || matchingRange[0]?.element || (directReplacementCandidates.length === 1 ? directReplacementCandidates[0] : null) || (matchingHint.length === 1 ? matchingHint[0].element : null);
+    if (freshElement) {
+      block.span = Number(pending.span);
+      block.widthScale = normalizeMarkdownBlockWidthScale(pending.widthScale);
+      block.noteFlowAutoSpan = false;
+      freshElement.dataset.noteDrawMarkdownBlockId = block.id;
+      freshElement.addClass("notedraw-md-block");
+      freshElement.toggleClass("is-selected", this.selectedMarkdownBlockIds.has(block.id));
+      freshElement.toggleClass("is-locked", Boolean(block.locked));
+      freshElement.toggleClass("is-floating", false);
+      this.applyMarkdownBlockFlowPresentation(block, freshElement);
+      this.applyMarkdownBlockWidthPresentation(block, freshElement);
+      setNoteDrawCssProps(freshElement, {
+        "--notedraw-md-border": block.borderColor || "transparent",
+        "--notedraw-md-background": block.backgroundColor || "transparent",
+        "--notedraw-md-content-color": block.contentColor || "inherit",
+        "--notedraw-md-content-opacity": String(block.contentOpacity ?? 1),
+        "--notedraw-md-content-scale": String(block.contentScale ?? 1)
+      });
+      this.applyMarkdownBlockHeightPresentation(block, freshElement);
+      this.markdownBlockElements.set(block.id, freshElement);
+      return true;
     }
     const current = this.markdownBlockElements.get(block.id);
     const currentSpan = current?.classList?.contains("notedraw-md-inline-grid-item") ? Number.parseInt(current.style?.getPropertyValue?.("--notedraw-md-inline-span"), 10) : Number.NaN;
@@ -15265,22 +15333,21 @@ ${selected}
     const renderer = this.view?.previewMode?.renderer;
     return renderer?.previewEl === this.previewEl && Array.isArray(renderer?.sections) ? renderer : null;
   }
-  readingHasAsyncFileEmbeds(renderer = this.readingPreviewRenderer()) {
+  readingHasPendingAsyncFileEmbeds(renderer = this.readingPreviewRenderer()) {
     const filePath = normalizeVaultPath(this.file?.path || "");
-    if (this.readingAsyncEmbedFilePath === filePath && filePath) {
-      return true;
-    }
     const roots = [this.previewEl, ...(renderer?.sections || []).map((section) => section?.el)].filter(Boolean);
     const found = roots.some((root) => {
-      if (isAsyncFileEmbedElement(root)) {
+      if ((isAsyncFileEmbedElement(root) || isPendingPdfEmbedElement(root)) && !root.closest?.(".obcc-inline-workbench-embed")) {
         return true;
       }
       return Array.from(root.querySelectorAll?.(
-        ".obcc-inline-workbench-embed, .internal-embed[src], .internal-embed[data-src]"
-      ) || []).some(isAsyncFileEmbedElement);
+        ".internal-embed[src], .internal-embed[data-src]"
+      ) || []).some((element) => (isAsyncFileEmbedElement(element) || isPendingPdfEmbedElement(element)) && !element.closest?.(".obcc-inline-workbench-embed"));
     });
     if (found) {
       this.readingAsyncEmbedFilePath = filePath;
+    } else if (this.readingAsyncEmbedFilePath === filePath) {
+      this.readingAsyncEmbedFilePath = "";
     }
     return found;
   }
@@ -15480,9 +15547,10 @@ ${selected}
     if (!renderer || target !== sizer || !target?.isConnected || !this.readingZoomStage?.contains?.(sizer) || !pusher || !sections.length || Math.abs(zoom - 1) < 1e-3) {
       return false;
     }
-    if (this.readingHasAsyncFileEmbeds(renderer)) {
+    if (this.readingHasPendingAsyncFileEmbeds(renderer)) {
       this.restoreReadingVirtualSections();
       this.repairAsyncFileEmbedSections(renderer);
+      this.scheduleEmbedRepair(0);
       return false;
     }
     this.rememberReadingVirtualStyle(sizer, "min-height");
@@ -21371,6 +21439,10 @@ ${selected}
         continue;
       }
       const dest = this.plugin.app.metadataCache?.getFirstLinkpathDest?.(target, this.file?.path || "") || null;
+      if (dest?.extension?.toLowerCase?.() === "pdf") {
+        repaired += await this.repairPdfEmbedPlaceholder(span, target) ? 1 : 0;
+        continue;
+      }
       if (!dest || dest.extension !== "md") {
         continue;
       }
@@ -21394,6 +21466,43 @@ ${selected}
       }
     }
     return repaired;
+  }
+  async repairPdfEmbedPlaceholder(span, target) {
+    if (!span?.isConnected || !isPendingPdfEmbedElement(span) || span.dataset.noteDrawPdfEmbedRepair === "true") {
+      return false;
+    }
+    span.dataset.noteDrawPdfEmbedRepair = "true";
+    const host = span.ownerDocument.createElement("div");
+    host.className = "notedraw-pdf-embed-repair";
+    span.parentNode?.insertBefore(host, span.nextSibling);
+    try {
+      const escapedTarget = String(target || "").replaceAll("]", "\\]");
+      await import_obsidian.MarkdownRenderer.render(
+        this.plugin.app,
+        `![[${escapedTarget}]]`,
+        host,
+        this.file?.path || "",
+        this.plugin
+      );
+      const rendered = host.querySelector(".internal-embed.pdf-embed, .pdf-embed.is-loaded");
+      if (!rendered) {
+        host.remove();
+        delete span.dataset.noteDrawPdfEmbedRepair;
+        return false;
+      }
+      rendered.remove();
+      span.replaceWith(rendered);
+      host.remove();
+      this.readingAsyncEmbedFilePath = "";
+      this.scheduleReadingVirtualSectionSync();
+      this.scheduleResize({ layout: false, measure: true });
+      return true;
+    } catch (error) {
+      host.remove();
+      delete span.dataset.noteDrawPdfEmbedRepair;
+      console.error(`[${PLUGIN_ID}] Failed to render PDF embed ${target}`, error);
+      return false;
+    }
   }
   repairUnrenderedWikilinks() {
     if (this.surfaceType !== "preview" || this.embeddedSurface || !this.previewEl?.isConnected || !this.plugin?.app) {
@@ -27382,6 +27491,13 @@ function isAsyncFileEmbedElement(element) {
   }
   const source = String(element.getAttribute?.("data-src") || element.getAttribute?.("src") || "").split("#", 1)[0].split("?", 1)[0].toLowerCase();
   return /\.(?:docx?|pptx?|xlsx?|odt|ods|odp|rtf)$/.test(source);
+}
+function isPendingPdfEmbedElement(element) {
+  if (!element?.matches?.(".internal-embed[src], .internal-embed[data-src]")) {
+    return false;
+  }
+  const source = String(element.getAttribute("data-src") || element.getAttribute("src") || "").split("#", 1)[0].split("?", 1)[0].toLowerCase();
+  return source.endsWith(".pdf") && !element.matches(".pdf-embed, .is-loaded") && !element.querySelector?.(".pdf-container, .pdf-viewer-container");
 }
 function rootPreviewHasRenderedContent(preview) {
   const sizer = rootPreviewSizer(preview);
