@@ -10096,9 +10096,6 @@ var PreviewDrawingController = class {
           if (this.draggingStroke || this.resizingSelection || this.pointerDown) {
             return;
           }
-          if (this.pendingMarkdownIdentityRefresh?.expiresAt > Date.now()) {
-            this.restorePendingMarkdownIdentityPresentation();
-          }
           this.scheduleMarkdownMutationSync();
         }
       });
@@ -14496,38 +14493,13 @@ ${selected}
     if (!block || !Number.isFinite(Number(block.lineStart))) {
       return;
     }
-    const liveInlineSpan = element?.classList?.contains("notedraw-md-inline-grid-item") ? Number.parseInt(element.style?.getPropertyValue?.("--notedraw-md-inline-span"), 10) : Number.NaN;
-    const persistedSpan = Number(block.span);
-    const span = Number.isFinite(liveInlineSpan) && liveInlineSpan >= 1 && liveInlineSpan < 12 ? liveInlineSpan : Number.isFinite(persistedSpan) && persistedSpan >= 1 && persistedSpan < 12 ? persistedSpan : null;
     this.pendingMarkdownIdentityRefresh = {
       id: block.id,
       path: block.path,
       lineStart: Number(block.lineStart),
       lineEnd: Number.isFinite(Number(block.lineEnd)) ? Number(block.lineEnd) : Number(block.lineStart),
-      span,
-      widthScale: normalizeMarkdownBlockWidthScale(block.widthScale),
       expiresAt: Date.now() + 3e3
     };
-  }
-  restorePendingMarkdownIdentityPresentation() {
-    const pending = this.pendingMarkdownIdentityRefresh;
-    if (!pending || pending.expiresAt <= Date.now() || this.surfaceType !== "preview" || !this.previewEl?.isConnected) {
-      return false;
-    }
-    const block = this.markdownBlockRecords().find((item) => item.id === pending.id);
-    if (!block || block.floating || !(Number(pending.span) >= 1 && Number(pending.span) < 12)) {
-      return false;
-    }
-    const current = this.markdownBlockElements.get(block.id);
-    const currentSpan = current?.classList?.contains("notedraw-md-inline-grid-item") ? Number.parseInt(current.style?.getPropertyValue?.("--notedraw-md-inline-span"), 10) : Number.NaN;
-    if (current?.isConnected && currentSpan === Number(pending.span)) {
-      return false;
-    }
-    block.span = Number(pending.span);
-    block.widthScale = normalizeMarkdownBlockWidthScale(pending.widthScale);
-    block.noteFlowAutoSpan = false;
-    this.syncMarkdownBlockPresentation();
-    return true;
   }
   rememberTextTap(index, point, event) {
     this.lastTextTap = {

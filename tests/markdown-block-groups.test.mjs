@@ -708,8 +708,6 @@ test("reading selection preserves live parallel spans and NoteFlow ink overlap i
   assert.match(presentationSource, /liveInlineSpan = element\.classList\?\.contains\("notedraw-md-inline-grid-item"\)/);
   assert.match(presentationSource, /block\.span = liveInlineSpan/);
   assert.match(presentationSource, /pendingIdentity\?\.id === block\.id[\s\S]*Number\(meta\.info\?\.lineStart\) === pendingIdentity\.lineStart/);
-  assert.match(source, /restorePendingMarkdownIdentityPresentation\(\)[\s\S]*block\.span = Number\(pending\.span\)[\s\S]*this\.syncMarkdownBlockPresentation\(\)/);
-  assert.match(source, /const liveInlineSpan = element\?\.classList\?\.contains\("notedraw-md-inline-grid-item"\)[\s\S]*span,[\s\S]*widthScale: normalizeMarkdownBlockWidthScale\(block\.widthScale\)/);
   assert.doesNotMatch(presentationSource, /if \(element\) \{\s*this\.pendingMarkdownIdentityRefresh = null;/);
   assert.match(mutationSource, /identityMutationPending = this\.pendingMarkdownIdentityRefresh\?\.expiresAt > Date\.now\(\)/);
   assert.match(mutationSource, /editingLayout \|\| identityMutationPending[\s\S]*delay: identityMutationPending \? 0 : void 0,[\s\S]*force: identityMutationPending/);
