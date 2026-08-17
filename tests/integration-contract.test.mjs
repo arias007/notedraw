@@ -144,10 +144,17 @@ test("3.4.84 preserves reading content and cross-view frames without hidden-surf
   assert.match(source, /flushScheduledResize\(\)[\s\S]*window\.cancelAnimationFrame\(this\.resizeFrameId\)[\s\S]*window\.clearTimeout\(this\.resizeFallbackTimer\)/);
   assert.match(source, /this\.repairConnectedReadingSections\(\);\s*await this\.prepareInitialReadingLayout\(\)/);
   assert.match(source, /new MutationObserver\(\(mutations\) => \{\s*if \(mutations\.some\(\(mutation\) => isMarkdownContentMutation\(mutation\)\)\) \{[\s\S]*?this\.currentEditorEmbedded[\s\S]*?mutations\.every[\s\S]*?return;[\s\S]*?this\.noteFlowMarkdownAnnotationComplete = false;\s*if \(this\.draggingStroke \|\| this\.resizingSelection \|\| this\.pointerDown\) \{[\s\S]*?return;[\s\S]*?this\.scheduleMarkdownMutationSync\(\)/);
+  assert.match(source, /pendingMarkdownIdentityRefresh\?\.expiresAt > Date\.now\(\)[\s\S]*restorePendingMarkdownIdentityPresentation\(\)[\s\S]*scheduleMarkdownMutationSync\(\)/);
   assert.match(source, /const identityMutationPending = this\.pendingMarkdownIdentityRefresh\?\.expiresAt > Date\.now\(\);[\s\S]*if \(editingLayout \|\| identityMutationPending\) \{[\s\S]*this\.scheduleMarkdownAnnotationRefresh\(\{[\s\S]*force: identityMutationPending[\s\S]*\}\);\s*\} else \{\s*this\.syncMarkdownBlockPresentation\(\);\s*this\.scheduleFrozenNoteFlowLayoutRestore\(\)/);
   assert.match(source, /await this\.ensureDrawingsLoaded\(\);[\s\S]*?this\.repairConnectedReadingSections\(\);/);
   assert.match(source, /repairConnectedReadingSections\(renderer = this\.readingPreviewRenderer\(\)\)[\s\S]*renderer\.updateVirtualDisplay\?\.\(\);[\s\S]*section\.rendered !== false[\s\S]*section\.render\?\.\(\);[\s\S]*renderer\.measureSection\?\.\(section\);[\s\S]*renderer\.updateVirtualDisplay\?\.\(\)/);
   assert.match(source, /restoreReadingVirtualSections\(\)[\s\S]*this\.repairConnectedReadingSections\(renderer\)/);
+  assert.match(source, /readingHasAsyncFileEmbeds\(renderer[\s\S]*isAsyncFileEmbedElement[\s\S]*readingAsyncEmbedFilePath/);
+  assert.match(source, /syncReadingVirtualSections\(\)[\s\S]*readingHasAsyncFileEmbeds\(renderer\)[\s\S]*restoreReadingVirtualSections\(\)[\s\S]*repairAsyncFileEmbedSections\(renderer\)[\s\S]*return false/);
+  assert.match(source, /repairAsyncFileEmbedSections\(renderer[\s\S]*rect\.height <= 1[\s\S]*promoteAsyncFileEmbedPlaceholder\(element\)/);
+  assert.match(source, /promoteAsyncFileEmbedPlaceholder\(element\)[\s\S]*cloneNode\(true\)[\s\S]*classList\.add\("file-embed", "mod-generic", "is-loaded"\)[\s\S]*replaceWith\(replacement\)/);
+  assert.match(source, /repairUnloadedEmbeds\(\)[\s\S]*isAsyncFileEmbedElement\(span\)[\s\S]*promoteAsyncFileEmbedPlaceholder\(span\)/);
+  assert.match(source, /function isAsyncFileEmbedElement\(element\)[\s\S]*obcc-inline-workbench-embed[\s\S]*docx\?[\s\S]*pptx\?[\s\S]*xlsx\?/);
   assert.match(source, /const requestFrame = \(\) => new Promise[\s\S]*window\.requestAnimationFrame\(finish\)[\s\S]*window\.setTimeout\(finish, 120\)/);
   assert.match(source, /if \(!this\.responsivePointsInitialized \|\| signature !== this\.responsiveLayoutSignature\)/);
   assert.match(source, /captureElementLayoutForStroke/);

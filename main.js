@@ -9668,6 +9668,8 @@ var PreviewDrawingController = class {
     this.readingVirtualSectionsManaged = false;
     this.readingVirtualSectionSignature = "";
     this.readingVirtualStyleState = /* @__PURE__ */ new Map();
+    this.readingAsyncEmbedFilePath = "";
+    this.readingAsyncEmbedRepairedSections = /* @__PURE__ */ new WeakSet();
     this.readingLogicalSizerHeight = 0;
     this.readingZoomInteractionUntil = 0;
     this.readingZoomSettleTimer = null;
@@ -10095,6 +10097,9 @@ var PreviewDrawingController = class {
           this.noteFlowMarkdownAnnotationComplete = false;
           if (this.draggingStroke || this.resizingSelection || this.pointerDown) {
             return;
+          }
+          if (this.pendingMarkdownIdentityRefresh?.expiresAt > Date.now()) {
+            this.restorePendingMarkdownIdentityPresentation();
           }
           this.scheduleMarkdownMutationSync();
         }
@@ -14493,13 +14498,38 @@ ${selected}
     if (!block || !Number.isFinite(Number(block.lineStart))) {
       return;
     }
+    const liveInlineSpan = element?.classList?.contains("notedraw-md-inline-grid-item") ? Number.parseInt(element.style?.getPropertyValue?.("--notedraw-md-inline-span"), 10) : Number.NaN;
+    const persistedSpan = Number(block.span);
+    const span = Number.isFinite(liveInlineSpan) && liveInlineSpan >= 1 && liveInlineSpan < 12 ? liveInlineSpan : Number.isFinite(persistedSpan) && persistedSpan >= 1 && persistedSpan < 12 ? persistedSpan : null;
     this.pendingMarkdownIdentityRefresh = {
       id: block.id,
       path: block.path,
       lineStart: Number(block.lineStart),
       lineEnd: Number.isFinite(Number(block.lineEnd)) ? Number(block.lineEnd) : Number(block.lineStart),
+      span,
+      widthScale: normalizeMarkdownBlockWidthScale(block.widthScale),
       expiresAt: Date.now() + 3e3
     };
+  }
+  restorePendingMarkdownIdentityPresentation() {
+    const pending = this.pendingMarkdownIdentityRefresh;
+    if (!pending || pending.expiresAt <= Date.now() || this.surfaceType !== "preview" || !this.previewEl?.isConnected) {
+      return false;
+    }
+    const block = this.markdownBlockRecords().find((item) => item.id === pending.id);
+    if (!block || block.floating || !(Number(pending.span) >= 1 && Number(pending.span) < 12)) {
+      return false;
+    }
+    const current = this.markdownBlockElements.get(block.id);
+    const currentSpan = current?.classList?.contains("notedraw-md-inline-grid-item") ? Number.parseInt(current.style?.getPropertyValue?.("--notedraw-md-inline-span"), 10) : Number.NaN;
+    if (current?.isConnected && currentSpan === Number(pending.span)) {
+      return false;
+    }
+    block.span = Number(pending.span);
+    block.widthScale = normalizeMarkdownBlockWidthScale(pending.widthScale);
+    block.noteFlowAutoSpan = false;
+    this.syncMarkdownBlockPresentation();
+    return true;
   }
   rememberTextTap(index, point, event) {
     this.lastTextTap = {
@@ -15235,6 +15265,58 @@ ${selected}
     const renderer = this.view?.previewMode?.renderer;
     return renderer?.previewEl === this.previewEl && Array.isArray(renderer?.sections) ? renderer : null;
   }
+  readingHasAsyncFileEmbeds(renderer = this.readingPreviewRenderer()) {
+    const filePath = normalizeVaultPath(this.file?.path || "");
+    if (this.readingAsyncEmbedFilePath === filePath && filePath) {
+      return true;
+    }
+    const roots = [this.previewEl, ...(renderer?.sections || []).map((section) => section?.el)].filter(Boolean);
+    const found = roots.some((root) => {
+      if (isAsyncFileEmbedElement(root)) {
+        return true;
+      }
+      return Array.from(root.querySelectorAll?.(
+        ".obcc-inline-workbench-embed, .internal-embed[src], .internal-embed[data-src]"
+      ) || []).some(isAsyncFileEmbedElement);
+    });
+    if (found) {
+      this.readingAsyncEmbedFilePath = filePath;
+    }
+    return found;
+  }
+  repairAsyncFileEmbedSections(renderer = this.readingPreviewRenderer()) {
+    let repaired = 0;
+    for (const section of renderer?.sections || []) {
+      if (!section?.el?.isConnected || this.readingAsyncEmbedRepairedSections.has(section)) {
+        continue;
+      }
+      const placeholders = Array.from(section.el.querySelectorAll?.(
+        ".internal-embed[src], .internal-embed[data-src]"
+      ) || []).filter(isAsyncFileEmbedElement);
+      const unloaded = placeholders.filter((element) => {
+        const rect = element.getBoundingClientRect?.();
+        return !element.closest?.(".obcc-inline-workbench-embed") && !element.classList?.contains("file-embed") && (!rect || rect.height <= 1);
+      });
+      if (!unloaded.length) {
+        continue;
+      }
+      this.readingAsyncEmbedRepairedSections.add(section);
+      for (const element of unloaded) {
+        repaired += this.promoteAsyncFileEmbedPlaceholder(element) ? 1 : 0;
+      }
+    }
+    return repaired;
+  }
+  promoteAsyncFileEmbedPlaceholder(element) {
+    if (!element?.isConnected || !isAsyncFileEmbedElement(element) || element.classList?.contains("file-embed")) {
+      return false;
+    }
+    const replacement = element.cloneNode(true);
+    replacement.classList.add("file-embed", "mod-generic", "is-loaded");
+    replacement.dataset.noteDrawAsyncEmbedRepair = "true";
+    element.replaceWith(replacement);
+    return true;
+  }
   repairConnectedReadingSections(renderer = this.readingPreviewRenderer()) {
     if (!renderer || !this.previewEl?.isConnected) {
       return 0;
@@ -15396,6 +15478,11 @@ ${selected}
     const pusher = renderer?.pusherEl;
     const sections = renderer?.sections || [];
     if (!renderer || target !== sizer || !target?.isConnected || !this.readingZoomStage?.contains?.(sizer) || !pusher || !sections.length || Math.abs(zoom - 1) < 1e-3) {
+      return false;
+    }
+    if (this.readingHasAsyncFileEmbeds(renderer)) {
+      this.restoreReadingVirtualSections();
+      this.repairAsyncFileEmbedSections(renderer);
       return false;
     }
     this.rememberReadingVirtualStyle(sizer, "min-height");
@@ -21279,6 +21366,10 @@ ${selected}
       if (!target || target.startsWith("http://") || target.startsWith("https://")) {
         continue;
       }
+      if (isAsyncFileEmbedElement(span) && this.promoteAsyncFileEmbedPlaceholder(span)) {
+        repaired += 1;
+        continue;
+      }
       const dest = this.plugin.app.metadataCache?.getFirstLinkpathDest?.(target, this.file?.path || "") || null;
       if (!dest || dest.extension !== "md") {
         continue;
@@ -22032,9 +22123,12 @@ ${selected}
       if (moved.has(index) || !normalizeNoteFlow(stroke?.noteFlow) || isConnectorStroke(stroke)) {
         continue;
       }
-      const bounds = getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight());
+      const original = this.dragNoteFlowLivePreviewOriginals.get(index);
+      const peerStroke = original ? { ...stroke, points: original.points } : stroke;
+      const peerNoteFlow = original?.noteFlow || stroke.noteFlow;
+      const bounds = getStrokeBounds(peerStroke, this.canvasWidth(), this.canvasHeight());
       const canonical = bounds && this.noteFlowCanonicalGapPlacement(
-        stroke.noteFlow,
+        peerNoteFlow,
         geometry?.noteFlowCandidates,
         liveCanvasRect?.top + (bounds.minY - this.canvasWindowTop) * liveScaleY
       );
@@ -27278,6 +27372,16 @@ function findRootPreviewForView(view) {
 }
 function rootPreviewSizer(preview) {
   return preview?.querySelector?.(":scope > .markdown-preview-sizer") || preview?.querySelector?.(".markdown-preview-sizer") || null;
+}
+function isAsyncFileEmbedElement(element) {
+  if (!element) {
+    return false;
+  }
+  if (element.matches?.(".obcc-inline-workbench-embed")) {
+    return true;
+  }
+  const source = String(element.getAttribute?.("data-src") || element.getAttribute?.("src") || "").split("#", 1)[0].split("?", 1)[0].toLowerCase();
+  return /\.(?:docx?|pptx?|xlsx?|odt|ods|odp|rtf)$/.test(source);
 }
 function rootPreviewHasRenderedContent(preview) {
   const sizer = rootPreviewSizer(preview);

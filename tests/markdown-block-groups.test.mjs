@@ -708,6 +708,8 @@ test("reading selection preserves live parallel spans and NoteFlow ink overlap i
   assert.match(presentationSource, /liveInlineSpan = element\.classList\?\.contains\("notedraw-md-inline-grid-item"\)/);
   assert.match(presentationSource, /block\.span = liveInlineSpan/);
   assert.match(presentationSource, /pendingIdentity\?\.id === block\.id[\s\S]*Number\(meta\.info\?\.lineStart\) === pendingIdentity\.lineStart/);
+  assert.match(source, /restorePendingMarkdownIdentityPresentation\(\)[\s\S]*block\.span = Number\(pending\.span\)[\s\S]*this\.syncMarkdownBlockPresentation\(\)/);
+  assert.match(source, /const liveInlineSpan = element\?\.classList\?\.contains\("notedraw-md-inline-grid-item"\)[\s\S]*span,[\s\S]*widthScale: normalizeMarkdownBlockWidthScale\(block\.widthScale\)/);
   assert.doesNotMatch(presentationSource, /if \(element\) \{\s*this\.pendingMarkdownIdentityRefresh = null;/);
   assert.match(mutationSource, /identityMutationPending = this\.pendingMarkdownIdentityRefresh\?\.expiresAt > Date\.now\(\)/);
   assert.match(mutationSource, /editingLayout \|\| identityMutationPending[\s\S]*delay: identityMutationPending \? 0 : void 0,[\s\S]*force: identityMutationPending/);
@@ -720,6 +722,14 @@ test("same-row horizontal NoteFlow drag keeps the origin reservation until the r
 
   assert.match(preview, /const resolved = this\.resolveDraggedNoteFlowPlacement\(placement, movedIndexes\)/);
   assert.match(preview, /if \(!this\.draggedNoteFlowRemainsInOriginGap\(movedIndexes, resolved\)\) \{\s*this\.clearDraggedNoteFlowOriginReservationPreview\(movedIndexes\);/);
+});
+
+test("parallel NoteFlow ordering uses peer geometry from before live preview packing", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const placement = source.slice(source.indexOf("  updateDraggedNoteFlowPlacement("), source.indexOf("  syncMarkdownDropFromNoteFlowPlacement("));
+
+  assert.match(placement, /const original = this\.dragNoteFlowLivePreviewOriginals\.get\(index\)[\s\S]*peerStroke = original \? \{ \.\.\.stroke, points: original\.points \} : stroke[\s\S]*peerNoteFlow = original\?\.noteFlow \|\| stroke\.noteFlow/);
+  assert.match(placement, /getStrokeBounds\(peerStroke[\s\S]*noteFlowCanonicalGapPlacement\([\s\S]*peerNoteFlow/);
 });
 
 test("selection handle hit testing stays usable for narrow elements at visual zoom", async () => {
