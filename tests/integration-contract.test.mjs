@@ -3,6 +3,20 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const sourceUrl = new URL("../src/notedraw-plugin.js", import.meta.url);
+
+test("fenced code blocks are selectable and editable without losing their fence", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+
+  assert.match(source, /MARKDOWN_TEXT_SELECTOR = "[^"]*pre/);
+  const blocked = source.slice(source.indexOf("var BLOCKED_EDIT_SELECTOR"), source.indexOf("var WEBVIEW_EDITABLE_SELECTOR"));
+  assert.doesNotMatch(blocked, /"pre"|"code"/);
+  assert.match(source, /String\(element\?\.tagName \|\| ""\)\.toLowerCase\(\) === "pre"/);
+  assert.match(source, /const fencedCode = firstLine\.match/);
+  assert.match(source, /fencedCode\[2\].*fencedCode\[3\]/s);
+  assert.match(source, /text = text\.replace\(\/\^\\s\*\(`\{3,/);
+  assert.match(source, /const fencedMatch = blocks\.find\([\s\S]*sourceLine >= block\.line[\s\S]*sourceLine <= block\.endLine/);
+  assert.match(source, /if \(!inFence\) \{[\s\S]*buffer = fullLine;[\s\S]*blocks\.push\(\{[\s\S]*endLine: currentLine/);
+});
 const canvasSizingUrl = new URL("../src/canvas-sizing.mjs", import.meta.url);
 const manifestUrl = new URL("../manifest.json", import.meta.url);
 const stylesUrl = new URL("../styles.css", import.meta.url);

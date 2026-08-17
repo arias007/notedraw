@@ -55,6 +55,7 @@ import {
 } from "./markdown-anchors.mjs";
 import { preservesAllMovedMarkdownBlocks } from "./markdown-reorder.mjs";
 import { allocateInlineRow, distributeInlineRowSpans } from "./markdown-inline-row.mjs";
+import { dedupeMarkdownBlockRecords } from "./markdown-block-records.mjs";
 import {
   clientPointInRect,
   markdownClientRectsOverlap,
@@ -1271,7 +1272,7 @@ var DEFAULT_SETTINGS = {
   autoSaveDelayMs: 500,
   enableDebugLog: false
 };
-var MARKDOWN_TEXT_SELECTOR = "h1,h2,h3,h4,h5,h6,p,li,blockquote,td,th,.callout-content";
+var MARKDOWN_TEXT_SELECTOR = "h1,h2,h3,h4,h5,h6,p,li,blockquote,pre,td,th,.callout-content";
 var MARKDOWN_EMBED_SELECTOR = ".internal-embed,.markdown-embed,.markdown-embed-content";
 var NOTE_FLOW_RENDERED_OWNER_SELECTOR = [
   ".el-p",
@@ -1346,8 +1347,6 @@ var BLOCKED_EDIT_SELECTOR = [
   "input",
   "textarea",
   "select",
-  "pre",
-  "code",
   "img",
   "svg",
   "canvas",
@@ -1371,6 +1370,7 @@ var WEBVIEW_EDITABLE_SELECTOR = [
   "summary",
   "figcaption",
   "caption",
+  "pre",
   "a",
   "span",
   "div"
@@ -1391,8 +1391,6 @@ var WEBVIEW_BLOCKED_EDIT_SELECTOR = [
   "input",
   "textarea",
   "select",
-  "pre",
-  "code",
   "img",
   "svg",
   "canvas",
@@ -4768,7 +4766,11 @@ var NoteDrawPlugin = class extends Plugin {
       const selected = candidates[0] || null;
       const sourceRevision = sourceRevisionForFile(file);
       const storedRevision = normalizeSourceRevision(selected?.data?.sourceRevision);
+      const storedMarkdownBlockCount = Array.isArray(selected?.data?.markdownBlocks)
+        ? selected.data.markdownBlocks.length
+        : 0;
       const data = selected ? normalizeDrawingData(selected.data, file) : createEmptyDrawingData(file);
+      const repairedMarkdownBlocks = Boolean(selected && data.markdownBlocks.length < storedMarkdownBlockCount);
       const sourceRevisionMismatch = Boolean(selected && (
         !storedRevision
         || storedRevision !== sourceRevision
@@ -4780,7 +4782,8 @@ var NoteDrawPlugin = class extends Plugin {
         value: sourceRevisionMismatch
       });
       this.drawingStateCache.set(storageKey, normalizeDrawingData(data, file));
-      if (selected?.kind === "legacy" && options.migrateLegacy !== false) {
+      if ((selected?.kind === "legacy" && options.migrateLegacy !== false)
+        || repairedMarkdownBlocks && options.repair !== false) {
         await this.writeDrawings(file, data, { refresh: false });
       }
       return data;
@@ -9494,19 +9497,39 @@ var PreviewDrawingController = class {
         const box = projectedBox
           ? stabilizeProjectedElementBox(projectedBox, currentBoundsById.get(transitionId))
           : null;
-        const stableFlowBox = noteFlow?.boxWidthRatio > 0 && noteFlow?.boxHeightRatio > 0
+        const sourceContentWidth = Number(layout?.sourceFrame?.contentWidth) || 0;
+        const targetContentWidth = Number(context.frame?.width) || this.canvasWidth();
+        const layoutWidthRatio = sourceContentWidth >= 24 && Number(layout?.box?.width) > 0
+          ? Number(layout.box.width) / sourceContentWidth
+          : 0;
+        const layoutHeightRatio = sourceContentWidth >= 24 && Number(layout?.box?.height) > 0
+          ? Number(layout.box.height) / sourceContentWidth
+          : 0;
+        const fallbackBox = box || projectedBounds;
+        const stableFlowBox = noteFlow && (layout || fallbackBox)
           ? {
             ...(box || {}),
             ...projectStableNoteFlowBox({
-              boxLeftRatio: noteFlow.boxLeftRatio,
-              boxWidthRatio: noteFlow.boxWidthRatio,
-              boxHeightRatio: noteFlow.boxHeightRatio,
+              boxLeftRatio: noteFlow.boxWidthRatio > 0
+                ? noteFlow.boxLeftRatio
+                : sourceContentWidth >= 24
+                  ? (Number(layout?.box?.x) - Number(layout?.sourceFrame?.contentLeft || 0)) / sourceContentWidth
+                  : (Number(fallbackBox?.x) - Number(context.frame?.left || 0)) / Math.max(24, targetContentWidth),
+              boxWidthRatio: noteFlow.boxWidthRatio > 0
+                ? noteFlow.boxWidthRatio
+                : layoutWidthRatio || Number(fallbackBox?.width) / Math.max(24, targetContentWidth),
+              boxHeightRatio: noteFlow.boxHeightRatio > 0
+                ? noteFlow.boxHeightRatio
+                : layoutHeightRatio || Number(fallbackBox?.height) / Math.max(24, targetContentWidth),
               contentLeft: context.frame?.left,
               contentWidth: context.frame?.width,
               canvasWidth: this.canvasWidth(),
-              fallbackWidth: Number(layout?.sourceFrame?.contentWidth) >= 24
-                ? Number(layout?.box?.width) * Number(context.frame?.width) / Number(layout.sourceFrame.contentWidth)
-                : Number(box?.width) || Number(layout?.box?.width) || 0,
+              fallbackWidth: sourceContentWidth >= 24
+                ? Number(layout?.box?.width) * targetContentWidth / sourceContentWidth
+                : Number(fallbackBox?.width) || Number(layout?.box?.width) || 0,
+              fallbackHeight: sourceContentWidth >= 24
+                ? Number(layout?.box?.height) * targetContentWidth / sourceContentWidth
+                : Number(fallbackBox?.height) || Number(layout?.box?.height) || 0,
               y: this.noteFlowStoredRowCanvasY(noteFlow) ?? box?.y ?? layout?.box?.y ?? 0
             })
           }
@@ -16218,9 +16241,14 @@ var PreviewDrawingController = class {
       ? String(block.explicitLineGroup || "") === explicitGroup
       : !block.explicitLineGroup;
     const mapped = candidates.find((block) => this.markdownBlockElements?.get?.(block.id) === blockElement);
+    const rangeMatching = candidates.filter((block) => compatible(block)
+      && Number.isFinite(info.lineStart)
+      && block.lineStart === info.lineStart
+      && block.lineEnd === (info.lineEnd ?? info.lineStart));
     const matching = candidates.filter((block) => compatible(block)
       && (!block.textHint || block.textHint === hint));
     return mapped
+      || rangeMatching[0]
       || matching.find((block) => Number.isFinite(info.lineStart) && block.lineStart === info.lineStart)
       || matching.find((block) => block.textHint && block.textHint === hint)
       || null;
@@ -16479,9 +16507,18 @@ var PreviewDrawingController = class {
       this.markdownBlockGridContainer(element)
     ]).filter(Boolean));
     const candidates = markdownBlockCandidateElements(this.previewEl);
-    const explicitRecordsChanged = this.expandExplicitMarkdownBlockRecords(candidates);
+    let explicitRecordsChanged = this.expandExplicitMarkdownBlockRecords(candidates);
+    const currentRecords = this.markdownBlockRecords();
+    const compactedRecords = dedupeMarkdownBlockRecords(currentRecords);
+    if (compactedRecords.length < currentRecords.length) {
+      this.drawingData.markdownBlocks = compactedRecords;
+      const retainedIds = new Set(compactedRecords.map((block) => block.id));
+      this.selectedMarkdownBlockIds = new Set(Array.from(this.selectedMarkdownBlockIds || []).filter((id) => retainedIds.has(id)));
+      explicitRecordsChanged = true;
+    }
     const candidateMeta = /* @__PURE__ */ new Map();
     const idCandidates = /* @__PURE__ */ new Map();
+    const rangeCandidates = /* @__PURE__ */ new Map();
     const exactCandidates = /* @__PURE__ */ new Map();
     const hintCandidates = /* @__PURE__ */ new Map();
     const queueCandidate = (map, key, element) => {
@@ -16499,6 +16536,7 @@ var PreviewDrawingController = class {
         queueCandidate(idCandidates, mappedId, element);
       }
       if (Number.isFinite(info.lineStart)) {
+        queueCandidate(rangeCandidates, `${path}\u0000${info.lineStart}\u0000${info.lineEnd ?? info.lineStart}\u0000${String(element.dataset?.noteDrawExplicitLineGroup || "")}`, element);
         queueCandidate(exactCandidates, `${path}\u0000${info.lineStart}\u0000${hint}`, element);
       }
       queueCandidate(hintCandidates, `${path}\u0000${hint}`, element);
@@ -16526,6 +16564,7 @@ var PreviewDrawingController = class {
       return hint === normalizeRenderedText(block.textHint);
     };
     const takeUnused = (values, block = null) => values?.find((element) => !used.has(element) && identityMatches(block, element)) || null;
+    const takeUnusedRange = (values, block = null) => values?.find((element) => !used.has(element) && explicitGroupMatches(block, element)) || null;
     const next = /* @__PURE__ */ new Map();
     for (const block of this.markdownBlockRecords()) {
       const previous = this.markdownBlockElements.get(block.id);
@@ -16534,10 +16573,12 @@ var PreviewDrawingController = class {
         && previous?.dataset?.noteDrawMarkdownBlockId === block.id
         && identityMatches(block, previous);
       const exactKey = `${block.path}\u0000${block.lineStart}\u0000${block.textHint}`;
+      const rangeKey = `${block.path}\u0000${block.lineStart}\u0000${block.lineEnd ?? block.lineStart}\u0000${String(block.explicitLineGroup || "")}`;
       const hintKey = `${block.path}\u0000${block.textHint}`;
       let element = previousMatches
         ? previous
         : takeUnused(idCandidates.get(block.id), block)
+          || takeUnusedRange(rangeCandidates.get(rangeKey), block)
           || takeUnused(exactCandidates.get(exactKey), block)
           || takeUnused(hintCandidates.get(hintKey), block);
       if (!element && pendingIdentity?.id === block.id && pendingIdentity.path === block.path) {
@@ -23469,7 +23510,9 @@ function isClearableInlineFormattingElement(element) {
   return ["A", "B", "CODE", "DEL", "EM", "I", "KBD", "MARK", "S", "SMALL", "SPAN", "STRONG", "SUB", "SUP", "U"].includes(tag);
 }
 function serializeControllerEditableSource(element, embeddedSurface = false, cleanupTerminalBreak = false) {
-  const source = serializeEditableSource(element);
+  const source = String(element?.tagName || "").toLowerCase() === "pre"
+    ? String(element.querySelector?.("code")?.textContent ?? element.textContent ?? "").replace(/\n+$/g, "")
+    : serializeEditableSource(element);
   return cleanupTerminalBreak ? stripOneTerminalBreakPerLine(source) : source;
 }
 function stripOneTerminalBreakPerLine(value) {
@@ -23583,6 +23626,7 @@ function isSafeCssSize(value) {
 }
 function normalizeMarkdownBlock(value) {
   let text = String(value || "").trim();
+  text = text.replace(/^\s*(`{3,}|~{3,})[^\r\n]*\r?\n([\s\S]*?)\r?\n\s*\1\s*$/, "$2");
   text = text.replace(/<br\s*\/?>/gi, "\n").replace(/<\/(p|div|li|h[1-6])>/gi, "\n").replace(/<pre[^>]*><code[^>]*>([\s\S]*?)<\/code><\/pre>/gi, "$1").replace(/<\/?(span|u|mark|kbd|sup|sub|small|strong|b|em|i|code)[^>]*>/gi, "").replace(/<[^>]+>/g, "");
   text = text.replace(/^\s*[-*+]\s+\[[ xX]\]\s+/gm, "").replace(/^#{1,6}\s+/gm, "").replace(/^\s{0,3}>\s?/gm, "").replace(/^\s*[-*+]\s+/gm, "").replace(/^\s*\d+[.)]\s+/gm, "").replace(/\*\*([^*]+)\*\*/g, "$1").replace(/\*([^*]+)\*/g, "$1").replace(/__([^_]+)__/g, "$1").replace(/_([^_]+)_/g, "$1").replace(/==([^=]+)==/g, "$1").replace(/`([^`]+)`/g, "$1").replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, "$2").replace(/\[\[([^\]]+)\]\]/g, "$1").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
   return normalizeRenderedText(text);
@@ -23655,20 +23699,38 @@ function collectMarkdownBlocks(source) {
     offset += fullLine.length;
     lineNumber += 1;
     if (/^```|^~~~/.test(trimmed)) {
-      if (buffer.trim()) {
+      if (!inFence) {
+        if (buffer.trim()) {
+          blocks.push({
+            start,
+            end: lineStart,
+            line: startLine,
+            endLine: Math.max(startLine, currentLine - 1),
+            text: buffer.replace(/\s+$/, "")
+          });
+        }
+        start = lineStart;
+        startLine = currentLine;
+        buffer = fullLine;
+        inFence = true;
+      } else {
+        buffer += fullLine;
         blocks.push({
           start,
-          end: lineStart,
+          end: offset,
           line: startLine,
-          endLine: Math.max(startLine, currentLine - 1),
+          endLine: currentLine,
           text: buffer.replace(/\s+$/, "")
         });
         buffer = "";
+        start = offset;
+        startLine = lineNumber;
+        inFence = false;
       }
-      inFence = !inFence;
       continue;
     }
     if (inFence) {
+      buffer += fullLine;
       continue;
     }
     if (!trimmed) {
@@ -25626,7 +25688,7 @@ function normalizeMarkdownBlocks(value, file) {
     return [];
   }
   const seen = /* @__PURE__ */ new Set();
-  return value.map((block, index) => {
+  const normalized = value.map((block, index) => {
     const path = normalizeVaultPath(block?.path || file?.path || "");
     const textHint = normalizeRenderedText(block?.textHint || "").slice(0, 240);
     const lineStart = Number.isFinite(Number(block?.lineStart)) ? Math.max(0, Math.round(Number(block.lineStart))) : null;
@@ -25667,6 +25729,7 @@ function normalizeMarkdownBlocks(value, file) {
     }
     return normalized;
   }).filter((block) => block && block.path && block.id && !seen.has(block.id) && seen.add(block.id));
+  return dedupeMarkdownBlockRecords(normalized);
 }
 function normalizeMarkdownBlockWidthScale(value) {
   const widthScale = Number(value);
@@ -25975,7 +26038,12 @@ function resolveSourceEditTarget(source, sourceInfo, originalText) {
   }
   const blocks = collectMarkdownBlocks(source);
   const sourceLine = sourceInfo?.lineStart ?? (sourceInfo?.dataLineScope === "self" ? sourceInfo?.dataLine : null);
-  let match = pickFromSectionText(source, sourceInfo, normalizedOriginal) || collectSourceLineBlock(source, sourceInfo, normalizedOriginal) || pickLineInSourceRange(source, sourceInfo, normalizedOriginal) || pickBlockInSourceRange(blocks, sourceInfo, normalizedOriginal) || pickBlockBySourceInfo(blocks, sourceInfo, normalizedOriginal);
+  const fencedMatch = blocks.find((block) => Number.isFinite(sourceLine)
+    && sourceLine >= block.line
+    && sourceLine <= block.endLine
+    && /^\s*(`{3,}|~{3,})/.test(block.text)
+    && normalizeMarkdownBlock(block.text) === normalizedOriginal);
+  let match = fencedMatch || pickFromSectionText(source, sourceInfo, normalizedOriginal) || collectSourceLineBlock(source, sourceInfo, normalizedOriginal) || pickLineInSourceRange(source, sourceInfo, normalizedOriginal) || pickBlockInSourceRange(blocks, sourceInfo, normalizedOriginal) || pickBlockBySourceInfo(blocks, sourceInfo, normalizedOriginal);
   if (!match) {
     const candidates = blocks.filter((block) => normalizeMarkdownBlock(block.text) === normalizedOriginal);
     match = pickNearestBlock(candidates, sourceLine);
@@ -27043,6 +27111,10 @@ function formatReplacementBlock(originalBlock, editedText) {
   const original = String(originalBlock || "");
   const edited = normalizeEditableSourceText(editedText);
   const firstLine = original.split(/\r?\n/)[0] || "";
+  const fencedCode = firstLine.match(/^(\s*)(`{3,}|~{3,})([^\r\n]*)$/);
+  if (fencedCode) {
+    return `${fencedCode[1]}${fencedCode[2]}${fencedCode[3]}\n${edited}\n${fencedCode[1]}${fencedCode[2]}`;
+  }
   const heading = firstLine.match(/^(#{1,6}\s+)/);
   if (heading) {
     return `${heading[1]}${edited}`;

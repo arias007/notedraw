@@ -918,6 +918,20 @@ test("NoteFlow stable box projection restores a saved width when old points alre
   assert.equal(projected.width, 96);
 });
 
+test("NoteFlow stable box projection restores saved height when ratios are missing", () => {
+  const projected = projectStableNoteFlowBox({
+    boxLeftRatio: 0.1,
+    boxWidthRatio: 0,
+    boxHeightRatio: 0,
+    contentWidth: 400,
+    canvasWidth: 440,
+    fallbackWidth: 128,
+    fallbackHeight: 72,
+    y: 50
+  });
+  assert.deepEqual(projected, { x: 40, y: 50, width: 128, height: 72 });
+});
+
 test("NoteFlow current geometry expands into its stable box instead of collapsing left", () => {
   const source = [
     { x: 0.49, y: 0.2, pressure: 0.4 },

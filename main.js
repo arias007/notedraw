@@ -1632,6 +1632,84 @@ function allocateInlineRow({
   };
 }
 
+// src/markdown-block-records.mjs
+function finiteInteger(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.round(number) : null;
+}
+function semanticMarkdownBlockKey(block) {
+  const path = String(block?.path || "");
+  const lineStart = finiteInteger(block?.lineStart);
+  const lineEnd = finiteInteger(block?.lineEnd);
+  if (!path || lineStart === null || lineEnd === null || lineStart < 0 || lineEnd < lineStart) {
+    return "";
+  }
+  return `${path}\0${lineStart}\0${lineEnd}\0${String(block?.explicitLineGroup || "")}`;
+}
+function shortestUsefulHint(...values) {
+  return values.map((value) => String(value || "").trim()).filter(Boolean).sort((left, right) => {
+    const leftLines = left.split(/\r?\n/).length;
+    const rightLines = right.split(/\r?\n/).length;
+    return leftLines - rightLines || left.length - right.length;
+  })[0] || "";
+}
+function firstValue(records, property, predicate = Boolean) {
+  return records.map((record) => record?.[property]).find(predicate);
+}
+function mergeSemanticMarkdownBlocks(current, duplicate) {
+  const records = [current, duplicate];
+  const explicitFloating = records.find((record) => record?.floating && record?.floatingExplicit && record?.floatBox);
+  const implicitFloating = records.every((record) => record?.floating && record?.floatBox) ? records.find((record) => record?.floatBox) : null;
+  const floatingSource = explicitFloating || implicitFloating;
+  return {
+    ...current,
+    textHint: shortestUsefulHint(current.textHint, duplicate.textHint),
+    span: Math.max(Number(current.span) || 1, Number(duplicate.span) || 1),
+    noteFlowAutoSpan: Boolean(current.noteFlowAutoSpan && duplicate.noteFlowAutoSpan),
+    widthScale: Math.max(Number(current.widthScale) || 0, Number(duplicate.widthScale) || 0),
+    minHeight: Math.max(Number(current.minHeight) || 0, Number(duplicate.minHeight) || 0),
+    borderColor: firstValue(records, "borderColor") || "",
+    backgroundColor: firstValue(records, "backgroundColor") || "",
+    contentColor: firstValue(records, "contentColor") || "",
+    contentOpacity: Math.max(Number(current.contentOpacity) || 0, Number(duplicate.contentOpacity) || 0),
+    contentScale: Math.max(Number(current.contentScale) || 0, Number(duplicate.contentScale) || 0),
+    floating: Boolean(floatingSource),
+    floatingExplicit: Boolean(explicitFloating),
+    floatBox: floatingSource?.floatBox || null,
+    locked: Boolean(current.locked || duplicate.locked),
+    groupId: firstValue(records, "groupId") || ""
+  };
+}
+function repeatedSingleLineHint(value) {
+  const lines = String(value || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  return lines.length > 1 && lines.every((line) => line === lines[0]) ? lines[0] : "";
+}
+function dedupeMarkdownBlockRecords(value) {
+  const records = Array.isArray(value) ? value.filter(Boolean) : [];
+  const merged = [];
+  const indexes = /* @__PURE__ */ new Map();
+  for (const record of records) {
+    const key = semanticMarkdownBlockKey(record);
+    if (!key || !indexes.has(key)) {
+      if (key) {
+        indexes.set(key, merged.length);
+      }
+      merged.push({ ...record });
+      continue;
+    }
+    const index = indexes.get(key);
+    merged[index] = mergeSemanticMarkdownBlocks(merged[index], record);
+  }
+  const reliableHints = new Set(merged.filter((record) => Number(record.lineStart) > 0).map((record) => String(record.textHint || "").trim()).filter(Boolean));
+  return merged.filter((record) => {
+    if (Number(record.lineStart) !== 0 || Number(record.lineEnd) !== 0 || record.explicitLineGroup) {
+      return true;
+    }
+    const repeated = repeatedSingleLineHint(record.textHint);
+    return !repeated || !reliableHints.has(repeated);
+  });
+}
+
 // src/markdown-block-layout.mjs
 function clamp4(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -2781,6 +2859,7 @@ function projectStableNoteFlowBox({
   contentWidth,
   canvasWidth,
   fallbackWidth = 0,
+  fallbackHeight = 0,
   minWidth = 24,
   y = 0
 } = {}) {
@@ -2794,7 +2873,7 @@ function projectStableNoteFlowBox({
     finite8(boxWidthRatio) * laneWidth,
     finite8(fallbackWidth)
   ), minimumStableWidth, surfaceWidth);
-  const height = Math.max(2, finite8(boxHeightRatio) * laneWidth);
+  const height = Math.max(2, finite8(boxHeightRatio) * laneWidth, finite8(fallbackHeight));
   return {
     x: clamp7(finite8(contentLeft) + finite8(boxLeftRatio) * laneWidth, 0, Math.max(0, surfaceWidth - width)),
     y: Math.max(0, finite8(y)),
@@ -5193,7 +5272,7 @@ var DEFAULT_SETTINGS = {
   autoSaveDelayMs: 500,
   enableDebugLog: false
 };
-var MARKDOWN_TEXT_SELECTOR = "h1,h2,h3,h4,h5,h6,p,li,blockquote,td,th,.callout-content";
+var MARKDOWN_TEXT_SELECTOR = "h1,h2,h3,h4,h5,h6,p,li,blockquote,pre,td,th,.callout-content";
 var MARKDOWN_EMBED_SELECTOR = ".internal-embed,.markdown-embed,.markdown-embed-content";
 var NOTE_FLOW_RENDERED_OWNER_SELECTOR = [
   ".el-p",
@@ -5268,8 +5347,6 @@ var BLOCKED_EDIT_SELECTOR = [
   "input",
   "textarea",
   "select",
-  "pre",
-  "code",
   "img",
   "svg",
   "canvas",
@@ -5293,6 +5370,7 @@ var WEBVIEW_EDITABLE_SELECTOR = [
   "summary",
   "figcaption",
   "caption",
+  "pre",
   "a",
   "span",
   "div"
@@ -5313,8 +5391,6 @@ var WEBVIEW_BLOCKED_EDIT_SELECTOR = [
   "input",
   "textarea",
   "select",
-  "pre",
-  "code",
   "img",
   "svg",
   "canvas",
@@ -8620,7 +8696,9 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       const selected = candidates[0] || null;
       const sourceRevision = sourceRevisionForFile(file2);
       const storedRevision = normalizeSourceRevision(selected?.data?.sourceRevision);
+      const storedMarkdownBlockCount = Array.isArray(selected?.data?.markdownBlocks) ? selected.data.markdownBlocks.length : 0;
       const data = selected ? normalizeDrawingData(selected.data, file2) : createEmptyDrawingData(file2);
+      const repairedMarkdownBlocks = Boolean(selected && data.markdownBlocks.length < storedMarkdownBlockCount);
       const sourceRevisionMismatch = Boolean(selected && (!storedRevision || storedRevision !== sourceRevision));
       data.sourceRevision = sourceRevision;
       Object.defineProperty(data, "_notedrawSourceRevisionMismatch", {
@@ -8629,7 +8707,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
         value: sourceRevisionMismatch
       });
       this.drawingStateCache.set(storageKey, normalizeDrawingData(data, file2));
-      if (selected?.kind === "legacy" && options.migrateLegacy !== false) {
+      if (selected?.kind === "legacy" && options.migrateLegacy !== false || repairedMarkdownBlocks && options.repair !== false) {
         await this.writeDrawings(file2, data, { refresh: false });
       }
       return data;
@@ -13175,7 +13253,7 @@ ${selected}
         });
         return noteFlow.positionBasis === "document" && noteFlow.positionVersion >= 1 ? projectNoteFlowDocumentPoint(point, projectedPoint, { canvasHeight: this.canvasHeight() }) : projectedPoint;
       });
-      const projectedBounds = getStrokeBounds({ ...stroke, points: projectedPoints }, this.canvasWidth(), this.canvasHeight());
+      const projectedBounds2 = getStrokeBounds({ ...stroke, points: projectedPoints }, this.canvasWidth(), this.canvasHeight());
       const layoutBox = projectElementLayout(layout, {
         canvasWidth: this.canvasWidth(),
         canvasHeight: this.canvasHeight(),
@@ -13184,20 +13262,20 @@ ${selected}
         lineToCanvasY,
         preferDocumentFlow: isMobileRuntime()
       });
-      const projectedBox = layoutBox && projectedBounds ? {
+      const projectedBox = layoutBox && projectedBounds2 ? {
         ...layoutBox,
-        y: clamp10(projectedBounds.minY, 0, Math.max(0, this.canvasHeight() - layoutBox.height)),
-        anchorY: clamp10(projectedBounds.minY, 0, Math.max(0, this.canvasHeight() - layoutBox.height))
+        y: clamp10(projectedBounds2.minY, 0, Math.max(0, this.canvasHeight() - layoutBox.height)),
+        anchorY: clamp10(projectedBounds2.minY, 0, Math.max(0, this.canvasHeight() - layoutBox.height))
       } : null;
       if (projectedBox) {
         noteFlowProjectedById.set(transitionId, projectedBox);
       }
-      if (previousBounds && (projectedBox || projectedBounds)) {
+      if (previousBounds && (projectedBox || projectedBounds2)) {
         const transitionBox2 = projectedBox || {
-          x: projectedBounds.minX,
-          y: projectedBounds.minY,
-          width: projectedBounds.maxX - projectedBounds.minX,
-          height: projectedBounds.maxY - projectedBounds.minY
+          x: projectedBounds2.minX,
+          y: projectedBounds2.minY,
+          width: projectedBounds2.maxX - projectedBounds2.minX,
+          height: projectedBounds2.maxY - projectedBounds2.minY
         };
         currentBoundsById.set(transitionId, previousBounds);
         transitionProjected.push({
@@ -13252,16 +13330,22 @@ ${selected}
         const transitionId = `note-flow:${strokeElementId(stroke) || index}`;
         const projectedBox = noteFlowProjectedById.get(transitionId);
         const box2 = projectedBox ? stabilizeProjectedElementBox(projectedBox, currentBoundsById.get(transitionId)) : null;
-        const stableFlowBox = noteFlow?.boxWidthRatio > 0 && noteFlow?.boxHeightRatio > 0 ? {
+        const sourceContentWidth = Number(layout2?.sourceFrame?.contentWidth) || 0;
+        const targetContentWidth = Number(context.frame?.width) || this.canvasWidth();
+        const layoutWidthRatio = sourceContentWidth >= 24 && Number(layout2?.box?.width) > 0 ? Number(layout2.box.width) / sourceContentWidth : 0;
+        const layoutHeightRatio = sourceContentWidth >= 24 && Number(layout2?.box?.height) > 0 ? Number(layout2.box.height) / sourceContentWidth : 0;
+        const fallbackBox = box2 || projectedBounds;
+        const stableFlowBox = noteFlow && (layout2 || fallbackBox) ? {
           ...box2 || {},
           ...projectStableNoteFlowBox({
-            boxLeftRatio: noteFlow.boxLeftRatio,
-            boxWidthRatio: noteFlow.boxWidthRatio,
-            boxHeightRatio: noteFlow.boxHeightRatio,
+            boxLeftRatio: noteFlow.boxWidthRatio > 0 ? noteFlow.boxLeftRatio : sourceContentWidth >= 24 ? (Number(layout2?.box?.x) - Number(layout2?.sourceFrame?.contentLeft || 0)) / sourceContentWidth : (Number(fallbackBox?.x) - Number(context.frame?.left || 0)) / Math.max(24, targetContentWidth),
+            boxWidthRatio: noteFlow.boxWidthRatio > 0 ? noteFlow.boxWidthRatio : layoutWidthRatio || Number(fallbackBox?.width) / Math.max(24, targetContentWidth),
+            boxHeightRatio: noteFlow.boxHeightRatio > 0 ? noteFlow.boxHeightRatio : layoutHeightRatio || Number(fallbackBox?.height) / Math.max(24, targetContentWidth),
             contentLeft: context.frame?.left,
             contentWidth: context.frame?.width,
             canvasWidth: this.canvasWidth(),
-            fallbackWidth: Number(layout2?.sourceFrame?.contentWidth) >= 24 ? Number(layout2?.box?.width) * Number(context.frame?.width) / Number(layout2.sourceFrame.contentWidth) : Number(box2?.width) || Number(layout2?.box?.width) || 0,
+            fallbackWidth: sourceContentWidth >= 24 ? Number(layout2?.box?.width) * targetContentWidth / sourceContentWidth : Number(fallbackBox?.width) || Number(layout2?.box?.width) || 0,
+            fallbackHeight: sourceContentWidth >= 24 ? Number(layout2?.box?.height) * targetContentWidth / sourceContentWidth : Number(fallbackBox?.height) || Number(layout2?.box?.height) || 0,
             y: this.noteFlowStoredRowCanvasY(noteFlow) ?? box2?.y ?? layout2?.box?.y ?? 0
           })
         } : box2;
@@ -19642,8 +19726,9 @@ ${selected}
     const explicitGroup = String(blockElement.dataset?.noteDrawExplicitLineGroup || "");
     const compatible = (block) => explicitGroup ? String(block.explicitLineGroup || "") === explicitGroup : !block.explicitLineGroup;
     const mapped = candidates.find((block) => this.markdownBlockElements?.get?.(block.id) === blockElement);
+    const rangeMatching = candidates.filter((block) => compatible(block) && Number.isFinite(info.lineStart) && block.lineStart === info.lineStart && block.lineEnd === (info.lineEnd ?? info.lineStart));
     const matching = candidates.filter((block) => compatible(block) && (!block.textHint || block.textHint === hint));
-    return mapped || matching.find((block) => Number.isFinite(info.lineStart) && block.lineStart === info.lineStart) || matching.find((block) => block.textHint && block.textHint === hint) || null;
+    return mapped || rangeMatching[0] || matching.find((block) => Number.isFinite(info.lineStart) && block.lineStart === info.lineStart) || matching.find((block) => block.textHint && block.textHint === hint) || null;
   }
   markdownBlockElementForTarget(target, clientPoint = null) {
     if (this.surfaceType !== "preview" || !target || !this.previewEl?.contains?.(target)) {
@@ -19888,9 +19973,18 @@ ${selected}
       this.markdownBlockGridContainer(element)
     ]).filter(Boolean));
     const candidates = markdownBlockCandidateElements(this.previewEl);
-    const explicitRecordsChanged = this.expandExplicitMarkdownBlockRecords(candidates);
+    let explicitRecordsChanged = this.expandExplicitMarkdownBlockRecords(candidates);
+    const currentRecords = this.markdownBlockRecords();
+    const compactedRecords = dedupeMarkdownBlockRecords(currentRecords);
+    if (compactedRecords.length < currentRecords.length) {
+      this.drawingData.markdownBlocks = compactedRecords;
+      const retainedIds = new Set(compactedRecords.map((block) => block.id));
+      this.selectedMarkdownBlockIds = new Set(Array.from(this.selectedMarkdownBlockIds || []).filter((id) => retainedIds.has(id)));
+      explicitRecordsChanged = true;
+    }
     const candidateMeta = /* @__PURE__ */ new Map();
     const idCandidates = /* @__PURE__ */ new Map();
+    const rangeCandidates = /* @__PURE__ */ new Map();
     const exactCandidates = /* @__PURE__ */ new Map();
     const hintCandidates = /* @__PURE__ */ new Map();
     const queueCandidate = (map, key, element) => {
@@ -19908,6 +20002,7 @@ ${selected}
         queueCandidate(idCandidates, mappedId, element);
       }
       if (Number.isFinite(info.lineStart)) {
+        queueCandidate(rangeCandidates, `${path}\0${info.lineStart}\0${info.lineEnd ?? info.lineStart}\0${String(element.dataset?.noteDrawExplicitLineGroup || "")}`, element);
         queueCandidate(exactCandidates, `${path}\0${info.lineStart}\0${hint}`, element);
       }
       queueCandidate(hintCandidates, `${path}\0${hint}`, element);
@@ -19933,14 +20028,16 @@ ${selected}
       return hint === normalizeRenderedText2(block.textHint);
     };
     const takeUnused = (values, block = null) => values?.find((element) => !used.has(element) && identityMatches(block, element)) || null;
+    const takeUnusedRange = (values, block = null) => values?.find((element) => !used.has(element) && explicitGroupMatches(block, element)) || null;
     const next = /* @__PURE__ */ new Map();
     for (const block of this.markdownBlockRecords()) {
       const previous = this.markdownBlockElements.get(block.id);
       const previousMeta = candidateMeta.get(previous);
       const previousMatches = previousMeta && !used.has(previous) && previousMeta.path === block.path && previous?.dataset?.noteDrawMarkdownBlockId === block.id && identityMatches(block, previous);
       const exactKey = `${block.path}\0${block.lineStart}\0${block.textHint}`;
+      const rangeKey = `${block.path}\0${block.lineStart}\0${block.lineEnd ?? block.lineStart}\0${String(block.explicitLineGroup || "")}`;
       const hintKey = `${block.path}\0${block.textHint}`;
-      let element = previousMatches ? previous : takeUnused(idCandidates.get(block.id), block) || takeUnused(exactCandidates.get(exactKey), block) || takeUnused(hintCandidates.get(hintKey), block);
+      let element = previousMatches ? previous : takeUnused(idCandidates.get(block.id), block) || takeUnusedRange(rangeCandidates.get(rangeKey), block) || takeUnused(exactCandidates.get(exactKey), block) || takeUnused(hintCandidates.get(hintKey), block);
       if (!element && pendingIdentity?.id === block.id && pendingIdentity.path === block.path) {
         element = candidates.find((candidate) => {
           if (used.has(candidate) || !explicitGroupMatches(block, candidate)) {
@@ -26245,7 +26342,7 @@ function isClearableInlineFormattingElement(element) {
   return ["A", "B", "CODE", "DEL", "EM", "I", "KBD", "MARK", "S", "SMALL", "SPAN", "STRONG", "SUB", "SUP", "U"].includes(tag);
 }
 function serializeControllerEditableSource(element, embeddedSurface = false, cleanupTerminalBreak = false) {
-  const source = serializeEditableSource(element);
+  const source = String(element?.tagName || "").toLowerCase() === "pre" ? String(element.querySelector?.("code")?.textContent ?? element.textContent ?? "").replace(/\n+$/g, "") : serializeEditableSource(element);
   return cleanupTerminalBreak ? stripOneTerminalBreakPerLine(source) : source;
 }
 function stripOneTerminalBreakPerLine(value) {
@@ -26364,6 +26461,7 @@ function isSafeCssSize(value) {
 }
 function normalizeMarkdownBlock(value) {
   let text = String(value || "").trim();
+  text = text.replace(/^\s*(`{3,}|~{3,})[^\r\n]*\r?\n([\s\S]*?)\r?\n\s*\1\s*$/, "$2");
   text = text.replace(/<br\s*\/?>/gi, "\n").replace(/<\/(p|div|li|h[1-6])>/gi, "\n").replace(/<pre[^>]*><code[^>]*>([\s\S]*?)<\/code><\/pre>/gi, "$1").replace(/<\/?(span|u|mark|kbd|sup|sub|small|strong|b|em|i|code)[^>]*>/gi, "").replace(/<[^>]+>/g, "");
   text = text.replace(/^\s*[-*+]\s+\[[ xX]\]\s+/gm, "").replace(/^#{1,6}\s+/gm, "").replace(/^\s{0,3}>\s?/gm, "").replace(/^\s*[-*+]\s+/gm, "").replace(/^\s*\d+[.)]\s+/gm, "").replace(/\*\*([^*]+)\*\*/g, "$1").replace(/\*([^*]+)\*/g, "$1").replace(/__([^_]+)__/g, "$1").replace(/_([^_]+)_/g, "$1").replace(/==([^=]+)==/g, "$1").replace(/`([^`]+)`/g, "$1").replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, "$2").replace(/\[\[([^\]]+)\]\]/g, "$1").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
   return normalizeRenderedText2(text);
@@ -26434,20 +26532,38 @@ function collectMarkdownBlocks(source) {
     offset += fullLine.length;
     lineNumber += 1;
     if (/^```|^~~~/.test(trimmed)) {
-      if (buffer.trim()) {
+      if (!inFence) {
+        if (buffer.trim()) {
+          blocks.push({
+            start,
+            end: lineStart,
+            line: startLine,
+            endLine: Math.max(startLine, currentLine - 1),
+            text: buffer.replace(/\s+$/, "")
+          });
+        }
+        start = lineStart;
+        startLine = currentLine;
+        buffer = fullLine;
+        inFence = true;
+      } else {
+        buffer += fullLine;
         blocks.push({
           start,
-          end: lineStart,
+          end: offset,
           line: startLine,
-          endLine: Math.max(startLine, currentLine - 1),
+          endLine: currentLine,
           text: buffer.replace(/\s+$/, "")
         });
         buffer = "";
+        start = offset;
+        startLine = lineNumber;
+        inFence = false;
       }
-      inFence = !inFence;
       continue;
     }
     if (inFence) {
+      buffer += fullLine;
       continue;
     }
     if (!trimmed) {
@@ -28358,13 +28474,13 @@ function normalizeMarkdownBlocks(value, file2) {
     return [];
   }
   const seen = /* @__PURE__ */ new Set();
-  return value.map((block, index) => {
+  const normalized = value.map((block, index) => {
     const path = normalizeVaultPath(block?.path || file2?.path || "");
     const textHint = normalizeRenderedText2(block?.textHint || "").slice(0, 240);
     const lineStart = Number.isFinite(Number(block?.lineStart)) ? Math.max(0, Math.round(Number(block.lineStart))) : null;
     const id = typeof block?.id === "string" && block.id ? block.id : `md-${hashString(`${path}:${lineStart ?? "x"}:${textHint}:${index}`)}`;
     const floatBox = normalizeMarkdownFloatBox(block?.floatBox);
-    const normalized = {
+    const normalized2 = {
       id,
       path,
       lineStart,
@@ -28386,12 +28502,13 @@ function normalizeMarkdownBlocks(value, file2) {
       groupId: typeof block?.groupId === "string" ? block.groupId : "",
       explicitLineGroup: typeof block?.explicitLineGroup === "string" ? block.explicitLineGroup : ""
     };
-    const explicit = parseExplicitMarkdownLineGroup(normalized.explicitLineGroup);
-    if (explicit && (explicit.path !== path || !Number.isFinite(lineStart) || lineStart < explicit.start || lineStart > explicit.end || normalized.lineEnd < explicit.start || normalized.lineEnd > explicit.end)) {
+    const explicit = parseExplicitMarkdownLineGroup(normalized2.explicitLineGroup);
+    if (explicit && (explicit.path !== path || !Number.isFinite(lineStart) || lineStart < explicit.start || lineStart > explicit.end || normalized2.lineEnd < explicit.start || normalized2.lineEnd > explicit.end)) {
       return null;
     }
-    return normalized;
+    return normalized2;
   }).filter((block) => block && block.path && block.id && !seen.has(block.id) && seen.add(block.id));
+  return dedupeMarkdownBlockRecords(normalized);
 }
 function normalizeMarkdownBlockWidthScale(value) {
   const widthScale = Number(value);
@@ -28676,7 +28793,8 @@ function resolveSourceEditTarget(source, sourceInfo, originalText) {
   }
   const blocks = collectMarkdownBlocks(source);
   const sourceLine = sourceInfo?.lineStart ?? (sourceInfo?.dataLineScope === "self" ? sourceInfo?.dataLine : null);
-  let match = pickFromSectionText(source, sourceInfo, normalizedOriginal) || collectSourceLineBlock(source, sourceInfo, normalizedOriginal) || pickLineInSourceRange(source, sourceInfo, normalizedOriginal) || pickBlockInSourceRange(blocks, sourceInfo, normalizedOriginal) || pickBlockBySourceInfo(blocks, sourceInfo, normalizedOriginal);
+  const fencedMatch = blocks.find((block) => Number.isFinite(sourceLine) && sourceLine >= block.line && sourceLine <= block.endLine && /^\s*(`{3,}|~{3,})/.test(block.text) && normalizeMarkdownBlock(block.text) === normalizedOriginal);
+  let match = fencedMatch || pickFromSectionText(source, sourceInfo, normalizedOriginal) || collectSourceLineBlock(source, sourceInfo, normalizedOriginal) || pickLineInSourceRange(source, sourceInfo, normalizedOriginal) || pickBlockInSourceRange(blocks, sourceInfo, normalizedOriginal) || pickBlockBySourceInfo(blocks, sourceInfo, normalizedOriginal);
   if (!match) {
     const candidates = blocks.filter((block) => normalizeMarkdownBlock(block.text) === normalizedOriginal);
     match = pickNearestBlock(candidates, sourceLine);
@@ -29740,6 +29858,12 @@ function formatReplacementBlock(originalBlock, editedText) {
   const original = String(originalBlock || "");
   const edited = normalizeEditableSourceText(editedText);
   const firstLine = original.split(/\r?\n/)[0] || "";
+  const fencedCode = firstLine.match(/^(\s*)(`{3,}|~{3,})([^\r\n]*)$/);
+  if (fencedCode) {
+    return `${fencedCode[1]}${fencedCode[2]}${fencedCode[3]}
+${edited}
+${fencedCode[1]}${fencedCode[2]}`;
+  }
   const heading = firstLine.match(/^(#{1,6}\s+)/);
   if (heading) {
     return `${heading[1]}${edited}`;

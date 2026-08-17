@@ -618,6 +618,7 @@ export function projectStableNoteFlowBox({
   contentWidth,
   canvasWidth,
   fallbackWidth = 0,
+  fallbackHeight = 0,
   minWidth = 24,
   y = 0
 } = {}) {
@@ -635,7 +636,7 @@ export function projectStableNoteFlowBox({
     finite(boxWidthRatio) * laneWidth,
     finite(fallbackWidth)
   ), minimumStableWidth, surfaceWidth);
-  const height = Math.max(2, finite(boxHeightRatio) * laneWidth);
+  const height = Math.max(2, finite(boxHeightRatio) * laneWidth, finite(fallbackHeight));
   return {
     x: clamp(finite(contentLeft) + finite(boxLeftRatio) * laneWidth, 0, Math.max(0, surfaceWidth - width)),
     y: Math.max(0, finite(y)),

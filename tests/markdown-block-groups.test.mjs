@@ -14,9 +14,88 @@ import {
   resolveVerticalMarkdownDropTarget,
   trimMarkdownClientRect
 } from "../src/markdown-block-layout.mjs";
+import { dedupeMarkdownBlockRecords } from "../src/markdown-block-records.mjs";
 
 const sourceUrl = new URL("../src/notedraw-plugin.js", import.meta.url);
 const stylesUrl = new URL("../styles.css", import.meta.url);
+
+test("Markdown block records keep one canonical owner per source range", () => {
+  const records = dedupeMarkdownBlockRecords([
+    {
+      id: "callout-inner",
+      path: "note.md",
+      lineStart: 100,
+      lineEnd: 100,
+      textHint: "This is a note.",
+      span: 11,
+      widthScale: 0.4,
+      minHeight: 20,
+      contentOpacity: 0.8,
+      contentScale: 1,
+      explicitLineGroup: ""
+    },
+    {
+      id: "callout-owner",
+      path: "note.md",
+      lineStart: 100,
+      lineEnd: 100,
+      textHint: "Note\nThis is a note.",
+      span: 12,
+      widthScale: 1,
+      minHeight: 40,
+      contentOpacity: 1,
+      contentScale: 1.2,
+      explicitLineGroup: ""
+    }
+  ]);
+
+  assert.equal(records.length, 1);
+  assert.equal(records[0].id, "callout-inner");
+  assert.equal(records[0].textHint, "This is a note.");
+  assert.equal(records[0].span, 12);
+  assert.equal(records[0].widthScale, 1);
+  assert.equal(records[0].minHeight, 40);
+  assert.equal(records[0].contentScale, 1.2);
+});
+
+test("Markdown block record repair removes a repeated line-zero alias but preserves distinct groups", () => {
+  const records = dedupeMarkdownBlockRecords([
+    {
+      id: "footnote",
+      path: "note.md",
+      lineStart: 104,
+      lineEnd: 104,
+      textHint: "Footnote reference.",
+      explicitLineGroup: ""
+    },
+    {
+      id: "stale-footnote",
+      path: "note.md",
+      lineStart: 0,
+      lineEnd: 0,
+      textHint: "Footnote reference.\nFootnote reference.\nFootnote reference.",
+      explicitLineGroup: ""
+    },
+    {
+      id: "line-a",
+      path: "note.md",
+      lineStart: 12,
+      lineEnd: 12,
+      textHint: "A",
+      explicitLineGroup: "note.md\0" + "12\0" + "13\0a"
+    },
+    {
+      id: "line-b",
+      path: "note.md",
+      lineStart: 12,
+      lineEnd: 12,
+      textHint: "B",
+      explicitLineGroup: "note.md\0" + "12\0" + "13\0b"
+    }
+  ]);
+
+  assert.deepEqual(records.map((record) => record.id), ["footnote", "line-a", "line-b"]);
+});
 
 test("horizontal drag intent reserves the left edge for magnetic line insertion", () => {
   const target = {
@@ -234,6 +313,7 @@ test("Markdown blocks persist layout, floating state, and hybrid group membershi
   const source = await readFile(sourceUrl, "utf8");
 
   assert.match(source, /markdownBlocks: normalizeMarkdownBlocks\(data\?\.markdownBlocks, file\)/);
+  assert.match(source, /const compactedRecords = dedupeMarkdownBlockRecords\(currentRecords\)[\s\S]*compactedRecords\.length < currentRecords\.length[\s\S]*this\.drawingData\.markdownBlocks = compactedRecords/);
   assert.match(source, /elementGroups: normalizeElementGroups\(data\?\.elementGroups\)/);
   assert.match(source, /floating: Boolean\(block\?\.floating && floatBox\)/);
   assert.match(source, /groupId: typeof block\?\.groupId === "string"/);
