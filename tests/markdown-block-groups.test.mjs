@@ -343,6 +343,20 @@ test("Markdown blocks use pointer sorting, logical-coordinate floating, and rema
   assert.match(styles, /\.notedraw-md-block\.is-floating/);
 });
 
+test("rendered thematic breaks use a stable semantic drag identity", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+
+  assert.match(source, /element\?\.matches\?\.\("hr,\.el-hr"\)[\s\S]*sourceText: "---"/);
+});
+
+test("third-party virtual-link decorations never become Markdown drag identity", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+
+  assert.match(source, /\.multiple-files-indicator,\.multiple-files-references/);
+  assert.match(source, /identityClone\.querySelectorAll\([\s\S]*decoration\.remove\(\)/);
+  assert.match(source, /text = identityClone\.textContent \|\| text/);
+});
+
 test("selecting Markdown blocks does not trigger a whole-note responsive reflow", async () => {
   const source = await readFile(sourceUrl, "utf8");
 

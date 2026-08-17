@@ -1126,7 +1126,7 @@ function normalizeRenderedText(value) {
 }
 function normalizeMarkdownText(value) {
   let text = String(value || "");
-  text = text.replace(/<br\s*\/?>/gi, "\n").replace(/<\/(p|div|li|h[1-6])>/gi, "\n").replace(/<pre[^>]*><code[^>]*>([\s\S]*?)<\/code><\/pre>/gi, "$1").replace(/^\s*(?:```|~~~)[^\n]*$/gm, "").replace(/\$\$([\s\S]*?)\$\$/g, "$1").replace(/^\s*\$\$\s*$/gm, "").replace(/^\s*:::[^\n]*$/gm, "").replace(/<\/?(span|u|mark|kbd|sup|sub|small|strong|b|em|i|code)[^>]*>/gi, "").replace(/<[^>]+>/g, "").replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1").replace(/!\[\[([^\]|]+)\|([^\]]+)\]\]/g, "$2").replace(/!\[\[([^\]]+)\]\]/g, "$1").replace(/^\s*[-*+]\s+\[[ xX]\]\s+/gm, "").replace(/^#{1,6}\s+/gm, "").replace(/^\s{0,3}>\s?/gm, "").replace(/^\s*[-*+]\s+/gm, "").replace(/^\s*\d+[.)]\s+/gm, "").replace(/\*\*([^*]+)\*\*/g, "$1").replace(/\*([^*]+)\*/g, "$1").replace(/__([^_]+)__/g, "$1").replace(/_([^_]+)_/g, "$1").replace(/==([^=]+)==/g, "$1").replace(/`([^`]+)`/g, "$1").replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, "$2").replace(/\[\[([^\]]+)\]\]/g, "$1").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").split("\n").map((line) => {
+  text = text.replace(/<br\s*\/?>/gi, "\n").replace(/<\/(p|div|li|h[1-6])>/gi, "\n").replace(/<pre[^>]*><code[^>]*>([\s\S]*?)<\/code><\/pre>/gi, "$1").replace(/^\s*(?:```|~~~)[^\n]*$/gm, "").replace(/\$\$([\s\S]*?)\$\$/g, "$1").replace(/^\s*\$\$\s*$/gm, "").replace(/^\s*:::[^\n]*$/gm, "").replace(/<\/?(span|u|mark|kbd|sup|sub|small|strong|b|em|i|code)[^>]*>/gi, "").replace(/<[^>]+>/g, "").replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1").replace(/!\[\[([^\]|]+)\|([^\]]+)\]\]/g, "$2").replace(/!\[\[([^\]]+)\]\]/g, "$1").replace(/^\s*[-*+]\s+\[[ xX]\]\s+/gm, "").replace(/^#{1,6}\s+/gm, "").replace(/^\s{0,3}>\s?/gm, "").replace(/^\s*[-*+]\s+/gm, "").replace(/^\s*\d+[.)]\s+/gm, "").replace(/\*\*([^*]+)\*\*/g, "$1").replace(/\*([^*]+)\*/g, "$1").replace(/__([^_]+)__/g, "$1").replace(/_([^_]+)_/g, "$1").replace(/~~([^~]+)~~/g, "$1").replace(/==([^=]+)==/g, "$1").replace(/`([^`]+)`/g, "$1").replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, "$2").replace(/\[\[([^\]]+)\]\]/g, "$1").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").split("\n").map((line) => {
     if (!line.includes("|")) {
       return line;
     }
@@ -1137,6 +1137,40 @@ function normalizeMarkdownText(value) {
     return cells.length > 1 ? cells.join("	") : line;
   }).join("\n");
   return normalizeRenderedText(text);
+}
+function calloutRenderedAliases(sourceText) {
+  const lines = String(sourceText || "").split(/\r?\n/).map((line) => line.replace(/^\s{0,3}>\s?/, ""));
+  const marker = String(lines[0] || "").trim().match(/^\[!([^\]]+)\][+-]?(?:\s+(.+?))?\s*$/);
+  if (!marker) {
+    return [];
+  }
+  const type = normalizeRenderedText(marker[1]);
+  const customTitle = normalizeMarkdownText(marker[2] || "");
+  const defaultTitle = type ? `${type.charAt(0).toUpperCase()}${type.slice(1)}` : "";
+  const body = normalizeMarkdownText(lines.slice(1).join("\n"));
+  const title = customTitle || defaultTitle;
+  return [
+    normalizeRenderedText([title, body].filter(Boolean).join("\n")),
+    normalizeRenderedText([type, body].filter(Boolean).join("\n")),
+    body
+  ].filter(Boolean);
+}
+function footnoteRenderedAliases(sourceText) {
+  const source = String(sourceText || "");
+  if (!/\[\^[^\]]+\](?:\([^)]+\))?/.test(source)) {
+    return [];
+  }
+  const keepLabel = source.replace(/\[\^([^\]]+)\]\([^)]+\)/g, "$1").replace(/\[\^([^\]]+)\]/g, "$1");
+  const omitLabel = source.replace(/\[\^[^\]]+\]\([^)]+\)/g, "").replace(/\[\^[^\]]+\]/g, "");
+  return [normalizeMarkdownText(keepLabel), normalizeMarkdownText(omitLabel)].filter(Boolean);
+}
+function candidateRenderedAliases(candidate) {
+  return Array.from(new Set([
+    normalizeRenderedText(candidate?.text),
+    candidate?.kind === "thematic-break" ? "---" : "",
+    ...calloutRenderedAliases(candidate?.sourceText),
+    ...footnoteRenderedAliases(candidate?.sourceText)
+  ].filter(Boolean)));
 }
 function isMarkdownTableDelimiter(rawLine) {
   const cells = String(rawLine || "").trim().replace(/^\||\|$/g, "").split("|").map((cell) => cell.trim());
@@ -1312,8 +1346,10 @@ function createMarkdownSourceIndex(source) {
     map.set(key, values);
   };
   for (const candidate of candidates) {
-    append(exact, candidate.text, candidate);
-    append(compact, candidate.text.replace(/\s+/g, ""), candidate);
+    for (const alias of candidateRenderedAliases(candidate)) {
+      append(exact, alias, candidate);
+      append(compact, alias.replace(/\s+/g, ""), candidate);
+    }
   }
   return {
     source: input,
@@ -1335,7 +1371,7 @@ function indexedExactCandidates(source, rendered, compactRendered, sourceIndex) 
     ]);
   }
   return uniqueSourceCandidates(indexedCandidates(input, sourceIndex).filter((candidate) => {
-    return candidate.text === rendered || candidate.text.replace(/\s+/g, "") === compactRendered;
+    return candidateRenderedAliases(candidate).some((alias) => alias === rendered || alias.replace(/\s+/g, "") === compactRendered);
   }));
 }
 function candidateDistanceFromRange(candidate, lineStart, lineEnd) {
@@ -26638,7 +26674,19 @@ function collectNoteFlowMarkdownOwners(root) {
   return owners;
 }
 function renderedMarkdownIdentityText(element) {
-  const text = element?.innerText || element?.textContent || element?._noteDrawSourceText || "";
+  let text = element?.innerText || element?.textContent || element?._noteDrawSourceText || "";
+  const injectedIdentityDecorations = element?.querySelectorAll?.(
+    ".multiple-files-indicator,.multiple-files-references"
+  );
+  if (injectedIdentityDecorations?.length) {
+    const identityClone = element.cloneNode(true);
+    for (const decoration of identityClone.querySelectorAll(
+      ".multiple-files-indicator,.multiple-files-references"
+    )) {
+      decoration.remove();
+    }
+    text = identityClone.textContent || text;
+  }
   if (normalizeRenderedText2(text)) {
     return text;
   }
@@ -28760,6 +28808,13 @@ function getSourceInfo(element) {
   };
 }
 function markdownDragSourceIdentity(element) {
+  if (element?.matches?.("hr,.el-hr") || element?.querySelector?.(":scope > hr")) {
+    return {
+      sourceInfo: getSourceInfo(element),
+      sourceText: "---",
+      embedDestination: ""
+    };
+  }
   const embed = findMarkdownEmbedBlockElement(element);
   const owner = embed?.matches?.(".internal-embed") ? embed : embed?.closest?.(".internal-embed") || embed?.querySelector?.(".internal-embed");
   const linkedFileSelector = "[data-cancip-inline-path],[data-file-path],[data-embed-path]";

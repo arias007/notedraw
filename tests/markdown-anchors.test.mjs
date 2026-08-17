@@ -60,6 +60,8 @@ test("every draggable Markdown block kind resolves one stable host range", () =>
     "",
     "普通文字 [网页链接](https://example.com)",
     "",
+    "~~删除线~~",
+    "",
     "- [ ] 待办任务",
     "",
     "| 名称 | 说明 |",
@@ -80,10 +82,11 @@ test("every draggable Markdown block kind resolves one stable host range", () =>
   const renderedCases = [
     ["标题", 0, 0],
     ["普通文字 网页链接", 2, 2],
-    ["待办任务", 4, 4],
-    ["名称\t说明\nMarkdown\t轻量标记", 6, 8],
-    ["console.log(1)", 10, 12],
-    ["引用内容", 18, 18]
+    ["删除线", 4, 4],
+    ["待办任务", 6, 6],
+    ["名称\t说明\nMarkdown\t轻量标记", 8, 10],
+    ["console.log(1)", 12, 14],
+    ["引用内容", 20, 20]
   ];
   for (const [rendered, line, endLine] of renderedCases) {
     const target = resolveRenderedMarkdownSourceTarget(source, rendered, {
@@ -93,8 +96,8 @@ test("every draggable Markdown block kind resolves one stable host range", () =>
     assert.equal(target?.line, line, rendered);
     assert.equal(target?.endLine, endLine, rendered);
   }
-  assert.equal(resolveMarkdownEmbedSourceTarget(source, "资料/工作簿.xlsx", { lineStart: 14 }, index)?.line, 14);
-  assert.equal(resolveMarkdownEmbedSourceTarget(source, "资料/项目说明.md", { lineStart: 16 }, index)?.line, 16);
+  assert.equal(resolveMarkdownEmbedSourceTarget(source, "资料/工作簿.xlsx", { lineStart: 16 }, index)?.line, 16);
+  assert.equal(resolveMarkdownEmbedSourceTarget(source, "资料/项目说明.md", { lineStart: 18 }, index)?.line, 18);
 });
 
 test("rendered headings and list items map to their Markdown source lines", () => {
@@ -226,6 +229,44 @@ test("fenced code, quotes, and containers keep their complete source ranges", ()
   });
 });
 
+test("Callouts and footnote-style links keep one source identity across rendered drag text", () => {
+  const source = [
+    "### Callout",
+    "",
+    "> [!note]  ",
+    "> 这是一条提示。",
+    "",
+    "> [!warning]- 自定义标题",
+    "> 警告正文",
+    "",
+    "这里有一个脚注引用[^1](app://-/footnote)。",
+    "",
+    "普通脚注[^ref]。"
+  ].join("\n");
+  const sourceIndex = createMarkdownSourceIndex(source);
+  const cases = [
+    ["Note\n这是一条提示。", 3, 2, 3],
+    ["自定义标题\n警告正文", 6, 5, 6],
+    ["这里有一个脚注引用。", 8, 8, 8],
+    ["普通脚注。", 10, 10, 10],
+    ["普通脚注ref。", 10, 10, 10]
+  ];
+
+  for (const [rendered, staleLine, line, endLine] of cases) {
+    const target = resolveRenderedMarkdownSourceTarget(source, rendered, {
+      lineStart: staleLine,
+      lineEnd: staleLine
+    }, sourceIndex);
+    assert.equal(target?.line, line, rendered);
+    assert.equal(target?.endLine, endLine, rendered);
+  }
+  assert.deepEqual(matchRenderedTextToMarkdown(source, "Note\n这是一条提示。", sourceIndex), {
+    lineStart: 2,
+    lineEnd: 3,
+    confidence: 1
+  });
+});
+
 test("a single-line math block does not absorb the following paragraph", () => {
   const source = [
     "$$x + y$$",
@@ -288,6 +329,7 @@ test("tables keep one semantic owner with or without edge pipes", () => {
 test("standalone media and thematic breaks retain semantic identities", () => {
   const media = findRenderedMarkdownSourceTargets("![架构图](assets/layout.png)", "架构图")[0];
   const breakTarget = findRenderedMarkdownSourceTargets("---", "---")[0];
+  const alternateBreak = resolveRenderedMarkdownSourceTarget("***", "---", { lineStart: 0 });
 
   assert.deepEqual({ line: media.line, endLine: media.endLine, kind: media.kind }, {
     line: 0,
@@ -295,6 +337,11 @@ test("standalone media and thematic breaks retain semantic identities", () => {
     kind: "media"
   });
   assert.deepEqual({ line: breakTarget.line, endLine: breakTarget.endLine, kind: breakTarget.kind }, {
+    line: 0,
+    endLine: 0,
+    kind: "thematic-break"
+  });
+  assert.deepEqual({ line: alternateBreak.line, endLine: alternateBreak.endLine, kind: alternateBreak.kind }, {
     line: 0,
     endLine: 0,
     kind: "thematic-break"

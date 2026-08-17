@@ -23811,7 +23811,19 @@ function collectNoteFlowMarkdownOwners(root) {
   return owners;
 }
 function renderedMarkdownIdentityText(element) {
-  const text = element?.innerText || element?.textContent || element?._noteDrawSourceText || "";
+  let text = element?.innerText || element?.textContent || element?._noteDrawSourceText || "";
+  const injectedIdentityDecorations = element?.querySelectorAll?.(
+    ".multiple-files-indicator,.multiple-files-references"
+  );
+  if (injectedIdentityDecorations?.length) {
+    const identityClone = element.cloneNode(true);
+    for (const decoration of identityClone.querySelectorAll(
+      ".multiple-files-indicator,.multiple-files-references"
+    )) {
+      decoration.remove();
+    }
+    text = identityClone.textContent || text;
+  }
   if (normalizeRenderedText(text)) {
     return text;
   }
@@ -25987,6 +25999,13 @@ function getSourceInfo(element) {
   };
 }
 function markdownDragSourceIdentity(element) {
+  if (element?.matches?.("hr,.el-hr") || element?.querySelector?.(":scope > hr")) {
+    return {
+      sourceInfo: getSourceInfo(element),
+      sourceText: "---",
+      embedDestination: ""
+    };
+  }
   const embed = findMarkdownEmbedBlockElement(element);
   const owner = embed?.matches?.(".internal-embed")
     ? embed

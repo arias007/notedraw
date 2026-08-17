@@ -33,6 +33,7 @@ function normalizeMarkdownText(value) {
     .replace(/\*([^*]+)\*/g, "$1")
     .replace(/__([^_]+)__/g, "$1")
     .replace(/_([^_]+)_/g, "$1")
+    .replace(/~~([^~]+)~~/g, "$1")
     .replace(/==([^=]+)==/g, "$1")
     .replace(/`([^`]+)`/g, "$1")
     .replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, "$2")
@@ -51,6 +52,47 @@ function normalizeMarkdownText(value) {
     })
     .join("\n");
   return normalizeRenderedText(text);
+}
+
+function calloutRenderedAliases(sourceText) {
+  const lines = String(sourceText || "").split(/\r?\n/).map((line) => line.replace(/^\s{0,3}>\s?/, ""));
+  const marker = String(lines[0] || "").trim().match(/^\[!([^\]]+)\][+-]?(?:\s+(.+?))?\s*$/);
+  if (!marker) {
+    return [];
+  }
+  const type = normalizeRenderedText(marker[1]);
+  const customTitle = normalizeMarkdownText(marker[2] || "");
+  const defaultTitle = type ? `${type.charAt(0).toUpperCase()}${type.slice(1)}` : "";
+  const body = normalizeMarkdownText(lines.slice(1).join("\n"));
+  const title = customTitle || defaultTitle;
+  return [
+    normalizeRenderedText([title, body].filter(Boolean).join("\n")),
+    normalizeRenderedText([type, body].filter(Boolean).join("\n")),
+    body
+  ].filter(Boolean);
+}
+
+function footnoteRenderedAliases(sourceText) {
+  const source = String(sourceText || "");
+  if (!/\[\^[^\]]+\](?:\([^)]+\))?/.test(source)) {
+    return [];
+  }
+  const keepLabel = source
+    .replace(/\[\^([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/\[\^([^\]]+)\]/g, "$1");
+  const omitLabel = source
+    .replace(/\[\^[^\]]+\]\([^)]+\)/g, "")
+    .replace(/\[\^[^\]]+\]/g, "");
+  return [normalizeMarkdownText(keepLabel), normalizeMarkdownText(omitLabel)].filter(Boolean);
+}
+
+function candidateRenderedAliases(candidate) {
+  return Array.from(new Set([
+    normalizeRenderedText(candidate?.text),
+    candidate?.kind === "thematic-break" ? "---" : "",
+    ...calloutRenderedAliases(candidate?.sourceText),
+    ...footnoteRenderedAliases(candidate?.sourceText)
+  ].filter(Boolean)));
 }
 
 function isMarkdownTableDelimiter(rawLine) {
@@ -242,8 +284,10 @@ export function createMarkdownSourceIndex(source) {
     map.set(key, values);
   };
   for (const candidate of candidates) {
-    append(exact, candidate.text, candidate);
-    append(compact, candidate.text.replace(/\s+/g, ""), candidate);
+    for (const alias of candidateRenderedAliases(candidate)) {
+      append(exact, alias, candidate);
+      append(compact, alias.replace(/\s+/g, ""), candidate);
+    }
   }
   return {
     source: input,
@@ -269,7 +313,9 @@ function indexedExactCandidates(source, rendered, compactRendered, sourceIndex) 
     ]);
   }
   return uniqueSourceCandidates(indexedCandidates(input, sourceIndex).filter((candidate) => {
-    return candidate.text === rendered || candidate.text.replace(/\s+/g, "") === compactRendered;
+    return candidateRenderedAliases(candidate).some((alias) => (
+      alias === rendered || alias.replace(/\s+/g, "") === compactRendered
+    ));
   }));
 }
 
