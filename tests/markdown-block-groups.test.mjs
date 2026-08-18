@@ -555,11 +555,45 @@ test("selected Markdown text edits on a second tap while a moved tap still drags
   assert.match(pointerSource, /const selectedMarkdownEditableCandidate = markdownSelectionCandidate/);
   assert.match(pointerSource, /type: "edit-markdown-or-drag"/);
   assert.match(source, /pending\.type === "edit-markdown-or-drag"[\s\S]*selectedDragActivationDistancePx\(event\.pointerType\)[\s\S]*this\.startSelectedStrokeDrag\(event, pending\.startPoint \|\| this\.eventToPoint\(event\), pending\.index \?\? -1[\s\S]*startClient: pending\.startClient[\s\S]*this\.moveSelectedStroke\(event\)/);
+  assert.match(pointerSource, /const selectionActivated = this\.markdownSelectionCanEditOrDrag\(existing, markdownSelectionCandidate\)/);
+  assert.match(pointerSource, /!wasSelected \|\| !selectionActivated/);
+  assert.match(source, /activateMarkdownSelection\(block, element\)[\s\S]*captureSelectionFrameSnapshot\(\{ force: true \}\)[\s\S]*selectionKey: this\.selectionStateKey\(\)/);
+  assert.match(source, /markdownSelectionCanEditOrDrag\(block, element\)[\s\S]*activation\.element === selectedElement[\s\S]*this\.selectionFrameSnapshot\?\.key === activation\.selectionKey/);
   assert.match(source, /startTextEdit\(pending\.editable \|\| pending\.element, pending\.clientPoint \|\| null\)/);
   assert.match(tapSource, /const applied = this\.applyPendingSelectionTap\(pending\);[\s\S]*pending\.type !== "edit-markdown-or-drag" \|\| applied === false/);
   assert.match(editSource, /!element\?\.isConnected[\s\S]*findMarkdownBlockRecordForElement\(element\)[\s\S]*markdownBlockElement\(block\)/);
   assert.match(editSource, /return true;\s*}\s*this\.endTextEdit\(\)/);
   assert.match(editSource, /element\.addEventListener\("blur", onBlur\);\s*return true;/);
+});
+
+test("parallel reading mutations preserve exact widths and move the shared selection boundary left", async () => {
+  const [source, styles] = await Promise.all([
+    readFile(sourceUrl, "utf8"),
+    readFile(stylesUrl, "utf8")
+  ]);
+  const mutationSource = source.slice(source.indexOf("  rememberMarkdownIdentityMutation("), source.indexOf("  rememberTextTap(", source.indexOf("  rememberMarkdownIdentityMutation(")));
+  const boundarySource = source.slice(source.indexOf("  markdownInlineSelectionClientLimits("), source.indexOf("  selectedMarkdownInlineFrameLimitsCanvas(", source.indexOf("  markdownInlineSelectionClientLimits(")));
+  const rowCommitSource = source.slice(source.indexOf("  async commitDraggedMarkdownBlocks("), source.indexOf("  updateDraggedElementGroupMembership(", source.indexOf("  async commitDraggedMarkdownBlocks(")));
+
+  assert.match(source, /INLINE_SELECTION_BOUNDARY_BIAS_PX = 4/);
+  assert.match(boundarySource, /const boundary = midpoint - INLINE_SELECTION_BOUNDARY_BIAS_PX/g);
+  assert.match(mutationSource, /directTarget === this\.canvas[\s\S]*this\.elementBelowCanvas/);
+  assert.match(mutationSource, /const freshInfo = getSourceInfo\(freshElement\)[\s\S]*block\.lineStart = freshInfo\.lineStart[\s\S]*block\.textHint = freshHint/);
+  assert.match(rowCommitSource, /if \(Number\(block\.span\) !== Number\(nextSpan\)\) \{\s*block\.widthScale = 1;[\s\S]*block\.span = nextSpan/);
+  assert.match(source, /function markdownInlineWidthCss\(span, widthScale = 1, element = null\)[\s\S]*element\?\.matches\?\.\("li"\) \? INLINE_NOTE_FLOW_LIST_GAP_PX/);
+  assert.match(styles, /width: var\(--notedraw-md-inline-width/);
+});
+
+test("task rows above the canvas still route their first pointer tap through NoteDraw selection", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const directPointerSource = source.slice(source.indexOf("  onPreviewSecondPointerDown("), source.indexOf("  isReadingPreviewGesture(", source.indexOf("  onPreviewSecondPointerDown(")));
+  const finishSource = source.slice(source.indexOf("  onDocumentPointerFinish("), source.indexOf("  projectStrokePointsForLayoutRepair(", source.indexOf("  onDocumentPointerFinish(")));
+  const clickSource = source.slice(source.indexOf("  onReadingClick("), source.indexOf("  canZoomReadingSurface(", source.indexOf("  onReadingClick(")));
+
+  assert.match(directPointerSource, /directTaskBlock[\s\S]*this\.toolMode === TOOL_SELECT[\s\S]*this\.directMarkdownPointerId = event\.pointerId[\s\S]*this\.directMarkdownPointerElement = directTaskBlock[\s\S]*this\.onPointerDown\(event, true\)/);
+  assert.match(finishSource, /this\.directMarkdownPointerId === event\.pointerId[\s\S]*this\.onPointerUp\(event\)[\s\S]*this\.directMarkdownPointerElement = null/);
+  assert.match(source, /const target = this\.directMarkdownPointerId === event\.pointerId && this\.directMarkdownPointerElement\?\.isConnected[\s\S]*this\.directMarkdownPointerElement[\s\S]*this\.elementBelowCanvas/);
+  assert.match(clickSource, /Date\.now\(\) <= this\.directMarkdownTaskClickUntil[\s\S]*li\.task-list-item[\s\S]*stopImmediatePropagation/);
 });
 
 test("long press opens the element menu without falling through to edit", async () => {

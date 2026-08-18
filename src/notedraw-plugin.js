@@ -225,6 +225,8 @@ var MOUSE_SELECTED_DRAG_ACTIVATION_PX = 3;
 var TOUCH_SELECTED_DRAG_ACTIVATION_PX = 5;
 var MIN_INLINE_NOTE_FLOW_ITEM_WIDTH_PX = 18;
 var INLINE_NOTE_FLOW_GAP_PX = 6;
+var INLINE_NOTE_FLOW_LIST_GAP_PX = 10;
+var INLINE_SELECTION_BOUNDARY_BIAS_PX = 4;
 var TEXT_RENDER_PLAIN = "plain";
 var TEXT_RENDER_MARKDOWN = "markdown";
 var TEXT_RENDER_HTML = "html";
@@ -5557,6 +5559,10 @@ var PreviewDrawingController = class {
     this.selectedStrokeIndex = -1;
     this.selectedStrokeIndexes = /* @__PURE__ */ new Set();
     this.selectedMarkdownBlockIds = /* @__PURE__ */ new Set();
+    this.markdownSelectionActivation = null;
+    this.directMarkdownPointerId = null;
+    this.directMarkdownPointerElement = null;
+    this.directMarkdownTaskClickUntil = 0;
     this.enteredElementGroupIds = /* @__PURE__ */ new Set();
     this.selectionFrameSnapshot = null;
     this.selectionFrameAwaitingMarkdownSync = null;
@@ -5708,7 +5714,6 @@ var PreviewDrawingController = class {
     this.readingVirtualSectionSignature = "";
     this.readingVirtualStyleState = /* @__PURE__ */ new Map();
     this.readingAsyncEmbedFilePath = "";
-    this.readingAsyncEmbedRepairedSections = /* @__PURE__ */ new WeakSet();
     this.readingLogicalSizerHeight = 0;
     this.readingZoomInteractionUntil = 0;
     this.readingZoomSettleTimer = null;
@@ -5845,6 +5850,7 @@ var PreviewDrawingController = class {
     this.onButtonPointerDown = this.onButtonPointerDown.bind(this);
     this.onButtonPointerUp = this.onButtonPointerUp.bind(this);
     this.onDocumentPointerDown = this.onDocumentPointerDown.bind(this);
+    this.onDocumentPointerMove = this.onDocumentPointerMove.bind(this);
     this.onDocumentPointerFinish = this.onDocumentPointerFinish.bind(this);
     this.onDocumentSelectionChange = this.onDocumentSelectionChange.bind(this);
     this.onDocumentKeyDown = this.onDocumentKeyDown.bind(this);
@@ -6112,6 +6118,7 @@ var PreviewDrawingController = class {
     window.visualViewport?.addEventListener("resize", this.onResize);
     window.visualViewport?.addEventListener("scroll", this.onResize);
     activeDocument.addEventListener("pointerdown", this.onDocumentPointerDown, true);
+    activeDocument.addEventListener("pointermove", this.onDocumentPointerMove, true);
     activeDocument.addEventListener("pointerup", this.onDocumentPointerFinish, true);
     activeDocument.addEventListener("pointercancel", this.onDocumentPointerFinish, true);
     activeDocument.addEventListener("selectionchange", this.onDocumentSelectionChange);
@@ -6428,6 +6435,7 @@ var PreviewDrawingController = class {
     this.selectedStrokeIndex = -1;
     this.selectedStrokeIndexes.clear();
     this.selectedMarkdownBlockIds.clear();
+    this.markdownSelectionActivation = null;
     this.selectionFrameSnapshot = null;
     this.clearMarkdownBlockPresentation();
     this.embedNodes.forEach((node) => node.remove());
@@ -6543,6 +6551,7 @@ var PreviewDrawingController = class {
     window.visualViewport?.removeEventListener("resize", this.onResize);
     window.visualViewport?.removeEventListener("scroll", this.onResize);
     activeDocument.removeEventListener("pointerdown", this.onDocumentPointerDown, true);
+    activeDocument.removeEventListener("pointermove", this.onDocumentPointerMove, true);
     activeDocument.removeEventListener("pointerup", this.onDocumentPointerFinish, true);
     activeDocument.removeEventListener("pointercancel", this.onDocumentPointerFinish, true);
     activeDocument.removeEventListener("selectionchange", this.onDocumentSelectionChange);
@@ -9041,6 +9050,15 @@ var PreviewDrawingController = class {
       this.endTextEdit();
     }
   }
+  onDocumentPointerMove(event) {
+    if (this.directMarkdownPointerId !== event.pointerId) {
+      return;
+    }
+    this.onPointerMove(event);
+    event.preventDefault?.();
+    event.stopPropagation?.();
+    event.stopImmediatePropagation?.();
+  }
   onButtonPointerDown(event) {
     if (event?.button !== void 0 && event.button !== 0) {
       return;
@@ -9318,6 +9336,16 @@ var PreviewDrawingController = class {
     return changed;
   }
   onDocumentPointerFinish(event) {
+    if (this.directMarkdownPointerId === event.pointerId) {
+      this.directMarkdownTaskClickUntil = Date.now() + 600;
+      this.onPointerUp(event);
+      this.directMarkdownPointerId = null;
+      this.directMarkdownPointerElement = null;
+      event.preventDefault?.();
+      event.stopPropagation?.();
+      event.stopImmediatePropagation?.();
+      return;
+    }
     if (event.pointerType === "touch" && this.touchPointers.has(event.pointerId)) {
       this.completeTrackedTouch(event.pointerId);
     }
@@ -9861,7 +9889,9 @@ var PreviewDrawingController = class {
         return;
       }
     }
-    const target = this.elementBelowCanvas(event.clientX, event.clientY);
+    const target = this.directMarkdownPointerId === event.pointerId && this.directMarkdownPointerElement?.isConnected
+      ? this.directMarkdownPointerElement
+      : this.elementBelowCanvas(event.clientX, event.clientY);
     const canEditMarkdownText = this.toolMode === TOOL_EDIT_MD;
     const clientPoint = { x: event.clientX, y: event.clientY };
     const editableCandidate = canEditMarkdownText ? findEditableTarget(target, this.previewEl, clientPoint) : null;
@@ -9978,6 +10008,7 @@ var PreviewDrawingController = class {
       const additiveSelect = event.shiftKey || event.ctrlKey || event.metaKey;
       const existing = markdownSelectionRecord;
       const wasSelected = Boolean(existing && this.selectedMarkdownBlockIds.has(existing.id));
+      const selectionActivated = this.markdownSelectionCanEditOrDrag(existing, markdownSelectionCandidate);
       const hitGroupId = existing?.groupId || "";
       if (!additiveSelect && hitGroupId && this.isElementGroupFullySelected(hitGroupId) && !this.enteredElementGroupIds.has(hitGroupId)) {
         this.startPendingSelectionTap(event, {
@@ -9993,7 +10024,7 @@ var PreviewDrawingController = class {
           element: markdownSelectionCandidate
         });
         return;
-      } else if (!wasSelected) {
+      } else if (!wasSelected || !selectionActivated) {
         this.startPendingSelectionTap(event, {
           type: "select-markdown",
           element: markdownSelectionCandidate
@@ -10624,9 +10655,22 @@ var PreviewDrawingController = class {
       || event.isPrimary === false) {
       return;
     }
+    const point = { x: Number(event.clientX) || 0, y: Number(event.clientY) || 0 };
+    const directTaskItem = event.target?.closest?.("li.task-list-item");
+    const directTaskBlock = directTaskItem && this.previewEl.contains(directTaskItem)
+      ? this.markdownBlockElementForTarget(directTaskItem, point)
+      : null;
+    if (this.active && this.toolMode === TOOL_SELECT && event.target !== this.canvas && directTaskBlock) {
+      this.directMarkdownPointerId = event.pointerId;
+      this.directMarkdownPointerElement = directTaskBlock;
+      this.onPointerDown(event, true);
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation?.();
+      return;
+    }
     this.rememberMarkdownIdentityMutation(event);
     const now = Number(event.timeStamp) || Date.now();
-    const point = { x: Number(event.clientX) || 0, y: Number(event.clientY) || 0 };
     const previous = this.previewPrimaryPress;
     this.previewPrimaryPress = { ...point, time: now };
     const repeated = previous
@@ -10670,7 +10714,11 @@ var PreviewDrawingController = class {
     event.stopImmediatePropagation?.();
   }
   rememberMarkdownIdentityMutation(event) {
-    const checkbox = event?.target?.closest?.("input.task-list-item-checkbox, input[type='checkbox']");
+    const directTarget = event?.target;
+    const underlyingTarget = directTarget === this.canvas
+      ? this.elementBelowCanvas(Number(event?.clientX) || 0, Number(event?.clientY) || 0)
+      : directTarget;
+    const checkbox = underlyingTarget?.closest?.("input.task-list-item-checkbox, input[type='checkbox']");
     if (!checkbox || !this.previewEl?.contains?.(checkbox)) {
       return;
     }
@@ -10823,6 +10871,15 @@ var PreviewDrawingController = class {
       const freshElement = matched.get(member.id);
       if (!freshElement) {
         continue;
+      }
+      const freshInfo = getSourceInfo(freshElement);
+      const freshHint = normalizeRenderedText(renderedMarkdownIdentityText(freshElement)).slice(0, 240);
+      if (Number.isFinite(freshInfo.lineStart) && !taskSourceRangeLooksRelative(block, freshElement, freshInfo)) {
+        block.lineStart = freshInfo.lineStart;
+        block.lineEnd = freshInfo.lineEnd ?? freshInfo.lineStart;
+      }
+      if (freshHint) {
+        block.textHint = freshHint;
       }
       freshElement.dataset.noteDrawMarkdownBlockId = block.id;
       freshElement.addClass("notedraw-md-block");
@@ -11521,7 +11578,16 @@ var PreviewDrawingController = class {
     }
   }
   onReadingClick(event) {
-    if (this.active || !shouldSuppressReadingClick(this.readingTouchGuard, Date.now())) {
+    if (this.active) {
+      if (this.toolMode === TOOL_SELECT && Date.now() <= this.directMarkdownTaskClickUntil
+        && event.target?.closest?.("li.task-list-item")) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation?.();
+      }
+      return;
+    }
+    if (!shouldSuppressReadingClick(this.readingTouchGuard, Date.now())) {
       return;
     }
     event.preventDefault();
@@ -11617,39 +11683,10 @@ var PreviewDrawingController = class {
     return found;
   }
   repairAsyncFileEmbedSections(renderer = this.readingPreviewRenderer()) {
-    let repaired = 0;
-    for (const section of renderer?.sections || []) {
-      if (!section?.el?.isConnected || this.readingAsyncEmbedRepairedSections.has(section)) {
-        continue;
-      }
-      const placeholders = Array.from(section.el.querySelectorAll?.(
-        ".internal-embed[src], .internal-embed[data-src]"
-      ) || []).filter(isAsyncFileEmbedElement);
-      const unloaded = placeholders.filter((element) => {
-        const rect = element.getBoundingClientRect?.();
-        return !element.closest?.(".obcc-inline-workbench-embed")
-          && !element.classList?.contains("file-embed")
-          && (!rect || rect.height <= 1);
-      });
-      if (!unloaded.length) {
-        continue;
-      }
-      this.readingAsyncEmbedRepairedSections.add(section);
-      for (const element of unloaded) {
-        repaired += this.promoteAsyncFileEmbedPlaceholder(element) ? 1 : 0;
-      }
-    }
-    return repaired;
-  }
-  promoteAsyncFileEmbedPlaceholder(element) {
-    if (!element?.isConnected || !isAsyncFileEmbedElement(element) || element.classList?.contains("file-embed")) {
-      return false;
-    }
-    const replacement = element.cloneNode(true);
-    replacement.classList.add("file-embed", "mod-generic", "is-loaded");
-    replacement.dataset.noteDrawAsyncEmbedRepair = "true";
-    element.replaceWith(replacement);
-    return true;
+    // Office/PDF renderers attach asynchronously to the original embed node.
+    // Cloning that placeholder or forcing is-loaded prevents Obsidian and
+    // workbench plugins from completing their own render lifecycle.
+    return this.repairConnectedReadingSections(renderer);
   }
   repairConnectedReadingSections(renderer = this.readingPreviewRenderer()) {
     if (!renderer || !this.previewEl?.isConnected) {
@@ -12442,7 +12479,8 @@ var PreviewDrawingController = class {
       this.selectedMarkdownBlockIds.clear();
       this.setSelectedStrokes(pending.index, { skipGroupExpansion: true });
     } else if (pending.type === "select-markdown") {
-      this.selectMarkdownBlock(pending.element);
+      const block = this.selectMarkdownBlock(pending.element);
+      this.activateMarkdownSelection(block, pending.element);
     } else if (pending.type === "toggle-markdown") {
       this.toggleMarkdownBlockSelection(pending.element);
     } else if (pending.type === "enter-markdown-group") {
@@ -13352,13 +13390,19 @@ var PreviewDrawingController = class {
     const effectiveSide = horizontal ? drop.side : drop.side === "right" ? "after" : drop.side === "left" ? "before" : drop.side;
     if (horizontal && targetBlock) {
       for (const [id, block] of rowBlocks) {
-        block.span = this.markdownInlineRowSpan(allocation, id, block.span);
-        block.widthScale = 1;
+        const nextSpan = this.markdownInlineRowSpan(allocation, id, block.span);
+        if (Number(block.span) !== Number(nextSpan)) {
+          block.widthScale = 1;
+        }
+        block.span = nextSpan;
         block.noteFlowAutoSpan = false;
       }
       for (const state of moving) {
-        state.block.span = this.markdownInlineRowSpan(allocation, state.block.id, state.block.span);
-        state.block.widthScale = 1;
+        const nextSpan = this.markdownInlineRowSpan(allocation, state.block.id, state.block.span);
+        if (Number(state.block.span) !== Number(nextSpan)) {
+          state.block.widthScale = 1;
+        }
+        state.block.span = nextSpan;
         state.block.noteFlowAutoSpan = false;
         state.block.floating = false;
         state.block.floatingExplicit = false;
@@ -16457,9 +16501,12 @@ var PreviewDrawingController = class {
     if (!flowElement?.isConnected || !this.markdownBlockInlineLane(flowElement)) {
       return false;
     }
+    const block = this.findMarkdownBlockRecordForElement(element);
     this.setDraggedNoteFlowDomClass(flowElement, "notedraw-md-inline-grid-item", true);
     this.setDraggedNoteFlowDomClass(flowElement, "notedraw-md-grid-item", false);
     this.setDraggedNoteFlowDomStyle(flowElement, "--notedraw-md-inline-span", String(clamp(Math.round(Number(span) || 12), 1, 12)));
+    const widthScale = Number(block?.span) === Number(span) ? block?.widthScale : 1;
+    this.setDraggedNoteFlowDomStyle(flowElement, "--notedraw-md-inline-width", markdownInlineWidthCss(span, widthScale, flowElement));
     this.setDraggedNoteFlowDomStyle(flowElement, "grid-column", null);
     return true;
   }
@@ -16472,11 +16519,13 @@ var PreviewDrawingController = class {
       flowElement.classList.add("notedraw-md-inline-grid-item");
       flowElement.classList.remove("notedraw-md-grid-item");
       flowElement.style.setProperty("--notedraw-md-inline-span", String(inlineSpan));
+      flowElement.style.setProperty("--notedraw-md-inline-width", markdownInlineWidthCss(inlineSpan, block?.widthScale, flowElement));
       flowElement.style.removeProperty("grid-column");
       return flowElement;
     }
     flowElement?.classList?.remove("notedraw-md-inline-grid-item");
     flowElement?.style?.removeProperty("--notedraw-md-inline-span");
+    flowElement?.style?.removeProperty("--notedraw-md-inline-width");
     const gridContainer = this.ensureMarkdownBlockGridRow(block, element)
       || this.markdownBlockGridContainer(element);
     element?.style?.removeProperty("grid-column");
@@ -16500,6 +16549,7 @@ var PreviewDrawingController = class {
     flowElement.classList.remove("notedraw-md-inline-grid-item");
     flowElement.style.removeProperty("grid-column");
     flowElement.style.removeProperty("--notedraw-md-inline-span");
+    flowElement.style.removeProperty("--notedraw-md-inline-width");
     flowElement.style.removeProperty("--notedraw-md-drag-x");
     flowElement.style.removeProperty("--notedraw-md-drag-y");
   }
@@ -16591,6 +16641,7 @@ var PreviewDrawingController = class {
     const blockElement = element.closest?.(".notedraw-md-block") || element;
     const existing = this.findMarkdownBlockRecordForElement(blockElement);
     if (existing) {
+      existing.renderKind = markdownElementRenderKind(blockElement) || existing.renderKind || "";
       return existing;
     }
     const info = getSourceInfo(blockElement);
@@ -16605,6 +16656,7 @@ var PreviewDrawingController = class {
       lineStart: info.lineStart,
       lineEnd: info.lineEnd,
       textHint,
+      renderKind: markdownElementRenderKind(blockElement),
       span: 12
     }], this.file)[0];
     if (!record) {
@@ -16643,7 +16695,7 @@ var PreviewDrawingController = class {
       delete element.dataset.noteDrawSortDragging;
       delete element.dataset.noteDrawResizedHeight;
     }
-    for (const property of ["grid-column", "width", "--notedraw-md-border", "--notedraw-md-background", "--notedraw-md-min-height", "--notedraw-md-drag-x", "--notedraw-md-drag-y", "--notedraw-md-float-x", "--notedraw-md-float-y", "--notedraw-md-float-width"]) {
+    for (const property of ["grid-column", "width", "--notedraw-md-inline-width", "--notedraw-md-border", "--notedraw-md-background", "--notedraw-md-min-height", "--notedraw-md-drag-x", "--notedraw-md-drag-y", "--notedraw-md-float-x", "--notedraw-md-float-y", "--notedraw-md-float-width"]) {
       element.style?.removeProperty(property);
     }
   }
@@ -16684,11 +16736,18 @@ var PreviewDrawingController = class {
     if (!element) {
       return;
     }
+    const flowElement = this.markdownBlockFlowElement(element) || element;
     if (block?.floating) {
       element.style.removeProperty("width");
+      flowElement.style.removeProperty("--notedraw-md-inline-width");
       return;
     }
     const widthScale = normalizeMarkdownBlockWidthScale(block?.widthScale);
+    if (flowElement.classList?.contains("notedraw-md-inline-grid-item")) {
+      flowElement.style.setProperty("--notedraw-md-inline-width", markdownInlineWidthCss(block?.span, widthScale, flowElement));
+      element.style.removeProperty("width");
+      return;
+    }
     if (widthScale >= 0.999) {
       element.style.removeProperty("width");
       return;
@@ -16791,6 +16850,49 @@ var PreviewDrawingController = class {
       this.markdownBlockGridContainer(element)
     ]).filter(Boolean));
     const candidates = markdownBlockCandidateElements(this.previewEl);
+    // A task list may have one persisted NoteDraw row while a sibling task
+    // record was removed by a renderer/plugin refresh. Recreate only that
+    // sibling set so the list can restore its parallel row without eagerly
+    // materializing every Markdown block in a large note.
+    const recordsById = new Map(this.markdownBlockRecords().map((block) => [block.id, block]));
+    const taskOwnerTemplates = /* @__PURE__ */ new Map();
+    for (const [id, element] of previousMarkdownBlockElements) {
+      if (!element?.matches?.("li.task-list-item")) {
+        continue;
+      }
+      const owner = element.closest?.("ul.contains-task-list,ol.contains-task-list") || element.parentElement;
+      const block = recordsById.get(id);
+      if (!owner || !block || block.floating) {
+        continue;
+      }
+      const templates = taskOwnerTemplates.get(owner) || [];
+      templates.push(block);
+      taskOwnerTemplates.set(owner, templates);
+    }
+    if (taskOwnerTemplates.size) {
+      for (const candidate of candidates) {
+        if (!candidate.matches?.("li.task-list-item")) {
+          continue;
+        }
+        const owner = candidate.closest?.("ul.contains-task-list,ol.contains-task-list") || candidate.parentElement;
+        const templates = taskOwnerTemplates.get(owner);
+        if (!templates?.length) {
+          continue;
+        }
+        const existing = this.findMarkdownBlockRecordForElement(candidate);
+        const block = existing || this.ensureMarkdownBlockRecord(candidate);
+        if (!existing && block) {
+          const template = templates.find((item) => Number(item.span) >= 1 && Number(item.span) < 12)
+            || templates[0];
+          block.span = clamp(Math.round(Number(template.span) || 12), 1, 12);
+          block.widthScale = normalizeMarkdownBlockWidthScale(template.widthScale);
+          block.noteFlowAutoSpan = false;
+          block.floating = false;
+          block.floatingExplicit = false;
+          block.floatBox = null;
+        }
+      }
+    }
     let explicitRecordsChanged = this.expandExplicitMarkdownBlockRecords(candidates);
     const currentRecords = this.markdownBlockRecords();
     const compactedRecords = dedupeMarkdownBlockRecords(currentRecords);
@@ -16847,6 +16949,55 @@ var PreviewDrawingController = class {
       block.widthScale = normalizeMarkdownBlockWidthScale(member.widthScale);
       block.noteFlowAutoSpan = false;
     }
+    // Tasks can replace a complete list and renumber its rendered rows from
+    // zero. Match the new list back to the old records by list order, using
+    // any unchanged sibling as the anchor. This keeps a toggled task bound
+    // even when both its text and rendered line number change at once.
+    const taskRecords = this.markdownBlockRecords().filter((block) => {
+      const previous = previousMarkdownBlockElements.get(block.id);
+      return block.renderKind === "task" || previous?.matches?.("li.task-list-item");
+    }).sort((left, right) => Number(left.lineStart) - Number(right.lineStart));
+    const taskCandidateGroups = /* @__PURE__ */ new Map();
+    for (const [element, meta] of candidateMeta) {
+      if (!element.matches?.("li.task-list-item")) {
+        continue;
+      }
+      const owner = element.closest?.("ul.contains-task-list,ol.contains-task-list") || element.parentElement;
+      const group = taskCandidateGroups.get(owner) || [];
+      group.push({ element, meta });
+      taskCandidateGroups.set(owner, group);
+    }
+    const taskOrdinalMatches = /* @__PURE__ */ new Map();
+    const taskOrdinalElements = /* @__PURE__ */ new Set();
+    for (const group of taskCandidateGroups.values()) {
+      let anchoredSequence = null;
+      for (const [candidateIndex, candidate] of group.entries()) {
+        const matchingRecordIndexes = taskRecords.map((block, recordIndex) => (
+          normalizeRenderedText(block.textHint) === candidate.meta.hint ? recordIndex : -1
+        )).filter((recordIndex) => recordIndex >= 0);
+        if (matchingRecordIndexes.length !== 1) {
+          continue;
+        }
+        const startIndex = matchingRecordIndexes[0] - candidateIndex;
+        const sequence = taskRecords.slice(startIndex, startIndex + group.length);
+        if (startIndex >= 0 && sequence.length === group.length
+          && sequence.every((block) => block.path === candidate.meta.path)) {
+          anchoredSequence = sequence;
+          break;
+        }
+      }
+      if (!anchoredSequence && taskCandidateGroups.size === 1 && taskRecords.length === group.length) {
+        anchoredSequence = taskRecords;
+      }
+      anchoredSequence?.forEach((block, index) => {
+        const element = group[index]?.element;
+        if (!element || taskOrdinalMatches.has(block.id) || taskOrdinalElements.has(element)) {
+          return;
+        }
+        taskOrdinalMatches.set(block.id, element);
+        taskOrdinalElements.add(element);
+      });
+    }
     const identityMatches = (block, element) => {
       if (!element || !explicitGroupMatches(block, element)) {
         return false;
@@ -16874,7 +17025,8 @@ var PreviewDrawingController = class {
         : takeUnused(idCandidates.get(block.id), block)
           || takeUnusedRange(rangeCandidates.get(rangeKey), block)
           || takeUnused(exactCandidates.get(exactKey), block)
-          || takeUnused(hintCandidates.get(hintKey), block);
+          || takeUnused(hintCandidates.get(hintKey), block)
+          || (!used.has(taskOrdinalMatches.get(block.id)) ? taskOrdinalMatches.get(block.id) : null);
       const pendingMember = pendingIdentityMembers.get(block.id);
       if (!element && pendingMember?.path === block.path) {
         // Task renderers can replace the complete list. Preserve every member
@@ -16927,7 +17079,7 @@ var PreviewDrawingController = class {
       next.set(block.id, element);
       const meta = candidateMeta.get(element) || { info: getSourceInfo(element), hint: normalizeRenderedText(renderedMarkdownIdentityText(element)).slice(0, 240) };
       const info = meta.info;
-      if (Number.isFinite(info.lineStart)) {
+      if (Number.isFinite(info.lineStart) && !taskSourceRangeLooksRelative(block, element, info)) {
         markdownMetadataChanged = markdownMetadataChanged
           || block.lineStart !== info.lineStart
           || block.lineEnd !== (info.lineEnd ?? info.lineStart);
@@ -16939,6 +17091,7 @@ var PreviewDrawingController = class {
         block.textHint = meta.hint;
       }
       element.dataset.noteDrawMarkdownBlockId = block.id;
+      block.renderKind = markdownElementRenderKind(element) || block.renderKind || "";
       element.addClass("notedraw-md-block");
       element.toggleClass("is-selected", this.selectedMarkdownBlockIds.has(block.id));
       element.toggleClass("is-locked", Boolean(block.locked));
@@ -17165,7 +17318,43 @@ var PreviewDrawingController = class {
     arrow.classList.toggle("is-collapsed", willCollapse);
     renderer?.updateVirtualDisplay?.();
   }
+  activateMarkdownSelection(block, element) {
+    const selectedElement = this.markdownBlockElement(block) || element;
+    if (!block?.id || !selectedElement?.isConnected || !this.selectedMarkdownBlockIds.has(block.id)) {
+      this.markdownSelectionActivation = null;
+      return false;
+    }
+    const frame = this.captureSelectionFrameSnapshot({ force: true });
+    if (!frame) {
+      this.markdownSelectionActivation = null;
+      return false;
+    }
+    this.markdownSelectionActivation = {
+      id: block.id,
+      element: selectedElement,
+      selectionKey: this.selectionStateKey()
+    };
+    return true;
+  }
+  markdownSelectionCanEditOrDrag(block, element) {
+    const activation = this.markdownSelectionActivation;
+    const selectedElement = this.markdownBlockElement(block) || element;
+    const ready = Boolean(
+      block?.id
+      && activation?.id === block.id
+      && activation.element === selectedElement
+      && selectedElement?.isConnected
+      && this.selectedMarkdownBlockIds.has(block.id)
+      && activation.selectionKey === this.selectionStateKey()
+      && this.selectionFrameSnapshot?.key === activation.selectionKey
+    );
+    if (!ready) {
+      this.markdownSelectionActivation = null;
+    }
+    return ready;
+  }
   selectMarkdownBlock(element, { additive = false, toggle = false, skipGroupExpansion = false } = {}) {
+    this.markdownSelectionActivation = null;
     const block = this.ensureMarkdownBlockRecord(element);
     if (!block) {
       return null;
@@ -17215,6 +17404,7 @@ var PreviewDrawingController = class {
     }
   }
   setSelectedStrokes(indexes, options = {}) {
+    this.markdownSelectionActivation = null;
     const normalized = Array.isArray(indexes) ? indexes : [indexes];
     this.selectedStrokeIndexes = new Set(
       normalized.map((index) => Number(index)).filter((index) => Number.isInteger(index) && index >= 0 && index < this.drawingData.strokes.length)
@@ -17246,6 +17436,7 @@ var PreviewDrawingController = class {
     this.setSelectedStrokes(Array.from(next), { preserveMarkdown: true });
   }
   clearSelectedStrokes() {
+    this.markdownSelectionActivation = null;
     this.selectedStrokeIndexes.clear();
     this.selectedStrokeIndex = -1;
     this.selectedMarkdownBlockIds.clear();
@@ -18090,13 +18281,14 @@ var PreviewDrawingController = class {
       if (!target || target.startsWith("http://") || target.startsWith("https://")) {
         continue;
       }
-      if (isAsyncFileEmbedElement(span) && this.promoteAsyncFileEmbedPlaceholder(span)) {
-        repaired += 1;
+      if (isAsyncFileEmbedElement(span)) {
+        repaired += await this.repairNativeFileEmbedPlaceholder(span, target) ? 1 : 0;
         continue;
       }
       const dest = this.plugin.app.metadataCache?.getFirstLinkpathDest?.(target, this.file?.path || "") || null;
       if (dest?.extension?.toLowerCase?.() === "pdf") {
-        repaired += await this.repairPdfEmbedPlaceholder(span, target) ? 1 : 0;
+        repaired += await this.repairNativeFileEmbedPlaceholder(span, target) ? 1 : 0;
+        this.repairConnectedReadingSections(this.readingPreviewRenderer());
         continue;
       }
       if (!dest || dest.extension !== "md") {
@@ -18123,14 +18315,14 @@ var PreviewDrawingController = class {
     }
     return repaired;
   }
-  async repairPdfEmbedPlaceholder(span, target) {
-    if (!span?.isConnected || !isPendingPdfEmbedElement(span)
-      || span.dataset.noteDrawPdfEmbedRepair === "true") {
+  async repairNativeFileEmbedPlaceholder(span, target) {
+    if (!span?.isConnected || !span.matches?.(".internal-embed[src], .internal-embed[data-src]")
+      || span.dataset.noteDrawNativeEmbedRepair === "true") {
       return false;
     }
-    span.dataset.noteDrawPdfEmbedRepair = "true";
+    span.dataset.noteDrawNativeEmbedRepair = "true";
     const host = span.ownerDocument.createElement("div");
-    host.className = "notedraw-pdf-embed-repair";
+    host.className = "markdown-rendered notedraw-native-embed-repair";
     span.parentNode?.insertBefore(host, span.nextSibling);
     try {
       const escapedTarget = String(target || "").replaceAll("]", "\\]");
@@ -18141,13 +18333,15 @@ var PreviewDrawingController = class {
         this.file?.path || "",
         this.plugin
       );
-      const rendered = host.querySelector(".internal-embed.pdf-embed, .pdf-embed.is-loaded");
+      // Keep the renderer-owned outer token. Never extract an inner PDF
+      // viewer or mark an Office placeholder as loaded ourselves.
+      const rendered = Array.from(host.querySelectorAll(".internal-embed[src], .internal-embed[data-src]"))
+        .find((element) => isSameEmbedTarget(element, target));
       if (!rendered) {
         host.remove();
-        delete span.dataset.noteDrawPdfEmbedRepair;
+        delete span.dataset.noteDrawNativeEmbedRepair;
         return false;
       }
-      rendered.remove();
       span.replaceWith(rendered);
       host.remove();
       this.readingAsyncEmbedFilePath = "";
@@ -18156,8 +18350,8 @@ var PreviewDrawingController = class {
       return true;
     } catch (error) {
       host.remove();
-      delete span.dataset.noteDrawPdfEmbedRepair;
-      console.error(`[${PLUGIN_ID}] Failed to render PDF embed ${target}`, error);
+      delete span.dataset.noteDrawNativeEmbedRepair;
+      console.error(`[${PLUGIN_ID}] Failed to render native file embed ${target}`, error);
       return false;
     }
   }
@@ -19242,9 +19436,12 @@ var PreviewDrawingController = class {
     let changed = false;
     for (const [id, item] of blocks) {
       const span = this.markdownInlineRowSpan(allocation, id, item.span);
-      changed = changed || item.span !== span || item.widthScale !== 1 || item.noteFlowAutoSpan !== true;
+      const widthScale = Number(item.span) === Number(span)
+        ? normalizeMarkdownBlockWidthScale(item.widthScale)
+        : 1;
+      changed = changed || item.span !== span || item.widthScale !== widthScale || item.noteFlowAutoSpan !== true;
       item.span = span;
-      item.widthScale = 1;
+      item.widthScale = widthScale;
       item.floating = false;
       item.floatingExplicit = false;
       item.floatBox = null;
@@ -21855,14 +22052,16 @@ var PreviewDrawingController = class {
       }
       const peerCenter = (peerRect.left + peerRect.right) / 2;
       if (peerCenter < currentCenter) {
-        const boundary = peerRect.right <= currentRect.left
+        const midpoint = peerRect.right <= currentRect.left
           ? (peerRect.right + currentRect.left) / 2
           : (Math.max(peerRect.left, currentRect.left) + Math.min(peerRect.right, currentRect.right)) / 2;
+        const boundary = midpoint - INLINE_SELECTION_BOUNDARY_BIAS_PX;
         left = Math.max(left, boundary);
       } else if (peerCenter > currentCenter) {
-        const boundary = currentRect.right <= peerRect.left
+        const midpoint = currentRect.right <= peerRect.left
           ? (currentRect.right + peerRect.left) / 2
           : (Math.max(peerRect.left, currentRect.left) + Math.min(peerRect.right, currentRect.right)) / 2;
+        const boundary = midpoint - INLINE_SELECTION_BOUNDARY_BIAS_PX;
         right = Math.min(right, boundary);
       }
     }
@@ -24798,6 +24997,13 @@ function isAsyncFileEmbedElement(element) {
   return /\.(?:docx?|pptx?|xlsx?|odt|ods|odp|rtf)$/.test(source);
 }
 function isPendingPdfEmbedElement(element) {
+  if (!isPdfEmbedSourceElement(element)) {
+    return false;
+  }
+  return !element.matches(".pdf-embed, .is-loaded")
+    && !element.querySelector?.(".pdf-container, .pdf-viewer-container");
+}
+function isPdfEmbedSourceElement(element) {
   if (!element?.matches?.(".internal-embed[src], .internal-embed[data-src]")) {
     return false;
   }
@@ -24805,9 +25011,20 @@ function isPendingPdfEmbedElement(element) {
     .split("#", 1)[0]
     .split("?", 1)[0]
     .toLowerCase();
-  return source.endsWith(".pdf")
-    && !element.matches(".pdf-embed, .is-loaded")
-    && !element.querySelector?.(".pdf-container, .pdf-viewer-container");
+  return source.endsWith(".pdf");
+}
+function isSameEmbedTarget(element, target) {
+  if (!element?.matches?.(".internal-embed[src], .internal-embed[data-src]")) {
+    return false;
+  }
+  const normalize = (value) => decodeURIComponent(String(value || "")
+    .replace(/^!/, "")
+    .split("#", 1)[0]
+    .split("?", 1)[0]
+    .trim()).toLowerCase();
+  const expected = normalize(target);
+  const actual = normalize(element.getAttribute("data-src") || element.getAttribute("src"));
+  return Boolean(expected && actual && (actual === expected || normalizeVaultPath(actual) === normalizeVaultPath(expected)));
 }
 function rootPreviewHasRenderedContent(preview) {
   const sizer = rootPreviewSizer(preview);
@@ -26179,12 +26396,13 @@ function normalizeMarkdownBlocks(value, file) {
       ? block.id
       : `md-${hashString(`${path}:${lineStart ?? "x"}:${textHint}:${index}`)}`;
     const floatBox = normalizeMarkdownFloatBox(block?.floatBox);
-    const normalized = {
+      const normalized = {
       id,
       path,
       lineStart,
       lineEnd: Number.isFinite(Number(block?.lineEnd)) ? Math.max(lineStart ?? 0, Math.round(Number(block.lineEnd))) : lineStart,
       textHint,
+      renderKind: block?.renderKind === "task" ? "task" : "",
       span: clamp(Math.round(Number(block?.span) || 12), 1, 12),
       noteFlowAutoSpan: Boolean(block?.noteFlowAutoSpan),
       widthScale: normalizeMarkdownBlockWidthScale(block?.widthScale),
@@ -26217,6 +26435,31 @@ function normalizeMarkdownBlocks(value, file) {
 function normalizeMarkdownBlockWidthScale(value) {
   const widthScale = Number(value);
   return Number.isFinite(widthScale) ? clamp(widthScale, 0.2, 1) : 1;
+}
+function taskSourceRangeLooksRelative(block, element, info) {
+  if (!element?.matches?.("li.task-list-item") || !Number.isFinite(Number(block?.lineStart)) || !Number.isFinite(Number(info?.lineStart))) {
+    return false;
+  }
+  const list = element.closest?.("ul.contains-task-list,ol.contains-task-list");
+  const renderedLines = Array.from(list?.querySelectorAll?.(":scope > li.task-list-item") || [])
+    .map((item) => Number(getSourceInfo(item).lineStart))
+    .filter(Number.isFinite);
+  if (!renderedLines.length) {
+    return false;
+  }
+  const renderedMax = Math.max(...renderedLines);
+  return Math.min(...renderedLines) <= 2
+    && renderedMax <= renderedLines.length * 4
+    && Number(block.lineStart) > renderedMax + 2;
+}
+function markdownElementRenderKind(element) {
+  return element?.matches?.("li.task-list-item") ? "task" : "";
+}
+function markdownInlineWidthCss(span, widthScale = 1, element = null) {
+  const columns = clamp(Math.round(Number(span) || 12), 1, 12);
+  const percent = Math.round(columns / 12 * normalizeMarkdownBlockWidthScale(widthScale) * 1e4) / 100;
+  const gap = element?.matches?.("li") ? INLINE_NOTE_FLOW_LIST_GAP_PX : INLINE_NOTE_FLOW_GAP_PX;
+  return `max(${MIN_INLINE_NOTE_FLOW_ITEM_WIDTH_PX}px, calc(${percent}% - ${gap}px))`;
 }
 function collectDeletedVaultFiles(file, output = []) {
   if (!file?.path) {

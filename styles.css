@@ -746,7 +746,7 @@
   /* Inline-block whitespace between renderer nodes is real layout width.
      Reserve the same small gap used by the grid path so two 6-span blocks,
      and larger mixed rows, stay on one line instead of wrapping at 100%. */
-  width: calc(100% * var(--notedraw-md-inline-span, 12) / 12 - 6px) !important;
+  width: var(--notedraw-md-inline-width, max(18px, calc(100% * var(--notedraw-md-inline-span, 12) / 12 - 6px))) !important;
   max-width: 100%;
   min-width: 0;
   box-sizing: border-box;
