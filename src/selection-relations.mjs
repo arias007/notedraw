@@ -1,8 +1,3 @@
-function boundsOverlapArea(left, right, minimumOverlap = 0.5) {
-  return Math.min(left.maxX, right.maxX) - Math.max(left.minX, right.minX) > minimumOverlap
-    && Math.min(left.maxY, right.maxY) - Math.max(left.minY, right.minY) > minimumOverlap;
-}
-
 function connectorTouches(left, right) {
   const leftTargets = new Set([left.connector?.fromId, left.connector?.toId].filter(Boolean));
   const rightTargets = new Set([right.connector?.fromId, right.connector?.toId].filter(Boolean));
@@ -25,9 +20,7 @@ export function expandRelatedSelection(candidates, initialKeys) {
       if (relatedKeys.has(candidate.key)) {
         continue;
       }
-      const sameGroup = Boolean(current.groupId && current.groupId === candidate.groupId);
-      const overlaps = Boolean(current.bounds && candidate.bounds && boundsOverlapArea(current.bounds, candidate.bounds));
-      if (!sameGroup && !overlaps && !connectorTouches(current, candidate)) {
+      if (!connectorTouches(current, candidate)) {
         continue;
       }
       relatedKeys.add(candidate.key);

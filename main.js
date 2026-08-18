@@ -1084,7 +1084,136 @@ function settleProjectedElementTransition(projectedItems, previousById, pendingI
     abrupt: true
   };
 }
-function projectElementPoints(points, layoutInput, projectedBox, { canvasWidth, canvasHeight } = {}) {
+function rectGap(a, b) {
+  const dx = Math.max(0, a.x - (b.x + b.width), b.x - (a.x + a.width));
+  const dy = Math.max(0, a.y - (b.y + b.height), b.y - (a.y + a.height));
+  return Math.hypot(dx, dy);
+}
+function overlapArea(a, b) {
+  const width = Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x));
+  const height = Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y));
+  return width * height;
+}
+function overlapCenter(a, b) {
+  const left = Math.max(a.x, b.x);
+  const right = Math.min(a.x + a.width, b.x + b.width);
+  const top = Math.max(a.y, b.y);
+  const bottom = Math.min(a.y + a.height, b.y + b.height);
+  if (right <= left || bottom <= top) {
+    return null;
+  }
+  return {
+    x: (left + right) / 2,
+    y: (top + bottom) / 2
+  };
+}
+function boxCorner(box, name) {
+  return {
+    x: box.x + (name === "topRight" || name === "bottomRight" ? box.width : 0),
+    y: box.y + (name === "bottomLeft" || name === "bottomRight" ? box.height : 0)
+  };
+}
+function nearestCornerPair(source, target) {
+  let best = { sourceCorner: "topLeft", targetCorner: "topLeft", distance: Number.POSITIVE_INFINITY };
+  for (const sourceCorner of CORNER_NAMES) {
+    const sourcePoint = boxCorner(source, sourceCorner);
+    for (const targetCorner of CORNER_NAMES) {
+      const targetPoint = boxCorner(target, targetCorner);
+      const distance = Math.hypot(targetPoint.x - sourcePoint.x, targetPoint.y - sourcePoint.y);
+      if (distance < best.distance) {
+        best = { sourceCorner, targetCorner, distance };
+      }
+    }
+  }
+  return best;
+}
+function normalizeBoxAnchor(box, point) {
+  return {
+    u: clamp3((point.x - box.x) / Math.max(0.01, box.width), 0, 1),
+    v: clamp3((point.y - box.y) / Math.max(0.01, box.height), 0, 1)
+  };
+}
+function captureElementRelations(items, { nearDistance = 80, maxRelations = 3 } = {}) {
+  const normalized = (Array.isArray(items) ? items : []).map((item) => ({
+    id: typeof item?.id === "string" ? item.id : "",
+    scale: clamp3(finite2(item?.scale, 1), 0.05, 20),
+    xScale: clamp3(finite2(item?.xScale, item?.scale ?? 1), 0.05, 20),
+    yScale: clamp3(finite2(item?.yScale, item?.scale ?? 1), 0.05, 20),
+    bounds: normalizeBox({
+      x: item?.bounds?.minX ?? item?.bounds?.x,
+      y: item?.bounds?.minY ?? item?.bounds?.y,
+      width: item?.bounds?.width ?? finite2(item?.bounds?.maxX, 0) - finite2(item?.bounds?.minX, 0),
+      height: item?.bounds?.height ?? finite2(item?.bounds?.maxY, 0) - finite2(item?.bounds?.minY, 0)
+    })
+  })).filter((item) => item.id);
+  const cellSize = Math.max(16, finite2(nearDistance, 80));
+  const buckets = /* @__PURE__ */ new Map();
+  const cellRange = (bounds, padding = 0) => ({
+    minX: Math.floor((bounds.x - padding) / cellSize),
+    maxX: Math.floor((bounds.x + bounds.width + padding) / cellSize),
+    minY: Math.floor((bounds.y - padding) / cellSize),
+    maxY: Math.floor((bounds.y + bounds.height + padding) / cellSize)
+  });
+  for (const item of normalized) {
+    const range = cellRange(item.bounds);
+    for (let x = range.minX; x <= range.maxX; x += 1) {
+      for (let y = range.minY; y <= range.maxY; y += 1) {
+        const key = `${x}:${y}`;
+        const bucket = buckets.get(key) || [];
+        bucket.push(item);
+        buckets.set(key, bucket);
+      }
+    }
+  }
+  const relations = /* @__PURE__ */ new Map();
+  for (const source of normalized) {
+    const candidates = [];
+    const nearby = /* @__PURE__ */ new Set();
+    const range = cellRange(source.bounds, nearDistance);
+    for (let x = range.minX; x <= range.maxX; x += 1) {
+      for (let y = range.minY; y <= range.maxY; y += 1) {
+        for (const item of buckets.get(`${x}:${y}`) || []) {
+          nearby.add(item);
+        }
+      }
+    }
+    for (const target of nearby) {
+      if (target === source) {
+        continue;
+      }
+      const overlap = overlapArea(source.bounds, target.bounds);
+      const gap = rectGap(source.bounds, target.bounds);
+      if (overlap <= 0 && gap > nearDistance) {
+        continue;
+      }
+      const kind = overlap > 0 ? "intersection" : "near";
+      const relationScaleX = Math.max(0.05, (source.xScale + target.xScale) / 2);
+      const relationScaleY = Math.max(0.05, (source.yScale + target.yScale) / 2);
+      const cornerPair = nearestCornerPair(source.bounds, target.bounds);
+      const intersectionCenter = kind === "intersection" ? overlapCenter(source.bounds, target.bounds) : null;
+      const sourceAnchor = intersectionCenter ? normalizeBoxAnchor(source.bounds, intersectionCenter) : null;
+      const targetAnchor = intersectionCenter ? normalizeBoxAnchor(target.bounds, intersectionCenter) : null;
+      const sourceCornerPoint = intersectionCenter || boxCorner(source.bounds, cornerPair.sourceCorner);
+      const targetCornerPoint = intersectionCenter || boxCorner(target.bounds, cornerPair.targetCorner);
+      candidates.push({
+        targetId: target.id,
+        kind,
+        sourceCorner: cornerPair.sourceCorner,
+        targetCorner: cornerPair.targetCorner,
+        ...sourceAnchor ? { sourceU: sourceAnchor.u, sourceV: sourceAnchor.v } : {},
+        ...targetAnchor ? { targetU: targetAnchor.u, targetV: targetAnchor.v } : {},
+        dx: (targetCornerPoint.x - sourceCornerPoint.x) / relationScaleX,
+        dy: (targetCornerPoint.y - sourceCornerPoint.y) / relationScaleY,
+        weight: kind === "intersection" ? 0.32 : 0.14,
+        score: kind === "intersection" ? -overlap - 1 : gap
+      });
+    }
+    candidates.sort((a, b) => a.score - b.score || a.targetId.localeCompare(b.targetId));
+    relations.set(source.id, candidates.slice(0, maxRelations).map(({ score, ...relation }) => relation));
+  }
+  return relations;
+}
+function projectElementPoints(points, layoutInput, projectedBox, { canvasWidth, canvasHeight, preserveAspectRatio = false } = {}) {
   const layout = normalizeElementLayout(layoutInput);
   if (!layout || !projectedBox) {
     return Array.isArray(points) ? points.map((point) => ({ ...point })) : [];
@@ -1092,16 +1221,23 @@ function projectElementPoints(points, layoutInput, projectedBox, { canvasWidth, 
   const targetWidth = Math.max(1, finite2(canvasWidth, 1));
   const targetHeight = Math.max(1, finite2(canvasHeight, 1));
   const source = layout.sourceFrame;
+  const sourceWidth = Math.max(0.01, layout.box.width);
+  const sourceHeight = Math.max(0.01, layout.box.height);
+  const projectedWidth = Math.max(0.01, finite2(projectedBox.width, sourceWidth));
+  const projectedHeight = Math.max(0.01, finite2(projectedBox.height, sourceHeight));
+  const uniformScale = Math.min(projectedWidth / sourceWidth, projectedHeight / sourceHeight);
   return (Array.isArray(points) ? points : []).map((point) => {
     const anchor = point?.anchor;
     const sourceX = anchor && Number.isFinite(Number(anchor.x)) ? source.contentLeft + Number(anchor.x) * source.contentWidth : clamp3(finite2(point?.x, 0), 0, 1) * source.surfaceWidth;
     const sourceY = anchor && Number.isFinite(Number(anchor.y)) ? Number(anchor.y) * source.documentHeight : clamp3(finite2(point?.y, 0), 0, 1) * source.documentHeight;
     const localX = (sourceX - layout.box.x) / layout.box.width;
     const localY = (sourceY - layout.box.y) / layout.box.height;
+    const projectedLocalX = preserveAspectRatio ? (sourceX - layout.box.x) * uniformScale : localX * projectedBox.width;
+    const projectedLocalY = preserveAspectRatio ? (sourceY - layout.box.y) * uniformScale : localY * projectedBox.height;
     return {
       ...point,
-      x: clamp3((projectedBox.x + localX * projectedBox.width) / targetWidth, 0, 1),
-      y: clamp3((projectedBox.y + localY * projectedBox.height) / targetHeight, 0, 1)
+      x: clamp3((projectedBox.x + projectedLocalX) / targetWidth, 0, 1),
+      y: clamp3((projectedBox.y + projectedLocalY) / targetHeight, 0, 1)
     };
   });
 }
@@ -1607,6 +1743,29 @@ function distributeInlineRowSpans(itemCount, columns = 12) {
   const remainder = totalColumns % count;
   return Array.from({ length: count }, (_, index) => base + (index < remainder ? 1 : 0));
 }
+function fitPreferredSpans(preferred, columns) {
+  if (!preferred.length || preferred.length > columns) {
+    return [];
+  }
+  const available = columns - preferred.length;
+  const weights = preferred.map((span) => Math.max(0, span - 1));
+  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+  if (!totalWeight || available <= 0) {
+    return preferred.map(() => 1);
+  }
+  const exactExtras = weights.map((weight) => weight / totalWeight * available);
+  const extras = exactExtras.map(Math.floor);
+  let remainder = available - extras.reduce((sum, value) => sum + value, 0);
+  const order = exactExtras.map((value, index) => ({ index, fraction: value - extras[index] })).sort((left, right) => right.fraction - left.fraction || left.index - right.index);
+  for (const item of order) {
+    if (remainder <= 0) {
+      break;
+    }
+    extras[item.index] += 1;
+    remainder -= 1;
+  }
+  return extras.map((extra) => extra + 1);
+}
 function allocateInlineRow({
   existingIds = [],
   movingIds = [],
@@ -1638,23 +1797,8 @@ function allocateInlineRow({
   };
   let spans = [];
   if (preferredSpanById && orderedIds.length <= totalColumns) {
-    spans = orderedIds.map(preferredSpan);
-    let overflow = spans.reduce((sum, span) => sum + span, 0) - totalColumns;
-    const movingSetForPriority = new Set(moving);
-    const movingIndexes = orderedIds.map((id, index) => movingSetForPriority.has(id) ? index : -1).filter((index) => index >= 0).reverse();
-    const movingCenter = movingIndexes.length ? movingIndexes.reduce((sum, index) => sum + index, 0) / movingIndexes.length : insertionIndex;
-    const existingIndexes = orderedIds.map((id, index) => movingSetForPriority.has(id) ? -1 : index).filter((index) => index >= 0).sort((left, right) => Math.abs(left - movingCenter) - Math.abs(right - movingCenter) || right - left);
-    for (const index of [...movingIndexes, ...existingIndexes]) {
-      if (overflow <= 0) {
-        break;
-      }
-      const reduction = Math.min(overflow, Math.max(0, spans[index] - 1));
-      spans[index] -= reduction;
-      overflow -= reduction;
-    }
-    if (overflow > 0) {
-      spans = [];
-    }
+    const preferred = orderedIds.map(preferredSpan);
+    spans = preferred.reduce((sum, span) => sum + span, 0) <= totalColumns ? preferred : fitPreferredSpans(preferred, totalColumns);
   } else {
     spans = distributeInlineRowSpans(orderedIds.length, totalColumns);
   }
@@ -2034,9 +2178,6 @@ function resolveSelectedDrawGesture({
 }
 
 // src/selection-relations.mjs
-function boundsOverlapArea(left, right, minimumOverlap = 0.5) {
-  return Math.min(left.maxX, right.maxX) - Math.max(left.minX, right.minX) > minimumOverlap && Math.min(left.maxY, right.maxY) - Math.max(left.minY, right.minY) > minimumOverlap;
-}
 function connectorTouches(left, right) {
   const leftTargets = new Set([left.connector?.fromId, left.connector?.toId].filter(Boolean));
   const rightTargets = new Set([right.connector?.fromId, right.connector?.toId].filter(Boolean));
@@ -2055,9 +2196,7 @@ function expandRelatedSelection(candidates, initialKeys) {
       if (relatedKeys.has(candidate.key)) {
         continue;
       }
-      const sameGroup = Boolean(current.groupId && current.groupId === candidate.groupId);
-      const overlaps = Boolean(current.bounds && candidate.bounds && boundsOverlapArea(current.bounds, candidate.bounds));
-      if (!sameGroup && !overlaps && !connectorTouches(current, candidate)) {
+      if (!connectorTouches(current, candidate)) {
         continue;
       }
       relatedKeys.add(candidate.key);
@@ -4413,6 +4552,8 @@ var I18N = {
     settingsSectionSupport: "Support",
     settingsLanguage: "Language",
     settingsLanguageDesc: "Plugin UI language. Auto follows Obsidian when possible.",
+    defaultSourceEditMarkdown: "Default to Edit MD in editing view",
+    defaultSourceEditMarkdownDesc: "Open NoteDraw in Edit MD mode when switching from reading view to editing view.",
     languageAuto: "Auto",
     drawingStorageMode: "NoteDraw data location",
     drawingStorageModeDesc: "Where each note's NoteDraw JSON is stored. The plugin config folder remains the default.",
@@ -4589,6 +4730,8 @@ var I18N = {
     settingsSectionSupport: "\u652F\u6301\u4F5C\u8005",
     settingsLanguage: "\u8BED\u8A00",
     settingsLanguageDesc: "\u63D2\u4EF6\u754C\u9762\u8BED\u8A00\u3002\u81EA\u52A8\u6A21\u5F0F\u4F1A\u5C3D\u91CF\u8DDF\u968F Obsidian\u3002",
+    defaultSourceEditMarkdown: "\u7F16\u8F91\u89C6\u56FE\u9ED8\u8BA4\u8FDB\u5165\u7F16\u8F91 MD",
+    defaultSourceEditMarkdownDesc: "\u4ECE\u9605\u8BFB\u89C6\u56FE\u5207\u6362\u5230\u7F16\u8F91\u89C6\u56FE\u65F6\uFF0CNoteDraw \u9ED8\u8BA4\u8FDB\u5165\u7F16\u8F91 MD \u5DE5\u5177\u3002",
     languageAuto: "\u81EA\u52A8",
     drawingStorageMode: "NoteDraw \u6570\u636E\u4F4D\u7F6E",
     drawingStorageModeDesc: "\u8BBE\u7F6E\u6BCF\u7BC7\u7B14\u8BB0\u7684 NoteDraw \u6570\u636E\u6587\u4EF6\u4F4D\u7F6E\u3002\u9ED8\u8BA4\u4ECD\u4E3A\u63D2\u4EF6\u914D\u7F6E\u6587\u4EF6\u5939\u3002",
@@ -5312,6 +5455,7 @@ var DEFAULT_SETTINGS = {
   lastTextPreset: "plain",
   lastReadingZoom: 1,
   mindMapAffectsSource: true,
+  defaultSourceEditMarkdown: true,
   toolbarTopOffset: 6,
   toolbarPosition: null,
   longPressMs: LONG_PRESS_MS,
@@ -5324,6 +5468,7 @@ var DEFAULT_SETTINGS = {
   autoSaveDelayMs: 500,
   enableDebugLog: false
 };
+var METADATA_PROPERTY_SELECTOR = ".metadata-property";
 var MARKDOWN_TEXT_SELECTOR = "h1,h2,h3,h4,h5,h6,p,li,blockquote,pre,td,th,.callout-content";
 var MARKDOWN_EMBED_SELECTOR = ".internal-embed,.markdown-embed,.markdown-embed-content";
 var NOTE_FLOW_RENDERED_OWNER_SELECTOR = [
@@ -5385,7 +5530,9 @@ var EDITABLE_SELECTOR = [
   ".markdown-preview-view",
   ".markdown-embed-content",
   ".internal-embed"
-].flatMap((root) => MARKDOWN_TEXT_SELECTOR.split(",").map((selector) => `${root} ${selector}`)).join(",");
+].flatMap((root) => MARKDOWN_TEXT_SELECTOR.split(",").map((selector) => `${root} ${selector}`)).concat([
+  `.metadata-container ${METADATA_PROPERTY_SELECTOR}`
+]).join(",");
 var BLOCKED_EDIT_SELECTOR = [
   ".notedraw-button",
   ".notedraw-toolbar",
@@ -5403,8 +5550,7 @@ var BLOCKED_EDIT_SELECTOR = [
   "svg",
   "canvas",
   ".external-embed",
-  ".frontmatter",
-  ".metadata-container"
+  ".frontmatter"
 ].join(",");
 var WEBVIEW_EDITABLE_SELECTOR = [
   "h1",
@@ -5575,6 +5721,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     this.workspaceSyncTimer = null;
     this.surfaceSyncTimer = null;
     this.surfaceSyncIdleId = null;
+    this.surfaceSyncDueAt = 0;
     this.floatingControlsSyncTimer = null;
     this.mindMapPickerTimer = null;
     this.mindMapFileModal = null;
@@ -5666,8 +5813,12 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       }
       const renderedSourcePath = resolveRenderedSourcePath(this.app, el, ctx.sourcePath);
       annotateEditableElements(el, ctx, renderedSourcePath);
-      void this.hydratePortableMarkdownResources(el, renderedSourcePath);
-      this.scheduleEmbeddedMarkdownSync();
+      if (el.matches?.("img,video,audio,source,a,.internal-embed") || el.querySelector?.("img,video,audio,source,a,.internal-embed")) {
+        void this.hydratePortableMarkdownResources(el, renderedSourcePath);
+      }
+      if (el.matches?.(MARKDOWN_EMBED_SELECTOR) || el.querySelector?.(MARKDOWN_EMBED_SELECTOR)) {
+        this.scheduleEmbeddedMarkdownSync();
+      }
       const preview = el.closest(".markdown-preview-view");
       if (!preview || isEmbeddedPreview(preview)) {
         return;
@@ -5708,8 +5859,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       controller.mount();
       this.scheduleWebviewSync();
     });
-    this.runSurfaceSync();
-    this.scheduleSurfaceSync(180);
+    this.scheduleSurfaceSync(24);
   }
   onunload() {
     this.runtimeDisposed = true;
@@ -5772,6 +5922,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       window.cancelIdleCallback(this.surfaceSyncIdleId);
       this.surfaceSyncIdleId = null;
     }
+    this.surfaceSyncDueAt = 0;
     if (this.floatingControlsSyncTimer !== null) {
       window.clearTimeout(this.floatingControlsSyncTimer);
       this.floatingControlsSyncTimer = null;
@@ -5815,13 +5966,28 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     }
   }
   scheduleSurfaceSync(delay = 80) {
-    if (this.runtimeDisposed || this.surfaceSyncTimer !== null || this.surfaceSyncIdleId !== null) {
+    if (this.runtimeDisposed) {
       return;
     }
+    const wait = Math.max(0, Number(delay) || 0);
+    const dueAt = Date.now() + wait;
+    if (this.surfaceSyncTimer !== null && this.surfaceSyncDueAt <= dueAt) {
+      return;
+    }
+    if (this.surfaceSyncTimer !== null) {
+      window.clearTimeout(this.surfaceSyncTimer);
+      this.surfaceSyncTimer = null;
+    }
+    if (this.surfaceSyncIdleId !== null && typeof window.cancelIdleCallback === "function") {
+      window.cancelIdleCallback(this.surfaceSyncIdleId);
+      this.surfaceSyncIdleId = null;
+    }
+    this.surfaceSyncDueAt = dueAt;
     this.surfaceSyncTimer = window.setTimeout(() => {
       this.surfaceSyncTimer = null;
       const run = () => {
         this.surfaceSyncIdleId = null;
+        this.surfaceSyncDueAt = 0;
         this.runSurfaceSync();
       };
       if (typeof window.requestIdleCallback === "function") {
@@ -5829,7 +5995,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       } else {
         run();
       }
-    }, Math.max(0, Number(delay) || 0));
+    }, wait);
   }
   scheduleMindMapFilePicker(controller) {
     if (this.mindMapPickerTimer !== null) {
@@ -9535,7 +9701,7 @@ var PreviewDrawingController = class {
     this.penWidth = this.brushSettings[BRUSH_PEN].width;
     this.penOpacity = this.brushSettings[BRUSH_PEN].opacity;
     this.penCount = this.brushSettings[BRUSH_PEN].count;
-    this.toolMode = normalizeToolMode(this.runtimeSettings.lastToolMode);
+    this.toolMode = this.surfaceType === "source" && this.runtimeSettings.defaultSourceEditMarkdown ? TOOL_EDIT_MD : normalizeToolMode(this.runtimeSettings.lastToolMode);
     if (this.workspaceSurface && this.toolMode === TOOL_EDIT_MD) {
       this.toolMode = TOOL_DRAW;
     }
@@ -9918,11 +10084,13 @@ var PreviewDrawingController = class {
       attr: { type: "button", title: this.plugin.t("undoLastDrawing") }
     });
     (0, import_obsidian.setIcon)(this.undoButton, "undo-2");
+    this.undoButton.addEventListener("pointerdown", (event) => event.preventDefault());
     this.undoButton.addEventListener("click", () => this.undoLastStroke());
     this.redoButton = this.toolbar.createEl("button", {
       attr: { type: "button", title: this.plugin.t("redoDrawing") }
     });
     (0, import_obsidian.setIcon)(this.redoButton, "redo-2");
+    this.redoButton.addEventListener("pointerdown", (event) => event.preventDefault());
     this.redoButton.addEventListener("click", () => this.redoLastStroke());
     this.deleteButton = this.toolbar.createEl("button", {
       attr: { type: "button", title: this.plugin.t("deleteSelectedDrawing") }
@@ -10098,7 +10266,7 @@ var PreviewDrawingController = class {
     if (typeof MutationObserver !== "undefined") {
       this.markdownRenderObserver = new MutationObserver((mutations) => {
         if (mutations.some((mutation) => isMarkdownContentMutation(mutation))) {
-          if (this.currentEditorEmbedded && this.currentEditor && mutations.every((mutation) => mutation.target === this.currentEditor || this.currentEditor.contains?.(mutation.target))) {
+          if (this.currentEditor && mutations.every((mutation) => mutation.target === this.currentEditor || this.currentEditor.contains?.(mutation.target))) {
             return;
           }
           this.noteFlowMarkdownAnnotationComplete = false;
@@ -10117,6 +10285,18 @@ var PreviewDrawingController = class {
     this.syncPaletteInputs();
     this.refreshLocalizedLabels();
     this.applySharedToolbarState(this.plugin.controllerToolbarState(this));
+    if (this.surfaceType === "source" && this.runtimeSettings.defaultSourceEditMarkdown) {
+      this.toolMode = TOOL_EDIT_MD;
+      this.paletteOpen = false;
+      this.brushPanelOpen = false;
+      this.textPanelOpen = false;
+      this.previewEl.removeClass("is-select-mode");
+      this.previewEl.removeClass("is-palette-open");
+      this.previewEl.removeClass("is-brush-panel-open");
+      this.previewEl.removeClass("is-text-panel-open");
+      this.updateToolButtons();
+      this.syncFloatingControlClasses();
+    }
     this.applyReadingZoom();
     this.applyActiveState(this.active);
     await this.ensureDrawingsLoaded();
@@ -12920,6 +13100,7 @@ ${selected}
       this.textPanel,
       this.textButton,
       this.selectionMenu,
+      this.toolbar,
       this.formatToolbar,
       this.currentEditor,
       this.floatingTextInput?.element
@@ -13200,6 +13381,18 @@ ${selected}
     return stroke.layout;
   }
   rebuildElementRelations() {
+    const items = (this.drawingData?.strokes || []).flatMap((stroke, index) => {
+      if (isConnectorStroke(stroke)) {
+        return [];
+      }
+      const layout = normalizeElementLayout(stroke.layout);
+      const bounds = getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight());
+      return layout?.id && bounds ? [{ id: layout.id, bounds, index }] : [];
+    });
+    const intersectionRelations = captureElementRelations(items, {
+      nearDistance: 0,
+      maxRelations: 3
+    });
     let changed = false;
     for (const stroke of this.drawingData?.strokes || []) {
       if (isConnectorStroke(stroke)) {
@@ -13207,8 +13400,9 @@ ${selected}
       }
       const layout = normalizeElementLayout(stroke.layout);
       if (layout?.id) {
-        if (layout.relations.length) {
-          stroke.layout = { ...layout, relations: [] };
+        const relations = (intersectionRelations.get(layout.id) || []).filter((relation) => relation.kind === "intersection");
+        if (JSON.stringify(layout.relations) !== JSON.stringify(relations)) {
+          stroke.layout = { ...layout, relations };
           changed = true;
         }
       }
@@ -13478,9 +13672,14 @@ ${selected}
         if (layout2 && stableFlowBox) {
           stroke.points = projectElementPoints(stroke.points, layout2, stableFlowBox, {
             canvasWidth: this.canvasWidth(),
-            canvasHeight: this.canvasHeight()
+            canvasHeight: this.canvasHeight(),
+            preserveAspectRatio: !isTextLikeStroke(stroke) && !isEmbedStroke(stroke)
           });
-          const metrics = scaleElementMetrics(layout2.metrics, stableFlowBox);
+          const uniformScale = Math.min(
+            Number(stableFlowBox.width) / Math.max(0.01, Number(layout2.box.width)),
+            Number(stableFlowBox.height) / Math.max(0.01, Number(layout2.box.height))
+          );
+          const metrics = scaleElementMetrics(layout2.metrics, !isTextLikeStroke(stroke) && !isEmbedStroke(stroke) ? { scale: Number.isFinite(uniformScale) && uniformScale > 0 ? uniformScale : 1 } : stableFlowBox);
           if (metrics.width) {
             stroke.width = metrics.width;
           }
@@ -13507,9 +13706,14 @@ ${selected}
       if (layout && box) {
         stroke.points = projectElementPoints(stroke.points, layout, box, {
           canvasWidth: this.canvasWidth(),
-          canvasHeight: this.canvasHeight()
+          canvasHeight: this.canvasHeight(),
+          preserveAspectRatio: !isTextLikeStroke(stroke) && !isEmbedStroke(stroke)
         });
-        const metrics = scaleElementMetrics(layout.metrics, box);
+        const uniformScale = Math.min(
+          Number(box.width) / Math.max(0.01, Number(layout.box.width)),
+          Number(box.height) / Math.max(0.01, Number(layout.box.height))
+        );
+        const metrics = scaleElementMetrics(layout.metrics, !isTextLikeStroke(stroke) && !isEmbedStroke(stroke) ? { scale: Number.isFinite(uniformScale) && uniformScale > 0 ? uniformScale : 1 } : box);
         if (metrics.width) {
           stroke.width = metrics.width;
         }
@@ -13532,6 +13736,7 @@ ${selected}
         }));
       }
     }
+    this.restoreTextHighlightAnchors();
     this.syncBoundConnectors({ recover: true });
     if (this.currentStroke?.points?.length) {
       this.currentStroke.points = this.currentStroke.points.map((point) => projectResponsivePoint(point, {
@@ -14554,9 +14759,8 @@ ${selected}
       }
       const flowElement = this.markdownBlockFlowElement(memberElement) || memberElement;
       const liveInlineSpan = flowElement.classList?.contains("notedraw-md-inline-grid-item") ? Number.parseInt(flowElement.style?.getPropertyValue?.("--notedraw-md-inline-span"), 10) : Number.NaN;
-      const liveWidthPercent = Number.parseFloat(memberElement.style?.width || "");
       const persistedSpan = Number(memberBlock.span);
-      const span = Number.isFinite(liveInlineSpan) && liveInlineSpan >= 1 && liveInlineSpan < 12 ? liveInlineSpan : Number.isFinite(persistedSpan) && persistedSpan >= 1 && persistedSpan < 12 ? persistedSpan : null;
+      const span = Number.isFinite(liveInlineSpan) && liveInlineSpan >= 1 && liveInlineSpan < 12 ? Number.isFinite(persistedSpan) && persistedSpan >= 1 && persistedSpan < 12 ? persistedSpan : liveInlineSpan : Number.isFinite(persistedSpan) && persistedSpan >= 1 && persistedSpan < 12 ? persistedSpan : null;
       if (!(Number(span) >= 1 && Number(span) < 12)) {
         return null;
       }
@@ -14568,7 +14772,7 @@ ${selected}
         textHint: normalizeRenderedText2(renderedMarkdownIdentityText(memberElement)).slice(0, 240),
         flowElement,
         span,
-        widthScale: Number.isFinite(liveWidthPercent) && liveWidthPercent > 0 ? normalizeMarkdownBlockWidthScale(liveWidthPercent / 100) : normalizeMarkdownBlockWidthScale(memberBlock.widthScale),
+        widthScale: normalizeMarkdownBlockWidthScale(memberBlock.widthScale),
         order
       };
     }).filter(Boolean);
@@ -16238,7 +16442,6 @@ ${selected}
     }
     if (pending.type === "select-stroke") {
       this.setSelectedStrokes(pending.index);
-      this.executeButtonCommand(pending.index);
     } else if (pending.type === "toggle-stroke") {
       this.toggleStrokeSelection(pending.index);
     } else if (pending.type === "enter-stroke-group") {
@@ -16261,9 +16464,7 @@ ${selected}
     } else if (pending.type === "edit-markdown-or-drag") {
       return this.startTextEdit(pending.editable || pending.element, pending.clientPoint || null);
     } else if (pending.type === "edit-stroke-or-drag") {
-      if (!this.executeButtonCommand(pending.index)) {
-        this.editFloatingTextStroke(pending.index);
-      }
+      this.editFloatingTextStroke(pending.index);
     }
   }
   executeButtonCommand(index) {
@@ -18469,7 +18670,57 @@ ${selected}
       return false;
     }
     stroke.points = stroke.points.map((point) => this.alignTextHighlightPoint(point, lineRect));
+    this.captureTextHighlightAnchor(stroke, lineRect);
     return true;
+  }
+  captureTextHighlightAnchor(stroke, lineRect) {
+    const canvasRect = this.canvas?.getBoundingClientRect?.();
+    if (!stroke?.points?.length || !canvasRect?.width || !lineRect?.width || !lineRect.sourcePath || !Number.isFinite(lineRect.lineStart)) {
+      return false;
+    }
+    const scaleX = canvasRect.width / Math.max(1, this.canvasWidth());
+    stroke.textAnchor = {
+      path: normalizeVaultPath(lineRect.sourcePath),
+      lineStart: lineRect.lineStart,
+      lineEnd: Number.isFinite(lineRect.lineEnd) ? lineRect.lineEnd : lineRect.lineStart,
+      baseline: 0.58,
+      u: stroke.points.map((point) => {
+        const canvasPoint2 = this.pointToCanvas(point);
+        const clientX = canvasRect.left + canvasPoint2.x * scaleX;
+        return clamp10((clientX - lineRect.left) / Math.max(1, lineRect.width), 0, 1);
+      })
+    };
+    return true;
+  }
+  restoreTextHighlightAnchors() {
+    const anchored = (this.drawingData?.strokes || []).filter((stroke) => this.isTextHighlightStroke(stroke) && stroke.textAnchor?.path);
+    if (!anchored.length || !this.canvas) {
+      return false;
+    }
+    const lineRects = collectTextLineRectsBelowCanvas(this.canvas, this.previewEl);
+    let changed = false;
+    for (const stroke of anchored) {
+      const anchor = normalizeTextHighlightAnchor(stroke.textAnchor);
+      const lineRect = lineRects.find((rect) => normalizeVaultPath(rect.sourcePath) === anchor?.path && rect.lineStart === anchor.lineStart && rect.lineEnd === anchor.lineEnd) || lineRects.find((rect) => normalizeVaultPath(rect.sourcePath) === anchor?.path && rect.lineStart === anchor.lineStart);
+      if (!anchor || !lineRect || !stroke.points?.length) {
+        continue;
+      }
+      const canvasRect = this.canvas.getBoundingClientRect();
+      const scaleX = canvasRect.width / Math.max(1, this.canvasWidth());
+      const scaleY = canvasRect.height / Math.max(1, this.canvasRenderHeight);
+      stroke.points = stroke.points.map((point, index) => {
+        const uIndex = anchor.u.length > 1 && stroke.points.length > 1 ? Math.round(index / (stroke.points.length - 1) * (anchor.u.length - 1)) : 0;
+        const clientX = lineRect.left + (anchor.u[uIndex] ?? 0) * lineRect.width;
+        const clientY = lineRect.top + lineRect.height * anchor.baseline;
+        return {
+          ...point,
+          x: clamp10((clientX - canvasRect.left) / Math.max(1e-4, scaleX) / this.canvasWidth(), 0, 1),
+          y: clamp10(((clientY - canvasRect.top) / Math.max(1e-4, scaleY) + this.canvasWindowTop) / this.canvasHeight(), 0, 1)
+        };
+      });
+      changed = true;
+    }
+    return changed;
   }
   snapWatercolorStrokeToTextLine(stroke) {
     if (!stroke?.points?.length || !this.canvas) {
@@ -18808,7 +19059,7 @@ ${selected}
     this.embedRenderTokens.set(key, token);
     node.empty();
     if (isRichTextStroke(stroke)) {
-      this.renderRichTextEmbed(node, stroke).catch((error) => {
+      this.renderRichTextEmbed(node, stroke, index).catch((error) => {
         console.error(`[${PLUGIN_ID}] Failed to render preview`, error);
         node.setText(String(stroke.text || ""));
       });
@@ -18840,7 +19091,33 @@ ${selected}
     body.createDiv({ cls: "notedraw-file-name", text: stroke.assetName || stroke.text || "Attachment" });
     body.createDiv({ cls: "notedraw-file-meta", text: formatBytes(stroke.assetSize) });
   }
-  async renderRichTextEmbed(node, stroke) {
+  async renderRichTextEmbed(node, stroke, index) {
+    const isCommandButton = stroke?.uiRole === "button" && Boolean(String(stroke.commandId || "").trim());
+    node.toggleClass("is-command-button", isCommandButton);
+    node.toggleAttribute("role", isCommandButton);
+    node.toggleAttribute("tabindex", isCommandButton);
+    if (isCommandButton) {
+      node.setAttribute("role", "button");
+      node.setAttribute("tabindex", "0");
+      node.setAttribute("title", stroke.commandName || stroke.commandId);
+    } else {
+      node.removeAttribute("title");
+    }
+    node.onclick = (event) => {
+      if (!isCommandButton || this.active || this.surfaceType !== "preview") {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      this.executeButtonCommand(index);
+    };
+    node.onkeydown = (event) => {
+      if (!isCommandButton || this.active || this.surfaceType !== "preview" || !["Enter", " "].includes(event.key)) {
+        return;
+      }
+      event.preventDefault();
+      this.executeButtonCommand(index);
+    };
     const renderMode = normalizeTextRenderMode(stroke.render);
     const content = String(stroke.text || "");
     if (renderMode === TEXT_RENDER_HTML) {
@@ -19318,21 +19595,16 @@ ${selected}
   }
   drawElementGroups() {
     for (const group of this.elementGroupRecords().filter((item) => item.boxed || item.locked)) {
-      const bounds = this.getElementGroupBounds(group.id);
-      if (!bounds) {
+      const frame = this.elementGroupFrameRect(group.id);
+      if (!frame) {
         continue;
       }
-      const padding = this.elementGroupFramePaddingPx(group.id);
-      const x = bounds.minX - padding;
-      const y = bounds.minY - padding;
-      const width = bounds.maxX - bounds.minX + padding * 2;
-      const height = bounds.maxY - bounds.minY + padding * 2;
       this.ctx.save();
       this.ctx.globalAlpha = (group.boxed ? 0.92 : 0.58) * clamp10(Number(group.opacity ?? 1), 0, 1);
       this.ctx.strokeStyle = group.boxed ? group.borderColor || SELECTION_FRAME_COLOR : "#8b8b96";
       this.ctx.lineWidth = group.boxed ? SELECTION_FRAME_LINE_WIDTH : 1.25;
       this.ctx.setLineDash(group.boxed ? [3, 2] : [4, 3]);
-      roundRect(this.ctx, x, y, width, height, SELECTION_FRAME_RADIUS);
+      roundRect(this.ctx, frame.x, frame.y, frame.width, frame.height, SELECTION_FRAME_RADIUS);
       this.ctx.stroke();
       this.ctx.restore();
     }
@@ -19342,20 +19614,19 @@ ${selected}
       return;
     }
     for (const group of this.elementGroupRecords().filter((item) => item.boxed && item.backgroundColor)) {
-      const bounds = this.getElementGroupBounds(group.id);
-      if (!bounds) {
+      const frame = this.elementGroupFrameRect(group.id);
+      if (!frame) {
         continue;
       }
-      const padding = this.elementGroupFramePaddingPx(group.id);
       this.underlayCtx.save();
       this.underlayCtx.globalAlpha = 0.14 * clamp10(Number(group.opacity ?? 1), 0, 1);
       this.underlayCtx.fillStyle = group.backgroundColor;
       roundRect(
         this.underlayCtx,
-        bounds.minX - padding,
-        bounds.minY - padding,
-        bounds.maxX - bounds.minX + padding * 2,
-        bounds.maxY - bounds.minY + padding * 2,
+        frame.x,
+        frame.y,
+        frame.width,
+        frame.height,
         6
       );
       this.underlayCtx.fill();
@@ -19584,6 +19855,42 @@ ${selected}
       this.groupMemberStrokeIndexes(groupId),
       this.groupMemberMarkdownBlocks(groupId).length
     );
+  }
+  elementGroupFrameRect(groupId) {
+    const bounds = this.getElementGroupBounds(groupId);
+    if (!bounds) {
+      return null;
+    }
+    const padding = this.elementGroupFramePaddingPx(groupId);
+    let minX = bounds.minX - padding;
+    let maxX = bounds.maxX + padding;
+    const strokes = this.groupMemberStrokeIndexes(groupId);
+    const blocks = this.groupMemberMarkdownBlocks(groupId);
+    if (!strokes.length && blocks.length === 1 && Number(blocks[0].span || 12) < 12) {
+      const element = this.markdownBlockElement(blocks[0]);
+      const canvasRect = this.canvas?.getBoundingClientRect?.();
+      const elementRect = this.markdownElementVisibleClientRect(element) || element?.getBoundingClientRect?.();
+      if (canvasRect?.width > 0 && elementRect?.width > 0) {
+        const limits = this.markdownInlineSelectionClientLimits(element, elementRect, { includeSelectedPeers: true });
+        const scaleX = this.canvasWidth() / canvasRect.width;
+        if (Number.isFinite(limits.left)) {
+          minX = Math.max(minX, (limits.left - canvasRect.left) * scaleX);
+        }
+        if (Number.isFinite(limits.right)) {
+          maxX = Math.min(maxX, (limits.right - canvasRect.left) * scaleX);
+        }
+      }
+    }
+    if (maxX <= minX) {
+      minX = bounds.minX;
+      maxX = bounds.maxX;
+    }
+    return {
+      x: minX,
+      y: bounds.minY - padding,
+      width: maxX - minX,
+      height: bounds.maxY - bounds.minY + padding * 2
+    };
   }
   findBoxedElementGroupAtPoint(point) {
     const hit = this.pointToCanvas(point);
@@ -20615,6 +20922,7 @@ ${selected}
     if (selectedSizeChanged || selectedElementChanged) {
       this.selectedMarkdownBlockIds = selectedIds;
       this.invalidateSelectionFrameSnapshot();
+      this.rebindMarkdownSelectionActivation();
       if (selectedSizeChanged) {
         this.hideSelectionMenu();
       }
@@ -20772,6 +21080,30 @@ ${selected}
     this.markdownSelectionActivation = {
       id: block.id,
       element: selectedElement,
+      selectionKey: this.selectionStateKey()
+    };
+    return true;
+  }
+  rebindMarkdownSelectionActivation() {
+    const activation = this.markdownSelectionActivation;
+    if (!activation?.id || !this.selectedMarkdownBlockIds.has(activation.id)) {
+      this.markdownSelectionActivation = null;
+      return false;
+    }
+    const element = this.markdownBlockElements.get(activation.id);
+    if (!element?.isConnected) {
+      this.markdownSelectionActivation = null;
+      return false;
+    }
+    this.invalidateSelectionFrameSnapshot();
+    const frame = this.captureSelectionFrameSnapshot({ force: true });
+    if (!frame) {
+      this.markdownSelectionActivation = null;
+      return false;
+    }
+    this.markdownSelectionActivation = {
+      id: activation.id,
+      element,
       selectionKey: this.selectionStateKey()
     };
     return true;
@@ -24937,14 +25269,14 @@ ${selected}
     }
     return Number.isFinite(minGap) ? minGap * pixelScale : Number.POSITIVE_INFINITY;
   }
-  markdownInlineSelectionClientLimits(element, elementRect = null) {
+  markdownInlineSelectionClientLimits(element, elementRect = null, { includeSelectedPeers = false } = {}) {
     const currentRect = elementRect || this.markdownElementVisibleClientRect(element) || element?.getBoundingClientRect?.();
     const lane = this.markdownBlockLayoutLane(element);
     if (!lane || !currentRect || currentRect.width <= 0 || currentRect.height <= 0) {
       return { left: Number.NEGATIVE_INFINITY, right: Number.POSITIVE_INFINITY };
     }
     const currentBlock = this.findMarkdownBlockRecordForElement(element);
-    const selectedIds = this.selectedMarkdownBlockIds || /* @__PURE__ */ new Set();
+    const selectedIds = includeSelectedPeers ? /* @__PURE__ */ new Set() : this.selectedMarkdownBlockIds || /* @__PURE__ */ new Set();
     const currentCenter = (currentRect.left + currentRect.right) / 2;
     let left = Number.NEGATIVE_INFINITY;
     let right = Number.POSITIVE_INFINITY;
@@ -25701,6 +26033,10 @@ ${selected}
       }
       element = replacement;
     }
+    const metadataProperty = element.closest?.(METADATA_PROPERTY_SELECTOR);
+    if (metadataProperty) {
+      return this.activateMetadataPropertyEditor(metadataProperty, clientPoint);
+    }
     if (this.currentEditor === element) {
       this.applyTextEditingFlowClip(element);
       element.focus();
@@ -25769,14 +26105,15 @@ ${selected}
         }
       }
     };
-    const onBlur = () => {
+    const onBlur = (event) => {
+      const nextTarget = event.relatedTarget;
       window.setTimeout(() => {
         const active = activeDocument.activeElement;
-        if (this.currentEditor !== element || element.dataset.noteDrawSortDragging === "true" || element.contains(active) || this.formatToolbar?.contains(active)) {
+        if (this.currentEditor !== element || element.dataset.noteDrawSortDragging === "true" || element.contains(active) || this.isTextEditingControlTarget(active) || this.isTextEditingControlTarget(nextTarget)) {
           return;
         }
         this.endTextEdit();
-      }, 0);
+      }, 120);
     };
     element._noteDrawCleanup = () => {
       element.removeEventListener("input", onInput);
@@ -25787,6 +26124,29 @@ ${selected}
     element.addEventListener("keydown", onKeyDown);
     element.addEventListener("blur", onBlur);
     return true;
+  }
+  isTextEditingControlTarget(target) {
+    return Boolean(target && [
+      this.toolbar,
+      this.formatToolbar,
+      this.palettePanel,
+      this.brushPanel,
+      this.textPanel,
+      this.selectionMenu
+    ].some((element) => element?.contains?.(target)));
+  }
+  activateMetadataPropertyEditor(property, clientPoint = null) {
+    if (!property?.isConnected || !this.previewEl?.contains?.(property)) {
+      return false;
+    }
+    const value = property.querySelector?.(".metadata-property-value, .metadata-input-longtext, input, textarea, select") || property;
+    const rect = value.getBoundingClientRect?.() || property.getBoundingClientRect?.();
+    const point = clientPoint || (rect ? {
+      x: rect.left + Math.min(Math.max(8, rect.width * 0.5), Math.max(8, rect.width - 8)),
+      y: rect.top + Math.max(8, rect.height * 0.5)
+    } : null);
+    this.hideSelectionMenu();
+    return dispatchMouseClickThroughOverlay(this.canvas, point);
   }
   focusSourceEditorAt(clientPoint) {
     if (!clientPoint || !Number.isFinite(clientPoint.x) || !Number.isFinite(clientPoint.y)) {
@@ -25954,16 +26314,42 @@ ${selected}
     await this.textCommitBarrier.wait();
   }
   async undoLastStroke() {
+    if (this.applyActiveTextHistory("undo")) {
+      return;
+    }
     await this.commitActiveTextEditForHistory();
     await this.plugin.undoControllerHistory(this);
     this.clearSelectedStrokes();
     this.render();
   }
   async redoLastStroke() {
+    if (this.applyActiveTextHistory("redo")) {
+      return;
+    }
     await this.commitActiveTextEditForHistory();
     await this.plugin.redoControllerHistory(this);
     this.clearSelectedStrokes();
     this.render();
+  }
+  applyActiveTextHistory(direction) {
+    if (this.currentEditor?.isConnected) {
+      this.currentEditor.focus?.();
+      const applied = activeDocument.execCommand?.(direction, false, null);
+      if (applied !== false) {
+        this.currentEditor.dispatchEvent?.(new Event("input", { bubbles: true }));
+        this.positionFormatToolbar();
+        return true;
+      }
+    }
+    if (this.surfaceType === "source" && this.toolMode === TOOL_EDIT_MD) {
+      const editor = this.view?.editor;
+      const action = direction === "redo" ? editor?.redo : editor?.undo;
+      if (typeof action === "function") {
+        action.call(editor);
+        return true;
+      }
+    }
+    return false;
   }
   deleteSelectedStroke() {
     const indexes = this.getSelectedStrokeIndexes().filter((index) => !this.drawingData.strokes[index]?.locked || Boolean(this.drawingData.strokes[index]?.groupId));
@@ -26113,6 +26499,12 @@ var NoteDrawSettingTab = class extends import_obsidian.PluginSettingTab {
         }));
       }),
       this.createSectionDefinition("settingsSectionInteraction"),
+      this.createSettingDefinition("defaultSourceEditMarkdown", "defaultSourceEditMarkdownDesc", (setting) => {
+        setting.addToggle((component) => component.setValue(settings.defaultSourceEditMarkdown).onChange(async (value) => {
+          this.plugin.noteDrawSettings.defaultSourceEditMarkdown = value;
+          await this.plugin.saveSettings();
+        }));
+      }),
       this.createSettingDefinition("longPressMs", "longPressMsDesc", (setting) => {
         this.addSliderWithValue(setting, {
           value: settings.longPressMs,
@@ -26346,6 +26738,9 @@ var NoteDrawSettingTab = class extends import_obsidian.PluginSettingTab {
   }
 };
 function isConcreteMarkdownBlockElement(element) {
+  if (element?.matches?.(METADATA_PROPERTY_SELECTOR)) {
+    return true;
+  }
   if (element?.matches?.(".notedraw-md-line-block")) {
     return true;
   }
@@ -26364,8 +26759,11 @@ function isConcreteMarkdownBlockElement(element) {
   return !element.querySelector?.(MARKDOWN_TEXT_SELECTOR);
 }
 function isMarkdownBlockCandidateElement(element) {
-  if (!element || element.closest?.(NOTEDRAW_OWNED_MUTATION_SELECTOR) || element.closest?.(".frontmatter,.metadata-container")) {
+  if (!element || element.closest?.(NOTEDRAW_OWNED_MUTATION_SELECTOR) || element.closest?.(".frontmatter")) {
     return false;
+  }
+  if (element.matches?.(METADATA_PROPERTY_SELECTOR)) {
+    return true;
   }
   if (isConcreteMarkdownBlockElement(element)) {
     return true;
@@ -26415,6 +26813,7 @@ function markdownBlockCandidateElementForTarget(target, root) {
   if (!target || !root?.contains?.(target)) {
     return null;
   }
+  const metadataProperty = target.closest?.(METADATA_PROPERTY_SELECTOR);
   const explicitLine = target.closest?.(".notedraw-md-line-block");
   const marked = target.closest?.("[data-note-draw-markdown-block-id]");
   const owner = findNoteFlowMarkdownBlockElement(target, root);
@@ -26422,7 +26821,7 @@ function markdownBlockCandidateElementForTarget(target, root) {
   const mappedChild = Array.from(target.querySelectorAll?.("[data-note-draw-line-mapped='true']") || []).find((element) => {
     return isMarkdownBlockCandidateElement(element);
   });
-  for (const candidate of [explicitLine, marked, owner, preciselyMapped, mappedChild]) {
+  for (const candidate of [metadataProperty, explicitLine, marked, owner, preciselyMapped, mappedChild]) {
     if (candidate && root.contains(candidate) && isMarkdownBlockCandidateElement(candidate)) {
       return candidate;
     }
@@ -26519,6 +26918,10 @@ function findEditableTarget(target, previewEl, clientPoint = null) {
   if (controller?.surfaceType === "webview") {
     return findWebviewEditableTarget(target, previewEl);
   }
+  const metadataProperty = target.closest?.(METADATA_PROPERTY_SELECTOR);
+  if (metadataProperty && previewEl.contains(metadataProperty)) {
+    return metadataProperty;
+  }
   if (target.closest(BLOCKED_EDIT_SELECTOR)) {
     return null;
   }
@@ -26593,6 +26996,7 @@ function sanitizeSettings(settings) {
     lastTextPreset: normalizeTextPreset(input.lastTextPreset),
     lastReadingZoom: clamp10(Number(input.lastReadingZoom ?? DEFAULT_SETTINGS.lastReadingZoom), MIN_READING_ZOOM, MAX_READING_ZOOM),
     mindMapAffectsSource: input.mindMapAffectsSource !== false,
+    defaultSourceEditMarkdown: input.defaultSourceEditMarkdown !== false,
     toolbarTopOffset: clamp10(Number(input.toolbarTopOffset ?? DEFAULT_SETTINGS.toolbarTopOffset), 0, 48),
     toolbarPosition: normalizeToolbarPosition(input.toolbarPosition),
     longPressMs: clamp10(Number(input.longPressMs ?? DEFAULT_SETTINGS.longPressMs), MIN_LONG_PRESS_MS, MAX_LONG_PRESS_MS),
@@ -29334,6 +29738,7 @@ function normalizeStroke(stroke) {
     connector,
     noteFlow,
     mindMapNode: normalizeMindMapNode(stroke?.mindMapNode),
+    textAnchor: normalizeTextHighlightAnchor(stroke?.textAnchor),
     layout,
     points: points.map((point) => ({
       x: clamp10(Number(point?.x), 0, 1),
@@ -29341,6 +29746,22 @@ function normalizeStroke(stroke) {
       t: Number.isFinite(Number(point?.t)) ? Number(point.t) : Date.now(),
       anchor: normalizeResponsiveAnchor(point?.anchor)
     })).filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
+  };
+}
+function normalizeTextHighlightAnchor(value) {
+  const path = normalizeVaultPath(value?.path || "");
+  const lineStart = Number(value?.lineStart);
+  const lineEnd = Number(value?.lineEnd);
+  const u = Array.isArray(value?.u) ? value.u.map((item) => clamp10(Number(item), 0, 1)).filter(Number.isFinite) : [];
+  if (!path || !Number.isFinite(lineStart) || !u.length) {
+    return null;
+  }
+  return {
+    path,
+    lineStart,
+    lineEnd: Number.isFinite(lineEnd) ? lineEnd : lineStart,
+    baseline: clamp10(Number(value?.baseline ?? 0.58), 0, 1),
+    u
   };
 }
 function isTextStroke(stroke) {

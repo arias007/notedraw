@@ -237,6 +237,10 @@
   line-height: 1.35;
 }
 
+.notedraw-shell:not(.is-drawing-active) .notedraw-embed.is-command-button {
+  cursor: pointer;
+}
+
 .notedraw-embed.is-rich-text > *:first-child {
   margin-top: 0;
 }
@@ -706,7 +710,7 @@
 .notedraw-md-block::before {
   position: absolute;
   z-index: -1;
-  inset: -4px;
+  inset: -2px;
   border: 1.5px solid var(--notedraw-md-border, transparent);
   border-radius: 6px;
   background: var(--notedraw-md-background, transparent);

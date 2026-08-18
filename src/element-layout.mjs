@@ -939,7 +939,7 @@ export function stabilizeElementRelations(projectedItems, layouts) {
   });
 }
 
-export function projectElementPoints(points, layoutInput, projectedBox, { canvasWidth, canvasHeight } = {}) {
+export function projectElementPoints(points, layoutInput, projectedBox, { canvasWidth, canvasHeight, preserveAspectRatio = false } = {}) {
   const layout = normalizeElementLayout(layoutInput);
   if (!layout || !projectedBox) {
     return Array.isArray(points) ? points.map((point) => ({ ...point })) : [];
@@ -947,6 +947,11 @@ export function projectElementPoints(points, layoutInput, projectedBox, { canvas
   const targetWidth = Math.max(1, finite(canvasWidth, 1));
   const targetHeight = Math.max(1, finite(canvasHeight, 1));
   const source = layout.sourceFrame;
+  const sourceWidth = Math.max(0.01, layout.box.width);
+  const sourceHeight = Math.max(0.01, layout.box.height);
+  const projectedWidth = Math.max(0.01, finite(projectedBox.width, sourceWidth));
+  const projectedHeight = Math.max(0.01, finite(projectedBox.height, sourceHeight));
+  const uniformScale = Math.min(projectedWidth / sourceWidth, projectedHeight / sourceHeight);
   return (Array.isArray(points) ? points : []).map((point) => {
     const anchor = point?.anchor;
     const sourceX = anchor && Number.isFinite(Number(anchor.x))
@@ -957,10 +962,16 @@ export function projectElementPoints(points, layoutInput, projectedBox, { canvas
       : clamp(finite(point?.y, 0), 0, 1) * source.documentHeight;
     const localX = (sourceX - layout.box.x) / layout.box.width;
     const localY = (sourceY - layout.box.y) / layout.box.height;
+    const projectedLocalX = preserveAspectRatio
+      ? (sourceX - layout.box.x) * uniformScale
+      : localX * projectedBox.width;
+    const projectedLocalY = preserveAspectRatio
+      ? (sourceY - layout.box.y) * uniformScale
+      : localY * projectedBox.height;
     return {
       ...point,
-      x: clamp((projectedBox.x + localX * projectedBox.width) / targetWidth, 0, 1),
-      y: clamp((projectedBox.y + localY * projectedBox.height) / targetHeight, 0, 1)
+      x: clamp((projectedBox.x + projectedLocalX) / targetWidth, 0, 1),
+      y: clamp((projectedBox.y + projectedLocalY) / targetHeight, 0, 1)
     };
   });
 }

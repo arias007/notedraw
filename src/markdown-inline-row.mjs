@@ -20,6 +20,32 @@ export function distributeInlineRowSpans(itemCount, columns = 12) {
   return Array.from({ length: count }, (_, index) => base + (index < remainder ? 1 : 0));
 }
 
+function fitPreferredSpans(preferred, columns) {
+  if (!preferred.length || preferred.length > columns) {
+    return [];
+  }
+  const available = columns - preferred.length;
+  const weights = preferred.map((span) => Math.max(0, span - 1));
+  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+  if (!totalWeight || available <= 0) {
+    return preferred.map(() => 1);
+  }
+  const exactExtras = weights.map((weight) => weight / totalWeight * available);
+  const extras = exactExtras.map(Math.floor);
+  let remainder = available - extras.reduce((sum, value) => sum + value, 0);
+  const order = exactExtras
+    .map((value, index) => ({ index, fraction: value - extras[index] }))
+    .sort((left, right) => right.fraction - left.fraction || left.index - right.index);
+  for (const item of order) {
+    if (remainder <= 0) {
+      break;
+    }
+    extras[item.index] += 1;
+    remainder -= 1;
+  }
+  return extras.map((extra) => extra + 1);
+}
+
 export function allocateInlineRow({
   existingIds = [],
   movingIds = [],
@@ -53,34 +79,10 @@ export function allocateInlineRow({
   };
   let spans = [];
   if (preferredSpanById && orderedIds.length <= totalColumns) {
-    spans = orderedIds.map(preferredSpan);
-    let overflow = spans.reduce((sum, span) => sum + span, 0) - totalColumns;
-    const movingSetForPriority = new Set(moving);
-    const movingIndexes = orderedIds
-      .map((id, index) => movingSetForPriority.has(id) ? index : -1)
-      .filter((index) => index >= 0)
-      .reverse();
-    const movingCenter = movingIndexes.length
-      ? movingIndexes.reduce((sum, index) => sum + index, 0) / movingIndexes.length
-      : insertionIndex;
-    const existingIndexes = orderedIds
-      .map((id, index) => movingSetForPriority.has(id) ? -1 : index)
-      .filter((index) => index >= 0)
-      .sort((left, right) => (
-        Math.abs(left - movingCenter) - Math.abs(right - movingCenter)
-        || right - left
-      ));
-    for (const index of [...movingIndexes, ...existingIndexes]) {
-      if (overflow <= 0) {
-        break;
-      }
-      const reduction = Math.min(overflow, Math.max(0, spans[index] - 1));
-      spans[index] -= reduction;
-      overflow -= reduction;
-    }
-    if (overflow > 0) {
-      spans = [];
-    }
+    const preferred = orderedIds.map(preferredSpan);
+    spans = preferred.reduce((sum, span) => sum + span, 0) <= totalColumns
+      ? preferred
+      : fitPreferredSpans(preferred, totalColumns);
   } else {
     spans = distributeInlineRowSpans(orderedIds.length, totalColumns);
   }

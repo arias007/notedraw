@@ -744,7 +744,8 @@ test("reading selection preserves live parallel spans and NoteFlow ink overlap i
   assert.match(presentationSource, /const pendingIdentityMembers = new Map\(\(pendingIdentity\?\.members \|\| \[\]\)\.map/);
   assert.match(presentationSource, /pendingMember\?\.path === block\.path[\s\S]*Number\(meta\.info\?\.lineStart\) === pendingMember\.lineStart/);
   assert.match(source, /restorePendingMarkdownIdentityPresentation\(mutations = \[\]\)[\s\S]*const members = \(pending\.members \|\| \[\]\)[\s\S]*block\.span = Number\(member\.span\)[\s\S]*this\.syncMarkdownBlockPresentation\(\)/);
-  assert.match(source, /const row = this\.markdownDropRowMetrics\(element\);[\s\S]*const members = rowIds\.map[\s\S]*const flowElement = this\.markdownBlockFlowElement\(memberElement\) \|\| memberElement;[\s\S]*const liveInlineSpan = flowElement\.classList\?\.contains\("notedraw-md-inline-grid-item"\)[\s\S]*const liveWidthPercent = Number\.parseFloat\(memberElement\.style\?\.width \|\| ""\)[\s\S]*textHint: normalizeRenderedText\(renderedMarkdownIdentityText\(memberElement\)\)\.slice\(0, 240\),[\s\S]*flowElement,[\s\S]*span,[\s\S]*widthScale:/);
+  assert.match(source, /const row = this\.markdownDropRowMetrics\(element\);[\s\S]*const members = rowIds\.map[\s\S]*const flowElement = this\.markdownBlockFlowElement\(memberElement\) \|\| memberElement;[\s\S]*const liveInlineSpan = flowElement\.classList\?\.contains\("notedraw-md-inline-grid-item"\)[\s\S]*const persistedSpan = Number\(memberBlock\.span\)[\s\S]*textHint: normalizeRenderedText\(renderedMarkdownIdentityText\(memberElement\)\)\.slice\(0, 240\),[\s\S]*flowElement,[\s\S]*span,[\s\S]*widthScale: normalizeMarkdownBlockWidthScale\(memberBlock\.widthScale\)/);
+  assert.doesNotMatch(source, /const liveWidthPercent = Number\.parseFloat\(memberElement\.style\?\.width/);
   const immediateRestoreSource = source.slice(source.indexOf("  restorePendingMarkdownIdentityPresentation("), source.indexOf("  rememberTextTap(", source.indexOf("  restorePendingMarkdownIdentityPresentation(")));
   assert.match(immediateRestoreSource, /mutation\?\.addedNodes/);
   assert.match(immediateRestoreSource, /mutation\?\.removedNodes[\s\S]*node === member\.flowElement/);
@@ -1069,7 +1070,7 @@ test("precisely mapped atomic Markdown blocks keep their own source line and ide
   assert.match(targetSource, /const explicitLine = target\.closest\?\.\("\.notedraw-md-line-block"\)/);
   assert.match(targetSource, /const marked = target\.closest\?\.\("\[data-note-draw-markdown-block-id\]"\)/);
   assert.match(targetSource, /const owner = findNoteFlowMarkdownBlockElement\(target, root\)/);
-  assert.match(targetSource, /\[explicitLine, marked, owner, preciselyMapped, mappedChild\]/);
+  assert.match(targetSource, /\[metadataProperty, explicitLine, marked, owner, preciselyMapped, mappedChild\]/);
   assert.match(targetSource, /isMarkdownBlockCandidateElement\(candidate\)/);
   assert.match(targetSource, /target\.querySelectorAll\?\.\("\[data-note-draw-line-mapped='true'\]"\)/);
   assert.match(recordSource, /normalizeRenderedText\(renderedMarkdownIdentityText\(blockElement\)\)/);

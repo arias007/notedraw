@@ -26,7 +26,7 @@ test("embedded Markdown editing freezes its initial geometry without running a l
   assert.match(editSource, /stabilizeEmbeddedEditor\(element, editorLayoutLock\)/);
   assert.match(editSource, /requestAnimationFrame[\s\S]*requestAnimationFrame\(restoreFrame\)/);
   assert.match(editSource, /clearEmbeddedEditorStability\(element\)/);
-  assert.match(mutationSource, /this\.currentEditorEmbedded[\s\S]*mutations\.every[\s\S]*return;/);
+  assert.match(mutationSource, /this\.currentEditor[\s\S]*mutations\.every[\s\S]*return;/);
   assert.match(styles, /\.notedraw-editing\.notedraw-editing-embedded-stable[\s\S]*width: var\(--notedraw-editing-stable-width\);[\s\S]*min-height: var\(--notedraw-editing-stable-height\);[\s\S]*overflow-anchor: none/);
 });
 
@@ -475,13 +475,15 @@ test("text controls keep drawing presets grouped and expose command buttons in I
   assert.match(source, /executeCommandById\?\.\(commandId\)/);
 });
 
-test("command buttons preserve editing and execute only after a completed selection tap", async () => {
+test("command buttons remain editable while active and execute only in inactive reading view", async () => {
   const source = await readFile(sourceUrl, "utf8");
-  const pendingSource = source.slice(source.indexOf("  applyPendingSelectionTap(pending)"), source.indexOf("  startSelectionDrag(", source.indexOf("  applyPendingSelectionTap(pending)")));
+  const pendingSource = source.slice(source.indexOf("  applyPendingSelectionTap(pending)"), source.indexOf("  executeButtonCommand(index)", source.indexOf("  applyPendingSelectionTap(pending)")));
   const pointerSource = source.slice(source.indexOf("  onPointerDown(event, routed = false)"), source.indexOf("  startConnectorGesture(", source.indexOf("  onPointerDown(event, routed = false)")));
 
-  assert.match(pendingSource, /this\.setSelectedStrokes\(pending\.index\);\s*this\.executeButtonCommand\(pending\.index\)/);
-  assert.match(pendingSource, /if \(!this\.executeButtonCommand\(pending\.index\)\) \{\s*this\.editFloatingTextStroke\(pending\.index\)/);
+  assert.match(pendingSource, /this\.setSelectedStrokes\(pending\.index\)/);
+  assert.doesNotMatch(pendingSource, /executeButtonCommand/);
+  assert.match(source, /if \(!isCommandButton \|\| this\.active \|\| this\.surfaceType !== "preview"\)/);
+  assert.match(source, /this\.executeButtonCommand\(index\)/);
   assert.match(source, /if \(event\.detail >= 2 \|\| repeatedSelectionTap\) \{\s*this\.editFloatingTextStroke\(hitStrokeIndex\)/);
   assert.match(source, /class extends FuzzySuggestModal/);
   assert.match(source, /chooseButtonCommand/);

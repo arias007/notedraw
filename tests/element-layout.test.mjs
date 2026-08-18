@@ -268,6 +268,28 @@ test("adaptive element projection reshapes boxes for portrait and wide screens",
   assert.ok(wideBox.scale >= 0.42 && wideBox.scale <= 2.4);
 });
 
+test("freehand projection can preserve aspect ratio instead of stretching a portrait stroke", () => {
+  const layout = createElementLayout({
+    id: "portrait-ink",
+    bounds: { minX: 100, minY: 100, maxX: 120, maxY: 300 },
+    canvasWidth: 600,
+    canvasHeight: 1200,
+    viewportHeight: 600,
+    frame: { left: 60, width: 480 }
+  });
+  const projected = projectElementPoints([
+    { x: 100 / 600, y: 100 / 1200 },
+    { x: 120 / 600, y: 300 / 1200 }
+  ], layout, { x: 200, y: 200, width: 180, height: 60 }, {
+    canvasWidth: 600,
+    canvasHeight: 1200,
+    preserveAspectRatio: true
+  });
+  const width = (projected[1].x - projected[0].x) * 600;
+  const height = (projected[1].y - projected[0].y) * 1200;
+  assert.ok(Math.abs(width / height - 20 / 200) < 1e-9);
+});
+
 test("reading and editing surfaces with similar content width keep visual text size stable", () => {
   const layout = createElementLayout({
     id: "same-width-reader",

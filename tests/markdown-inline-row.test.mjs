@@ -47,7 +47,7 @@ test("stroke placeholders share the same allocation as Markdown blocks", () => {
   assert.deepEqual(allocation.spans, [3, 3, 2, 2, 2]);
 });
 
-test("parallel allocation shrinks the new item first and then the nearest right-side peer", () => {
+test("parallel allocation proportionally narrows the whole row", () => {
   const allocation = allocateInlineRow({
     existingIds: ["left", "target", "right"],
     movingIds: ["new"],
@@ -63,10 +63,10 @@ test("parallel allocation shrinks the new item first and then the nearest right-
 
   assert.equal(allocation.canFit, true);
   assert.deepEqual(allocation.orderedIds, ["left", "target", "new", "right"]);
-  assert.deepEqual(allocation.spans, [4, 4, 1, 3]);
+  assert.deepEqual(allocation.spans, [3, 3, 3, 3]);
 });
 
-test("an inserted item reaches one column before an existing parallel row is compressed", () => {
+test("parallel allocation preserves relative widths while making room", () => {
   const allocation = allocateInlineRow({
     existingIds: ["left", "target"],
     movingIds: ["new"],
@@ -80,5 +80,5 @@ test("an inserted item reaches one column before an existing parallel row is com
   });
 
   assert.equal(allocation.canFit, true);
-  assert.deepEqual(allocation.spans, [6, 5, 1]);
+  assert.deepEqual(allocation.spans, [3, 3, 6]);
 });

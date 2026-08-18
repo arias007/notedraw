@@ -38,7 +38,7 @@ test("embedded Markdown edits resolve and save against the referenced file", asy
   assert.match(source, /findMarkdownEmbedBlockElement\(target, previewEl = null\)[\s\S]*embed\.matches\?\.\("\.internal-embed"\)[\s\S]*embed\.closest\?\.\("\.internal-embed"\)[\s\S]*embed\.closest\?\.\("\.markdown-embed"\)/);
   assert.match(source, /findMarkdownBlocksInSelection\(startPoint, endPoint\)[\s\S]*const candidates = markdownBlockCandidateElements\(this\.previewEl\)[\s\S]*const element = candidate[\s\S]*forSelection: true/);
   assert.match(source, /function markdownBlockCandidateElements\(root\)[\s\S]*MARKDOWN_EMBED_SELECTOR[\s\S]*findNoteFlowMarkdownBlockElement\(element, root\)/);
-  assert.match(source, /function markdownBlockCandidateElementForTarget\(target, root\)[\s\S]*findNoteFlowMarkdownBlockElement\(target, root\)[\s\S]*\[explicitLine, marked, owner, preciselyMapped, mappedChild\][\s\S]*isMarkdownBlockCandidateElement\(candidate\)/);
+  assert.match(source, /function markdownBlockCandidateElementForTarget\(target, root\)[\s\S]*findNoteFlowMarkdownBlockElement\(target, root\)[\s\S]*\[metadataProperty, explicitLine, marked, owner, preciselyMapped, mappedChild\][\s\S]*isMarkdownBlockCandidateElement\(candidate\)/);
   assert.match(source, /elementBelowCanvas\(clientX, clientY\)[\s\S]*elementsFromPoint[\s\S]*classList\?\.contains\("notedraw-canvas"\)[\s\S]*pointerEvents: "none"/);
   assert.match(source, /if \(this\.currentEditor && this\.currentEditorEmbedded\) \{\s*return null;/);
   assert.match(source, /this\.surfaceType === "source" && this\.toolMode === TOOL_EDIT_MD && !this\.currentEditorEmbedded/);
@@ -143,7 +143,7 @@ test("3.4.84 preserves reading content and cross-view frames without hidden-surf
   assert.match(source, /window\.setTimeout\(\(\) => this\.flushScheduledResize\(\), 120\)/);
   assert.match(source, /flushScheduledResize\(\)[\s\S]*window\.cancelAnimationFrame\(this\.resizeFrameId\)[\s\S]*window\.clearTimeout\(this\.resizeFallbackTimer\)/);
   assert.match(source, /this\.repairConnectedReadingSections\(\);\s*await this\.prepareInitialReadingLayout\(\)/);
-  assert.match(source, /new MutationObserver\(\(mutations\) => \{\s*if \(mutations\.some\(\(mutation\) => isMarkdownContentMutation\(mutation\)\)\) \{[\s\S]*?this\.currentEditorEmbedded[\s\S]*?mutations\.every[\s\S]*?return;[\s\S]*?this\.noteFlowMarkdownAnnotationComplete = false;\s*if \(this\.draggingStroke \|\| this\.resizingSelection \|\| this\.pointerDown\) \{[\s\S]*?return;[\s\S]*?this\.scheduleMarkdownMutationSync\(\)/);
+  assert.match(source, /new MutationObserver\(\(mutations\) => \{\s*if \(mutations\.some\(\(mutation\) => isMarkdownContentMutation\(mutation\)\)\) \{[\s\S]*?this\.currentEditor[\s\S]*?mutations\.every[\s\S]*?return;[\s\S]*?this\.noteFlowMarkdownAnnotationComplete = false;\s*if \(this\.draggingStroke \|\| this\.resizingSelection \|\| this\.pointerDown\) \{[\s\S]*?return;[\s\S]*?this\.scheduleMarkdownMutationSync\(\)/);
   assert.match(source, /pendingMarkdownIdentityRefresh\?\.expiresAt > Date\.now\(\)[\s\S]*restorePendingMarkdownIdentityPresentation\(mutations\)[\s\S]*scheduleMarkdownMutationSync\(\)/);
   assert.match(source, /const identityMutationPending = this\.pendingMarkdownIdentityRefresh\?\.expiresAt > Date\.now\(\);[\s\S]*if \(editingLayout \|\| identityMutationPending\) \{[\s\S]*this\.scheduleMarkdownAnnotationRefresh\(\{[\s\S]*force: identityMutationPending[\s\S]*\}\);\s*\} else \{\s*this\.syncMarkdownBlockPresentation\(\);\s*this\.scheduleFrozenNoteFlowLayoutRestore\(\)/);
   assert.match(source, /rememberMarkdownIdentityMutation\(event\)[\s\S]*markdownDropRowMetrics\(element\)[\s\S]*triggerId: block\.id,[\s\S]*members,/);
@@ -218,7 +218,9 @@ test("3.4.84 preserves reading content and cross-view frames without hidden-surf
   assert.doesNotMatch(activeState, /scheduleLayoutRefresh/);
   assert.match(activeState, /if \(!this\.active && wasActive\)[\s\S]*this\.syncMarkdownBlockPresentation\(\);\s*this\.scheduleFrozenNoteFlowLayoutRestore\(\);\s*this\.render\(\)/);
   assert.match(activeState, /if \(wasActive !== this\.active && this\.drawingsLoaded\) \{\s*this\.scheduleResize\(\{ layout: false, measure: false \}\)/);
-  assert.match(source, /this\.registerMarkdownPostProcessor\([\s\S]*this\.runSurfaceSync\(\);\s*this\.scheduleSurfaceSync\(180\);\s*}\s*onunload\(\)/);
+  const onloadSource = source.slice(source.indexOf("  async onload()"), source.indexOf("  onunload()"));
+  assert.match(onloadSource, /this\.registerMarkdownPostProcessor\([\s\S]*this\.scheduleSurfaceSync\(24\)/);
+  assert.doesNotMatch(onloadSource, /this\.runSurfaceSync\(\)/);
 });
 
 test("reading text edits avoid placeholder breaks and support undo, redo, and block sorting", async () => {
