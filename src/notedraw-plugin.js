@@ -11666,13 +11666,17 @@ var PreviewDrawingController = class {
     const filePath = normalizeVaultPath(this.file?.path || "");
     const roots = [this.previewEl, ...(renderer?.sections || []).map((section) => section?.el)].filter(Boolean);
     const found = roots.some((root) => {
-      if ((isAsyncFileEmbedElement(root) || isPendingPdfEmbedElement(root))
+      // Office/workbench placeholders need the virtualization guard while
+      // they hydrate. PDFs are renderer-owned and must keep the normal
+      // reading layout path; treating them as permanently pending causes
+      // repeated restore/reflow flashes and disrupts parallel rows.
+      if (isAsyncFileEmbedElement(root)
         && !root.closest?.(".obcc-inline-workbench-embed")) {
         return true;
       }
       return Array.from(root.querySelectorAll?.(
         ".internal-embed[src], .internal-embed[data-src]"
-      ) || []).some((element) => (isAsyncFileEmbedElement(element) || isPendingPdfEmbedElement(element))
+      ) || []).some((element) => isAsyncFileEmbedElement(element)
         && !element.closest?.(".obcc-inline-workbench-embed"));
     });
     if (found) {
@@ -11683,10 +11687,36 @@ var PreviewDrawingController = class {
     return found;
   }
   repairAsyncFileEmbedSections(renderer = this.readingPreviewRenderer()) {
-    // Office/PDF renderers attach asynchronously to the original embed node.
-    // Cloning that placeholder or forcing is-loaded prevents Obsidian and
-    // workbench plugins from completing their own render lifecycle.
-    return this.repairConnectedReadingSections(renderer);
+    let repaired = 0;
+    for (const section of renderer?.sections || []) {
+      if (!section?.el?.isConnected || section.shown === false) {
+        continue;
+      }
+      const placeholders = Array.from(section.el.querySelectorAll?.(
+        ".internal-embed[src], .internal-embed[data-src]"
+      ) || []).filter((element) => (
+        isAsyncFileEmbedElement(element)
+        && !element.closest?.(".obcc-inline-workbench-embed")
+        && !element.classList?.contains("file-embed")
+        && element.dataset?.noteDrawAsyncEmbedRepair !== "true"
+      ));
+      for (const element of placeholders) {
+        repaired += this.promoteAsyncFileEmbedPlaceholder(element) ? 1 : 0;
+      }
+    }
+    return repaired + this.repairConnectedReadingSections(renderer);
+  }
+  promoteAsyncFileEmbedPlaceholder(element) {
+    if (!element?.isConnected || !isAsyncFileEmbedElement(element)
+      || element.classList?.contains("file-embed")
+      || element.dataset?.noteDrawAsyncEmbedRepair === "true") {
+      return false;
+    }
+    const replacement = element.cloneNode(true);
+    replacement.classList.add("file-embed", "mod-generic", "is-loaded");
+    replacement.dataset.noteDrawAsyncEmbedRepair = "true";
+    element.replaceWith(replacement);
+    return true;
   }
   repairConnectedReadingSections(renderer = this.readingPreviewRenderer()) {
     if (!renderer || !this.previewEl?.isConnected) {
@@ -18282,13 +18312,15 @@ var PreviewDrawingController = class {
         continue;
       }
       if (isAsyncFileEmbedElement(span)) {
-        repaired += await this.repairNativeFileEmbedPlaceholder(span, target) ? 1 : 0;
+        repaired += this.promoteAsyncFileEmbedPlaceholder(span) ? 1 : 0;
         continue;
       }
       const dest = this.plugin.app.metadataCache?.getFirstLinkpathDest?.(target, this.file?.path || "") || null;
       if (dest?.extension?.toLowerCase?.() === "pdf") {
+        if (!isPendingPdfEmbedElement(span)) {
+          continue;
+        }
         repaired += await this.repairNativeFileEmbedPlaceholder(span, target) ? 1 : 0;
-        this.repairConnectedReadingSections(this.readingPreviewRenderer());
         continue;
       }
       if (!dest || dest.extension !== "md") {
@@ -18316,7 +18348,7 @@ var PreviewDrawingController = class {
     return repaired;
   }
   async repairNativeFileEmbedPlaceholder(span, target) {
-    if (!span?.isConnected || !span.matches?.(".internal-embed[src], .internal-embed[data-src]")
+    if (!span?.isConnected || !isPendingPdfEmbedElement(span)
       || span.dataset.noteDrawNativeEmbedRepair === "true") {
       return false;
     }
@@ -25657,6 +25689,16 @@ function isMarkdownContentMutation(mutation) {
   // Obsidian's render queue (queued.high never settles), so embeds never
   // finish loading and heading collapse arrows are never injected.
   if (mutation.target?.closest?.(".internal-embed, .markdown-embed, .markdown-embed-content")) {
+    return false;
+  }
+  const changedElements = [...Array.from(mutation.addedNodes || []), ...Array.from(mutation.removedNodes || [])]
+    .filter((node) => node?.nodeType === Node.ELEMENT_NODE);
+  const embedSelector = ".internal-embed, .file-embed, .pdf-embed, .pdf-container, .pdf-viewer-container, .obcc-inline-workbench-embed";
+  if (changedElements.length && changedElements.every((node) => (
+    node.matches?.(embedSelector)
+    || node.closest?.(embedSelector)
+    || node.querySelector?.(embedSelector)
+  ))) {
     return false;
   }
   const markdownRootSelector = ".markdown-preview-view, .markdown-embed-content, .internal-embed";
