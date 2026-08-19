@@ -70,6 +70,6 @@ test("adjacent boxed inline elements share one non-overlapping frame boundary", 
 
   assert.match(source, /elementGroupFrameRect\(groupId\)/);
   assert.match(source, /markdownInlineSelectionClientLimits\(element, elementRect, \{ includeSelectedPeers: true \}\)/);
-  assert.match(source, /roundRect\(this\.ctx, frame\.x, frame\.y, frame\.width, frame\.height, SELECTION_FRAME_RADIUS\)/);
+  assert.match(source, /roundRect\(this\.ctx, frame\.x, frame\.y, frame\.width, frame\.height, this\.frameCornerRadius\(\)\)/);
   assert.match(source, /roundRect\(\s*this\.underlayCtx,\s*frame\.x,\s*frame\.y,\s*frame\.width,\s*frame\.height,/s);
 });

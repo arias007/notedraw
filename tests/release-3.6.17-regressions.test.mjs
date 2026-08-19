@@ -17,20 +17,21 @@ test("view changes synchronize source geometry immediately without projecting hi
   assert.match(initialLoad, /resizeCanvas\(\{ layout: false, measure: true \}\)[\s\S]*surfaceType === "source"[\s\S]*resizeCanvas\(\{ layout: true, measure: false \}\)/);
 });
 
-test("text watercolor follows its Markdown block identity before line-number fallback", async () => {
+test("text watercolor follows its hard Markdown owner before line-number fallback", async () => {
   const source = await readFile(sourceUrl, "utf8");
   const restore = source.slice(source.indexOf("  restoreTextHighlightAnchors()"), source.indexOf("  snapWatercolorStrokeToTextLine("));
 
-  assert.match(source, /blockId: String\(lineRect\.blockId \|\| ""\)/);
+  assert.match(source, /mode: "hard"/);
+  assert.match(source, /ownerId: owner\.id/);
   assert.match(source, /dataset\.noteDrawMarkdownBlockId/);
-  assert.ok(restore.indexOf("anchor?.blockId && rect.blockId === anchor.blockId") < restore.indexOf("rect.lineStart === anchor.lineStart"));
+  assert.ok(restore.indexOf("anchor.ownerId && rect.blockId === anchor.ownerId") < restore.indexOf("rect.lineStart === anchor.lineStart"));
 });
 
-test("selection and element outlines are solid, aligned, and locked frames are contextual", async () => {
+test("selection and locked-group outlines are dashed, aligned, and contextual", async () => {
   const [source, styles] = await Promise.all([readFile(sourceUrl, "utf8"), readFile(stylesUrl, "utf8")]);
   const selection = source.slice(source.indexOf("  drawSelection()"), source.indexOf("  drawSelectionDragRect("));
 
-  assert.doesNotMatch(selection, /setLineDash\(\[3, 2\]\)/);
+  assert.match(selection, /setLineDash\(\[3, 2\]\)/);
   assert.match(selection, /ctx\.setLineDash\(\[\]\)/);
   assert.match(styles, /\.notedraw-embed\.is-boxed[\s\S]*border: 1\.25px solid/);
   assert.match(source, /selectedOutlineFrameLeft\(\)[\s\S]*elementGroupFrameRect[\s\S]*getStrokeBounds/);

@@ -204,7 +204,7 @@
 .notedraw-embed.is-boxed {
   box-sizing: border-box;
   border: 1.25px solid var(--notedraw-node-color, #64748b);
-  border-radius: 7px;
+  border-radius: var(--notedraw-frame-radius, 0);
 }
 
 .notedraw-embed.is-selected {
@@ -436,7 +436,7 @@
   padding: 3px 5px;
   box-sizing: border-box;
   border: 1px dashed var(--interactive-accent);
-  border-radius: 4px;
+  border-radius: var(--notedraw-frame-radius, 0);
   outline: none;
   color: var(--text-normal);
   background: color-mix(in srgb, var(--background-primary) 84%, transparent);
@@ -444,6 +444,15 @@
   resize: none;
   overflow: hidden;
   line-height: 1.25;
+}
+
+.notedraw-floating-text-input.is-in-place {
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  resize: none;
 }
 
 .notedraw-saving {
@@ -663,6 +672,15 @@
   width: 100%;
   margin: 0;
   padding: 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 600px) {
+  .notedraw-md-grid-row {
+    grid-template-columns: repeat(12, minmax(28px, 1fr));
+  }
 }
 
 /* A real Markdown <br> is an atomic NoteFlow block; soft wrapping stays inside it. */
@@ -718,10 +736,17 @@
   z-index: -1;
   inset: -2px;
   border: 1.5px solid var(--notedraw-md-border, transparent);
-  border-radius: 6px;
+  border-radius: var(--notedraw-frame-radius, 0);
   background: var(--notedraw-md-background, transparent);
   content: "";
   pointer-events: none;
+}
+
+/* Put a shared-row divider inside the preceding element so it cannot cover
+   task controls at the left edge of the following element. */
+.notedraw-md-grid > .notedraw-md-grid-item + .notedraw-md-grid-item::before,
+.notedraw-md-inline-grid-item + .notedraw-md-inline-grid-item::before {
+  left: -6px;
 }
 
 .notedraw-md-block.is-floating {

@@ -554,7 +554,7 @@ test("selected Markdown text edits on a second tap while a moved tap still drags
   assert.match(source, /this\.editMarkdownButton = this\.surfaceType === "source"/);
   assert.match(pointerSource, /const selectedMarkdownEditableCandidate = markdownSelectionCandidate/);
   assert.match(pointerSource, /type: "edit-markdown-or-drag"/);
-  assert.match(source, /pending\.type === "edit-markdown-or-drag"[\s\S]*selectedDragActivationDistancePx\(event\.pointerType\)[\s\S]*this\.startSelectedStrokeDrag\(event, pending\.startPoint \|\| this\.eventToPoint\(event\), pending\.index \?\? -1[\s\S]*startClient: pending\.startClient[\s\S]*this\.moveSelectedStroke\(event\)/);
+  assert.match(source, /const canBecomeElementDrag = \[[\s\S]*"edit-markdown-or-drag"[\s\S]*selectedDragActivationDistancePx\(event\.pointerType\)[\s\S]*this\.startSelectedStrokeDrag\(event, pending\.startPoint \|\| this\.eventToPoint\(event\), pending\.index \?\? -1[\s\S]*startClient: pending\.startClient[\s\S]*this\.moveSelectedStroke\(event\)/);
   assert.match(pointerSource, /const selectionActivated = this\.markdownSelectionCanEditOrDrag\(existing, markdownSelectionCandidate\)/);
   assert.match(pointerSource, /!wasSelected \|\| !selectionActivated/);
   assert.match(source, /activateMarkdownSelection\(block, element\)[\s\S]*captureSelectionFrameSnapshot\(\{ force: true \}\)[\s\S]*selectionKey: this\.selectionStateKey\(\)/);
@@ -801,8 +801,8 @@ test("Markdown selection uses only the visible Canvas frame and its four corners
   assert.match(drawSource, /getVisibleSelectionFrameCanvasRect/);
   assert.match(drawSource, /SELECTION_FRAME_COLOR/);
   assert.match(drawSource, /setLineDash\(\[\]\)/);
-  assert.doesNotMatch(drawSource, /setLineDash\(\[3, 2\]\)/);
-  assert.match(drawSource, /roundRect\(this\.ctx, x, y, width, height, SELECTION_FRAME_RADIUS\)/);
+  assert.match(drawSource, /setLineDash\(\[3, 2\]\)/);
+  assert.match(drawSource, /this\.frameCornerRadius\(\)/);
   assert.match(handleSource, /getVisibleSelectionFrameCanvasRect/);
 });
 

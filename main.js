@@ -4339,7 +4339,8 @@ var SELECT_RESIZE_HANDLE_SIZE = 9;
 var SELECT_RESIZE_HANDLE_HIT_RADIUS = 22;
 var SELECTION_FRAME_COLOR = "rgba(124, 58, 237, 0.96)";
 var SELECTION_FRAME_LINE_WIDTH = 1.5;
-var SELECTION_FRAME_RADIUS = 7;
+var MIN_FRAME_CORNER_RADIUS = 0;
+var MAX_FRAME_CORNER_RADIUS = 24;
 var SELECTION_FRAME_DRAG_FILL = "rgba(124, 58, 237, 0.10)";
 var SNAP_GRID_PX = 8;
 var SNAP_THRESHOLD_PX = 7;
@@ -4555,6 +4556,8 @@ var I18N = {
     defaultWatercolorOpacityDesc: "Initial watercolor opacity.",
     toolbarTopOffset: "Toolbar top offset",
     toolbarTopOffsetDesc: "Extra pixels below the Obsidian header.",
+    frameCornerRadius: "Frame corner radius",
+    frameCornerRadiusDesc: "Corner radius for element, selection, and group frames. Zero uses square corners.",
     longPressMs: "Long press delay",
     longPressMsDesc: "Delay before long-press actions open secondary controls.",
     selectTapDistance: "Tap tolerance",
@@ -4734,6 +4737,8 @@ var I18N = {
     defaultWatercolorOpacityDesc: "\u521D\u59CB\u6C34\u5F69\u900F\u660E\u5EA6\u3002",
     toolbarTopOffset: "\u5DE5\u5177\u680F\u9876\u90E8\u504F\u79FB",
     toolbarTopOffsetDesc: "\u8DDD\u79BB Obsidian \u9876\u90E8\u680F\u7684\u989D\u5916\u50CF\u7D20\u3002",
+    frameCornerRadius: "\u6846\u5706\u89D2",
+    frameCornerRadiusDesc: "\u5143\u7D20\u6846\u3001\u9009\u62E9\u6846\u548C\u9501\u5B9A\u96C6\u6846\u7684\u5706\u89D2\u5927\u5C0F\u3002\u8BBE\u4E3A 0 \u65F6\u4F7F\u7528\u76F4\u89D2\u3002",
     longPressMs: "\u957F\u6309\u5EF6\u8FDF",
     longPressMsDesc: "\u957F\u6309\u6253\u5F00\u4E8C\u7EA7\u63A7\u5236\u7684\u7B49\u5F85\u65F6\u95F4\u3002",
     selectTapDistance: "\u70B9\u51FB\u5BB9\u5DEE",
@@ -4894,6 +4899,8 @@ var I18N = {
     defaultWatercolorOpacityDesc: "\u521D\u59CB\u6C34\u5F69\u900F\u660E\u5EA6\u3002",
     toolbarTopOffset: "\u5DE5\u5177\u5217\u9802\u90E8\u504F\u79FB",
     toolbarTopOffsetDesc: "\u8DDD\u96E2 Obsidian \u9802\u90E8\u5217\u7684\u984D\u5916\u50CF\u7D20\u3002",
+    frameCornerRadius: "\u6846\u5713\u89D2",
+    frameCornerRadiusDesc: "\u5143\u7D20\u6846\u3001\u9078\u53D6\u6846\u548C\u9396\u5B9A\u96C6\u6846\u7684\u5713\u89D2\u5927\u5C0F\u3002\u8A2D\u70BA 0 \u6642\u4F7F\u7528\u76F4\u89D2\u3002",
     longPressMs: "\u9577\u6309\u5EF6\u9072",
     longPressMsDesc: "\u9577\u6309\u958B\u555F\u6B21\u7D1A\u63A7\u5236\u7684\u7B49\u5F85\u6642\u9593\u3002",
     selectTapDistance: "\u9EDE\u64CA\u5BB9\u5DEE",
@@ -5014,6 +5021,8 @@ var I18N = {
     defaultWatercolorOpacityDesc: "\u062F\u06D5\u0633\u0644\u06D5\u067E\u0643\u0649 \u0633\u06C7 \u0628\u0648\u064A\u0627\u0642 \u0633\u06C8\u0632\u06C8\u0643\u0644\u06C8\u0643\u0649.",
     toolbarTopOffset: "\u0642\u0648\u0631\u0627\u0644 \u0628\u0627\u0644\u062F\u0627\u0642 \u0626\u06C8\u0633\u062A\u0649 \u0626\u0627\u0631\u0649\u0644\u0649\u0642\u0649",
     toolbarTopOffsetDesc: "Obsidian \u0628\u0627\u0634 \u0642\u0649\u0633\u0645\u0649\u062F\u0649\u0646 \u0642\u0648\u0634\u06C7\u0645\u0686\u06D5 \u067E\u0649\u0643\u0633\u06D0\u0644.",
+    frameCornerRadius: "\u0631\u0627\u0645\u0643\u0627 \u0628\u06C7\u0644\u06C7\u06AD \u0631\u0627\u062F\u0649\u0626\u06C7\u0633\u0649",
+    frameCornerRadiusDesc: "\u0626\u06D0\u0644\u06D0\u0645\u06D0\u0646\u062A\u060C \u062A\u0627\u0644\u0644\u0627\u0634 \u06CB\u06D5 \u06AF\u06C7\u0631\u06C7\u067E\u067E\u0627 \u0631\u0627\u0645\u0643\u0649\u0633\u0649\u0646\u0649\u06AD \u0628\u06C7\u0644\u06C7\u06AD\u0649. 0 \u0628\u0648\u0644\u0633\u0627 \u062A\u06C8\u0632 \u0628\u06C7\u0644\u06C7\u06AD.",
     debugLog: "\u0633\u0627\u0632\u0644\u0627\u0634 \u062E\u0627\u062A\u0649\u0631\u0649\u0633\u0649",
     debugLogDesc: "\u067E\u06D5\u0642\u06D5\u062A \u0645\u06D5\u0633\u0649\u0644\u06D5 \u062A\u06D5\u0643\u0634\u06C8\u0631\u06AF\u06D5\u0646\u062F\u06D5 \u062A\u06D0\u0643\u0649\u0633\u062A \u0633\u0627\u0642\u0644\u0627\u0634 \u062F\u0649\u0626\u0627\u06AF\u0646\u0648\u0632\u0649\u0646\u0649 \u0642\u0649\u0633\u062A\u06C7\u0631\u0645\u0627 \u0642\u0649\u0633\u0642\u06C7\u0686\u0649\u063A\u0627 \u064A\u0627\u0632\u0649\u062F\u06C7.",
     supportTitle: "NoteDraw \u0646\u0649 \u0642\u0648\u0644\u0644\u0627\u0634",
@@ -5113,6 +5122,8 @@ var I18N = {
     defaultWatercolorOpacityDesc: "\u041D\u0430\u0447\u0430\u043B\u044C\u043D\u0430\u044F \u043F\u0440\u043E\u0437\u0440\u0430\u0447\u043D\u043E\u0441\u0442\u044C \u0430\u043A\u0432\u0430\u0440\u0435\u043B\u0438.",
     toolbarTopOffset: "\u0421\u043C\u0435\u0449\u0435\u043D\u0438\u0435 \u043F\u0430\u043D\u0435\u043B\u0438 \u0441\u0432\u0435\u0440\u0445\u0443",
     toolbarTopOffsetDesc: "\u0414\u043E\u043F\u043E\u043B\u043D\u0438\u0442\u0435\u043B\u044C\u043D\u044B\u0435 \u043F\u0438\u043A\u0441\u0435\u043B\u0438 \u043D\u0438\u0436\u0435 \u0437\u0430\u0433\u043E\u043B\u043E\u0432\u043A\u0430 Obsidian.",
+    frameCornerRadius: "\u0421\u043A\u0440\u0443\u0433\u043B\u0435\u043D\u0438\u0435 \u0440\u0430\u043C\u043E\u043A",
+    frameCornerRadiusDesc: "\u0420\u0430\u0434\u0438\u0443\u0441 \u0443\u0433\u043B\u043E\u0432 \u0440\u0430\u043C\u043E\u043A \u044D\u043B\u0435\u043C\u0435\u043D\u0442\u043E\u0432, \u0432\u044B\u0434\u0435\u043B\u0435\u043D\u0438\u044F \u0438 \u0433\u0440\u0443\u043F\u043F. \u041D\u043E\u043B\u044C \u043E\u0437\u043D\u0430\u0447\u0430\u0435\u0442 \u043F\u0440\u044F\u043C\u044B\u0435 \u0443\u0433\u043B\u044B.",
     debugLog: "\u0416\u0443\u0440\u043D\u0430\u043B \u043E\u0442\u043B\u0430\u0434\u043A\u0438",
     debugLogDesc: "\u0417\u0430\u043F\u0438\u0441\u044B\u0432\u0430\u0442\u044C \u0434\u0438\u0430\u0433\u043D\u043E\u0441\u0442\u0438\u043A\u0443 \u0441\u043E\u0445\u0440\u0430\u043D\u0435\u043D\u0438\u044F \u0442\u0435\u043A\u0441\u0442\u0430 \u0432 \u043F\u0430\u043F\u043A\u0443 \u043F\u043B\u0430\u0433\u0438\u043D\u0430 \u0442\u043E\u043B\u044C\u043A\u043E \u043F\u0440\u0438 \u043E\u0442\u043B\u0430\u0434\u043A\u0435.",
     supportTitle: "\u041F\u043E\u0434\u0434\u0435\u0440\u0436\u0430\u0442\u044C NoteDraw",
@@ -5160,6 +5171,8 @@ Object.assign(I18N, {
     settingsSectionPen: "\u0627\u0644\u0642\u0644\u0645",
     settingsSectionWatercolor: "\u0627\u0644\u0623\u0644\u0648\u0627\u0646 \u0627\u0644\u0645\u0627\u0626\u064A\u0629",
     settingsSectionLayout: "\u0627\u0644\u062A\u062E\u0637\u064A\u0637",
+    frameCornerRadius: "\u0627\u0633\u062A\u062F\u0627\u0631\u0629 \u0625\u0637\u0627\u0631 \u0627\u0644\u0639\u0646\u0635\u0631",
+    frameCornerRadiusDesc: "\u0627\u0633\u062A\u062F\u0627\u0631\u0629 \u0625\u0637\u0627\u0631\u0627\u062A \u0627\u0644\u0639\u0646\u0627\u0635\u0631 \u0648\u0627\u0644\u062A\u062D\u062F\u064A\u062F \u0648\u0627\u0644\u0645\u062C\u0645\u0648\u0639\u0627\u062A. \u0627\u0644\u0635\u0641\u0631 \u064A\u0639\u0646\u064A \u0632\u0648\u0627\u064A\u0627 \u0642\u0627\u0626\u0645\u0629.",
     settingsSectionDiagnostics: "\u0627\u0644\u062A\u0634\u062E\u064A\u0635",
     movePanel: "\u062A\u062D\u0631\u064A\u0643 \u0627\u0644\u0644\u0648\u062D\u0629",
     settingsLanguage: "\u0627\u0644\u0644\u063A\u0629",
@@ -5201,6 +5214,8 @@ Object.assign(I18N, {
     settingsSectionPen: "Pluma",
     settingsSectionWatercolor: "Acuarela",
     settingsSectionLayout: "Dise\xF1o",
+    frameCornerRadius: "Radio de las esquinas",
+    frameCornerRadiusDesc: "Radio de los marcos de elementos, selecci\xF3n y grupos. Cero usa esquinas rectas.",
     settingsSectionDiagnostics: "Diagn\xF3stico",
     movePanel: "Mover panel",
     settingsLanguage: "Idioma",
@@ -5242,6 +5257,8 @@ Object.assign(I18N, {
     settingsSectionPen: "Stylo",
     settingsSectionWatercolor: "Aquarelle",
     settingsSectionLayout: "Disposition",
+    frameCornerRadius: "Rayon des cadres",
+    frameCornerRadiusDesc: "Rayon des cadres d'\xE9l\xE9ments, de s\xE9lection et de groupes. Z\xE9ro cr\xE9e des angles droits.",
     settingsSectionDiagnostics: "Diagnostics",
     movePanel: "D\xE9placer le panneau",
     settingsLanguage: "Langue",
@@ -5283,6 +5300,8 @@ Object.assign(I18N, {
     settingsSectionPen: "Stift",
     settingsSectionWatercolor: "Aquarell",
     settingsSectionLayout: "Layout",
+    frameCornerRadius: "Rahmenecken",
+    frameCornerRadiusDesc: "Radius f\xFCr Element-, Auswahl- und Gruppenrahmen. Null verwendet rechte Ecken.",
     settingsSectionDiagnostics: "Diagnose",
     movePanel: "Panel verschieben",
     settingsLanguage: "Sprache",
@@ -5324,6 +5343,8 @@ Object.assign(I18N, {
     settingsSectionPen: "\u30DA\u30F3",
     settingsSectionWatercolor: "\u6C34\u5F69",
     settingsSectionLayout: "\u30EC\u30A4\u30A2\u30A6\u30C8",
+    frameCornerRadius: "\u67A0\u306E\u89D2\u4E38",
+    frameCornerRadiusDesc: "\u8981\u7D20\u3001\u9078\u629E\u3001\u30B0\u30EB\u30FC\u30D7\u67A0\u306E\u89D2\u4E38\u3067\u3059\u30020 \u3067\u76F4\u89D2\u306B\u306A\u308A\u307E\u3059\u3002",
     settingsSectionDiagnostics: "\u8A3A\u65AD",
     movePanel: "\u30D1\u30CD\u30EB\u3092\u79FB\u52D5",
     settingsLanguage: "\u8A00\u8A9E",
@@ -5365,6 +5386,8 @@ Object.assign(I18N, {
     settingsSectionPen: "\uD39C",
     settingsSectionWatercolor: "\uC218\uCC44\uD654",
     settingsSectionLayout: "\uB808\uC774\uC544\uC6C3",
+    frameCornerRadius: "\uD504\uB808\uC784 \uBAA8\uC11C\uB9AC",
+    frameCornerRadiusDesc: "\uC694\uC18C, \uC120\uD0DD \uBC0F \uADF8\uB8F9 \uD504\uB808\uC784\uC758 \uBAA8\uC11C\uB9AC \uBC18\uACBD\uC785\uB2C8\uB2E4. 0\uC740 \uC9C1\uAC01\uC785\uB2C8\uB2E4.",
     settingsSectionDiagnostics: "\uC9C4\uB2E8",
     movePanel: "\uD328\uB110 \uC774\uB3D9",
     settingsLanguage: "\uC5B8\uC5B4",
@@ -5406,6 +5429,8 @@ Object.assign(I18N, {
     settingsSectionPen: "Kalem",
     settingsSectionWatercolor: "Suluboya",
     settingsSectionLayout: "Yerle\u015Fim",
+    frameCornerRadius: "\xC7er\xE7eve k\xF6\u015Fe yar\u0131\xE7ap\u0131",
+    frameCornerRadiusDesc: "\xD6\u011Fe, se\xE7im ve grup \xE7er\xE7evelerinin k\xF6\u015Fe yar\u0131\xE7ap\u0131. S\u0131f\u0131r k\xF6\u015Feleri dik yapar.",
     settingsSectionDiagnostics: "Tan\u0131lama",
     movePanel: "Paneli ta\u015F\u0131",
     settingsLanguage: "Dil",
@@ -5434,6 +5459,7 @@ var DEFAULT_SETTINGS = {
   lastReadingZoom: 1,
   mindMapAffectsSource: true,
   defaultSourceEditMarkdown: true,
+  frameCornerRadius: 0,
   toolbarTopOffset: 6,
   toolbarPosition: null,
   longPressMs: LONG_PRESS_MS,
@@ -6616,11 +6642,16 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       readingNoteFlow: true,
       editableMindMaps: true,
       boundConnectors: true,
+      boxedConnectorTargets: true,
+      hardTextBindings: true,
+      groupSelection: true,
+      frameStyles: true,
+      dataSchemaVersion: 2,
       persistentHeaderActions: true,
       stateBackedWorkspaceSurfaces: true,
       agentActions: true,
       settingsApi: true,
-      drawingDataExchange: ["read", "parse", "serialize"],
+      drawingDataExchange: ["read", "parse", "normalize", "inspect", "serialize"],
       brushVariants: {
         [BRUSH_PEN]: [BRUSH_VARIANT_DEFAULT, PEN_VARIANT_FOUNTAIN, PEN_VARIANT_NOTE, PEN_VARIANT_LASER],
         [BRUSH_WATERCOLOR]: [BRUSH_VARIANT_DEFAULT, WATERCOLOR_VARIANT_TEXT, WATERCOLOR_VARIANT_STRAIGHT]
@@ -6635,6 +6666,8 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     const drawingData = Object.freeze({
       read: async (fileOrPath, options = {}) => this.readDrawingDataApi(fileOrPath, options),
       parse: async (input, options = {}) => this.parseDrawingDataApi(input, options),
+      normalize: async (input, options = {}) => this.parseDrawingDataApi(input, options),
+      inspect: async (input, options = {}) => this.inspectDrawingDataApi(input, options),
       serialize: async (data, options = {}) => this.serializeDrawingDataApi(data, options)
     });
     const v1 = {
@@ -6656,6 +6689,9 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       getZoom: (options = {}) => this.describeController(this.findApiController(options))?.zoom ?? 1,
       setZoom: (zoom, options = {}) => this.setApiZoom(zoom, options),
       getElements: async (options = {}) => this.getApiElements(options),
+      getElementById: async (id, options = {}) => this.getApiElementById(id, options),
+      getConnections: async (options = {}) => this.getApiConnections(options),
+      getTextBindings: async (options = {}) => this.getApiTextBindings(options),
       selectElements: async (options = {}) => this.selectApiElements(options),
       updateElements: async (options = {}) => this.updateApiElements(options),
       deleteElements: async (options = {}) => this.deleteApiElements(options),
@@ -6740,6 +6776,9 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       getZoom: v1.getZoom,
       setZoom: v1.setZoom,
       getElements: v1.getElements,
+      getElementById: v1.getElementById,
+      getConnections: v1.getConnections,
+      getTextBindings: v1.getTextBindings,
       selectElements: v1.selectElements,
       updateElements: v1.updateElements,
       deleteElements: v1.deleteElements,
@@ -6755,6 +6794,8 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       readDrawings: v1.readDrawings,
       readDrawingData: v1.readDrawingData,
       parseDrawingData: v1.parseDrawingData,
+      normalizeDrawingData: drawingData.normalize,
+      inspectDrawingData: drawingData.inspect,
       serializeDrawingData: v1.serializeDrawingData,
       writeDrawings: v1.writeDrawings,
       getStoragePaths: v1.getStoragePaths,
@@ -6846,6 +6887,28 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       throw new Error("NoteDraw data is invalid");
     }
     return clonePortableValue(bundle);
+  }
+  async inspectDrawingDataApi(input, options = {}) {
+    const bundle = await this.parseDrawingDataApi(input, options);
+    const drawing = bundle?.drawing || {};
+    const strokes = Array.isArray(drawing.strokes) ? drawing.strokes : [];
+    const markdownBlocks = Array.isArray(drawing.markdownBlocks) ? drawing.markdownBlocks : [];
+    const elementGroups = Array.isArray(drawing.elementGroups) ? drawing.elementGroups : [];
+    return {
+      ok: true,
+      format: bundle.format || "notedraw-portable",
+      bundleVersion: bundle.version || 1,
+      dataSchemaVersion: 2,
+      sourcePath: bundle.sourcePath || drawing.sourcePath || "",
+      counts: {
+        strokes: strokes.length,
+        markdownBlocks: markdownBlocks.length,
+        groups: elementGroups.length,
+        connectors: strokes.filter(isConnectorStroke).length,
+        textBindings: strokes.filter((stroke) => normalizeTextHighlightAnchor(stroke?.textAnchor)?.ownerId).length,
+        resources: Array.isArray(bundle.resources) ? bundle.resources.length : 0
+      }
+    };
   }
   async serializeDrawingDataApi(input, options = {}) {
     const bundle = await this.parseDrawingDataApi(input, options);
@@ -7160,11 +7223,59 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     const selected = new Set(controller.getSelectedStrokeIndexes());
     const requested = this.resolveApiElementIndexes(controller, options, false);
     const indexes = options.all === true || options.selection === "all" || requested.length ? requested : controller.drawingData.strokes.map((_, index) => index);
-    return {
+    const include = new Set(Array.isArray(options.include) ? options.include : ["strokes"]);
+    const strokes = indexes.map((index) => ({ index, selected: selected.has(index), ...JSON.parse(JSON.stringify(controller.drawingData.strokes[index])) }));
+    const result = {
       ok: true,
       surface: this.describeController(controller),
-      elements: indexes.map((index) => ({ index, selected: selected.has(index), ...JSON.parse(JSON.stringify(controller.drawingData.strokes[index])) }))
+      elements: strokes
     };
+    if (include.has("markdownBlocks")) {
+      result.markdownBlocks = clonePortableValue(controller.markdownBlockRecords());
+    }
+    if (include.has("groups")) {
+      result.groups = clonePortableValue(controller.elementGroupRecords());
+    }
+    if (include.has("connectors")) {
+      result.connectors = strokes.filter(isConnectorStroke);
+    }
+    return result;
+  }
+  async getApiElementById(id, options = {}) {
+    const controller = await this.getLoadedApiController(options);
+    const wanted = String(id || "");
+    if (!controller || !wanted) {
+      return null;
+    }
+    if (wanted.startsWith("md:")) {
+      return clonePortableValue(controller.markdownBlockRecords().find((block) => block.id === wanted.slice(3)) || null);
+    }
+    if (wanted.startsWith("group:")) {
+      return clonePortableValue(controller.elementGroup(wanted.slice(6)) || null);
+    }
+    return clonePortableValue(controller.drawingData.strokes.find((stroke) => strokeElementId(stroke) === wanted) || null);
+  }
+  async getApiConnections(options = {}) {
+    const controller = await this.getLoadedApiController(options);
+    if (!controller) {
+      return [];
+    }
+    return clonePortableValue(controller.drawingData.strokes.map((stroke, index) => ({
+      index,
+      elementId: strokeElementId(stroke),
+      connector: normalizeConnector(stroke?.connector)
+    })).filter((item) => item.connector));
+  }
+  async getApiTextBindings(options = {}) {
+    const controller = await this.getLoadedApiController(options);
+    if (!controller) {
+      return [];
+    }
+    return clonePortableValue(controller.drawingData.strokes.map((stroke, index) => ({
+      index,
+      elementId: strokeElementId(stroke),
+      textAnchor: normalizeTextHighlightAnchor(stroke?.textAnchor)
+    })).filter((item) => item.textAnchor));
   }
   async selectApiElements(options = {}) {
     const controller = await this.getLoadedApiController(options);
@@ -7333,6 +7444,9 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     if (name === "set-text-preset") return this.setApiTextPreset(options.preset, options);
     if (name === "set-zoom") return this.setApiZoom(options.zoom, options);
     if (name === "get-elements") return this.getApiElements(options);
+    if (name === "get-element" || name === "get-element-by-id") return this.getApiElementById(options.id || options.elementId, options);
+    if (name === "get-connections") return this.getApiConnections(options);
+    if (name === "get-text-bindings") return this.getApiTextBindings(options);
     if (name === "select-elements") return this.selectApiElements(options);
     if (name === "clear-selection") return this.selectApiElements({ ...options, clear: true });
     if (name === "update-elements") return this.updateApiElements(options);
@@ -9692,6 +9806,7 @@ var PreviewDrawingController = class {
     this.selectionFrameAwaitingMarkdownSync = null;
     this.embedRepairTimer = null;
     this.markdownMutationSyncTimer = null;
+    this.deletedTextHighlightPruneTimer = null;
     this.markdownBlockElements = /* @__PURE__ */ new Map();
     this.applySettings();
     this.penColor = this.brushSettings[BRUSH_PEN].color;
@@ -10355,6 +10470,9 @@ var PreviewDrawingController = class {
   applySettings() {
     const settings = sanitizeSettings(this.plugin?.noteDrawSettings || {});
     this.runtimeSettings = settings;
+    setNoteDrawCssProps(this.previewEl, {
+      "--notedraw-frame-radius": `${settings.frameCornerRadius}px`
+    });
     if (this.brushSettings?.[BRUSH_PEN]) {
       this.brushSettings[BRUSH_PEN].color = settings.defaultPenColor;
       this.brushSettings[BRUSH_PEN].width = settings.defaultPenWidth;
@@ -10464,6 +10582,9 @@ var PreviewDrawingController = class {
   }
   selectedStrokeAlpha() {
     return this.runtimeSettings?.selectedStrokeAlpha ?? DEFAULT_SETTINGS.selectedStrokeAlpha;
+  }
+  frameCornerRadius() {
+    return clamp10(Number(this.runtimeSettings?.frameCornerRadius ?? DEFAULT_SETTINGS.frameCornerRadius), MIN_FRAME_CORNER_RADIUS, MAX_FRAME_CORNER_RADIUS);
   }
   interpolationStepPx() {
     return this.runtimeSettings?.drawingInterpolationStep ?? DEFAULT_SETTINGS.drawingInterpolationStep;
@@ -10698,6 +10819,10 @@ var PreviewDrawingController = class {
     if (this.markdownMutationSyncTimer !== null) {
       window.clearTimeout(this.markdownMutationSyncTimer);
       this.markdownMutationSyncTimer = null;
+    }
+    if (this.deletedTextHighlightPruneTimer !== null) {
+      window.clearTimeout(this.deletedTextHighlightPruneTimer);
+      this.deletedTextHighlightPruneTimer = null;
     }
     if (this.sourceFormatToolbarRetryTimer !== null) {
       window.clearTimeout(this.sourceFormatToolbarRetryTimer);
@@ -14003,9 +14128,6 @@ ${selected}
     const markdownSelectionRecord = markdownSelectionCandidate ? this.findMarkdownBlockRecordForElement(markdownSelectionCandidate) : null;
     const markdownCandidateSelected = Boolean(markdownSelectionRecord && this.selectedMarkdownBlockIds.has(markdownSelectionRecord.id));
     let resizeHandle = noteFlowPenActive ? null : this.findSelectionHandleAt(point);
-    if (markdownSelectionCandidate && !markdownCandidateSelected && hitStrokeIndex < 0) {
-      resizeHandle = null;
-    }
     if (this.toolMode === TOOL_SELECT && hitStrokeIndex < 0 && !resizeHandle && !markdownSelectionCandidate) {
       hitStrokeIndex = ownedBlankSpaceStrokeIndex >= 0 ? ownedBlankSpaceStrokeIndex : this.findOwnedBlankSpaceStrokeAtClientPoint(event.clientX, event.clientY);
     }
@@ -14022,6 +14144,18 @@ ${selected}
     }
     if (resizeHandle) {
       this.startSelectedStrokeResize(event, resizeHandle);
+      return;
+    }
+    const lockedGroupFrameHit = this.toolMode === TOOL_SELECT ? this.findLockedElementGroupFrameAtPoint(point) : null;
+    if (lockedGroupFrameHit) {
+      if (!this.isElementGroupFullySelected(lockedGroupFrameHit.id)) {
+        this.startPendingSelectionTap(event, {
+          type: "select-group",
+          groupId: lockedGroupFrameHit.id
+        });
+      } else {
+        this.startSelectedStrokeDrag(event, point, -1, { preserveSelection: true });
+      }
       return;
     }
     if (canEditMarkdownText) {
@@ -14389,10 +14523,31 @@ ${selected}
       }
       const bounds = getStrokeBounds(stroke, this.canvasWidth(), this.canvasHeight());
       if (bounds) {
-        targets.push({ id, bounds });
+        targets.push({ id, bounds, type: "stroke" });
+      }
+    }
+    for (const block of this.markdownBlockRecords()) {
+      if (!block?.id || !block.borderColor && !block.backgroundColor) {
+        continue;
+      }
+      const bounds = this.markdownElementCanvasBounds(this.markdownBlockElement(block), { forSelection: true });
+      if (bounds) {
+        targets.push({ id: `md:${block.id}`, bounds, type: "markdown" });
+      }
+    }
+    for (const group of this.elementGroupRecords()) {
+      if (!group?.id || !group.boxed) {
+        continue;
+      }
+      const bounds = this.getElementGroupBounds(group.id);
+      if (bounds) {
+        targets.push({ id: `group:${group.id}`, bounds, type: "group" });
       }
     }
     return targets;
+  }
+  connectorTargetBoundsById() {
+    return new Map(this.collectSnapTargets().map((target) => [target.id, target.bounds]));
   }
   ensureSnapElementIds() {
     const strokes = this.drawingData?.strokes || [];
@@ -14430,7 +14585,7 @@ ${selected}
     return changed;
   }
   buildConnectorPointsForBindings(fromId, toId, fromPoint, toPoint, boundsById = null) {
-    const resolvedBounds = boundsById || new Map(this.collectSnapTargets().map((target) => [target.id, target.bounds]));
+    const resolvedBounds = boundsById || this.connectorTargetBoundsById();
     return buildSnappedConnectorPoints({
       fromBounds: fromId ? resolvedBounds.get(fromId) || null : null,
       toBounds: toId ? resolvedBounds.get(toId) || null : null,
@@ -14488,12 +14643,12 @@ ${selected}
       this.moveSelectedStroke(event);
       return;
     }
-    if (this.pendingSelectionTap && event.pointerId === this.activePointerId) {
-      this.updatePendingSelectionTap(event);
-      return;
-    }
     if (this.resizingSelection && event.pointerId === this.activePointerId) {
       this.moveSelectedStrokeResize(event);
+      return;
+    }
+    if (this.pendingSelectionTap && event.pointerId === this.activePointerId) {
+      this.updatePendingSelectionTap(event);
       return;
     }
     if (this.selectingStrokes && event.pointerId === this.activePointerId) {
@@ -15022,6 +15177,17 @@ ${selected}
       return;
     }
     const textarea = state.element;
+    if (state.inPlace && state.clientRect) {
+      const rect2 = state.clientRect;
+      applyElementStyles(textarea, {
+        left: `${Math.round(rect2.left)}px`,
+        top: `${Math.round(rect2.top)}px`,
+        width: `${Math.max(40, Math.round(rect2.width))}px`,
+        height: `${Math.max(28, Math.round(rect2.height))}px`
+      });
+      state.centered = false;
+      return;
+    }
     const view = textarea.ownerDocument?.defaultView || window.activeWindow || window;
     const anchor = this.floatingTextPointToClient(state.point);
     const rect = textarea.getBoundingClientRect();
@@ -15081,14 +15247,23 @@ ${selected}
     const preset = isTextLikeStroke(existing) ? existing : createTextPreset(this.textPreset, " ", brushColor);
     const editorDocument = this.canvas?.ownerDocument || this.previewEl?.ownerDocument || activeDocument;
     const editorWindow = editorDocument.defaultView || window.activeWindow || window;
-    const textarea = editorDocument.body.createEl("textarea", {
-      cls: "notedraw-floating-text-input",
-      attr: {
+    const inPlace = Boolean(existing);
+    const textarea = editorDocument.body.createEl(inPlace ? "div" : "textarea", {
+      cls: `notedraw-floating-text-input${inPlace ? " is-in-place" : ""}`,
+      attr: inPlace ? {
+        contenteditable: "plaintext-only",
+        spellcheck: "true",
+        role: "textbox"
+      } : {
         rows: "1",
         spellcheck: "true"
       }
     });
-    textarea.value = isTextLikeStroke(existing) ? existing.text : "";
+    if (inPlace) {
+      textarea.textContent = existing.text;
+    } else {
+      textarea.value = "";
+    }
     applyElementStyles(textarea, {
       color: isTextLikeStroke(existing) ? existing.color : brushColor,
       fontSize: `${isTextLikeStroke(existing) ? clamp10(Number(existing.fontSize || 18), 10, 72) : 18}px`,
@@ -15096,6 +15271,14 @@ ${selected}
       fontFamily: isTextLikeStroke(existing) && existing.code ? "monospace" : "sans-serif"
     });
     const preferredContentWidth = isRichTextStroke(existing) ? existing.previewWidth : Number(existing?.textWidth) > 0 ? Number(existing.textWidth) : isRichTextStroke(preset) && Number(preset.previewWidth) > 0 ? Number(preset.previewWidth) : null;
+    const canvasRect = this.canvas?.getBoundingClientRect?.();
+    const strokeBounds = inPlace ? getStrokeBounds(existing, this.canvasWidth(), this.canvasHeight()) : null;
+    const clientRect = strokeBounds && canvasRect?.width > 0 && canvasRect?.height > 0 ? {
+      left: canvasRect.left + strokeBounds.minX * canvasRect.width / Math.max(1, this.canvasWidth()),
+      top: canvasRect.top + (strokeBounds.minY - this.canvasWindowTop) * canvasRect.height / Math.max(1, this.canvasRenderHeight),
+      width: Math.max(40, (strokeBounds.maxX - strokeBounds.minX) * canvasRect.width / Math.max(1, this.canvasWidth())),
+      height: Math.max(28, (strokeBounds.maxY - strokeBounds.minY) * canvasRect.height / Math.max(1, this.canvasRenderHeight))
+    } : null;
     const state = {
       element: textarea,
       point: { ...point, t: Date.now() },
@@ -15106,7 +15289,9 @@ ${selected}
       cancelled: false,
       composing: false,
       commitAfterComposition: false,
-      centered: false
+      centered: false,
+      inPlace,
+      clientRect
     };
     this.floatingTextInput = state;
     const resize = () => {
@@ -15117,6 +15302,10 @@ ${selected}
       const maxWidth = Math.max(96, Math.min(520, (viewport?.width || editorWindow.innerWidth || 320) - 16));
       const maxHeight = Math.max(64, (viewport?.height || editorWindow.innerHeight || 480) - 16);
       const insets = this.floatingTextEditorInsets(textarea);
+      if (state.inPlace) {
+        this.positionFloatingTextInput(state);
+        return;
+      }
       applyElementStyles(textarea, { height: "auto", width: "auto", overflowY: "hidden" });
       const naturalWidth = textarea.scrollWidth + 2;
       const preferredWidth = Number(state.preferredContentWidth) > 0 ? Number(state.preferredContentWidth) + insets.horizontal : 0;
@@ -15160,7 +15349,18 @@ ${selected}
     editorWindow.requestAnimationFrame(() => {
       resize();
       textarea.focus();
-      textarea.select();
+      if (typeof textarea.select === "function") {
+        textarea.select();
+      } else {
+        const selection = editorWindow.getSelection?.();
+        const range = editorDocument.createRange?.();
+        if (selection && range) {
+          range.selectNodeContents(textarea);
+          range.collapse(false);
+          selection.removeAllRanges();
+          selection.addRange(range);
+        }
+      }
     });
   }
   commitFloatingTextInput(state = this.floatingTextInput) {
@@ -15172,7 +15372,7 @@ ${selected}
       return;
     }
     state.committed = true;
-    const text = state.element.value.trim();
+    const text = String(state.inPlace ? state.element.innerText : state.element.value).trim();
     if (!text) {
       this.endFloatingTextInput(false, state);
       return;
@@ -15603,7 +15803,21 @@ ${selected}
       event.stopPropagation();
       return;
     }
+    const row = this.parallelScrollRowAt(event.clientX, event.clientY);
+    const horizontalDelta = Math.abs(Number(event.deltaX) || 0) > Math.abs(Number(event.deltaY) || 0) ? Number(event.deltaX) || 0 : event.shiftKey ? Number(event.deltaY) || 0 : 0;
+    if (row && horizontalDelta && row.scrollWidth > row.clientWidth + 1) {
+      row.scrollLeft += horizontalDelta;
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     this.scheduleFloatingControlsPosition();
+  }
+  parallelScrollRowAt(clientX, clientY, element = null) {
+    const target = element || this.elementBelowCanvas(clientX, clientY);
+    const flowElement = this.markdownBlockFlowElement(target) || target;
+    const row = flowElement?.closest?.(".notedraw-md-grid-row");
+    return row && this.previewEl?.contains?.(row) ? row : null;
   }
   onReadingTouchPointerDown(event) {
     if (this.active || event.pointerType !== "touch" || event.isPrimary === false) {
@@ -16456,12 +16670,16 @@ ${selected}
   startPendingSelectionTap(event, action) {
     this.endTextEdit();
     this.cancelCurrentStroke();
+    const scrollRow = event.pointerType === "touch" ? this.parallelScrollRowAt(event.clientX, event.clientY, action.element) : null;
     this.pendingSelectionTap = {
       ...action,
       pointerId: event.pointerId,
       startClient: { x: event.clientX, y: event.clientY },
       startPoint: this.eventToPoint(event),
-      moved: false
+      moved: false,
+      scrollRow,
+      scrollStartLeft: scrollRow?.scrollLeft || 0,
+      scrollingRow: false
     };
     this.pointerStartClient = { x: event.clientX, y: event.clientY };
     this.activePointerId = event.pointerId;
@@ -16479,15 +16697,24 @@ ${selected}
     if (!pending || event.pointerId !== pending.pointerId) {
       return;
     }
-    const canBecomeElementDrag = pending.type === "edit-markdown-or-drag" || pending.type === "edit-stroke-or-drag";
-    const canBecomeAreaSelection = [
+    const deltaX = event.clientX - pending.startClient.x;
+    const deltaY = event.clientY - pending.startClient.y;
+    const scrollActivation = this.selectedDragActivationDistancePx(event.pointerType);
+    if (pending.scrollingRow || pending.scrollRow?.isConnected && pending.scrollRow.scrollWidth > pending.scrollRow.clientWidth + 1 && Math.abs(deltaX) > scrollActivation && Math.abs(deltaX) > Math.abs(deltaY) * 1.15) {
+      pending.moved = true;
+      pending.scrollingRow = true;
+      this.clearSelectionLongPress();
+      pending.scrollRow.scrollLeft = pending.scrollStartLeft - deltaX;
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    const canBecomeElementDrag = [
+      "edit-markdown-or-drag",
+      "edit-stroke-or-drag",
       "select-stroke",
-      "toggle-stroke",
       "select-markdown",
-      "toggle-markdown",
-      "select-group",
-      "enter-stroke-group",
-      "enter-markdown-group"
+      "select-group"
     ].includes(pending.type);
     const activationDistance = canBecomeElementDrag ? this.selectedDragActivationDistancePx(event.pointerType) : this.tapDistancePx();
     if (pointerDistance(pending.startClient, { x: event.clientX, y: event.clientY }) > activationDistance) {
@@ -16495,19 +16722,20 @@ ${selected}
       this.clearSelectionLongPress();
       if (canBecomeElementDrag) {
         this.pendingSelectionTap = null;
+        if (pending.type === "select-stroke") {
+          this.setSelectedStrokes(pending.index);
+        } else if (pending.type === "select-markdown") {
+          const block = this.selectMarkdownBlock(pending.element);
+          this.activateMarkdownSelection(block, pending.element);
+        } else if (pending.type === "select-group") {
+          this.enteredElementGroupIds.delete(pending.groupId);
+          this.selectElementGroup(pending.groupId);
+        }
         this.startSelectedStrokeDrag(event, pending.startPoint || this.eventToPoint(event), pending.index ?? -1, {
-          preserveSelection: pending.preserveSelection,
+          preserveSelection: pending.preserveSelection || pending.type === "select-group",
           startClient: pending.startClient
         });
         this.moveSelectedStroke(event);
-        return;
-      }
-      if (canBecomeAreaSelection) {
-        this.pendingSelectionTap = null;
-        this.startSelectionDrag(event, pending.startPoint || this.eventToPoint(event), {
-          startClient: pending.startClient
-        });
-        this.updateSelectionDrag(event);
         return;
       }
     }
@@ -17703,6 +17931,9 @@ ${selected}
       }
       this.queueDraggedNoteFlowRefresh(strokeIndexes);
     }
+    if (this.syncDraggedTextHighlightAnchors()) {
+      this.invalidateStaticCache();
+    }
     if (strokeIndexes.length || this.dragConnectorCandidates?.length || this.dragHasBoxBackground) {
       this.requestRender(this.selectionHasDomStrokes() ? "interaction" : false);
     }
@@ -17814,6 +18045,7 @@ ${selected}
       this.dragMarkdownDropSide = null;
     } else if (didMove) {
       const movedIndexes = Array.from(this.dragStrokeOriginalPoints?.keys() || []);
+      this.detachTextHighlightAnchors(movedIndexes);
       const movedNoteFlowIndexes = this.draggedNoteFlowIndexes(movedIndexes);
       const affectsNoteFlow = movedNoteFlowIndexes.length > 0;
       if (!markdownDrop) {
@@ -17914,6 +18146,9 @@ ${selected}
     }
     this.releasePointerCapture(event.pointerId);
     this.clearSelectedStrokeDragState({ preserveMarkdownDom: Boolean(markdownDrop?.domPreview && !noOpMarkdownDrop) });
+    if (this.restoreTextHighlightAnchors()) {
+      this.invalidateStaticCache();
+    }
     if (settleNoteFlowImmediately) {
       this.scheduleNoteFlowLayout({ immediate: true });
     }
@@ -18281,7 +18516,7 @@ ${selected}
     }
     const point = this.resizeEventToPoint(event);
     const movedDistance = this.resizeSelectionStartClient ? pointerDistance(this.resizeSelectionStartClient, { x: event.clientX, y: event.clientY }) : pointDistanceOnCanvas(this.resizeSelectionStartPoint, point, this.canvasWidth(), this.canvasHeight());
-    if (!this.resizeSelectionMoved && movedDistance <= this.tapDistancePx()) {
+    if (!this.resizeSelectionMoved && movedDistance <= this.selectedDragActivationDistancePx(event.pointerType)) {
       event.preventDefault();
       event.stopPropagation();
       return;
@@ -18494,6 +18729,7 @@ ${selected}
       this.cancelSelectedResizeNoteFlowLayout();
       this.flushSelectedResizeNoteFlowLayout();
       const resizedIndexes = Array.from(this.resizeSelectionOriginalStrokes?.keys() || []);
+      this.detachTextHighlightAnchors(resizedIndexes);
       this.captureResponsiveAnchorsForIndexes(resizedIndexes);
       this.syncBoundConnectors({ elementIds: this.connectorTargetIdsForStrokeIndexes(resizedIndexes) });
       this.redoStack = [];
@@ -18699,15 +18935,23 @@ ${selected}
   }
   captureTextHighlightAnchor(stroke, lineRect) {
     const canvasRect = this.canvas?.getBoundingClientRect?.();
-    if (!stroke?.points?.length || !canvasRect?.width || !lineRect?.width || !lineRect.sourcePath || !Number.isFinite(lineRect.lineStart)) {
+    if (!stroke?.points?.length || !canvasRect?.width || !lineRect?.width || !Number.isFinite(lineRect.lineStart)) {
+      return false;
+    }
+    const owner = this.ensureMarkdownBlockRecord(lineRect.element);
+    if (!owner?.id) {
       return false;
     }
     const scaleX = canvasRect.width / Math.max(1, this.canvasWidth());
     stroke.textAnchor = {
-      path: normalizeVaultPath(lineRect.sourcePath),
+      mode: "hard",
+      ownerType: "markdown",
+      ownerId: owner.id,
+      path: normalizeVaultPath(lineRect.sourcePath || owner.path),
       lineStart: lineRect.lineStart,
       lineEnd: Number.isFinite(lineRect.lineEnd) ? lineRect.lineEnd : lineRect.lineStart,
-      blockId: String(lineRect.blockId || ""),
+      blockId: owner.id,
+      textHint: owner.textHint || normalizeRenderedText2(lineRect.element?.innerText || "").slice(0, 240),
       baseline: 0.58,
       u: stroke.points.map((point) => {
         const canvasPoint2 = this.pointToCanvas(point);
@@ -18718,15 +18962,31 @@ ${selected}
     return true;
   }
   restoreTextHighlightAnchors() {
-    const anchored = (this.drawingData?.strokes || []).filter((stroke) => this.isTextHighlightStroke(stroke) && stroke.textAnchor?.path);
+    return this.restoreTextHighlightAnchorsForOwners(null);
+  }
+  syncDraggedTextHighlightAnchors() {
+    const ownerIds = new Set(Array.from(this.dragMarkdownOriginalElements?.keys?.() || []));
+    return ownerIds.size ? this.restoreTextHighlightAnchorsForOwners(ownerIds) : false;
+  }
+  restoreTextHighlightAnchorsForOwners(ownerIds = null) {
+    const anchored = (this.drawingData?.strokes || []).filter((stroke) => {
+      if (!this.isTextHighlightStroke(stroke) || !stroke.textAnchor?.path) {
+        return false;
+      }
+      const anchor = normalizeTextHighlightAnchor(stroke.textAnchor);
+      return !ownerIds || Boolean(anchor?.ownerId && ownerIds.has(anchor.ownerId));
+    });
     if (!anchored.length || !this.canvas) {
       return false;
     }
-    const lineRects = collectTextLineRectsBelowCanvas(this.canvas, this.previewEl);
+    const lineRects = collectTextLineRectsBelowCanvas(this.canvas, this.previewEl, ownerIds);
     let changed = false;
     for (const stroke of anchored) {
       const anchor = normalizeTextHighlightAnchor(stroke.textAnchor);
-      const lineRect = lineRects.find((rect) => anchor?.blockId && rect.blockId === anchor.blockId) || lineRects.find((rect) => normalizeVaultPath(rect.sourcePath) === anchor?.path && rect.lineStart === anchor.lineStart && rect.lineEnd === anchor.lineEnd) || lineRects.find((rect) => normalizeVaultPath(rect.sourcePath) === anchor?.path && rect.lineStart === anchor.lineStart);
+      if (!anchor || anchor.mode === "detached") {
+        continue;
+      }
+      const lineRect = lineRects.find((rect) => anchor.ownerId && rect.blockId === anchor.ownerId) || lineRects.find((rect) => anchor.blockId && rect.blockId === anchor.blockId) || lineRects.find((rect) => normalizeVaultPath(rect.sourcePath) === anchor?.path && rect.lineStart === anchor.lineStart && rect.lineEnd === anchor.lineEnd) || lineRects.find((rect) => normalizeVaultPath(rect.sourcePath) === anchor?.path && rect.lineStart === anchor.lineStart);
       if (!anchor || !lineRect || !stroke.points?.length) {
         continue;
       }
@@ -18747,6 +19007,60 @@ ${selected}
         stroke.points = nextPoints;
         changed = true;
       }
+    }
+    return changed;
+  }
+  scheduleDeletedTextHighlightPrune() {
+    if (!this.noteFlowMarkdownAnnotationComplete || this.deletedTextHighlightPruneTimer !== null || !this.file) {
+      return;
+    }
+    this.deletedTextHighlightPruneTimer = window.setTimeout(async () => {
+      this.deletedTextHighlightPruneTimer = null;
+      if (this.destroyed || !this.noteFlowMarkdownAnnotationComplete || !this.file) {
+        return;
+      }
+      const connectedIds = new Set(this.markdownBlockElements?.keys?.() || []);
+      const candidates = (this.drawingData?.strokes || []).filter((stroke) => {
+        const anchor = normalizeTextHighlightAnchor(stroke?.textAnchor);
+        return this.isTextHighlightStroke(stroke) && anchor?.mode === "hard" && anchor.ownerId && anchor.path === normalizeVaultPath(this.file.path) && !connectedIds.has(anchor.ownerId);
+      });
+      if (!candidates.length) {
+        return;
+      }
+      let source = "";
+      try {
+        source = await this.plugin.app.vault.cachedRead(this.file);
+      } catch {
+        return;
+      }
+      const sourceLower = source.toLocaleLowerCase();
+      const deleted = new Set(candidates.filter((stroke) => {
+        const hint = normalizeTextHighlightAnchor(stroke.textAnchor)?.textHint?.trim().toLocaleLowerCase() || "";
+        if (!hint || sourceLower.includes(hint)) {
+          return false;
+        }
+        const evidence = textBindingEvidenceTokens(hint);
+        return evidence.length > 0 && !evidence.some((term) => sourceLower.includes(term));
+      }));
+      if (!deleted.size) {
+        return;
+      }
+      this.drawingData.strokes = this.drawingData.strokes.filter((stroke) => !deleted.has(stroke));
+      this.invalidateStaticCache();
+      this.rebuildElementRelations();
+      this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true, replace: true });
+      this.render();
+    }, 260);
+  }
+  detachTextHighlightAnchors(indexes) {
+    let changed = false;
+    for (const index of indexes || []) {
+      const stroke = this.drawingData?.strokes?.[index];
+      if (!this.isTextHighlightStroke(stroke) || !stroke.textAnchor || stroke.textAnchor.mode === "detached") {
+        continue;
+      }
+      stroke.textAnchor = { ...stroke.textAnchor, mode: "detached" };
+      changed = true;
     }
     return changed;
   }
@@ -19281,8 +19595,13 @@ ${selected}
     const useDragCache = this.draggingStroke && targetIds === this.dragMovedElementIds;
     let changed = recover ? this.ensureSnapElementIds() : false;
     const byId = options.byId instanceof Map ? options.byId : useDragCache && this.dragConnectorById instanceof Map ? this.dragConnectorById : new Map(strokes.map((stroke) => [strokeElementId(stroke), stroke]).filter(([id]) => id));
-    const snapTargets = recover ? this.collectSnapTargets() : null;
     const connectorStrokes = Array.isArray(options.strokes) ? options.strokes : useDragCache && Array.isArray(this.dragConnectorCandidates) ? this.dragConnectorCandidates : strokes;
+    const needsExternalTargetBounds = recover || connectorStrokes.some((stroke) => {
+      const connector = normalizeConnector(stroke?.connector);
+      return connector && [connector.fromId, connector.toId].some((id) => /^(?:md|group):/.test(id));
+    });
+    const snapTargets = needsExternalTargetBounds ? this.collectSnapTargets() : [];
+    const targetBounds = new Map(snapTargets.map((target) => [target.id, target.bounds]));
     for (const stroke of connectorStrokes) {
       let connector = normalizeConnector(stroke.connector);
       if (!connector) {
@@ -19291,20 +19610,20 @@ ${selected}
       if (targetIds && !targetIds.has(connector.fromId) && !targetIds.has(connector.toId)) {
         continue;
       }
-      let fromBounds = getStrokeBounds(byId.get(connector.fromId), this.canvasWidth(), this.canvasHeight());
-      let toBounds = getStrokeBounds(byId.get(connector.toId), this.canvasWidth(), this.canvasHeight());
+      let fromBounds = getStrokeBounds(byId.get(connector.fromId), this.canvasWidth(), this.canvasHeight()) || targetBounds.get(connector.fromId);
+      let toBounds = getStrokeBounds(byId.get(connector.toId), this.canvasWidth(), this.canvasHeight()) || targetBounds.get(connector.toId);
       if (recover && !fromBounds && stroke.points?.[0]) {
         const recoveredId = this.findSnapElementIdAtPoint(stroke.points[0], toBounds ? connector.toId : "", snapTargets);
         if (recoveredId) {
           connector = { ...connector, fromId: recoveredId };
-          fromBounds = getStrokeBounds(byId.get(recoveredId), this.canvasWidth(), this.canvasHeight());
+          fromBounds = getStrokeBounds(byId.get(recoveredId), this.canvasWidth(), this.canvasHeight()) || targetBounds.get(recoveredId);
         }
       }
       if (recover && !toBounds && stroke.points?.length) {
         const recoveredId = this.findSnapElementIdAtPoint(stroke.points[stroke.points.length - 1], fromBounds ? connector.fromId : "", snapTargets);
         if (recoveredId && recoveredId !== connector.fromId) {
           connector = { ...connector, toId: recoveredId };
-          toBounds = getStrokeBounds(byId.get(recoveredId), this.canvasWidth(), this.canvasHeight());
+          toBounds = getStrokeBounds(byId.get(recoveredId), this.canvasWidth(), this.canvasHeight()) || targetBounds.get(recoveredId);
         }
       }
       if (connector.fromId === connector.toId) {
@@ -19331,7 +19650,7 @@ ${selected}
         changed = true;
       }
     }
-    if (!this.draggingStroke && this.syncConnectorElementGroups()) {
+    if (!this.draggingStroke && options.syncGroups !== false && this.syncConnectorElementGroups()) {
       changed = true;
     }
     return changed;
@@ -19608,13 +19927,13 @@ ${selected}
     this.ctx.lineWidth = dragging ? SELECTION_FRAME_LINE_WIDTH + 1.25 : SELECTION_FRAME_LINE_WIDTH;
     this.ctx.lineCap = "round";
     this.ctx.lineJoin = "round";
+    this.ctx.setLineDash([3, 2]);
     if (dragging) {
-      this.ctx.setLineDash([]);
       this.ctx.fillStyle = SELECTION_FRAME_DRAG_FILL;
-      roundRect(this.ctx, frame.x, frame.y, frame.width, frame.height, SELECTION_FRAME_RADIUS);
+      roundRect(this.ctx, frame.x, frame.y, frame.width, frame.height, this.frameCornerRadius());
       this.ctx.fill();
     }
-    roundRect(this.ctx, frame.x, frame.y, frame.width, frame.height, SELECTION_FRAME_RADIUS);
+    roundRect(this.ctx, frame.x, frame.y, frame.width, frame.height, this.frameCornerRadius());
     this.ctx.stroke();
     this.ctx.setLineDash([]);
     this.ctx.fillStyle = "rgba(255, 255, 255, 0.96)";
@@ -19649,8 +19968,8 @@ ${selected}
       ctx.globalAlpha = (group.boxed ? 0.92 : 0.58) * clamp10(Number(group.opacity ?? 1), 0, 1);
       ctx.strokeStyle = group.boxed ? group.borderColor || SELECTION_FRAME_COLOR : "#8b8b96";
       ctx.lineWidth = group.boxed ? SELECTION_FRAME_LINE_WIDTH : 1.25;
-      ctx.setLineDash([]);
-      roundRect(ctx, frame.x, frame.y, frame.width, frame.height, SELECTION_FRAME_RADIUS);
+      ctx.setLineDash(group.boxed ? [] : [3, 2]);
+      roundRect(ctx, frame.x, frame.y, frame.width, frame.height, this.frameCornerRadius());
       ctx.stroke();
       ctx.restore();
     }
@@ -19674,7 +19993,7 @@ ${selected}
     ctx.strokeStyle = strokePaletteColor(stroke, this.penColor);
     ctx.lineWidth = 1.25;
     ctx.setLineDash([]);
-    roundRect(ctx, frame.x, frame.y, frame.width, frame.height, SELECTION_FRAME_RADIUS);
+    roundRect(ctx, frame.x, frame.y, frame.width, frame.height, this.frameCornerRadius());
     ctx.stroke();
     ctx.restore();
   }
@@ -19696,7 +20015,7 @@ ${selected}
         frame.y,
         frame.width,
         frame.height,
-        6
+        this.frameCornerRadius()
       );
       this.underlayCtx.fill();
       this.underlayCtx.restore();
@@ -19890,11 +20209,21 @@ ${selected}
   }
   syncConnectorElementGroups() {
     const strokes = this.drawingData?.strokes || [];
-    const nodes = strokes.filter((stroke) => !isConnectorStroke(stroke) && strokeElementId(stroke));
+    const strokeNodes = strokes.filter((stroke) => !isConnectorStroke(stroke) && strokeElementId(stroke)).map((stroke) => ({
+      id: strokeElementId(stroke),
+      stroke,
+      block: null
+    }));
+    const markdownNodes = this.markdownBlockRecords().filter((block) => block?.id && (block.borderColor || block.backgroundColor)).map((block) => ({
+      id: `md:${block.id}`,
+      stroke: null,
+      block
+    }));
+    const nodes = [...strokeNodes, ...markdownNodes];
     if (!nodes.length) {
       return false;
     }
-    const parent = new Map(nodes.map((stroke) => [strokeElementId(stroke), strokeElementId(stroke)]));
+    const parent = new Map(nodes.map((node) => [node.id, node.id]));
     const find = (id) => {
       let root = parent.get(id) || id;
       while (parent.get(root) && parent.get(root) !== root) {
@@ -19933,18 +20262,18 @@ ${selected}
       }
     }
     const components = /* @__PURE__ */ new Map();
-    for (const stroke of nodes) {
-      const id = strokeElementId(stroke);
+    for (const node of nodes) {
+      const id = node.id;
       if (!connectedIds.has(id)) {
         continue;
       }
       const root = find(id);
       const members = components.get(root) || [];
-      members.push(stroke);
+      members.push(node);
       components.set(root, members);
     }
     const flowComponents = /* @__PURE__ */ new Map();
-    for (const stroke of nodes.filter((item) => isNoteFlowInkStroke(item))) {
+    for (const stroke of strokes.filter((item) => !isConnectorStroke(item) && strokeElementId(item) && isNoteFlowInkStroke(item))) {
       const flow = normalizeNoteFlow(stroke.noteFlow);
       if (!flow || flow.blockStart === null && !Number.isFinite(flow.line)) {
         continue;
@@ -19962,7 +20291,7 @@ ${selected}
       if (members.length < 2) {
         continue;
       }
-      const ids = members.map(strokeElementId).sort();
+      const ids = members.map((member) => member.id).sort();
       desired.set(`connector:${ids[0]}`, { members, relationOwned: true });
     }
     for (const members of flowComponents.values()) {
@@ -19970,10 +20299,11 @@ ${selected}
         continue;
       }
       const ids = members.map(strokeElementId).sort();
-      desired.set(`flow:${ids[0]}`, { members, relationOwned: true });
+      desired.set(`flow:${ids[0]}`, { members: members.map((stroke) => ({ id: strokeElementId(stroke), stroke, block: null })), relationOwned: true });
     }
     const existingByRelation = new Map(this.elementGroupRecords().filter((group) => group.relationOwned).map((group) => [group.relationKey, group]));
     const usedGroupIds = /* @__PURE__ */ new Set();
+    const desiredMemberIdsByGroup = /* @__PURE__ */ new Map();
     let changed = false;
     for (const [relationKey, record] of desired) {
       const existing = existingByRelation.get(relationKey);
@@ -19999,10 +20329,29 @@ ${selected}
         changed = true;
       }
       usedGroupIds.add(groupId);
-      for (const stroke of record.members) {
-        if (stroke.groupId !== groupId || !stroke.locked) {
-          stroke.groupId = groupId;
-          stroke.locked = true;
+      desiredMemberIdsByGroup.set(groupId, new Set(record.members.map((member) => member.id)));
+      for (const member of record.members) {
+        const element = member.stroke || member.block;
+        if (element.groupId !== groupId || !element.locked) {
+          element.groupId = groupId;
+          element.locked = true;
+          changed = true;
+        }
+      }
+    }
+    for (const group of this.elementGroupRecords().filter((item) => item.relationOwned && usedGroupIds.has(item.id))) {
+      const desiredIds = desiredMemberIdsByGroup.get(group.id) || /* @__PURE__ */ new Set();
+      for (const stroke of strokes) {
+        if (stroke.groupId === group.id && !desiredIds.has(strokeElementId(stroke))) {
+          stroke.groupId = "";
+          stroke.locked = false;
+          changed = true;
+        }
+      }
+      for (const block of this.markdownBlockRecords()) {
+        if (block.groupId === group.id && !desiredIds.has(`md:${block.id}`)) {
+          block.groupId = "";
+          block.locked = false;
           changed = true;
         }
       }
@@ -21215,6 +21564,15 @@ ${selected}
     if (this.restoreTextHighlightAnchors()) {
       this.invalidateStaticCache();
     }
+    const markdownConnectorIds = new Set((this.drawingData?.strokes || []).flatMap((stroke) => {
+      const connector = normalizeConnector(stroke?.connector);
+      return connector ? [connector.fromId, connector.toId].filter((id) => String(id || "").startsWith("md:")) : [];
+    }));
+    if (markdownConnectorIds.size && this.syncBoundConnectors({ elementIds: markdownConnectorIds, syncGroups: false })) {
+      this.invalidateStaticCache();
+      this.requestRender(false);
+    }
+    this.scheduleDeletedTextHighlightPrune();
     this.ensureReadingHeadingCollapseIndicators();
   }
   ensureReadingHeadingCollapseIndicators() {
@@ -21355,6 +21713,7 @@ ${selected}
     if (!block) {
       return null;
     }
+    this.syncConnectorElementGroups();
     const next = additive ? new Set(this.selectedMarkdownBlockIds) : /* @__PURE__ */ new Set();
     if (toggle && next.has(block.id)) {
       next.delete(block.id);
@@ -21401,6 +21760,7 @@ ${selected}
   }
   setSelectedStrokes(indexes, options = {}) {
     this.markdownSelectionActivation = null;
+    this.syncConnectorElementGroups();
     const normalized = Array.isArray(indexes) ? indexes : [indexes];
     this.selectedStrokeIndexes = new Set(
       normalized.map((index) => Number(index)).filter((index) => Number.isInteger(index) && index >= 0 && index < this.drawingData.strokes.length)
@@ -22875,6 +23235,10 @@ ${selected}
       this.dragNoteFlowDropClientY = null;
       if (Number.isFinite(Number(pendingX)) && Number.isFinite(Number(pendingY))) {
         this.updateDraggedNoteFlowPlacement(Number(pendingX), Number(pendingY));
+        if (this.syncDraggedTextHighlightAnchors()) {
+          this.invalidateStaticCache();
+          this.requestRender(this.selectionHasDomStrokes() ? "interaction" : false);
+        }
       }
     });
     return this.dragNoteFlowPlacement;
@@ -26869,6 +27233,19 @@ var NoteDrawSettingTab = class extends import_obsidian.PluginSettingTab {
         });
       }),
       this.createSectionDefinition("settingsSectionLayout"),
+      this.createSettingDefinition("frameCornerRadius", "frameCornerRadiusDesc", (setting) => {
+        this.addSliderWithValue(setting, {
+          value: settings.frameCornerRadius,
+          min: MIN_FRAME_CORNER_RADIUS,
+          max: MAX_FRAME_CORNER_RADIUS,
+          step: 1,
+          format: (value) => `${Math.round(value)} px`,
+          onChange: async (value) => {
+            this.plugin.noteDrawSettings.frameCornerRadius = value;
+            await this.plugin.saveSettings();
+          }
+        });
+      }),
       this.createSettingDefinition("toolbarTopOffset", "toolbarTopOffsetDesc", (setting) => {
         this.addSliderWithValue(setting, {
           value: settings.toolbarTopOffset,
@@ -26885,6 +27262,7 @@ var NoteDrawSettingTab = class extends import_obsidian.PluginSettingTab {
       this.createSettingDefinition("resetLayoutDefaults", "resetLayoutDefaultsDesc", (setting) => {
         setting.addButton((component) => component.setButtonText(this.plugin.t("reset")).onClick(async () => {
           Object.assign(this.plugin.noteDrawSettings, {
+            frameCornerRadius: DEFAULT_SETTINGS.frameCornerRadius,
             toolbarTopOffset: DEFAULT_SETTINGS.toolbarTopOffset,
             longPressMs: DEFAULT_SETTINGS.longPressMs,
             selectTapDistance: DEFAULT_SETTINGS.selectTapDistance,
@@ -27255,6 +27633,7 @@ function sanitizeSettings(settings) {
     lastReadingZoom: clamp10(Number(input.lastReadingZoom ?? DEFAULT_SETTINGS.lastReadingZoom), MIN_READING_ZOOM, MAX_READING_ZOOM),
     mindMapAffectsSource: input.mindMapAffectsSource !== false,
     defaultSourceEditMarkdown: input.defaultSourceEditMarkdown !== false,
+    frameCornerRadius: clamp10(Number(input.frameCornerRadius ?? DEFAULT_SETTINGS.frameCornerRadius), MIN_FRAME_CORNER_RADIUS, MAX_FRAME_CORNER_RADIUS),
     toolbarTopOffset: clamp10(Number(input.toolbarTopOffset ?? DEFAULT_SETTINGS.toolbarTopOffset), 0, 48),
     toolbarPosition: normalizeToolbarPosition(input.toolbarPosition),
     longPressMs: clamp10(Number(input.longPressMs ?? DEFAULT_SETTINGS.longPressMs), MIN_LONG_PRESS_MS, MAX_LONG_PRESS_MS),
@@ -28892,7 +29271,7 @@ function dispatchMouseClickThroughOverlay(canvas, clientPoint) {
   target.dispatchEvent(new MouseEvent("click", { ...eventInit, buttons: 0 }));
   return true;
 }
-function collectTextLineRectsBelowCanvas(canvas, root) {
+function collectTextLineRectsBelowCanvas(canvas, root, ownerIds = null) {
   const document2 = canvas?.ownerDocument || activeDocument;
   const canvasRect = canvas?.getBoundingClientRect?.();
   if (!canvas || !root || !canvasRect || !document2?.createTreeWalker) {
@@ -28921,14 +29300,16 @@ function collectTextLineRectsBelowCanvas(canvas, root) {
       bottom: rect.bottom,
       width: rect.width,
       height: rect.height,
-      sourcePath: element.dataset.noteDrawSourcePath || "",
+      element,
+      sourcePath: element.dataset.noteDrawSourcePath || element.closest?.("[data-note-draw-source-path]")?.dataset?.noteDrawSourcePath || "",
       lineStart: parseInteger(element.dataset.noteDrawLineStart),
       lineEnd: parseInteger(element.dataset.noteDrawLineEnd),
       blockId: String(element.dataset.noteDrawMarkdownBlockId || element.closest?.("[data-note-draw-markdown-block-id]")?.dataset?.noteDrawMarkdownBlockId || "")
     });
   };
   for (const textElement of root.querySelectorAll?.(MARKDOWN_TEXT_SELECTOR) || []) {
-    if (textElement.closest?.(WEBVIEW_BLOCKED_EDIT_SELECTOR) || textElement.closest?.(NOTEDRAW_OWNED_MUTATION_SELECTOR) || textElement.querySelector?.(MARKDOWN_TEXT_SELECTOR)) {
+    const ownerId = String(textElement.dataset.noteDrawMarkdownBlockId || textElement.closest?.("[data-note-draw-markdown-block-id]")?.dataset?.noteDrawMarkdownBlockId || "");
+    if (ownerIds && (!ownerId || !ownerIds.has(ownerId)) || textElement.closest?.(WEBVIEW_BLOCKED_EDIT_SELECTOR) || textElement.closest?.(NOTEDRAW_OWNED_MUTATION_SELECTOR) || textElement.querySelector?.(MARKDOWN_TEXT_SELECTOR)) {
       continue;
     }
     const beforeCount = rects.length;
@@ -28953,7 +29334,8 @@ function collectTextLineRectsBelowCanvas(canvas, root) {
     }
   }
   for (const textElement of root.querySelectorAll?.(".cm-line") || []) {
-    if (rects.length >= 1200 || textElement.closest?.(WEBVIEW_BLOCKED_EDIT_SELECTOR) || textElement.closest?.(NOTEDRAW_OWNED_MUTATION_SELECTOR)) {
+    const ownerId = String(textElement.dataset.noteDrawMarkdownBlockId || textElement.closest?.("[data-note-draw-markdown-block-id]")?.dataset?.noteDrawMarkdownBlockId || "");
+    if (rects.length >= 1200 || ownerIds && (!ownerId || !ownerIds.has(ownerId)) || textElement.closest?.(WEBVIEW_BLOCKED_EDIT_SELECTOR) || textElement.closest?.(NOTEDRAW_OWNED_MUTATION_SELECTOR)) {
       continue;
     }
     const beforeCount = rects.length;
@@ -30022,13 +30404,37 @@ function normalizeTextHighlightAnchor(value) {
     return null;
   }
   return {
+    mode: value?.mode === "detached" ? "detached" : "hard",
+    ownerType: "markdown",
+    ownerId: typeof value?.ownerId === "string" && value.ownerId ? value.ownerId : typeof value?.blockId === "string" ? value.blockId : "",
     path,
     lineStart,
     lineEnd: Number.isFinite(lineEnd) ? lineEnd : lineStart,
     blockId: typeof value?.blockId === "string" ? value.blockId : "",
+    textHint: typeof value?.textHint === "string" ? value.textHint.slice(0, 240) : "",
     baseline: clamp10(Number(value?.baseline ?? 0.58), 0, 1),
     u
   };
+}
+function textBindingEvidenceTokens(value) {
+  const text = normalizeRenderedText2(value).trim().toLocaleLowerCase();
+  if (!text) {
+    return [];
+  }
+  const words = text.split(/\s+/).map((word) => word.replace(/^\W+|\W+$/g, "")).filter((word) => word.length >= 2);
+  if (words.length > 1) {
+    return Array.from(new Set(words));
+  }
+  const compact = text.replace(/\s+/g, "");
+  if (compact.length <= 4) {
+    return [compact];
+  }
+  const size = compact.length >= 12 ? 3 : 2;
+  const tokens = [];
+  for (let index = 0; index <= compact.length - size; index += size) {
+    tokens.push(compact.slice(index, index + size));
+  }
+  return Array.from(new Set(tokens));
 }
 function isTextStroke(stroke) {
   return stroke?.kind === TOOL_TEXT && normalizeTextRenderMode(stroke.render) === TEXT_RENDER_PLAIN && typeof stroke.text === "string" && stroke.text.trim().length > 0;
@@ -30058,7 +30464,7 @@ function isButtonLikeStroke(stroke) {
   return stroke?.uiRole === "button" || Boolean(normalizeButtonStyle(stroke?.buttonStyle));
 }
 function isSnapStroke(stroke) {
-  return Boolean(stroke?.snap) || stroke?.uiRole === "button" || stroke?.uiRole === "arrow" || isConnectorStroke(stroke);
+  return Boolean(stroke?.snap) || Boolean(stroke?.boxed) || stroke?.uiRole === "button" || stroke?.uiRole === "arrow" || isConnectorStroke(stroke);
 }
 function isSnapPreset(preset) {
   return ["button", "rectangle", "circle", "arrow", "buttonPrimary", "buttonOutline", "buttonPill", "arrowUp", "arrowDown", "arrowLeft", "arrowRight"].includes(preset);

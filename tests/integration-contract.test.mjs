@@ -297,8 +297,8 @@ test("NoteDraw storage locations and single-file sharing stay portable and backw
   assert.match(storageSource, /this\.app\.vault\.process\(realFile, \(source\) => appendEncodedNotedrawDataBlock\(source, block\)\)/);
   assert.match(settingsSource, /drawingStorageMode[\s\S]*drawingStorageConfig[\s\S]*drawingStorageNoteSubfolder[\s\S]*drawingStorageNoteFolder[\s\S]*drawingStorageEmbedded/);
   assert.match(source, /this\.app\.workspace\.on\("file-menu"[\s\S]*shareNoteDrawFile[\s\S]*setIcon\("share-2"\)/);
-  assert.match(source, /drawingDataExchange: \["read", "parse", "serialize"\]/);
-  assert.match(source, /drawingData = Object\.freeze\(\{[\s\S]*read:[\s\S]*parse:[\s\S]*serialize:/);
+  assert.match(source, /drawingDataExchange: \["read", "parse", "normalize", "inspect", "serialize"\]/);
+  assert.match(source, /drawingData = Object\.freeze\(\{[\s\S]*read:[\s\S]*parse:[\s\S]*normalize:[\s\S]*inspect:[\s\S]*serialize:/);
   assert.match(drawingDataApi, /readDrawings\(file, \{ migrateLegacy: false \}\)/);
   assert.match(drawingDataApi, /decodeNotedrawDataBlock\(value\)[\s\S]*JSON\.parse\(value\)/);
   assert.match(drawingDataApi, /format === "json"[\s\S]*format === "block"[\s\S]*format === "markdown"/);
@@ -346,11 +346,12 @@ test("declared minimum Obsidian version uses compatible APIs and CSS", async () 
   assert.doesNotMatch(styles, /::-webkit-scrollbar/);
 });
 
-test("floating text editing keeps one anchor and survives multiline IME input", async () => {
+test("floating text creation and in-place editing survive multiline IME input", async () => {
   const source = await readFile(sourceUrl, "utf8");
 
   assert.match(source, /const editorDocument = this\.canvas\?\.ownerDocument/);
-  assert.match(source, /editorDocument\.body\.createEl\("textarea"/);
+  assert.match(source, /contenteditable: "plaintext-only"/);
+  assert.match(source, /state\.inPlace && state\.clientRect/);
   assert.match(source, /editorWindow\.visualViewport\?\.addEventListener\("resize", resize\)/);
   assert.match(source, /isRichTextStroke\(preset\) && Number\(preset\.previewWidth\) > 0/);
   assert.match(source, /this\.openFloatingTextInput\(stroke\.points\[0\], index\)/);
@@ -592,7 +593,7 @@ test("source Markdown editing exposes formatting for CodeMirror and embedded Mar
   assert.match(source, /serializeControllerEditableSource\(element, this\.currentEditorEmbedded\)/);
 });
 
-test("selection requires a completed tap before moving an element and reserves resize for frame corners", async () => {
+test("element movement promotes the tapped target and reserves resize for frame corners", async () => {
   const source = await readFile(sourceUrl, "utf8");
   const pointerSource = source.slice(source.indexOf("  onPointerDown("), source.indexOf("  startConnectorGesture(", source.indexOf("  onPointerDown(")));
   const strokeSelection = pointerSource.slice(pointerSource.indexOf("if (this.toolMode === TOOL_SELECT && hitStrokeIndex >= 0)"), pointerSource.indexOf("if (this.toolMode === TOOL_SELECT && hitStrokeIndex < 0 && markdownSelectionCandidate)"));
@@ -623,8 +624,10 @@ test("selection requires a completed tap before moving an element and reserves r
   assert.match(source, /startPendingSelectionTap\(event, action\)/);
   assert.match(source, /pointerDistance\(pending\.startClient, \{ x: event\.clientX, y: event\.clientY \}\)/);
   assert.match(source, /if \(pending && !pending\.moved && movedDistance <= this\.tapDistancePx\(\)\)/);
-  assert.match(source, /const canBecomeAreaSelection = \[[\s\S]*"select-stroke"[\s\S]*"select-markdown"[\s\S]*"select-group"/);
-  assert.match(source, /this\.startSelectionDrag\(event, pending\.startPoint \|\| this\.eventToPoint\(event\), \{[\s\S]*startClient: pending\.startClient[\s\S]*this\.updateSelectionDrag\(event\)/);
+  assert.match(source, /const canBecomeElementDrag = \[[\s\S]*"select-stroke"[\s\S]*"select-markdown"[\s\S]*"select-group"/);
+  assert.match(source, /pending\.type === "select-stroke"[\s\S]*this\.setSelectedStrokes\(pending\.index\)[\s\S]*startSelectedStrokeDrag/);
+  assert.match(source, /pending\.type === "select-markdown"[\s\S]*this\.selectMarkdownBlock\(pending\.element\)[\s\S]*startSelectedStrokeDrag/);
+  assert.doesNotMatch(source.slice(source.indexOf("  updatePendingSelectionTap("), source.indexOf("  applyPendingSelectionTap(")), /startSelectionDrag/);
 });
 
 test("NoteFlow resize updates stable geometry and remeasures row reservations before layout", async () => {
