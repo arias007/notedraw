@@ -800,7 +800,8 @@ test("Markdown selection uses only the visible Canvas frame and its four corners
   assert.match(drawSource, /getSelectionHandlePointsFromRect/);
   assert.match(drawSource, /getVisibleSelectionFrameCanvasRect/);
   assert.match(drawSource, /SELECTION_FRAME_COLOR/);
-  assert.match(drawSource, /setLineDash\(\[3, 2\]\)/);
+  assert.match(drawSource, /setLineDash\(\[\]\)/);
+  assert.doesNotMatch(drawSource, /setLineDash\(\[3, 2\]\)/);
   assert.match(drawSource, /roundRect\(this\.ctx, x, y, width, height, SELECTION_FRAME_RADIUS\)/);
   assert.match(handleSource, /getVisibleSelectionFrameCanvasRect/);
 });

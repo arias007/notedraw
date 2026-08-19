@@ -471,7 +471,8 @@ test("text controls keep drawing presets grouped and expose command buttons in I
   assert.match(source, /this\.syncBoundConnectors\(\)/);
   assert.match(source, /commandId: typeof stroke\?\.commandId === "string"/);
   assert.match(source, /\{ icon: "terminal", key: "buttonCommand", action: \(\) => this\.openSelectedButtonCommandPicker\(\) \}/);
-  assert.match(source, /openButtonCommandPicker\(requestedController, index\)/);
+  assert.match(source, /openButtonCommandPicker\(requestedController, target\)/);
+  assert.match(source, /setSelectedElementCommand\(requestedTarget, command\)/);
   assert.match(source, /executeCommandById\?\.\(commandId\)/);
 });
 
@@ -483,13 +484,12 @@ test("command buttons remain editable while active and execute only in inactive 
   assert.match(pendingSource, /this\.setSelectedStrokes\(pending\.index\)/);
   assert.doesNotMatch(pendingSource, /executeButtonCommand/);
   assert.match(source, /if \(!isCommandButton \|\| this\.active \|\| this\.surfaceType !== "preview"\)/);
-  assert.match(source, /this\.executeButtonCommand\(index\)/);
+  assert.match(source, /this\.executeElementCommand\(commandTarget\)/);
   assert.match(source, /if \(event\.detail >= 2 \|\| repeatedSelectionTap\) \{\s*this\.editFloatingTextStroke\(hitStrokeIndex\)/);
   assert.match(source, /class extends FuzzySuggestModal/);
   assert.match(source, /chooseButtonCommand/);
   assert.match(source, /setSelectedButtonCommand\(index, command\)/);
-  assert.match(source, /commandButton\?\.toggleAttribute\("hidden", this\.selectedButtonCommandIndex\(\) < 0\)/);
-  assert.doesNotMatch(source, /commandButton\?\.toggleAttribute\("hidden", !this\.selectedButtonCommandIndex\(\)\)/);
+  assert.match(source, /commandButton\?\.toggleAttribute\("hidden", !this\.selectedCommandTarget\(\)\)/);
   assert.doesNotMatch(pointerSource, /executeButtonCommand\(hitStrokeIndex\)/);
 });
 

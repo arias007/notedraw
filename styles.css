@@ -201,6 +201,12 @@
   box-shadow: 0 2px 9px rgba(0, 0, 0, 0.12);
 }
 
+.notedraw-embed.is-boxed {
+  box-sizing: border-box;
+  border: 1.25px solid var(--notedraw-node-color, #64748b);
+  border-radius: 7px;
+}
+
 .notedraw-embed.is-selected {
   border-color: color-mix(in srgb, var(--color-yellow) 72%, var(--interactive-accent));
   box-shadow:

@@ -70,7 +70,9 @@ function mergeSemanticMarkdownBlocks(current, duplicate) {
     floatingExplicit: Boolean(explicitFloating),
     floatBox: floatingSource?.floatBox || null,
     locked: Boolean(current.locked || duplicate.locked),
-    groupId: firstValue(records, "groupId") || ""
+    groupId: firstValue(records, "groupId") || "",
+    commandId: firstValue(records, "commandId") || "",
+    commandName: firstValue(records, "commandName") || ""
   };
 }
 
