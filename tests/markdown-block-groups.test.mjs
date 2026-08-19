@@ -206,7 +206,7 @@ test("all Markdown block types use stable inline lanes inside renderer-owned col
   assert.match(rows, /if \(!isNoteFlowCollectionBlock\(current\)\) \{\s*return current/);
   assert.match(rows, /current\.insertBefore\(row, flowElement\)/);
   assert.match(rows, /previousRow \|\| nextRow/);
-  assert.match(preview, /const allocation = this\.markdownInlineRowAllocation\(drop\?\.row, targetBlock, moving, drop\?\.side\)[\s\S]*applyDraggedMarkdownInlinePresentation\(target, targetSpan\)[\s\S]*ensureMarkdownBlockGridRow\(\{ \.\.\.targetBlock, span: targetSpan \}, target, \{ preview: true \}\)/);
+  assert.match(preview, /const allocation = this\.markdownDropInlineAllocation\(drop, targetBlock, moving\)[\s\S]*applyDraggedMarkdownInlinePresentation\(target, targetSpan\)[\s\S]*ensureMarkdownBlockGridRow\(\{ \.\.\.targetBlock, span: targetSpan \}, target, \{ preview: true \}\)/);
   assert.match(preview, /markdownInlineRowSpan\(allocation, state\.block\?\.id[\s\S]*applyDraggedMarkdownInlinePresentation\(dragElement, span\)/);
   assert.match(source, /canonicalMarkdownFlowTarget\(rawTarget\)[\s\S]*this\.markdownBlockElement\(block\)[\s\S]*candidate\.closest\?\.\("\.notedraw-md-block"\)/);
   assert.match(source, /applyDraggedNoteFlowAnchorDomPreview\(placement, drop = null\)[\s\S]*this\.canonicalMarkdownFlowTarget\(rawTarget\)/);
@@ -651,7 +651,7 @@ test("NoteFlow dragging previews the same snapped and packed placement committed
   assert.match(placementSource, /const horizontalSide = intent === "inline-right" \? "right"[\s\S]*: keptPreviousInline[\s\S]*\? previousPlacement\.horizontalSide[\s\S]*: null/);
   assert.match(dragSource, /createComment\("notedraw-note-flow-drag-origin"\)[\s\S]*state\.domMarker = marker/);
   assert.match(livePreviewSource, /this\.restoreDraggedNoteFlowLivePreview\(\)[\s\S]*applyDraggedNoteFlowAnchorDomPreview\(resolved, drop\)[\s\S]*applyDraggedMarkdownDomPreview\(drop\)[\s\S]*applyDraggedNoteFlowReservationPreview\(liveResolved, movedIndexes, rowExtent\)/);
-  assert.match(livePreviewSource, /const previousApplied = this\.dragNoteFlowLastAppliedPlacement[\s\S]*const previewStructureChanged = [\s\S]*previousApplied\.horizontalSide !== placement\.horizontalSide[\s\S]*previousApplied\.side !== placement\.side[\s\S]*previousApplied\.flowOrder !== placement\.flowOrder[\s\S]*const reuseAppliedPreview = options\.skipRestore === true[\s\S]*restoreDraggedNoteFlowLivePreview\(\)/);
+  assert.match(livePreviewSource, /const previousApplied = this\.dragNoteFlowLastAppliedPlacement[\s\S]*const previewOrderChanged = [\s\S]*previousApplied\.flowOrder !== placement\.flowOrder[\s\S]*const previewStructureChanged = [\s\S]*previousApplied\.horizontalSide !== placement\.horizontalSide[\s\S]*previousApplied\.side !== placement\.side[\s\S]*const reuseAppliedPreview = options\.skipRestore === true[\s\S]*!previewOrderChanged[\s\S]*restoreDraggedNoteFlowLivePreview\(\)/);
   assert.doesNotMatch(livePreviewSource.slice(0, livePreviewSource.indexOf("const reuseAppliedPreview")), /inlineBoundary|placement\.boundary/);
   assert.match(livePreviewSource, /if \(reuseAppliedPreview\) \{[\s\S]*resolveDraggedNoteFlowPlacement\(previousApplied, movedIndexes\)[\s\S]*snapDraggedSelectionToNoteFlowPlacement\(stableResolved, movedIndexes\)[\s\S]*dragNoteFlowLastAppliedPlacement = previousApplied;[\s\S]*return movedIndexes;/);
   assert.match(livePreviewSource, /this\.dragNoteFlowLastAppliedPlacement = \{[\s\S]*\.\.\.liveResolved,[\s\S]*previewCandidates,[\s\S]*previewRowOffsets: this\.captureDraggedNoteFlowPreviewRowOffsets/);
@@ -700,7 +700,7 @@ test("NoteFlow drag changes keep visual continuity without duplicate Markdown sp
   assert.match(animationSource, /captureDraggedNoteFlowStrokeVisualPoints[\s\S]*interpolatedDragStrokePoints[\s\S]*animateDraggedNoteFlowStrokeShifts/);
   assert.match(animationSource, /DRAG_STROKE_ANIMATION_MS[\s\S]*requestAnimationFrame\(tick\)/);
   assert.doesNotMatch(animationSource, /contains\("is-notedraw-md-dragging"\)/);
-  assert.match(livePreviewSource, /const previewTransition = Boolean\(placement\) && \(!previousApplied \|\| previewStructureChanged\)[\s\S]*const peerRects = previewTransition \? this\.captureNoteFlowPeerRects\(\) : null[\s\S]*const strokePoints = previewTransition \? this\.captureDraggedNoteFlowStrokeVisualPoints\(\) : null/);
+  assert.match(livePreviewSource, /const previewTransition = Boolean\(placement\) && \(!previousApplied \|\| previewStructureChanged \|\| previewOrderChanged\)[\s\S]*const peerRects = previewTransition \? this\.captureNoteFlowPeerRects\(\) : null[\s\S]*const strokePoints = previewTransition \? this\.captureDraggedNoteFlowStrokeVisualPoints\(\) : null/);
   assert.match(livePreviewSource, /if \(strokePoints\) \{[\s\S]*const movedSet = new Set\(movedIndexes\)[\s\S]*animateDraggedNoteFlowStrokeShifts\([\s\S]*affectedIndexes\.filter\(\(index\) => !movedSet\.has\(index\)\)/);
   assert.match(livePreviewSource, /markdownDomPreview \? 0 : this\.draggedNoteFlowPreviewHeight\(movedIndexes\)[\s\S]*applyDraggedNoteFlowReservationPreview[\s\S]*animateNoteFlowPeerShifts/);
   assert.match(source, /clearDraggedNoteFlowOriginReservationPreview\(indexes\)[\s\S]*moved\.has\(state\.ownerStrokeIndex\)[\s\S]*state\.value \|\| null/);
@@ -979,7 +979,7 @@ test("a missed Markdown drop restores document flow instead of creating a floati
   const finishSource = source.slice(source.indexOf("  finishSelectedStrokeDrag("), source.indexOf("  cancelSelectedStrokeDrag(", source.indexOf("  finishSelectedStrokeDrag(")));
   const edgeSource = source.slice(source.indexOf("  applyDraggedEdgeInsertion("), source.indexOf("  selectRelatedElements(", source.indexOf("  applyDraggedEdgeInsertion(")));
 
-  assert.match(finishSource, /if \(!markdownDrop\) \{\s*this\.updateDraggedFloatingMarkdownBlocks\(event, false\);\s*\}/);
+  assert.match(finishSource, /if \(!markdownDrop\) \{[\s\S]*state\.previewFloatBox[\s\S]*state\.block\.floatBox = \{ \.\.\.state\.previewFloatBox \}/);
   assert.doesNotMatch(finishSource, /updateDraggedFloatingMarkdownBlocks\(event, !markdownDrop\)/);
   assert.match(edgeSource, /const box = state\.block\.floating && state\.block\.floatBox \? state\.block\.floatBox : null/);
   assert.doesNotMatch(edgeSource, /currentBounds && normalizeMarkdownFloatBox/);
@@ -1091,9 +1091,9 @@ test("multi-item inline rows use one allocation for preview and commit", async (
   assert.match(metricsSource, /distributeInlineRowSpans\(totalCount\)/);
   assert.match(metricsSource, /const canFit = spans\.length === totalCount/);
   assert.doesNotMatch(metricsSource, /availableWidth \+ 0\.5 >= requiredWidth/);
-  assert.match(metricsSource, /markdownInlineRowAllocation\(row, targetBlock, moving, drop\.side\)/);
+  assert.match(metricsSource, /markdownDropInlineAllocation\(drop, targetBlock, moving\)/);
   assert.match(metricsSource, /markdownInlineRowSpan\(allocation, state\.block\.id/);
-  assert.match(previewSource, /markdownInlineRowAllocation\(drop\?\.row, targetBlock, moving, drop\?\.side\)/);
+  assert.match(previewSource, /markdownDropInlineAllocation\(drop, targetBlock, moving\)/);
   assert.match(previewSource, /markdownInlineRowSpan\(allocation, state\.block\?\.id/);
   assert.match(anchorSource, /markdownInlineRowAllocation\(row, block, movingStates, placement\.horizontalSide\)/);
   assert.match(styles, /\.notedraw-md-inline-grid-item \{[\s\S]*min-width: 0[\s\S]*overflow-wrap: anywhere/);

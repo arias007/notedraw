@@ -746,7 +746,7 @@
    task controls at the left edge of the following element. */
 .notedraw-md-grid > .notedraw-md-grid-item + .notedraw-md-grid-item::before,
 .notedraw-md-inline-grid-item + .notedraw-md-inline-grid-item::before {
-  left: -6px;
+  left: -9px;
 }
 
 .notedraw-md-block.is-floating {
