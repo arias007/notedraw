@@ -43,7 +43,7 @@ test("parallel rows scroll horizontally and keep their shared border away from t
   const styles = await readFile(stylesUrl, "utf8");
 
   assert.match(styles, /\.notedraw-md-grid-row[\s\S]*overflow-x: auto[\s\S]*overscroll-behavior-x: contain/);
-  assert.match(styles, /\.notedraw-md-grid > \.notedraw-md-grid-item \+ \.notedraw-md-grid-item::before[\s\S]*left: -9px/);
+  assert.match(styles, /\.notedraw-md-grid > \.notedraw-md-grid-item \+ \.notedraw-md-grid-item::before[\s\S]*left: -12px/);
 });
 
 test("existing floating text edits in place and commits when focus leaves", async () => {

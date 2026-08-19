@@ -10,10 +10,10 @@ test("parallel rows scroll independently and keep task controls clear", async ()
   const [source, styles] = await Promise.all([readFile(sourceUrl, "utf8"), readFile(stylesUrl, "utf8")]);
   const pending = source.slice(source.indexOf("  updatePendingSelectionTap("), source.indexOf("  applyPendingSelectionTap("));
 
-  assert.match(source, /type: "drag-selection"/);
+  assert.match(source, /type: "scroll-row"/);
   assert.match(pending, /pending\.scrollRow\.scrollLeft = pending\.scrollStartLeft - deltaX/);
   assert.match(styles, /\.notedraw-md-grid-row[\s\S]*overflow-x: auto/);
-  assert.match(styles, /\.notedraw-md-grid > \.notedraw-md-grid-item \+ \.notedraw-md-grid-item::before[\s\S]*left: -9px/);
+  assert.match(styles, /\.notedraw-md-grid > \.notedraw-md-grid-item \+ \.notedraw-md-grid-item::before[\s\S]*left: -12px/);
 });
 
 test("one frozen inline allocation is shared by preview and commit", async () => {

@@ -10313,7 +10313,16 @@ var PreviewDrawingController = class {
     if (this.toolMode === TOOL_SELECT && hitStrokeIndex >= 0) {
       const additiveSelect = event.shiftKey || event.ctrlKey || event.metaKey;
       const hitGroupId = this.drawingData.strokes[hitStrokeIndex]?.groupId || "";
+      const hitGroupIsLocked = Boolean(hitGroupId && this.elementGroup(hitGroupId)?.locked);
       if (!additiveSelect && hitGroupId && this.isElementGroupFullySelected(hitGroupId) && !this.enteredElementGroupIds.has(hitGroupId)) {
+        this.startPendingSelectionTap(event, {
+          type: "enter-stroke-group",
+          index: hitStrokeIndex,
+          groupId: hitGroupId
+        });
+        return;
+      }
+      if (!additiveSelect && hitGroupIsLocked && !this.enteredElementGroupIds.has(hitGroupId)) {
         this.startPendingSelectionTap(event, {
           type: "enter-stroke-group",
           index: hitStrokeIndex,
@@ -10339,17 +10348,6 @@ var PreviewDrawingController = class {
         });
         return;
       }
-      if (event.pointerType === "touch") {
-        const scrollRow = this.parallelScrollRowAt(event.clientX, event.clientY);
-        if (scrollRow && scrollRow.scrollWidth > scrollRow.clientWidth + 1) {
-          this.startPendingSelectionTap(event, {
-            type: "drag-selection",
-            index: hitStrokeIndex,
-            preserveSelection: preserveGroupSelection
-          });
-          return;
-        }
-      }
       this.startSelectedStrokeDrag(event, point, hitStrokeIndex, { preserveSelection: preserveGroupSelection });
       return;
     }
@@ -10359,7 +10357,16 @@ var PreviewDrawingController = class {
       const wasSelected = Boolean(existing && this.selectedMarkdownBlockIds.has(existing.id));
       const selectionActivated = this.markdownSelectionCanEditOrDrag(existing, markdownSelectionCandidate);
       const hitGroupId = existing?.groupId || "";
+      const hitGroupIsLocked = Boolean(hitGroupId && this.elementGroup(hitGroupId)?.locked);
       if (!additiveSelect && hitGroupId && this.isElementGroupFullySelected(hitGroupId) && !this.enteredElementGroupIds.has(hitGroupId)) {
+        this.startPendingSelectionTap(event, {
+          type: "enter-markdown-group",
+          element: markdownSelectionCandidate,
+          groupId: hitGroupId
+        });
+        return;
+      }
+      if (!additiveSelect && hitGroupIsLocked && !this.enteredElementGroupIds.has(hitGroupId)) {
         this.startPendingSelectionTap(event, {
           type: "enter-markdown-group",
           element: markdownSelectionCandidate,
@@ -10389,21 +10396,20 @@ var PreviewDrawingController = class {
         });
         return;
       }
-      if (event.pointerType === "touch") {
-        const scrollRow = this.parallelScrollRowAt(event.clientX, event.clientY, markdownSelectionCandidate);
-        if (scrollRow && scrollRow.scrollWidth > scrollRow.clientWidth + 1) {
-          this.startPendingSelectionTap(event, {
-            type: "drag-selection",
-            element: markdownSelectionCandidate,
-            preserveSelection: Boolean(hitGroupId && this.isElementGroupFullySelected(hitGroupId))
-          });
-          return;
-        }
-      }
       this.startSelectedStrokeDrag(event, point, -1, { preserveSelection: additiveSelect });
       return;
     }
     if (this.toolMode === TOOL_SELECT && hitStrokeIndex < 0 && !markdownSelectionCandidate) {
+      if (event.pointerType === "touch") {
+        const scrollRow = this.parallelScrollRowAt(event.clientX, event.clientY);
+        if (scrollRow && scrollRow.scrollWidth > scrollRow.clientWidth + 1) {
+          this.startPendingSelectionTap(event, {
+            type: "scroll-row",
+            scrollRow
+          });
+          return;
+        }
+      }
       const lockedGroup = this.findLockedElementGroupFrameAtPoint(point);
       if (lockedGroup) {
         if (!this.isElementGroupFullySelected(lockedGroup.id)) {
@@ -11314,6 +11320,17 @@ var PreviewDrawingController = class {
       members,
       expiresAt: Date.now() + 3000
     };
+    // Reapply the frozen row after checkbox handlers replace the rendered
+    // list item, including renderers that do not emit a child-list mutation.
+    for (const delay of [0, 48, 180]) {
+      window.setTimeout(() => {
+        if (this.destroyed || this.pendingMarkdownIdentityRefresh?.expiresAt <= Date.now()) {
+          return;
+        }
+        this.restorePendingMarkdownIdentityPresentation();
+        this.syncMarkdownBlockPresentation();
+      }, delay);
+    }
   }
   restorePendingMarkdownIdentityPresentation(mutations = []) {
     const pending = this.pendingMarkdownIdentityRefresh;
@@ -13052,17 +13069,14 @@ var PreviewDrawingController = class {
   startPendingSelectionTap(event, action) {
     this.endTextEdit();
     this.cancelCurrentStroke();
-    const scrollRow = event.pointerType === "touch"
-      ? this.parallelScrollRowAt(event.clientX, event.clientY, action.element)
-      : null;
     this.pendingSelectionTap = {
       ...action,
       pointerId: event.pointerId,
       startClient: { x: event.clientX, y: event.clientY },
       startPoint: this.eventToPoint(event),
       moved: false,
-      scrollRow,
-      scrollStartLeft: scrollRow?.scrollLeft || 0,
+      scrollRow: action.scrollRow || null,
+      scrollStartLeft: action.scrollRow?.scrollLeft || 0,
       scrollingRow: false
     };
     this.pointerStartClient = { x: event.clientX, y: event.clientY };
@@ -13084,10 +13098,10 @@ var PreviewDrawingController = class {
     const deltaX = event.clientX - pending.startClient.x;
     const deltaY = event.clientY - pending.startClient.y;
     const scrollActivation = this.selectedDragActivationDistancePx(event.pointerType);
-    if (pending.scrollingRow || pending.scrollRow?.isConnected
+    if (pending.type === "scroll-row" && (pending.scrollingRow || pending.scrollRow?.isConnected
       && pending.scrollRow.scrollWidth > pending.scrollRow.clientWidth + 1
       && Math.abs(deltaX) > scrollActivation
-      && Math.abs(deltaX) > Math.abs(deltaY) * 1.15) {
+      && Math.abs(deltaX) > Math.abs(deltaY) * 1.15)) {
       pending.moved = true;
       pending.scrollingRow = true;
       this.clearSelectionLongPress();
@@ -13102,6 +13116,8 @@ var PreviewDrawingController = class {
       "select-stroke",
       "select-markdown",
       "select-group",
+      "enter-stroke-group",
+      "enter-markdown-group",
       "drag-selection"
     ].includes(pending.type);
     const activationDistance = canBecomeElementDrag
@@ -13120,6 +13136,15 @@ var PreviewDrawingController = class {
         } else if (pending.type === "select-group") {
           this.enteredElementGroupIds.delete(pending.groupId);
           this.selectElementGroup(pending.groupId);
+        } else if (pending.type === "enter-stroke-group") {
+          this.enteredElementGroupIds.add(pending.groupId);
+          this.selectedMarkdownBlockIds.clear();
+          this.setSelectedStrokes(pending.index, { skipGroupExpansion: true });
+        } else if (pending.type === "enter-markdown-group") {
+          this.enteredElementGroupIds.add(pending.groupId);
+          this.selectedStrokeIndexes.clear();
+          this.selectedStrokeIndex = -1;
+          this.selectMarkdownBlock(pending.element, { skipGroupExpansion: true });
         }
         this.startSelectedStrokeDrag(event, pending.startPoint || this.eventToPoint(event), pending.index ?? -1, {
           preserveSelection: pending.preserveSelection || pending.type === "select-group",
@@ -13283,10 +13308,10 @@ var PreviewDrawingController = class {
     }
     const movableIndexes = indexes.filter((index) => {
       const stroke = this.drawingData.strokes[index];
-      return !stroke?.locked || Boolean(stroke.groupId && this.isElementGroupFullySelected(stroke.groupId));
+      return this.canManipulateGroupedElement(stroke);
     });
     const movableMarkdownBlocks = markdownBlocks.filter((block) => (
-      !block.locked || Boolean(block.groupId && this.isElementGroupFullySelected(block.groupId))
+      this.canManipulateGroupedElement(block)
     ) && this.markdownBlockElement(block));
     this.dragMarkdownTextCommit = this.endTextEdit();
     this.restoreDraggedNoteFlowLivePreview();
@@ -15014,8 +15039,8 @@ var PreviewDrawingController = class {
   }
   startSelectedStrokeResize(event, handle) {
     const indexes = this.getSelectedStrokeIndexes();
-    const resizableIndexes = indexes.filter((index) => !this.drawingData.strokes[index]?.locked || Boolean(this.drawingData.strokes[index]?.groupId));
-    const resizableMarkdownBlocks = this.getSelectedMarkdownBlocks().filter((block) => !block.locked || block.groupId);
+    const resizableIndexes = indexes.filter((index) => this.canManipulateGroupedElement(this.drawingData.strokes[index]));
+    const resizableMarkdownBlocks = this.getSelectedMarkdownBlocks().filter((block) => this.canManipulateGroupedElement(block));
     const bounds = this.getSelectedStrokeNormalizedBounds();
     if (!resizableIndexes.length && !resizableMarkdownBlocks.length || !bounds) {
       return;
@@ -17066,6 +17091,16 @@ var PreviewDrawingController = class {
   elementGroup(groupId) {
     return this.elementGroupRecords().find((group) => group.id === groupId) || null;
   }
+  canManipulateGroupedElement(item) {
+    if (!item?.locked) {
+      return true;
+    }
+    const groupId = String(item.groupId || "");
+    return Boolean(groupId && (
+      this.enteredElementGroupIds.has(groupId)
+      || this.isElementGroupFullySelected(groupId)
+    ));
+  }
   groupMemberStrokeIndexes(groupId) {
     const indexes = [];
     for (const [index, stroke] of this.drawingData.strokes.entries()) {
@@ -18331,6 +18366,7 @@ var PreviewDrawingController = class {
     if (this.restoreTextHighlightAnchors()) {
       this.invalidateStaticCache();
     }
+    this.restorePendingMarkdownIdentityWidths();
     const markdownConnectorIds = new Set((this.drawingData?.strokes || []).flatMap((stroke) => {
       const connector = normalizeConnector(stroke?.connector);
       return connector ? [connector.fromId, connector.toId].filter((id) => String(id || "").startsWith("md:")) : [];
@@ -18341,6 +18377,40 @@ var PreviewDrawingController = class {
     }
     this.scheduleDeletedTextHighlightPrune();
     this.ensureReadingHeadingCollapseIndicators();
+  }
+  restorePendingMarkdownIdentityWidths() {
+    const pending = this.pendingMarkdownIdentityRefresh;
+    if (!pending || pending.expiresAt <= Date.now()) {
+      return false;
+    }
+    let restored = false;
+    const records = new Map(this.markdownBlockRecords().map((block) => [block.id, block]));
+    for (const member of pending.members || []) {
+      const block = records.get(member.id);
+      const element = block ? this.markdownBlockElement(block) : null;
+      if (!block || block.floating || !element?.isConnected || !(Number(member.span) >= 1 && Number(member.span) < 12)) {
+        continue;
+      }
+      const span = Number(member.span);
+      const widthScale = normalizeMarkdownBlockWidthScale(member.widthScale);
+      if (Number(block.span) === span
+        && normalizeMarkdownBlockWidthScale(block.widthScale) === widthScale
+        && !block.noteFlowAutoSpan) {
+        continue;
+      }
+      block.span = span;
+      block.widthScale = widthScale;
+      block.noteFlowAutoSpan = false;
+      this.applyMarkdownBlockFlowPresentation(block, element);
+      this.applyMarkdownBlockWidthPresentation(block, element);
+      this.applyMarkdownBlockHeightPresentation(block, element);
+      restored = true;
+    }
+    if (restored) {
+      this.readingLogicalSizerHeight = 0;
+      this.scheduleResize({ layout: false, measure: true });
+    }
+    return restored;
   }
   ensureReadingHeadingCollapseIndicators() {
     // Obsidian's incremental re-render (plugin reload, file edits) drops the
@@ -23827,7 +23897,7 @@ var PreviewDrawingController = class {
     return null;
   }
   findSelectionHandleAt(point) {
-    const canResize = (item) => !item?.locked || Boolean(item.groupId && this.isElementGroupFullySelected(item.groupId));
+    const canResize = (item) => this.canManipulateGroupedElement(item);
     const hasUnlocked = this.getSelectedStrokeIndexes().some((index) => canResize(this.drawingData.strokes[index]))
       || this.getSelectedMarkdownBlocks().some(canResize);
     if (!hasUnlocked) {
