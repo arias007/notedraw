@@ -699,8 +699,11 @@ export function selectOwnedBlankSpaceCandidate(candidates, { clientX, clientY } 
   }
   return (Array.isArray(candidates) ? candidates : []).map((candidate, order) => {
     const rect = candidate?.rect;
-    const left = finite(rect?.left, Number.NaN);
-    const right = finite(rect?.right, Number.NaN);
+    const ownerRect = candidate?.ownerRect;
+    const ownerLeft = finite(ownerRect?.left, Number.NEGATIVE_INFINITY);
+    const ownerRight = finite(ownerRect?.right, Number.POSITIVE_INFINITY);
+    const left = Math.max(finite(rect?.left, Number.NaN), ownerLeft);
+    const right = Math.min(finite(rect?.right, Number.NaN), ownerRight);
     const top = finite(rect?.top, Number.NaN);
     const bottom = finite(rect?.bottom, Number.NaN);
     const applied = Math.max(0, finite(candidate?.applied));

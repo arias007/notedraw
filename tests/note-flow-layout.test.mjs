@@ -251,6 +251,18 @@ test("owned NoteFlow blank bands select the element that created the whitespace"
   assert.equal(selectOwnedBlankSpaceCandidate([candidates[3]], { clientX: 60, clientY: 70 })?.ownerIndex, 9);
   assert.equal(selectOwnedBlankSpaceCandidate([candidates[4]], { clientX: 60, clientY: 170 })?.ownerIndex, 10);
   assert.equal(selectOwnedBlankSpaceCandidate(candidates.slice(3), { clientX: 60, clientY: 120 }), null);
+
+  const horizontallyBoundOwner = {
+    ownerIndex: 11,
+    rect: { left: 10, right: 210, top: 100, bottom: 140 },
+    ownerRect: { left: 10, right: 80 },
+    property: "padding-bottom",
+    styleProperty: "margin-bottom",
+    applied: 45,
+    scale: 1
+  };
+  assert.equal(selectOwnedBlankSpaceCandidate([horizontallyBoundOwner], { clientX: 60, clientY: 170 })?.ownerIndex, 11);
+  assert.equal(selectOwnedBlankSpaceCandidate([horizontallyBoundOwner], { clientX: 160, clientY: 170 }), null);
 });
 
 test("frozen note-flow spacing is deterministic and keeps the largest offset per Markdown block", () => {

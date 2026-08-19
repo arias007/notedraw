@@ -4,7 +4,7 @@ import test from "node:test";
 
 const sourceUrl = new URL("../src/notedraw-plugin.js", import.meta.url);
 const stylesUrl = new URL("../styles.css", import.meta.url);
-const manifestUrl = new URL("../manifest.json", import.meta.url);
+const versionsUrl = new URL("../versions.json", import.meta.url);
 
 test("parallel rows scroll independently and keep task controls clear", async () => {
   const [source, styles] = await Promise.all([readFile(sourceUrl, "utf8"), readFile(stylesUrl, "utf8")]);
@@ -52,7 +52,7 @@ test("selected connector endpoints can reconnect, commit, and cancel", async () 
   assert.match(pointerUp, /connectorReconnect[\s\S]*finishConnectorReconnectGesture/);
 });
 
-test("release metadata is 3.6.20", async () => {
-  const manifest = JSON.parse(await readFile(manifestUrl, "utf8"));
-  assert.equal(manifest.version, "3.6.20");
+test("release history retains 3.6.20 compatibility", async () => {
+  const versions = JSON.parse(await readFile(versionsUrl, "utf8"));
+  assert.equal(versions["3.6.20"], "1.5.0");
 });

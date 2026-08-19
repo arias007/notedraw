@@ -8126,12 +8126,44 @@ var PreviewDrawingController = class {
     const indexes = this.getSelectedStrokeIndexes();
     const blocks = this.getSelectedMarkdownBlocks();
     if (indexes.length === 1 && blocks.length === 0) {
-      return { type: "stroke", index: indexes[0], elementId: strokeElementId(this.drawingData?.strokes?.[indexes[0]]) };
+      const stroke = this.drawingData?.strokes?.[indexes[0]];
+      return this.elementHasCommandFrame(stroke)
+        ? { type: "stroke", index: indexes[0], elementId: strokeElementId(stroke) }
+        : null;
     }
     if (indexes.length === 0 && blocks.length === 1) {
-      return { type: "markdown", id: blocks[0].id };
+      return this.elementHasCommandFrame(blocks[0])
+        ? { type: "markdown", id: blocks[0].id }
+        : null;
     }
     return null;
+  }
+  elementHasCommandFrame(item) {
+    if (!item) {
+      return false;
+    }
+    const ownFrame = Boolean(item.boxed || item.borderColor || item.backgroundColor);
+    const groupFrame = Boolean(item.groupId && this.elementGroup(item.groupId)?.boxed);
+    return ownFrame || groupFrame;
+  }
+  clearElementCommand(item) {
+    if (!item) {
+      return false;
+    }
+    const changed = Boolean(String(item.commandId || "").trim() || String(item.commandName || "").trim());
+    item.commandId = "";
+    item.commandName = "";
+    return changed;
+  }
+  clearElementGroupCommands(groupId) {
+    let changed = false;
+    for (const index of this.groupMemberStrokeIndexes(groupId)) {
+      changed = this.clearElementCommand(this.drawingData?.strokes?.[index]) || changed;
+    }
+    for (const block of this.groupMemberMarkdownBlocks(groupId)) {
+      changed = this.clearElementCommand(block) || changed;
+    }
+    return changed;
   }
   toggleSelectedBoxOrButtonStyle() {
     const index = this.getSelectedMarkdownBlocks().length === 0 && this.getSelectedStrokeIndexes().length === 1
@@ -8166,7 +8198,7 @@ var PreviewDrawingController = class {
     const item = target?.type === "markdown"
       ? this.markdownBlockRecords().find((block) => block.id === target.id)
       : this.drawingData?.strokes?.[Number(target?.index)];
-    if (!item || !command?.id) {
+    if (!item || !command?.id || !this.elementHasCommandFrame(item)) {
       return false;
     }
     const historyBefore = this.captureDrawingHistorySnapshot();
@@ -9255,9 +9287,9 @@ var PreviewDrawingController = class {
       const stroke = index >= 0 ? this.drawingData?.strokes?.[index] : null;
       const markdownElement = this.markdownBlockElementForTarget(event.target, { x: event.clientX, y: event.clientY });
       const markdownBlock = markdownElement ? this.findMarkdownBlockRecordForElement(markdownElement) : null;
-      const commandTarget = stroke && String(stroke.commandId || "").trim()
+      const commandTarget = stroke && this.elementHasCommandFrame(stroke) && String(stroke.commandId || "").trim()
         ? stroke
-        : markdownBlock && String(markdownBlock.commandId || "").trim()
+        : markdownBlock && this.elementHasCommandFrame(markdownBlock) && String(markdownBlock.commandId || "").trim()
           ? markdownBlock
           : null;
       if (commandTarget) {
@@ -10233,7 +10265,7 @@ var PreviewDrawingController = class {
       this.startSelectedStrokeResize(event, resizeHandle);
       return;
     }
-    const lockedGroupFrameHit = this.toolMode === TOOL_SELECT
+    const lockedGroupFrameHit = this.toolMode === TOOL_SELECT && hitStrokeIndex < 0 && !markdownSelectionCandidate
       ? this.findLockedElementGroupFrameAtPoint(point)
       : null;
     if (lockedGroupFrameHit) {
@@ -10309,7 +10341,7 @@ var PreviewDrawingController = class {
       }
       if (event.pointerType === "touch") {
         const scrollRow = this.parallelScrollRowAt(event.clientX, event.clientY);
-        if (scrollRow?.scrollWidth > scrollRow.clientWidth + 1) {
+        if (scrollRow && scrollRow.scrollWidth > scrollRow.clientWidth + 1) {
           this.startPendingSelectionTap(event, {
             type: "drag-selection",
             index: hitStrokeIndex,
@@ -10359,7 +10391,7 @@ var PreviewDrawingController = class {
       }
       if (event.pointerType === "touch") {
         const scrollRow = this.parallelScrollRowAt(event.clientX, event.clientY, markdownSelectionCandidate);
-        if (scrollRow?.scrollWidth > scrollRow.clientWidth + 1) {
+        if (scrollRow && scrollRow.scrollWidth > scrollRow.clientWidth + 1) {
           this.startPendingSelectionTap(event, {
             type: "drag-selection",
             element: markdownSelectionCandidate,
@@ -13136,6 +13168,9 @@ var PreviewDrawingController = class {
     return this.executeElementCommand(stroke);
   }
   executeElementCommand(element) {
+    if (!this.elementHasCommandFrame(element)) {
+      return false;
+    }
     const commandId = String(element?.commandId || "").trim();
     if (!commandId) {
       return false;
@@ -14378,7 +14413,7 @@ var PreviewDrawingController = class {
     const clientDx = this.dragMarkdownClientDeltaX / Math.max(0.0001, localScaleX);
     const clientDy = (dragEvent.clientY - this.pointerStartClient.y) / Math.max(0.0001, localScaleY);
     this.dragMarkdownClientDeltaY = dragEvent.clientY - this.pointerStartClient.y;
-    this.updateDraggedFloatingMarkdownBlocks(dragEvent, false);
+    const movedFloatingMarkdown = this.updateDraggedFloatingMarkdownBlocks(dragEvent, false);
     const usesNoteFlowPlacement = this.usesDraggedNoteFlowPlacement();
     for (const state of this.dragMarkdownOriginalElements?.values?.() || []) {
       // Only floating blocks follow the pointer through the CSS translate.
@@ -14412,7 +14447,8 @@ var PreviewDrawingController = class {
     if (this.syncDraggedTextHighlightAnchors()) {
       this.invalidateStaticCache();
     }
-    if (strokeIndexes.length || this.dragConnectorCandidates?.length || this.dragHasBoxBackground) {
+    this.invalidateSelectionFrameSnapshot();
+    if (strokeIndexes.length || this.dragConnectorCandidates?.length || this.dragHasBoxBackground || movedFloatingMarkdown) {
       this.requestRender(this.selectionHasDomStrokes() ? "interaction" : false);
     }
     event.preventDefault();
@@ -16043,7 +16079,7 @@ var PreviewDrawingController = class {
     body.createDiv({ cls: "notedraw-file-meta", text: formatBytes(stroke.assetSize) });
   }
   async renderRichTextEmbed(node, stroke, index) {
-    const isCommandButton = Boolean(String(stroke?.commandId || "").trim());
+    const isCommandButton = this.elementHasCommandFrame(stroke) && Boolean(String(stroke?.commandId || "").trim());
     node.toggleClass("is-command-button", isCommandButton);
     node.toggleAttribute("role", isCommandButton);
     node.toggleAttribute("tabindex", isCommandButton);
@@ -16751,9 +16787,17 @@ var PreviewDrawingController = class {
         if (ownerIndex < 0 || !owner || !this.isStrokeVisibleOnSurface(owner)) {
           continue;
         }
+        const ownerBounds = getStrokeBounds(owner, this.canvasWidth(), this.canvasHeight());
+        const canvasRect = this.canvas?.getBoundingClientRect?.();
+        const ownerPadding = Math.max(4, Number(owner.width) / 2 || 0);
+        const ownerRect = ownerBounds && canvasRect?.width > 0 && canvasRect?.height > 0 ? {
+          left: canvasRect.left + (ownerBounds.minX - ownerPadding) * canvasRect.width / this.canvasWidth(),
+          right: canvasRect.left + (ownerBounds.maxX + ownerPadding) * canvasRect.width / this.canvasWidth()
+        } : null;
         candidates.push({
           ownerIndex,
           rect,
+          ownerRect,
           property: state.property,
           styleProperty: state.styleProperty,
           applied: state.applied,
@@ -17103,8 +17147,7 @@ var PreviewDrawingController = class {
     const hit = this.pointToCanvas(point);
     const groups = this.elementGroupRecords().filter((group) => group.boxed);
     for (let index = groups.length - 1; index >= 0; index -= 1) {
-      const bounds = this.getElementGroupBounds(groups[index].id);
-      if (bounds && hit.x >= bounds.minX - 12 && hit.x <= bounds.maxX + 12 && hit.y >= bounds.minY - 12 && hit.y <= bounds.maxY + 12) {
+      if (this.elementGroupFrameBorderContains(groups[index].id, hit)) {
         return groups[index];
       }
     }
@@ -17117,38 +17160,30 @@ var PreviewDrawingController = class {
     ));
     for (let index = groups.length - 1; index >= 0; index -= 1) {
       const group = groups[index];
-      const bounds = this.getElementGroupBounds(group.id);
-      if (!bounds) {
-        continue;
-      }
-      const padding = this.elementGroupFramePaddingPx(group.id);
-      const tolerance = Math.max(5, this.selectionHitPaddingPx());
-      const outer = {
-        minX: bounds.minX - padding - tolerance,
-        maxX: bounds.maxX + padding + tolerance,
-        minY: bounds.minY - padding - tolerance,
-        maxY: bounds.maxY + padding + tolerance
-      };
-      const inner = {
-        minX: bounds.minX - padding + tolerance,
-        maxX: bounds.maxX + padding - tolerance,
-        minY: bounds.minY - padding + tolerance,
-        maxY: bounds.maxY + padding - tolerance
-      };
-      const insideOuter = hit.x >= outer.minX && hit.x <= outer.maxX && hit.y >= outer.minY && hit.y <= outer.maxY;
-      const insideInner = hit.x > inner.minX && hit.x < inner.maxX && hit.y > inner.minY && hit.y < inner.maxY;
-      const hitsVisibleEmptyArea = insideInner && !this.groupMemberStrokeIndexes(group.id).some((strokeIndex) => {
-        const strokeBounds = getStrokeBounds(this.drawingData.strokes[strokeIndex], this.canvasWidth(), this.canvasHeight());
-        return strokeBounds && hit.x >= strokeBounds.minX && hit.x <= strokeBounds.maxX && hit.y >= strokeBounds.minY && hit.y <= strokeBounds.maxY;
-      }) && !this.groupMemberMarkdownBlocks(group.id).some((block) => {
-        const blockBounds = this.markdownElementCanvasBounds(this.markdownBlockElement(block), { forSelection: true });
-        return blockBounds && hit.x >= blockBounds.minX && hit.x <= blockBounds.maxX && hit.y >= blockBounds.minY && hit.y <= blockBounds.maxY;
-      });
-      if (insideOuter && (!insideInner || hitsVisibleEmptyArea)) {
+      if (this.elementGroupFrameBorderContains(group.id, hit)) {
         return group;
       }
     }
     return null;
+  }
+  elementGroupFrameBorderContains(groupId, hit) {
+    const frame = this.elementGroupFrameRect(groupId);
+    if (!frame || !hit) {
+      return false;
+    }
+    const tolerance = Math.max(5, this.selectionHitPaddingPx());
+    const outerLeft = frame.x - tolerance;
+    const outerRight = frame.x + frame.width + tolerance;
+    const outerTop = frame.y - tolerance;
+    const outerBottom = frame.y + frame.height + tolerance;
+    if (hit.x < outerLeft || hit.x > outerRight || hit.y < outerTop || hit.y > outerBottom) {
+      return false;
+    }
+    const innerLeft = frame.x + tolerance;
+    const innerRight = frame.x + frame.width - tolerance;
+    const innerTop = frame.y + tolerance;
+    const innerBottom = frame.y + frame.height - tolerance;
+    return !(hit.x > innerLeft && hit.x < innerRight && hit.y > innerTop && hit.y < innerBottom);
   }
   isElementGroupFullySelected(groupId) {
     if (!groupId) {
@@ -23664,6 +23699,7 @@ var PreviewDrawingController = class {
       if (!group.backgroundColor) {
         group.backgroundColor = isCssColor(group.borderColor) ? group.borderColor : SELECTION_FRAME_COLOR;
       } else {
+        this.clearElementGroupCommands(group.id);
         group.boxed = false;
         group.backgroundColor = "";
         if (group.boxOwnedLock) {
