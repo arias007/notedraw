@@ -20,7 +20,7 @@ test("embedded Markdown editing freezes its initial geometry without running a l
     readFile(stylesUrl, "utf8")
   ]);
   const editSource = source.slice(source.indexOf("  captureEmbeddedEditorLayout("), source.indexOf("  focusSourceEditorAt(", source.indexOf("  captureEmbeddedEditorLayout(")));
-  const mutationSource = source.slice(source.indexOf("this.markdownRenderObserver = new MutationObserver"), source.indexOf("this.markdownRenderObserver.observe"));
+  const mutationSource = source.slice(source.indexOf("this.markdownRenderObserver = new MutationObserver"), source.lastIndexOf("      this.markdownRenderObserver.observe(this.previewEl, { subtree: true, childList: true });"));
 
   assert.match(editSource, /offsetWidth[\s\S]*offsetHeight/);
   assert.match(editSource, /stabilizeEmbeddedEditor\(element, editorLayoutLock\)/);

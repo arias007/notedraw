@@ -221,6 +221,7 @@ var WATERCOLOR_VARIANT_TEXT = "text-highlight";
 var WATERCOLOR_VARIANT_STRAIGHT = "straight";
 var MIN_READING_ZOOM = 0.6;
 var MAX_READING_ZOOM = 100;
+var READING_ZOOM_NORMALIZATION_EPSILON = 0.03;
 var DRAG_PEER_ANIMATION_MS = 150;
 var DRAG_STROKE_ANIMATION_MS = 160;
 var MOUSE_SELECTED_DRAG_ACTIVATION_PX = 3;
@@ -1459,6 +1460,8 @@ var NOTEDRAW_OWNED_MUTATION_SELECTOR = [
   ".notedraw-canvas",
   ".notedraw-note-flow-line-spacer",
   ".notedraw-note-flow-block-spacer",
+  ".notedraw-md-grid-row",
+  ".notedraw-md-line-block",
   ".notedraw-body-control",
   ".notedraw-file-input"
 ].join(",");
@@ -3903,10 +3906,10 @@ var NoteDrawPlugin = class extends Plugin {
           this.clearPreviewRenderRecovery(rootPreview);
           const controller = this.controllers.get(rootPreview) || rootPreview._noteDrawController;
           if (controller?.plugin === this && controller.previewEl?.isConnected) {
-            // Keep the hidden reading controller alive while the user edits.
-            // Destroying it clears the inline heading layout, so returning to
-            // reading view briefly renders the saved parallel row vertically.
-            controller.syncFloatingControlClasses?.();
+            // Hidden previews retain observers, canvases, and delayed layout
+            // work. Recreate them when reading mode returns instead of keeping
+            // one controller alive for every source tab.
+            controller.destroy();
           } else {
             controller?.destroy?.();
             resetDormantRootPreview(view, rootPreview);
@@ -5986,6 +5989,11 @@ var PreviewDrawingController = class {
     this.markdownAnnotationForce = false;
     this.lastScrollAt = 0;
     this.markdownRenderObserver = null;
+    this.markdownObserverResumeTimer = null;
+    this.markdownMutationWindowStartedAt = 0;
+    this.markdownMutationBurstCount = 0;
+    this.markdownObserverPausedUntil = 0;
+    this.markdownObserverPauseStreak = 0;
     this.staticCanvas = activeDocument.createElement("canvas");
     this.staticCanvas.width = 1;
     this.staticCanvas.height = 1;
@@ -6314,6 +6322,52 @@ var PreviewDrawingController = class {
     if (typeof MutationObserver !== "undefined") {
       this.markdownRenderObserver = new MutationObserver((mutations) => {
         if (mutations.some((mutation) => isMarkdownContentMutation(mutation))) {
+          const now = Date.now();
+          if (now < this.markdownObserverPausedUntil) {
+            return;
+          }
+          if (now - this.markdownMutationWindowStartedAt > 1000) {
+            this.markdownMutationWindowStartedAt = now;
+            this.markdownMutationBurstCount = 0;
+            if (now - this.markdownObserverPausedUntil > 30_000) {
+              this.markdownObserverPauseStreak = 0;
+            }
+          }
+          this.markdownMutationBurstCount += Math.max(1, mutations.length);
+          if (this.markdownMutationBurstCount > 20) {
+            // A renderer/plugin feedback loop can otherwise keep rebuilding
+            // the same preview until the Electron renderer reaches GBs of
+            // retained DOM. Pause this observer and let the next stable
+            // renderer batch reattach it.
+            this.markdownRenderObserver.disconnect();
+            this.markdownMutationBurstCount = 0;
+            this.markdownMutationWindowStartedAt = now;
+            this.markdownObserverPauseStreak = Math.min(6, this.markdownObserverPauseStreak + 1);
+            const pauseMs = Math.min(60_000, 4_000 * (2 ** (this.markdownObserverPauseStreak - 1)));
+            this.markdownObserverPausedUntil = now + pauseMs;
+            if (this.markdownObserverResumeTimer !== null) {
+              window.clearTimeout(this.markdownObserverResumeTimer);
+            }
+            this.markdownObserverResumeTimer = window.setTimeout(() => {
+              this.markdownObserverResumeTimer = null;
+              if (this.destroyed || !this.previewEl?.isConnected) {
+                return;
+              }
+              if (Date.now() < this.markdownObserverPausedUntil) {
+                this.markdownObserverResumeTimer = window.setTimeout(() => {
+                  this.markdownObserverResumeTimer = null;
+                  if (!this.destroyed && this.previewEl?.isConnected) {
+                    this.markdownRenderObserver.takeRecords();
+                    this.markdownRenderObserver.observe(this.previewEl, { subtree: true, childList: true });
+                  }
+                }, Math.max(100, this.markdownObserverPausedUntil - Date.now()));
+                return;
+              }
+              this.markdownRenderObserver.takeRecords();
+              this.markdownRenderObserver.observe(this.previewEl, { subtree: true, childList: true });
+            }, pauseMs);
+            return;
+          }
           if (this.currentEditor && mutations.every((mutation) => (
             mutation.target === this.currentEditor || this.currentEditor.contains?.(mutation.target)
           ))) {
@@ -6734,6 +6788,14 @@ var PreviewDrawingController = class {
     this.resizeObserver?.disconnect();
     this.markdownRenderObserver?.disconnect();
     this.markdownRenderObserver = null;
+    if (this.markdownObserverResumeTimer !== null) {
+      window.clearTimeout(this.markdownObserverResumeTimer);
+      this.markdownObserverResumeTimer = null;
+    }
+    this.markdownMutationWindowStartedAt = 0;
+    this.markdownMutationBurstCount = 0;
+    this.markdownObserverPausedUntil = 0;
+    this.markdownObserverPauseStreak = 0;
     if (this.markdownAnnotationTimer !== null) {
       window.clearTimeout(this.markdownAnnotationTimer);
       this.markdownAnnotationTimer = null;
@@ -12226,7 +12288,11 @@ var PreviewDrawingController = class {
     return this.surfaceType === "preview" && !this.embeddedSurface;
   }
   readingZoomScale() {
-    return this.canZoomReadingSurface() ? clamp(Number(this.readingZoom) || 1, MIN_READING_ZOOM, MAX_READING_ZOOM) : 1;
+    if (!this.canZoomReadingSurface()) {
+      return 1;
+    }
+    const scale = clamp(Number(this.readingZoom) || 1, MIN_READING_ZOOM, MAX_READING_ZOOM);
+    return Math.abs(scale - 1) < READING_ZOOM_NORMALIZATION_EPSILON ? 1 : scale;
   }
   isReadingZoomInteractionActive() {
     return Boolean(this.multiTouchScrolling) || Date.now() < this.readingZoomInteractionUntil;

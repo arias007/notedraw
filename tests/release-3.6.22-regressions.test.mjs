@@ -51,11 +51,21 @@ test("reading checkbox mutations reapply the frozen parallel row widths", async 
   assert.ok(restore.includes("applyMarkdownBlockWidthPresentation(block, element)"));
 });
 
-test("release metadata is 3.6.22", async () => {
+test("hidden previews are destroyed and NoteDraw wrappers are ignored by mutation scans", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const modeSync = source.slice(source.indexOf("  syncMarkdownControllerModes()"), source.indexOf("  syncEmbeddedMarkdownControllers()"));
+  const owned = source.slice(source.indexOf("var NOTEDRAW_OWNED_MUTATION_SELECTOR"), source.indexOf("var NoteDrawFileSuggestModal"));
+
+  assert.ok(modeSync.includes("controller.destroy();"));
+  assert.ok(owned.includes(".notedraw-md-grid-row"));
+  assert.ok(owned.includes(".notedraw-md-line-block"));
+});
+
+test("release metadata is 3.6.26", async () => {
   const [manifest, versions] = await Promise.all([
     readFile(manifestUrl, "utf8").then(JSON.parse),
     readFile(versionsUrl, "utf8").then(JSON.parse)
   ]);
-  assert.equal(manifest.version, "3.6.22");
-  assert.equal(versions["3.6.22"], manifest.minAppVersion);
+  assert.equal(manifest.version, "3.6.26");
+  assert.equal(versions["3.6.26"], manifest.minAppVersion);
 });

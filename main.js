@@ -4385,6 +4385,7 @@ var WATERCOLOR_VARIANT_TEXT = "text-highlight";
 var WATERCOLOR_VARIANT_STRAIGHT = "straight";
 var MIN_READING_ZOOM = 0.6;
 var MAX_READING_ZOOM = 100;
+var READING_ZOOM_NORMALIZATION_EPSILON = 0.03;
 var DRAG_PEER_ANIMATION_MS = 150;
 var DRAG_STROKE_ANIMATION_MS = 160;
 var MOUSE_SELECTED_DRAG_ACTIVATION_PX = 3;
@@ -5623,6 +5624,8 @@ var NOTEDRAW_OWNED_MUTATION_SELECTOR = [
   ".notedraw-canvas",
   ".notedraw-note-flow-line-spacer",
   ".notedraw-note-flow-block-spacer",
+  ".notedraw-md-grid-row",
+  ".notedraw-md-line-block",
   ".notedraw-body-control",
   ".notedraw-file-input"
 ].join(",");
@@ -8011,7 +8014,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
           this.clearPreviewRenderRecovery(rootPreview);
           const controller = this.controllers.get(rootPreview) || rootPreview._noteDrawController;
           if (controller?.plugin === this && controller.previewEl?.isConnected) {
-            controller.syncFloatingControlClasses?.();
+            controller.destroy();
           } else {
             controller?.destroy?.();
             resetDormantRootPreview(view, rootPreview);
@@ -10058,6 +10061,11 @@ var PreviewDrawingController = class {
     this.markdownAnnotationForce = false;
     this.lastScrollAt = 0;
     this.markdownRenderObserver = null;
+    this.markdownObserverResumeTimer = null;
+    this.markdownMutationWindowStartedAt = 0;
+    this.markdownMutationBurstCount = 0;
+    this.markdownObserverPausedUntil = 0;
+    this.markdownObserverPauseStreak = 0;
     this.staticCanvas = activeDocument.createElement("canvas");
     this.staticCanvas.width = 1;
     this.staticCanvas.height = 1;
@@ -10382,6 +10390,48 @@ var PreviewDrawingController = class {
     if (typeof MutationObserver !== "undefined") {
       this.markdownRenderObserver = new MutationObserver((mutations) => {
         if (mutations.some((mutation) => isMarkdownContentMutation(mutation))) {
+          const now = Date.now();
+          if (now < this.markdownObserverPausedUntil) {
+            return;
+          }
+          if (now - this.markdownMutationWindowStartedAt > 1e3) {
+            this.markdownMutationWindowStartedAt = now;
+            this.markdownMutationBurstCount = 0;
+            if (now - this.markdownObserverPausedUntil > 3e4) {
+              this.markdownObserverPauseStreak = 0;
+            }
+          }
+          this.markdownMutationBurstCount += Math.max(1, mutations.length);
+          if (this.markdownMutationBurstCount > 20) {
+            this.markdownRenderObserver.disconnect();
+            this.markdownMutationBurstCount = 0;
+            this.markdownMutationWindowStartedAt = now;
+            this.markdownObserverPauseStreak = Math.min(6, this.markdownObserverPauseStreak + 1);
+            const pauseMs = Math.min(6e4, 4e3 * 2 ** (this.markdownObserverPauseStreak - 1));
+            this.markdownObserverPausedUntil = now + pauseMs;
+            if (this.markdownObserverResumeTimer !== null) {
+              window.clearTimeout(this.markdownObserverResumeTimer);
+            }
+            this.markdownObserverResumeTimer = window.setTimeout(() => {
+              this.markdownObserverResumeTimer = null;
+              if (this.destroyed || !this.previewEl?.isConnected) {
+                return;
+              }
+              if (Date.now() < this.markdownObserverPausedUntil) {
+                this.markdownObserverResumeTimer = window.setTimeout(() => {
+                  this.markdownObserverResumeTimer = null;
+                  if (!this.destroyed && this.previewEl?.isConnected) {
+                    this.markdownRenderObserver.takeRecords();
+                    this.markdownRenderObserver.observe(this.previewEl, { subtree: true, childList: true });
+                  }
+                }, Math.max(100, this.markdownObserverPausedUntil - Date.now()));
+                return;
+              }
+              this.markdownRenderObserver.takeRecords();
+              this.markdownRenderObserver.observe(this.previewEl, { subtree: true, childList: true });
+            }, pauseMs);
+            return;
+          }
           if (this.currentEditor && mutations.every((mutation) => mutation.target === this.currentEditor || this.currentEditor.contains?.(mutation.target))) {
             return;
           }
@@ -10790,6 +10840,14 @@ var PreviewDrawingController = class {
     this.resizeObserver?.disconnect();
     this.markdownRenderObserver?.disconnect();
     this.markdownRenderObserver = null;
+    if (this.markdownObserverResumeTimer !== null) {
+      window.clearTimeout(this.markdownObserverResumeTimer);
+      this.markdownObserverResumeTimer = null;
+    }
+    this.markdownMutationWindowStartedAt = 0;
+    this.markdownMutationBurstCount = 0;
+    this.markdownObserverPausedUntil = 0;
+    this.markdownObserverPauseStreak = 0;
     if (this.markdownAnnotationTimer !== null) {
       window.clearTimeout(this.markdownAnnotationTimer);
       this.markdownAnnotationTimer = null;
@@ -16082,7 +16140,11 @@ ${selected}
     return this.surfaceType === "preview" && !this.embeddedSurface;
   }
   readingZoomScale() {
-    return this.canZoomReadingSurface() ? clamp10(Number(this.readingZoom) || 1, MIN_READING_ZOOM, MAX_READING_ZOOM) : 1;
+    if (!this.canZoomReadingSurface()) {
+      return 1;
+    }
+    const scale = clamp10(Number(this.readingZoom) || 1, MIN_READING_ZOOM, MAX_READING_ZOOM);
+    return Math.abs(scale - 1) < READING_ZOOM_NORMALIZATION_EPSILON ? 1 : scale;
   }
   isReadingZoomInteractionActive() {
     return Boolean(this.multiTouchScrolling) || Date.now() < this.readingZoomInteractionUntil;
