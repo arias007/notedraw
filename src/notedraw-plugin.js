@@ -88,6 +88,7 @@ import {
 } from "./viewport-gesture.mjs";
 import {
   captureInitialReadingLayout,
+  initialReadingLayoutSignature,
   waitForStableReadingLayout
 } from "./reading-layout.mjs";
 import {
@@ -5892,6 +5893,10 @@ var PreviewDrawingController = class {
     this.readingZoomInteractionUntil = 0;
     this.readingZoomSettleTimer = null;
     this.initialReadingLayoutPrepared = false;
+    this.initialReadingLayoutSettlement = null;
+    this.initialReadingLayoutSettled = false;
+    this.initialReadingSurfaceSettlement = null;
+    this.initialReadingCommittedSignature = "";
     this.readingTouchGuard = createReadingTouchGuardState();
     this.pendingEmbedTool = null;
     this.pendingMindMapFile = null;
@@ -6417,14 +6422,19 @@ var PreviewDrawingController = class {
   async prepareInitialReadingLayout() {
     if (this.surfaceType !== "preview"
       || this.initialReadingLayoutPrepared
-      || !this.usesVisualReadingZoom()) {
+      || !this.usesVisualReadingZoom()
+      || !this.drawingsLoaded) {
+      return this.initialReadingLayoutPrepared;
+    }
+    if (!(this.drawingData?.strokes?.length || this.drawingData?.markdownBlocks?.length)) {
       this.initialReadingLayoutPrepared = true;
+      this.initialReadingLayoutSettled = true;
       return;
     }
-    if (!this.active && !this.hasNoteFlowElements() && Math.abs(this.readingZoomScale() - 1) < 0.001) {
-      this.initialReadingLayoutPrepared = true;
-      return;
+    if (this.initialReadingLayoutSettlement) {
+      return this.initialReadingLayoutSettlement;
     }
+    const generation = this.drawingLoadGeneration;
     const requestFrame = () => new Promise((resolve) => {
       if (typeof window.requestAnimationFrame === "function") {
         let settled = false;
@@ -6449,21 +6459,158 @@ var PreviewDrawingController = class {
         window.setTimeout(resolve, 16);
       }
     });
-    await waitForStableReadingLayout(() => {
-      const sizer = rootPreviewSizer(this.previewEl);
-      return captureInitialReadingLayout(this.previewEl, sizer, this.readingPreviewRenderer());
-    }, {
-      requestFrame,
-      stableFrames: 2,
-      maxFrames: 8,
-      shouldAbort: () => this.destroyed || !this.previewEl?.isConnected
-    });
-    if (this.destroyed || !this.previewEl?.isConnected) {
-      return;
+    const preparation = (async () => {
+      await waitForStableReadingLayout(() => {
+        const sizer = rootPreviewSizer(this.previewEl);
+        return captureInitialReadingLayout(this.previewEl, sizer, this.readingPreviewRenderer());
+      }, {
+        requestFrame,
+        stableFrames: 2,
+        maxFrames: 8,
+        shouldAbort: () => this.destroyed
+          || generation !== this.drawingLoadGeneration
+          || !this.previewEl?.isConnected
+      });
+      if (this.destroyed || generation !== this.drawingLoadGeneration || !this.previewEl?.isConnected) {
+        return false;
+      }
+      this.responsiveLayoutContext = null;
+      this.responsiveLayoutSignature = "";
+      this.initialReadingLayoutPrepared = true;
+      return true;
+    })();
+    this.initialReadingLayoutSettlement = preparation;
+    try {
+      return await preparation;
+    } finally {
+      if (this.initialReadingLayoutSettlement === preparation) {
+        this.initialReadingLayoutSettlement = null;
+      }
     }
-    this.responsiveLayoutContext = null;
-    this.responsiveLayoutSignature = "";
-    this.initialReadingLayoutPrepared = true;
+  }
+  async settleInitialReadingSurface(generation = this.drawingLoadGeneration) {
+    if (this.surfaceType !== "preview" || this.active || this.embeddedSurface || !this.drawingsLoaded || !this.previewEl?.isConnected) {
+      return false;
+    }
+    if (generation !== this.drawingLoadGeneration || this.initialReadingLayoutSettled) {
+      return false;
+    }
+    if (this.initialReadingSurfaceSettlement) {
+      return this.initialReadingSurfaceSettlement;
+    }
+    const requestFrame = () => new Promise((resolve) => {
+      if (typeof window.requestAnimationFrame === "function") {
+        window.requestAnimationFrame(resolve);
+      } else {
+        window.setTimeout(resolve, 16);
+      }
+    });
+    const settlement = (async () => {
+      await this.prepareInitialReadingLayout();
+      if (this.destroyed || generation !== this.drawingLoadGeneration || !this.previewEl?.isConnected) {
+        return false;
+      }
+      const hasNoteFlow = this.hasNoteFlowElements();
+      if (hasNoteFlow) {
+        await this.prepareFrozenNoteFlowLayout();
+        await this.prepareNoteFlowForReading();
+      }
+      if (this.destroyed || generation !== this.drawingLoadGeneration || !this.previewEl?.isConnected) {
+        return false;
+      }
+      this.repairConnectedReadingSections();
+      this.syncMarkdownBlockPresentation();
+      // The first reading pass must project against the final rendered content
+      // frame. A measure-only resize leaves responsive coordinates from the
+      // previous surface, which is why toggling the toolbar used to fix it.
+      this.responsiveLayoutContext = null;
+      this.responsiveLayoutSignature = "";
+      this.responsivePointsInitialized = false;
+      this.resizeCanvas({ layout: true, measure: true });
+      await waitForStableReadingLayout(() => {
+        const sizer = rootPreviewSizer(this.previewEl);
+        return captureInitialReadingLayout(this.previewEl, sizer, this.readingPreviewRenderer());
+      }, {
+        requestFrame,
+        stableFrames: 2,
+        maxFrames: 6,
+        shouldAbort: () => this.destroyed
+          || generation !== this.drawingLoadGeneration
+          || !this.previewEl?.isConnected
+      });
+      if (this.destroyed || generation !== this.drawingLoadGeneration || !this.previewEl?.isConnected) {
+        return false;
+      }
+      // NoteFlow reservations can move all later Markdown blocks. Reproject
+      // once after that synchronous DOM change so the first painted frame is
+      // already the same frame users get after reopening the toolbar.
+      this.responsiveLayoutContext = null;
+      this.responsiveLayoutSignature = "";
+      this.responsivePointsInitialized = false;
+      this.resizeCanvas({ layout: true, measure: true });
+      if (hasNoteFlow) {
+        this.restoreFrozenNoteFlowLayout();
+      }
+      this.render();
+      this.initialReadingCommittedSignature = this.readingSurfaceGeometrySignature();
+      this.initialReadingLayoutSettled = true;
+      return true;
+    })();
+    this.initialReadingSurfaceSettlement = settlement;
+    try {
+      return await settlement;
+    } finally {
+      if (this.initialReadingSurfaceSettlement === settlement) {
+        this.initialReadingSurfaceSettlement = null;
+      }
+    }
+  }
+  readingSurfaceGeometrySignature() {
+    if (this.surfaceType !== "preview" || !this.previewEl?.isConnected) {
+      return "";
+    }
+    const sizer = rootPreviewSizer(this.previewEl);
+    const metrics = captureInitialReadingLayout(this.previewEl, sizer, this.readingPreviewRenderer());
+    const frame = measureResponsiveContentFrame(
+      this.previewEl,
+      this.surfaceType,
+      Math.max(1, Number(this.previewEl.clientWidth) || Number(metrics.previewWidth) || 1),
+      this.canvas,
+      this.readingZoomScale()
+    );
+    return [
+      initialReadingLayoutSignature(metrics),
+      Math.round(Number(frame?.left) || 0),
+      Math.round(Number(frame?.width) || 0),
+      Math.round(this.readingZoomScale() * 1000)
+    ].join(":");
+  }
+  reconcileSettledReadingSurface() {
+    if (
+      this.destroyed
+      || this.active
+      || this.surfaceType !== "preview"
+      || this.embeddedSurface
+      || !this.drawingsLoaded
+      || !this.initialReadingLayoutSettled
+      || this.initialReadingSurfaceSettlement
+      || !(this.drawingData?.strokes?.length || this.drawingData?.markdownBlocks?.length)
+    ) {
+      return false;
+    }
+    const currentSignature = this.readingSurfaceGeometrySignature();
+    if (!currentSignature || !this.initialReadingCommittedSignature || currentSignature === this.initialReadingCommittedSignature) {
+      return false;
+    }
+    const generation = this.drawingLoadGeneration;
+    this.initialReadingLayoutPrepared = false;
+    this.initialReadingLayoutSettled = false;
+    this.settleInitialReadingSurface(generation).catch((error) => {
+      if (!this.destroyed && generation === this.drawingLoadGeneration) {
+        console.error(`[${PLUGIN_ID}] Failed to settle changed reading layout`, error);
+      }
+    });
+    return true;
   }
   applySettings() {
     const settings = sanitizeSettings(this.plugin?.noteDrawSettings || {});
@@ -6698,6 +6845,10 @@ var PreviewDrawingController = class {
     this.responsivePointsInitialized = false;
     this.responsiveLayoutContext = null;
     this.initialReadingLayoutPrepared = false;
+    this.initialReadingLayoutSettlement = null;
+    this.initialReadingLayoutSettled = false;
+    this.initialReadingSurfaceSettlement = null;
+    this.initialReadingCommittedSignature = "";
     this.readingTouchGuard = createReadingTouchGuardState();
     this.responsiveProjectionPending = null;
     this.invalidateStaticCache();
@@ -7076,9 +7227,13 @@ var PreviewDrawingController = class {
       this.drawingsLoaded = true;
       this.applyDrawingsVisibility(data.visible !== false);
       this.invalidateStaticCache();
-      if (!this.active && this.hasNoteFlowElements()) {
+      if (this.destroyed || generation !== this.drawingLoadGeneration || this.file?.path !== file?.path) {
+        return;
+      }
+      if (!this.active && this.surfaceType === "preview") {
         this.initialReadingLayoutPrepared = false;
-        await this.prepareInitialReadingLayout();
+        this.initialReadingLayoutSettled = false;
+        await this.settleInitialReadingSurface(generation);
       }
       if (this.destroyed || generation !== this.drawingLoadGeneration || this.file?.path !== file?.path) {
         return;
@@ -7128,6 +7283,7 @@ var PreviewDrawingController = class {
     const previewWidth = Math.max(0, Number(this.previewEl?.clientWidth) || 0);
     const widthChanged = this.lastObservedPreviewWidth > 0 && Math.abs(previewWidth - this.lastObservedPreviewWidth) >= 1;
     this.lastObservedPreviewWidth = previewWidth;
+    this.reconcileSettledReadingSurface();
     if (this.active || this.drawingsLoaded || this.ctx) {
       this.scheduleResize({ layout: false, measure: widthChanged });
     }
@@ -7454,6 +7610,7 @@ var PreviewDrawingController = class {
         return;
       }
       this.repairConnectedReadingSections();
+      this.reconcileSettledReadingSurface();
       const editingLayout = this.active && (
         this.toolMode === TOOL_EDIT_MD
         || this.noteFlowOperationPending
@@ -21992,6 +22149,9 @@ var PreviewDrawingController = class {
   }
   scheduleFrozenNoteFlowLayoutRestore() {
     if (this.destroyed || !this.drawingsLoaded || this.frozenNoteFlowRestoreFrameId !== null || this.frozenNoteFlowRestoreTimer !== null) {
+      return;
+    }
+    if (this.surfaceType === "preview" && !this.active && !this.initialReadingLayoutSettled) {
       return;
     }
     if (this.noteFlowOperationPending || this.draggingStroke || this.resizingSelection || this.currentStroke?.noteFlow?.enabled) {

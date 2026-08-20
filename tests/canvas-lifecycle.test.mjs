@@ -40,6 +40,30 @@ test("late drawing loads cannot revive a destroyed or reassigned controller", as
   assert.match(loadSource, /if \(this\.loadingDrawings === loading\) \{\s*this\.loadingDrawings = null;/);
 });
 
+test("first reading surface settles after drawings load instead of relying on toolbar toggles", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const loadSource = source.slice(source.indexOf("  async ensureDrawingsLoaded()"), source.indexOf("  onResize()", source.indexOf("  async ensureDrawingsLoaded()")));
+  const settleStart = source.indexOf("  async settleInitialReadingSurface(");
+  const settleSource = source.slice(settleStart, source.indexOf("  applySettings()", settleStart));
+  const initialStart = source.indexOf("  async prepareInitialReadingLayout()");
+  const initialSource = source.slice(initialStart, source.indexOf("  applySettings()", initialStart));
+
+  assert.match(initialSource, /!this\.drawingsLoaded/);
+  assert.match(initialSource, /const generation = this\.drawingLoadGeneration/);
+  assert.match(initialSource, /generation !== this\.drawingLoadGeneration/);
+  assert.match(settleSource, /await this\.prepareInitialReadingLayout\(\)/);
+  assert.match(settleSource, /this\.resizeCanvas\(\{ layout: true, measure: true \}\)/);
+  assert.match(settleSource, /this\.responsivePointsInitialized = false/);
+  assert.match(settleSource, /waitForStableReadingLayout/);
+  assert.match(settleSource, /this\.initialReadingCommittedSignature = this\.readingSurfaceGeometrySignature\(\)/);
+  assert.match(source, /reconcileSettledReadingSurface\(\)[\s\S]*readingSurfaceGeometrySignature\(\)[\s\S]*settleInitialReadingSurface\(generation\)/);
+  assert.match(source, /onResize\(\)[\s\S]*this\.reconcileSettledReadingSurface\(\)/);
+  assert.match(source, /scheduleMarkdownMutationSync\(\)[\s\S]*this\.reconcileSettledReadingSurface\(\)/);
+  assert.match(loadSource, /if \(!this\.active && this\.surfaceType === "preview"\) \{[\s\S]*await this\.settleInitialReadingSurface\(generation\)/);
+  assert.match(loadSource, /this\.initialReadingLayoutSettled = false/);
+  assert.doesNotMatch(settleSource, /setTimeout\(.*settle/i);
+});
+
 test("background tabs cannot leave the initial canvas resize pending forever", async () => {
   const source = await readFile(sourceUrl, "utf8");
   const scheduleSource = source.slice(source.indexOf("  scheduleResize(options = {})"), source.indexOf("  scheduleFloatingControlsPosition()"));

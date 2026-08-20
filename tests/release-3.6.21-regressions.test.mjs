@@ -46,7 +46,7 @@ test("commands require a visible frame and are cleared when the frame is removed
   assert.match(unbox, /clearElementGroupCommands\(group\.id\)[\s\S]*group\.boxed = false/);
 });
 
-test("release metadata advances to 3.6.26", async () => {
+test("release metadata advances to the current release", async () => {
   const manifest = JSON.parse(await readFile(manifestUrl, "utf8"));
-  assert.equal(manifest.version, "3.6.26");
+  assert.equal(manifest.version, "3.6.27");
 });
