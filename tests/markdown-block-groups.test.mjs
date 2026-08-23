@@ -620,6 +620,23 @@ test("Markdown resize keeps continuous horizontal width inside its grid span", a
   assert.match(source, /const markdownScaleLimits =[\s\S]*state\.maxHeight[\s\S]*scaleY = Math\.min\(scaleY, \.\.\.markdownScaleLimits\)/);
 });
 
+test("Markdown blocks default to content-fit width and preserve explicit widths", async () => {
+  const [source, styles] = await Promise.all([
+    readFile(sourceUrl, "utf8"),
+    readFile(stylesUrl, "utf8")
+  ]);
+
+  assert.match(source, /inlineWidthMode: normalizeMarkdownInlineWidthMode\(/);
+  assert.match(source, /normalizeMarkdownInlineWidthMode\(value, span = 12, widthScale = 1\)/);
+  assert.match(source, /const fitContent = normalizeMarkdownInlineWidthMode\([\s\S]*\) === "fit"/);
+  assert.match(source, /flowElement\.classList\?\.toggle\?\.\("notedraw-md-fit-content", fitContent\)/);
+  assert.match(source, /block\.inlineWidthMode = "fixed"/);
+  assert.match(source, /block\.inlineWidthMode = "fit"/);
+  assert.match(source, /markdownInlinePreferredSpan\(block, element, inlineLaneWidth\)/);
+  assert.match(source, /const textRect = this\.markdownElementTextClientRect\(owner, visibleRect\)/);
+  assert.match(styles, /\.notedraw-md-block\.notedraw-md-fit-content \{[\s\S]*width: fit-content !important;[\s\S]*max-width: 100%;/);
+});
+
 test("NoteFlow dragging previews the same snapped and packed placement committed on release", async () => {
   const source = await readFile(sourceUrl, "utf8");
   const dragSource = source.slice(source.indexOf("  startSelectedStrokeDrag("), source.indexOf("  startSelectedStrokeResize("));

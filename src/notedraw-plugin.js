@@ -13603,6 +13603,7 @@ var PreviewDrawingController = class {
         span: block.span,
         noteFlowAutoSpan: Boolean(block.noteFlowAutoSpan),
         widthScale: normalizeMarkdownBlockWidthScale(block.widthScale),
+        inlineWidthMode: normalizeMarkdownInlineWidthMode(block.inlineWidthMode, block.span, block.widthScale),
         floatBox: block.floatBox ? { ...block.floatBox } : null,
         floatingExplicit: Boolean(block.floatingExplicit),
         canvasBounds: this.markdownElementCanvasBounds(element, { forSelection: true }),
@@ -14120,6 +14121,13 @@ var PreviewDrawingController = class {
     const movingMarkdownCount = movingElements.size || this.dragMarkdownOriginalElements?.size || 0;
     const targetRect = geometry?.markdownCandidateByElement?.get(target)?.rect || target?.getBoundingClientRect?.();
     const parent = this.markdownBlockLayoutLane(target);
+    const inlineLaneWidth = Number(parent?.clientWidth)
+      || Number(geometry?.laneRect?.right) - Number(geometry?.laneRect?.left)
+      || Number(this.dragContentLaneRect?.width)
+      || Number(this.layoutMeasureEl?.clientWidth)
+      || Number(this.previewEl?.clientWidth)
+      || Number(targetRect?.width)
+      || 0;
     const memberEntries = [];
     const targetBlock = this.findMarkdownBlockRecordForElement(target);
     const targetId = targetBlock?.id || target?.dataset?.noteDrawMarkdownBlockId || "__notedraw-inline-target__";
@@ -14143,7 +14151,9 @@ var PreviewDrawingController = class {
         memberEntries.push({
           id,
           rect,
-          span: Number.isFinite(liveSpan) ? liveSpan : block.span
+          span: Number.isFinite(liveSpan)
+            ? liveSpan
+            : this.markdownInlinePreferredSpan(block, element, inlineLaneWidth)
         });
       }
     }
@@ -14153,7 +14163,9 @@ var PreviewDrawingController = class {
     memberEntries.push({
       id: targetId,
       rect: targetRect,
-      span: Number.isFinite(targetLiveSpan) ? targetLiveSpan : targetBlock?.span
+      span: Number.isFinite(targetLiveSpan)
+        ? targetLiveSpan
+        : this.markdownInlinePreferredSpan(targetBlock, target, inlineLaneWidth)
     });
     memberEntries.sort((left, right) => (
       Number(left.rect?.left) - Number(right.rect?.left)
@@ -14207,6 +14219,41 @@ var PreviewDrawingController = class {
     geometry?.rowMetrics?.set(target, result);
     return result;
   }
+  markdownInlinePreferredSpan(block, element, laneWidth) {
+    const normalizedMode = normalizeMarkdownInlineWidthMode(
+      block?.inlineWidthMode,
+      block?.span,
+      block?.widthScale
+    );
+    const currentSpan = clamp(
+      Math.round(Number(block?.span) || 12),
+      1,
+      12
+    );
+    if (normalizedMode === "fixed") {
+      return currentSpan;
+    }
+    const availableWidth = Math.max(1, Number(laneWidth) || 0);
+    const owner = this.markdownBlockFlowElement(element) || element;
+    const visibleRect = this.markdownElementVisibleClientRect(owner)
+      || owner?.getBoundingClientRect?.();
+    const textRect = this.markdownElementTextClientRect(owner, visibleRect);
+    const mediaRect = owner?.querySelector?.(
+      "img,video,audio,iframe,.internal-embed,.markdown-embed,.markdown-embed-content,figure"
+    )?.getBoundingClientRect?.();
+    const checkboxRect = this.markdownTaskCheckboxRect(owner, visibleRect);
+    const contentWidth = Math.max(
+      Number(textRect?.width) || 0,
+      Number(mediaRect?.width) || 0,
+      checkboxRect ? Math.max(0, checkboxRect.right - (visibleRect?.left || checkboxRect.left)) : 0
+    );
+    if (!(contentWidth > 0)) {
+      return currentSpan;
+    }
+    const gap = owner?.matches?.("li") ? INLINE_NOTE_FLOW_LIST_GAP_PX : INLINE_NOTE_FLOW_GAP_PX;
+    const paddedWidth = Math.min(availableWidth, contentWidth + gap + 12);
+    return clamp(Math.ceil(paddedWidth / availableWidth * 12), 1, 12);
+  }
   markdownInlineRowAllocation(row, targetBlock, moving = [], side = "right") {
     const movingIds = moving.map((state) => state?.block?.id || state?.id).filter(Boolean);
     const knownMovingCount = Math.max(
@@ -14218,12 +14265,22 @@ var PreviewDrawingController = class {
       ? row.preferredSpanById
       : []);
     if (targetBlock?.id && !preferredSpanById.has(targetBlock.id)) {
-      preferredSpanById.set(targetBlock.id, targetBlock.span || 12);
+      preferredSpanById.set(
+        targetBlock.id,
+        this.markdownInlinePreferredSpan(targetBlock, this.markdownBlockElement(targetBlock), row?.availableWidth)
+      );
     }
     for (const state of moving) {
       const id = state?.block?.id || state?.id;
       if (id) {
-        preferredSpanById.set(id, state?.block?.span || state?.span || 12);
+        preferredSpanById.set(
+          id,
+          this.markdownInlinePreferredSpan(
+            state?.block,
+            state?.element,
+            row?.availableWidth
+          )
+        );
       }
     }
     for (let index = 0; index < Math.max(0, knownMovingCount - movingIds.length); index += 1) {
@@ -14313,7 +14370,8 @@ var PreviewDrawingController = class {
     const originalRowBlocks = new Map(Array.from(rowBlocks, ([id, block]) => [id, {
       span: block.span || 12,
       noteFlowAutoSpan: Boolean(block.noteFlowAutoSpan),
-      widthScale: normalizeMarkdownBlockWidthScale(block.widthScale)
+      widthScale: normalizeMarkdownBlockWidthScale(block.widthScale),
+      inlineWidthMode: normalizeMarkdownInlineWidthMode(block.inlineWidthMode, block.span, block.widthScale)
     }]));
     const originalTargetLineStart = targetBlock?.lineStart;
     const originalTargetLineEnd = targetBlock?.lineEnd;
@@ -14333,6 +14391,7 @@ var PreviewDrawingController = class {
         }
         block.span = nextSpan;
         block.noteFlowAutoSpan = false;
+        block.inlineWidthMode = "fixed";
       }
       for (const state of moving) {
         const nextSpan = this.markdownInlineRowSpan(allocation, state.block.id, state.block.span);
@@ -14341,6 +14400,7 @@ var PreviewDrawingController = class {
         }
         state.block.span = nextSpan;
         state.block.noteFlowAutoSpan = false;
+        state.block.inlineWidthMode = "fixed";
         state.block.floating = false;
         state.block.floatingExplicit = false;
         state.block.floatBox = null;
@@ -14350,6 +14410,7 @@ var PreviewDrawingController = class {
         state.block.span = 12;
         state.block.widthScale = 1;
         state.block.noteFlowAutoSpan = false;
+        state.block.inlineWidthMode = "fixed";
         state.block.floating = false;
         state.block.floatingExplicit = false;
         state.block.floatBox = null;
@@ -14375,11 +14436,13 @@ var PreviewDrawingController = class {
         block.span = original.span;
         block.noteFlowAutoSpan = original.noteFlowAutoSpan;
         block.widthScale = original.widthScale;
+        block.inlineWidthMode = original.inlineWidthMode;
       }
       for (const state of moving) {
         state.block.span = state.span;
         state.block.noteFlowAutoSpan = state.noteFlowAutoSpan;
         state.block.widthScale = state.widthScale;
+        state.block.inlineWidthMode = state.inlineWidthMode;
         state.block.floating = Boolean(state.floatBox);
         state.block.floatingExplicit = Boolean(state.floatingExplicit);
         state.block.floatBox = state.floatBox ? { ...state.floatBox } : null;
@@ -15000,6 +15063,7 @@ var PreviewDrawingController = class {
             state.block.span = state.span;
             state.block.noteFlowAutoSpan = state.noteFlowAutoSpan;
             state.block.widthScale = state.widthScale;
+            state.block.inlineWidthMode = state.inlineWidthMode;
             state.block.floating = Boolean(state.floatBox);
             state.block.floatingExplicit = Boolean(state.floatingExplicit);
             state.block.floatBox = state.floatBox ? { ...state.floatBox } : null;
@@ -15330,6 +15394,7 @@ var PreviewDrawingController = class {
         block,
         span: block.span,
         widthScale: normalizeMarkdownBlockWidthScale(block.widthScale),
+        inlineWidthMode: normalizeMarkdownInlineWidthMode(block.inlineWidthMode, block.span, block.widthScale),
         minHeight: block.minHeight,
         naturalHeight,
         currentHeight,
@@ -15481,6 +15546,7 @@ var PreviewDrawingController = class {
         const nextSpan = clamp(Math.ceil(desiredWidthUnits), 2, 12);
         block.span = nextSpan;
         block.widthScale = normalizeMarkdownBlockWidthScale(desiredWidthUnits / nextSpan);
+        block.inlineWidthMode = "fixed";
         block.minHeight = resizeMarkdownBlockMinHeight({
           currentHeight: state.currentHeight,
           naturalHeight: state.naturalHeight,
@@ -15630,6 +15696,7 @@ var PreviewDrawingController = class {
       const before = `${block.span}:${block.widthScale}:${block.minHeight}:${block.floating ? 1 : 0}`;
       block.span = 12;
       block.widthScale = 1;
+      block.inlineWidthMode = "fit";
       block.minHeight = null;
       block.floating = false;
       block.floatingExplicit = false;
@@ -15676,6 +15743,7 @@ var PreviewDrawingController = class {
       for (const state of this.resizeSelectionOriginalMarkdownBlocks.values()) {
         state.block.span = state.span;
         state.block.widthScale = state.widthScale;
+        state.block.inlineWidthMode = state.inlineWidthMode;
         state.block.minHeight = state.minHeight;
         state.block.floating = state.floating;
         state.block.floatBox = state.floatBox ? { ...state.floatBox } : null;
@@ -17898,6 +17966,7 @@ var PreviewDrawingController = class {
     }
     flowElement.classList.remove("notedraw-md-grid-item", "is-notedraw-md-dragging");
     flowElement.classList.remove("notedraw-md-inline-grid-item");
+    flowElement.classList.remove("notedraw-md-fit-content");
     flowElement.style.removeProperty("grid-column");
     flowElement.style.removeProperty("--notedraw-md-inline-span");
     flowElement.style.removeProperty("--notedraw-md-inline-width");
@@ -18089,16 +18158,29 @@ var PreviewDrawingController = class {
     }
     const flowElement = this.markdownBlockFlowElement(element) || element;
     if (block?.floating) {
+      flowElement.classList?.remove?.("notedraw-md-fit-content");
       element.style.removeProperty("width");
       flowElement.style.removeProperty("--notedraw-md-inline-width");
       return;
     }
     const widthScale = normalizeMarkdownBlockWidthScale(block?.widthScale);
     if (flowElement.classList?.contains("notedraw-md-inline-grid-item")) {
+      flowElement.classList?.remove?.("notedraw-md-fit-content");
       flowElement.style.setProperty("--notedraw-md-inline-width", markdownInlineWidthCss(block?.span, widthScale, flowElement));
       element.style.removeProperty("width");
       return;
     }
+    const fitContent = normalizeMarkdownInlineWidthMode(
+      block?.inlineWidthMode,
+      block?.span,
+      block?.widthScale
+    ) === "fit";
+    flowElement.classList?.toggle?.("notedraw-md-fit-content", fitContent);
+    if (fitContent) {
+      element.style.removeProperty("width");
+      return;
+    }
+    flowElement.classList?.remove?.("notedraw-md-fit-content");
     if (widthScale >= 0.999) {
       element.style.removeProperty("width");
       return;
@@ -28010,6 +28092,11 @@ function normalizeMarkdownBlocks(value, file) {
       span: clamp(Math.round(Number(block?.span) || 12), 1, 12),
       noteFlowAutoSpan: Boolean(block?.noteFlowAutoSpan),
       widthScale: normalizeMarkdownBlockWidthScale(block?.widthScale),
+      inlineWidthMode: normalizeMarkdownInlineWidthMode(
+        block?.inlineWidthMode,
+        block?.span,
+        block?.widthScale
+      ),
       minHeight: normalizeMarkdownBlockMinHeight(block?.minHeight),
       borderColor: isPaletteColor(block?.borderColor) ? block.borderColor : "",
       backgroundColor: isPaletteColor(block?.backgroundColor) ? block.backgroundColor : "",
@@ -28041,6 +28128,14 @@ function normalizeMarkdownBlocks(value, file) {
 function normalizeMarkdownBlockWidthScale(value) {
   const widthScale = Number(value);
   return Number.isFinite(widthScale) ? clamp(widthScale, 0.2, 1) : 1;
+}
+function normalizeMarkdownInlineWidthMode(value, span = 12, widthScale = 1) {
+  if (value === "fixed" || value === "fit") {
+    return value;
+  }
+  return Number(span) < 12 || normalizeMarkdownBlockWidthScale(widthScale) < 0.999
+    ? "fixed"
+    : "fit";
 }
 function taskSourceRangeLooksRelative(block, element, info) {
   if (!element?.matches?.("li.task-list-item") || !Number.isFinite(Number(block?.lineStart)) || !Number.isFinite(Number(info?.lineStart))) {

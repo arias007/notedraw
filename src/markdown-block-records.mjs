@@ -35,6 +35,15 @@ function hasExplicitParallelMarkdownLayout(record) {
     || (Number.isFinite(widthScale) && widthScale > 0 && widthScale < 0.999);
 }
 
+function markdownInlineWidthMode(record) {
+  if (record?.inlineWidthMode === "fixed" || record?.inlineWidthMode === "fit") {
+    return record.inlineWidthMode;
+  }
+  const span = Number(record?.span);
+  const widthScale = Number(record?.widthScale);
+  return span < 12 || widthScale < 0.999 ? "fixed" : "fit";
+}
+
 function mergeSemanticMarkdownBlocks(current, duplicate) {
   const records = [current, duplicate];
   // Re-rendered Markdown can create a fresh default owner (span=12) for a
@@ -60,6 +69,11 @@ function mergeSemanticMarkdownBlocks(current, duplicate) {
     widthScale: layoutSource
       ? Number(layoutSource.widthScale) || 1
       : Math.max(Number(current.widthScale) || 0, Number(duplicate.widthScale) || 0),
+    inlineWidthMode: layoutSource
+      ? markdownInlineWidthMode(layoutSource)
+      : markdownInlineWidthMode(current) === "fixed" || markdownInlineWidthMode(duplicate) === "fixed"
+        ? "fixed"
+        : "fit",
     minHeight: Math.max(Number(current.minHeight) || 0, Number(duplicate.minHeight) || 0),
     borderColor: firstValue(records, "borderColor") || "",
     backgroundColor: firstValue(records, "backgroundColor") || "",

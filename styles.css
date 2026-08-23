@@ -722,6 +722,18 @@
   zoom: var(--notedraw-md-content-scale, 1);
 }
 
+/* A normal Markdown block owns only the width its rendered content needs.
+   Once the user resizes it or places it in a parallel row, the controller
+   removes this class and restores the explicit width/span presentation. */
+.notedraw-md-block.notedraw-md-fit-content {
+  width: fit-content !important;
+  max-width: 100%;
+}
+
+.notedraw-md-block.notedraw-md-fit-content > * {
+  max-width: 100%;
+}
+
 .notedraw-md-block,
 .notedraw-md-block :where(a, span, strong, em, code, mark, del, small) {
   color: var(--notedraw-md-content-color, inherit);
