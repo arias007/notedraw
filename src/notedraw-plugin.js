@@ -13650,6 +13650,7 @@ var PreviewDrawingController = class {
         noteFlowAutoSpan: Boolean(block.noteFlowAutoSpan),
         widthScale: normalizeMarkdownBlockWidthScale(block.widthScale),
         inlineWidthMode: normalizeMarkdownInlineWidthMode(block.inlineWidthMode, block.span, block.widthScale),
+        inlineOffsetX: normalizeMarkdownInlineOffsetX(block.inlineOffsetX),
         floatBox: block.floatBox ? { ...block.floatBox } : null,
         floatingExplicit: Boolean(block.floatingExplicit),
         canvasBounds: this.markdownElementCanvasBounds(element, { forSelection: true }),
@@ -14417,7 +14418,8 @@ var PreviewDrawingController = class {
       span: block.span || 12,
       noteFlowAutoSpan: Boolean(block.noteFlowAutoSpan),
       widthScale: normalizeMarkdownBlockWidthScale(block.widthScale),
-      inlineWidthMode: normalizeMarkdownInlineWidthMode(block.inlineWidthMode, block.span, block.widthScale)
+      inlineWidthMode: normalizeMarkdownInlineWidthMode(block.inlineWidthMode, block.span, block.widthScale),
+      inlineOffsetX: normalizeMarkdownInlineOffsetX(block.inlineOffsetX)
     }]));
     const originalTargetLineStart = targetBlock?.lineStart;
     const originalTargetLineEnd = targetBlock?.lineEnd;
@@ -14438,6 +14440,7 @@ var PreviewDrawingController = class {
         block.span = nextSpan;
         block.noteFlowAutoSpan = false;
         block.inlineWidthMode = "fixed";
+        block.inlineOffsetX = 0;
       }
       for (const state of moving) {
         const nextSpan = this.markdownInlineRowSpan(allocation, state.block.id, state.block.span);
@@ -14447,6 +14450,7 @@ var PreviewDrawingController = class {
         state.block.span = nextSpan;
         state.block.noteFlowAutoSpan = false;
         state.block.inlineWidthMode = "fixed";
+        state.block.inlineOffsetX = 0;
         state.block.floating = false;
         state.block.floatingExplicit = false;
         state.block.floatBox = null;
@@ -14457,6 +14461,7 @@ var PreviewDrawingController = class {
         state.block.widthScale = 1;
         state.block.noteFlowAutoSpan = false;
         state.block.inlineWidthMode = "fixed";
+        state.block.inlineOffsetX = 0;
         state.block.floating = false;
         state.block.floatingExplicit = false;
         state.block.floatBox = null;
@@ -14483,12 +14488,14 @@ var PreviewDrawingController = class {
         block.noteFlowAutoSpan = original.noteFlowAutoSpan;
         block.widthScale = original.widthScale;
         block.inlineWidthMode = original.inlineWidthMode;
+        block.inlineOffsetX = original.inlineOffsetX;
       }
       for (const state of moving) {
         state.block.span = state.span;
         state.block.noteFlowAutoSpan = state.noteFlowAutoSpan;
         state.block.widthScale = state.widthScale;
         state.block.inlineWidthMode = state.inlineWidthMode;
+        state.block.inlineOffsetX = state.inlineOffsetX;
         state.block.floating = Boolean(state.floatBox);
         state.block.floatingExplicit = Boolean(state.floatingExplicit);
         state.block.floatBox = state.floatBox ? { ...state.floatBox } : null;
@@ -15110,6 +15117,7 @@ var PreviewDrawingController = class {
             state.block.noteFlowAutoSpan = state.noteFlowAutoSpan;
             state.block.widthScale = state.widthScale;
             state.block.inlineWidthMode = state.inlineWidthMode;
+            state.block.inlineOffsetX = state.inlineOffsetX;
             state.block.floating = Boolean(state.floatBox);
             state.block.floatingExplicit = Boolean(state.floatingExplicit);
             state.block.floatBox = state.floatBox ? { ...state.floatBox } : null;
@@ -15441,6 +15449,7 @@ var PreviewDrawingController = class {
         span: block.span,
         widthScale: normalizeMarkdownBlockWidthScale(block.widthScale),
         inlineWidthMode: normalizeMarkdownInlineWidthMode(block.inlineWidthMode, block.span, block.widthScale),
+        inlineOffsetX: normalizeMarkdownInlineOffsetX(block.inlineOffsetX),
         minHeight: block.minHeight,
         naturalHeight,
         currentHeight,
@@ -15593,6 +15602,12 @@ var PreviewDrawingController = class {
         block.span = nextSpan;
         block.widthScale = normalizeMarkdownBlockWidthScale(desiredWidthUnits / nextSpan);
         block.inlineWidthMode = "fixed";
+        const lane = this.markdownBlockLayoutLane(state.element);
+        const laneWidth = Number(lane?.getBoundingClientRect?.().width) || 0;
+        const canvasWidth = Math.max(1, Number(this.canvasWidth()) || 0);
+        const deltaX = Number(this.resizeSelectionPreviewBounds?.minX) - Number(this.resizeSelectionOriginalBounds?.minX);
+        const deltaRatio = laneWidth > 0 ? deltaX / canvasWidth : 0;
+        block.inlineOffsetX = normalizeMarkdownInlineOffsetX(Number(state.inlineOffsetX) + deltaRatio);
         block.minHeight = resizeMarkdownBlockMinHeight({
           currentHeight: state.currentHeight,
           naturalHeight: state.naturalHeight,
@@ -15743,6 +15758,7 @@ var PreviewDrawingController = class {
       block.span = 12;
       block.widthScale = 1;
       block.inlineWidthMode = "fit";
+      block.inlineOffsetX = 0;
       block.minHeight = null;
       block.floating = false;
       block.floatingExplicit = false;
@@ -15790,6 +15806,7 @@ var PreviewDrawingController = class {
         state.block.span = state.span;
         state.block.widthScale = state.widthScale;
         state.block.inlineWidthMode = state.inlineWidthMode;
+        state.block.inlineOffsetX = state.inlineOffsetX;
         state.block.minHeight = state.minHeight;
         state.block.floating = state.floating;
         state.block.floatBox = state.floatBox ? { ...state.floatBox } : null;
@@ -18016,6 +18033,7 @@ var PreviewDrawingController = class {
     flowElement.style.removeProperty("grid-column");
     flowElement.style.removeProperty("--notedraw-md-inline-span");
     flowElement.style.removeProperty("--notedraw-md-inline-width");
+    flowElement.style.removeProperty("--notedraw-md-inline-offset-x");
     flowElement.style.removeProperty("--notedraw-md-drag-x");
     flowElement.style.removeProperty("--notedraw-md-drag-y");
   }
@@ -18161,7 +18179,7 @@ var PreviewDrawingController = class {
       delete element.dataset.noteDrawSortDragging;
       delete element.dataset.noteDrawResizedHeight;
     }
-    for (const property of ["grid-column", "width", "--notedraw-md-inline-width", "--notedraw-md-border", "--notedraw-md-background", "--notedraw-md-min-height", "--notedraw-md-drag-x", "--notedraw-md-drag-y", "--notedraw-md-float-x", "--notedraw-md-float-y", "--notedraw-md-float-width"]) {
+    for (const property of ["grid-column", "width", "--notedraw-md-inline-width", "--notedraw-md-inline-offset-x", "--notedraw-md-border", "--notedraw-md-background", "--notedraw-md-min-height", "--notedraw-md-drag-x", "--notedraw-md-drag-y", "--notedraw-md-float-x", "--notedraw-md-float-y", "--notedraw-md-float-width"]) {
       element.style?.removeProperty(property);
     }
   }
@@ -18198,6 +18216,15 @@ var PreviewDrawingController = class {
       this.readingLogicalSizerHeight = 0;
     }
   }
+  markdownInlineOffsetCss(block, element) {
+    const offset = normalizeMarkdownInlineOffsetX(block?.inlineOffsetX);
+    if (!offset) {
+      return "0px";
+    }
+    const lane = this.markdownBlockLayoutLane(element) || element?.parentElement;
+    const laneWidth = Number(lane?.getBoundingClientRect?.().width) || 0;
+    return `${Math.round(offset * laneWidth * 100) / 100}px`;
+  }
   applyMarkdownBlockWidthPresentation(block, element) {
     if (!element) {
       return;
@@ -18207,12 +18234,16 @@ var PreviewDrawingController = class {
       flowElement.classList?.remove?.("notedraw-md-fit-content");
       element.style.removeProperty("width");
       flowElement.style.removeProperty("--notedraw-md-inline-width");
+      flowElement.style.removeProperty("--notedraw-md-inline-offset-x");
       return;
     }
     const widthScale = normalizeMarkdownBlockWidthScale(block?.widthScale);
     if (flowElement.classList?.contains("notedraw-md-inline-grid-item")) {
       flowElement.classList?.remove?.("notedraw-md-fit-content");
       flowElement.style.setProperty("--notedraw-md-inline-width", markdownInlineWidthCss(block?.span, widthScale, flowElement));
+      setNoteDrawCssProps(flowElement, {
+        "--notedraw-md-inline-offset-x": this.markdownInlineOffsetCss(block, flowElement)
+      });
       element.style.removeProperty("width");
       return;
     }
@@ -18223,10 +18254,14 @@ var PreviewDrawingController = class {
     ) === "fit";
     flowElement.classList?.toggle?.("notedraw-md-fit-content", fitContent);
     if (fitContent) {
+      flowElement.style.removeProperty("--notedraw-md-inline-offset-x");
       element.style.removeProperty("width");
       return;
     }
     flowElement.classList?.remove?.("notedraw-md-fit-content");
+    setNoteDrawCssProps(flowElement, {
+      "--notedraw-md-inline-offset-x": this.markdownInlineOffsetCss(block, flowElement)
+    });
     if (widthScale >= 0.999) {
       element.style.removeProperty("width");
       return;
@@ -28143,6 +28178,7 @@ function normalizeMarkdownBlocks(value, file) {
         block?.span,
         block?.widthScale
       ),
+      inlineOffsetX: normalizeMarkdownInlineOffsetX(block?.inlineOffsetX),
       minHeight: normalizeMarkdownBlockMinHeight(block?.minHeight),
       borderColor: isPaletteColor(block?.borderColor) ? block.borderColor : "",
       backgroundColor: isPaletteColor(block?.backgroundColor) ? block.backgroundColor : "",
@@ -28182,6 +28218,10 @@ function normalizeMarkdownInlineWidthMode(value, span = 12, widthScale = 1) {
   return Number(span) < 12 || normalizeMarkdownBlockWidthScale(widthScale) < 0.999
     ? "fixed"
     : "fit";
+}
+function normalizeMarkdownInlineOffsetX(value) {
+  const offset = Number(value);
+  return Number.isFinite(offset) ? clamp(offset, -1, 1) : 0;
 }
 function taskSourceRangeLooksRelative(block, element, info) {
   if (!element?.matches?.("li.task-list-item") || !Number.isFinite(Number(block?.lineStart)) || !Number.isFinite(Number(info?.lineStart))) {

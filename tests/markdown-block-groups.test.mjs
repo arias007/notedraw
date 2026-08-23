@@ -653,6 +653,22 @@ test("Markdown blocks default to content-fit width and preserve explicit widths"
   assert.match(styles, /\.notedraw-md-block\.notedraw-md-fit-content \{[\s\S]*width: fit-content !important;[\s\S]*max-width: 100%;/);
 });
 
+test("Markdown resize persists the inline left edge without affecting right-edge resizing", async () => {
+  const [source, styles, records] = await Promise.all([
+    readFile(sourceUrl, "utf8"),
+    readFile(stylesUrl, "utf8"),
+    readFile(new URL("../src/markdown-block-records.mjs", import.meta.url), "utf8")
+  ]);
+
+  assert.match(source, /inlineOffsetX: normalizeMarkdownInlineOffsetX\(block\.inlineOffsetX\)/);
+  assert.match(source, /const deltaX = Number\(this\.resizeSelectionPreviewBounds\?\.minX\)[\s\S]*block\.inlineOffsetX = normalizeMarkdownInlineOffsetX/);
+  assert.match(source, /block\.inlineOffsetX = original\.inlineOffsetX/);
+  assert.match(source, /--notedraw-md-inline-offset-x/);
+  assert.match(styles, /notedraw-md-inline-grid-item[\s\S]*transform: translateX\(var\(--notedraw-md-inline-offset-x/);
+  assert.match(styles, /notedraw-md-grid-item:not\(\.is-notedraw-md-dragging\)[\s\S]*transform: translateX/);
+  assert.match(records, /inlineOffsetX: layoutSource[\s\S]*normalizeMarkdownInlineOffsetX/);
+});
+
 test("NoteFlow dragging previews the same snapped and packed placement committed on release", async () => {
   const source = await readFile(sourceUrl, "utf8");
   const dragSource = source.slice(source.indexOf("  startSelectedStrokeDrag("), source.indexOf("  startSelectedStrokeResize("));

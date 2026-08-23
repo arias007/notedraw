@@ -773,16 +773,20 @@
 
 .notedraw-md-block.is-notedraw-md-dragging:not(.is-floating) {
   z-index: 9;
-  transform: translate(var(--notedraw-md-drag-x, 0px), var(--notedraw-md-drag-y, 0px));
+  transform: translate(calc(var(--notedraw-md-inline-offset-x, 0px) + var(--notedraw-md-drag-x, 0px)), var(--notedraw-md-drag-y, 0px));
   pointer-events: none;
   opacity: 0.84;
 }
 
 .notedraw-md-grid-item.is-notedraw-md-dragging {
   z-index: 9;
-  transform: translate(var(--notedraw-md-drag-x, 0px), var(--notedraw-md-drag-y, 0px));
+  transform: translate(calc(var(--notedraw-md-inline-offset-x, 0px) + var(--notedraw-md-drag-x, 0px)), var(--notedraw-md-drag-y, 0px));
   pointer-events: none;
   opacity: 0.84;
+}
+
+.notedraw-md-grid-item:not(.is-notedraw-md-dragging) {
+  transform: translateX(var(--notedraw-md-inline-offset-x, 0%));
 }
 
 /* Obsidian-owned Markdown collections keep their native children. Inline
@@ -800,6 +804,7 @@
   vertical-align: top;
   overflow-wrap: anywhere;
   word-break: break-word;
+  transform: translateX(var(--notedraw-md-inline-offset-x, 0%));
 }
 
 .notedraw-md-inline-grid-item > * {
@@ -813,7 +818,7 @@
 
 .notedraw-md-block.notedraw-note-flow-peer-animating {
   transform: translate(
-    var(--notedraw-note-flow-peer-x, 0px),
+    calc(var(--notedraw-md-inline-offset-x, 0px) + var(--notedraw-note-flow-peer-x, 0px)),
     var(--notedraw-note-flow-peer-y, 0px)
   );
   transition: transform 150ms cubic-bezier(0.2, 0.8, 0.2, 1);
@@ -822,7 +827,7 @@
 .notedraw-md-block.is-notedraw-md-dragging.notedraw-note-flow-peer-animating,
 .notedraw-md-grid-item.is-notedraw-md-dragging.notedraw-note-flow-peer-animating {
   transform: translate(
-    var(--notedraw-note-flow-peer-x, 0px),
+    calc(var(--notedraw-md-inline-offset-x, 0px) + var(--notedraw-note-flow-peer-x, 0px)),
     var(--notedraw-note-flow-peer-y, 0px)
   );
   transition: transform 150ms cubic-bezier(0.2, 0.8, 0.2, 1);

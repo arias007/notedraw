@@ -69,6 +69,11 @@ function mergeSemanticMarkdownBlocks(current, duplicate) {
     widthScale: layoutSource
       ? Number(layoutSource.widthScale) || 1
       : Math.max(Number(current.widthScale) || 0, Number(duplicate.widthScale) || 0),
+    inlineOffsetX: layoutSource
+      ? normalizeMarkdownInlineOffsetX(layoutSource.inlineOffsetX)
+      : Math.abs(Number(current.inlineOffsetX) || 0) >= Math.abs(Number(duplicate.inlineOffsetX) || 0)
+        ? normalizeMarkdownInlineOffsetX(current.inlineOffsetX)
+        : normalizeMarkdownInlineOffsetX(duplicate.inlineOffsetX),
     inlineWidthMode: layoutSource
       ? markdownInlineWidthMode(layoutSource)
       : markdownInlineWidthMode(current) === "fixed" || markdownInlineWidthMode(duplicate) === "fixed"
@@ -88,6 +93,11 @@ function mergeSemanticMarkdownBlocks(current, duplicate) {
     commandId: firstValue(records, "commandId") || "",
     commandName: firstValue(records, "commandName") || ""
   };
+}
+
+function normalizeMarkdownInlineOffsetX(value) {
+  const offset = Number(value);
+  return Number.isFinite(offset) ? Math.max(-1, Math.min(1, offset)) : 0;
 }
 
 function repeatedSingleLineHint(value) {
