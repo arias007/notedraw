@@ -495,11 +495,36 @@ test("visible Markdown and task checkboxes select their own block before lower N
   const pointerSource = source.slice(source.indexOf("  onPointerDown(event"), source.indexOf("  onPointerMove(event", source.indexOf("  onPointerDown(event")));
   const targetSource = source.slice(source.indexOf("  markdownBlockElementForTarget("), source.indexOf("  ensureMarkdownBlockRecord(", source.indexOf("  markdownBlockElementForTarget(")));
 
-  assert.match(pointerSource, /markdownSelectionCandidate && hitStrokeIndex >= 0 && shouldPlaceStrokeBelowMarkdown/);
+  assert.match(pointerSource, /markdownSelectionCandidate && hitStrokeIndex >= 0[\s\S]*shouldPlaceStrokeBelowMarkdown/);
   assert.match(pointerSource, /hitStrokeIndex < 0 && !resizeHandle && !markdownSelectionCandidate/);
   assert.match(targetSource, /input\.task-list-item-checkbox, input\[type='checkbox'\]/);
   assert.match(targetSource, /taskCheckbox\?\.closest\?\.\("li"\)/);
   assert.match(targetSource, /element\?\.closest\?\.\("li"\) === taskItem && isConcreteMarkdownBlockElement\(element\)/);
+});
+
+test("selected floating strokes keep drag priority over Markdown beneath the canvas", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const pointerStart = source.indexOf("  onPointerDown(event");
+  const pointerSource = source.slice(pointerStart, source.indexOf("  onPointerMove(event", pointerStart));
+
+  assert.match(pointerSource, /const selectedStrokeHit = hitStrokeIndex >= 0 && this\.isStrokeSelected\(hitStrokeIndex\)/);
+  assert.match(pointerSource, /!selectedStrokeHit[\s\S]*shouldPlaceStrokeBelowMarkdown/);
+});
+
+test("text editing toolbar exposes Word-style paragraph alignment for source and rendered editors", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const toolbar = source.slice(source.indexOf("  createFormatToolbar("), source.indexOf("  createFormatMoveButton(", source.indexOf("  createFormatToolbar(")));
+
+  assert.match(toolbar, /align-left/);
+  assert.match(toolbar, /align-center/);
+  assert.match(toolbar, /align-right/);
+  assert.match(toolbar, /align-justify/);
+  assert.match(source, /applySourceTextAlignment\(alignment\)/);
+  assert.match(source, /justifyLeft/);
+  assert.match(source, /justifyCenter/);
+  assert.match(source, /justifyRight/);
+  assert.match(source, /justifyFull/);
+  assert.match(source, /sourceTextAlignmentMarkers\(alignment\)/);
 });
 
 test("Markdown selection resize hits only the visible outer frame corners", async () => {

@@ -4519,6 +4519,10 @@ var I18N = {
     bold: "Bold",
     italic: "Italic",
     underline: "Underline",
+    alignLeft: "Align left",
+    alignCenter: "Center",
+    alignRight: "Align right",
+    alignJustify: "Justify",
     inlineCode: "Inline code",
     keyboardTag: "Keyboard tag",
     superscript: "Superscript",
@@ -4700,6 +4704,10 @@ var I18N = {
     bold: "\u52A0\u7C97",
     italic: "\u503E\u659C",
     underline: "\u4E0B\u5212\u7EBF",
+    alignLeft: "\u5DE6\u5BF9\u9F50",
+    alignCenter: "\u5C45\u4E2D",
+    alignRight: "\u53F3\u5BF9\u9F50",
+    alignJustify: "\u4E24\u7AEF\u5BF9\u9F50",
     inlineCode: "\u884C\u5185\u4EE3\u7801",
     keyboardTag: "\u952E\u76D8\u6807\u7B7E",
     superscript: "\u4E0A\u6807",
@@ -12646,6 +12654,10 @@ var PreviewDrawingController = class {
       }
     });
     this.createFormatMoveButton();
+    this.createFormatButton("align-left", "alignLeft", "align-left", () => this.applyTextAlignment("left"));
+    this.createFormatButton("align-center", "alignCenter", "align-center", () => this.applyTextAlignment("center"));
+    this.createFormatButton("align-right", "alignRight", "align-right", () => this.applyTextAlignment("right"));
+    this.createFormatButton("align-justify", "alignJustify", "align-justify", () => this.applyTextAlignment("justify"));
     this.createFormatButton("bold", "bold", "bold", () => this.applyTextInlineFormat("strong"));
     this.createFormatButton("italic", "italic", "italic", () => this.applyTextInlineFormat("em"));
     this.createFormatButton("underline", "underline", "underline", () => this.applyTextInlineFormat("u"));
@@ -12851,6 +12863,35 @@ ${selected}
     return this.dispatchSourceSelection([{ from: range.from, to: range.to, insert }], {
       anchor: range.from + 5,
       head: range.from + 5 + selected.length
+    });
+  }
+  sourceTextAlignmentMarkers(alignment) {
+    const safeAlignment = ["left", "center", "right", "justify"].includes(alignment) ? alignment : "left";
+    return [`<div style="text-align: ${safeAlignment};">`, "</div>"];
+  }
+  applySourceTextAlignment(alignment) {
+    const range = this.sourceSelectionRange();
+    if (!range) {
+      return false;
+    }
+    const source = range.cmView.state.doc.toString();
+    const from = source.lastIndexOf("\n", Math.max(0, range.from - 1)) + 1;
+    const lineEnd = source.indexOf("\n", range.to);
+    const to = lineEnd < 0 ? source.length : lineEnd;
+    const selected = source.slice(from, to);
+    if (!selected.trim()) {
+      return false;
+    }
+    const [prefix, suffix] = this.sourceTextAlignmentMarkers(alignment);
+    const selectionFrom = prefix.length + (range.from - from);
+    const selectionTo = selectionFrom + (range.to - range.from);
+    return this.dispatchSourceSelection([{
+      from,
+      to,
+      insert: `${prefix}${selected}${suffix}`
+    }], {
+      anchor: from + selectionFrom,
+      head: from + selectionTo
     });
   }
   insertSourceTextBreak() {
@@ -13096,6 +13137,45 @@ ${selected}
       this.queueCurrentTextSave(true);
       this.positionFormatToolbar();
     }
+  }
+  applyTextAlignment(alignment) {
+    const safeAlignment = ["left", "center", "right", "justify"].includes(alignment) ? alignment : "left";
+    if (this.surfaceType === "source" && this.toolMode === TOOL_EDIT_MD && !this.currentEditorEmbedded) {
+      return this.applySourceTextAlignment(safeAlignment);
+    }
+    if (!this.currentEditor || !this.restoreTextRange()) {
+      return false;
+    }
+    const selection = window.getSelection?.();
+    if (!selection?.rangeCount) {
+      return false;
+    }
+    const range = selection.getRangeAt(0);
+    if (!this.currentEditor.contains(range.commonAncestorContainer)) {
+      return false;
+    }
+    const command = {
+      left: "justifyLeft",
+      center: "justifyCenter",
+      right: "justifyRight",
+      justify: "justifyFull"
+    }[safeAlignment];
+    const applied = activeDocument.execCommand?.(command, false, null);
+    if (applied !== false) {
+      this.currentEditor.dispatchEvent?.(new Event("input", { bubbles: true }));
+      this.currentTextRange = window.getSelection()?.rangeCount ? window.getSelection().getRangeAt(0).cloneRange() : this.currentTextRange;
+      this.positionFormatToolbar();
+      return true;
+    }
+    const block = (range.commonAncestorContainer.nodeType === 1 ? range.commonAncestorContainer : range.commonAncestorContainer.parentElement)?.closest?.("p, li, blockquote, pre, h1, h2, h3, h4, h5, h6, div") || this.currentEditor;
+    if (typeof block.setCssStyles === "function") {
+      block.setCssStyles({ textAlign: safeAlignment });
+    } else {
+      setNoteDrawCssProps(block, { "--notedraw-text-align": safeAlignment });
+    }
+    this.currentEditor.dispatchEvent?.(new Event("input", { bubbles: true }));
+    this.positionFormatToolbar();
+    return true;
   }
   insertTextBreak() {
     if (this.surfaceType === "source" && this.toolMode === TOOL_EDIT_MD && !this.currentEditorEmbedded) {
@@ -14390,7 +14470,8 @@ ${selected}
       this.clearSelectedStrokes();
     }
     let hitStrokeIndex = noteFlowPenActive ? -1 : this.findStrokeAt(point, clientPoint);
-    if (markdownSelectionCandidate && hitStrokeIndex >= 0 && shouldPlaceStrokeBelowMarkdown(this.drawingData.strokes[hitStrokeIndex])) {
+    const selectedStrokeHit = hitStrokeIndex >= 0 && this.isStrokeSelected(hitStrokeIndex);
+    if (markdownSelectionCandidate && hitStrokeIndex >= 0 && !selectedStrokeHit && shouldPlaceStrokeBelowMarkdown(this.drawingData.strokes[hitStrokeIndex])) {
       hitStrokeIndex = -1;
     }
     const markdownSelectionRecord = markdownSelectionCandidate ? this.findMarkdownBlockRecordForElement(markdownSelectionCandidate) : null;
