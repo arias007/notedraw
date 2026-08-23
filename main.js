@@ -2013,6 +2013,9 @@ function resolveDragDropHorizontalIntent({
   if (Number.isFinite(movingLeft) && movingLeft <= surfaceLeft + contactTolerance) {
     return "line-start";
   }
+  if (horizontalRoom && x < left + (right - left) / 2) {
+    return "inline-left";
+  }
   const rightThreshold = surfaceLeft + laneWidth * clamp4(Number(rightIntentRatio) || 0.5, 0.4, 0.92);
   return horizontalRoom && x >= rightThreshold ? "inline-right" : "vertical";
 }
@@ -23873,7 +23876,7 @@ ${selected}
       draggedLeft: this.draggedSelectionClientLeft(),
       horizontalRoom
     });
-    const horizontalSide = intent === "inline-right" ? "right" : keptPreviousInline ? previousPlacement.horizontalSide : null;
+    const horizontalSide = intent === "inline-right" ? "right" : intent === "inline-left" ? "left" : keptPreviousInline ? previousPlacement.horizontalSide : null;
     const leftSnap = intent === "line-start";
     const canonicalGap = horizontalSide ? null : canonicalNoteFlowGapPlacement(
       geometry?.noteFlowCandidates,
@@ -23890,7 +23893,7 @@ ${selected}
     let flowBoundary = horizontalSide ? flowTargetRect.top : flowSide === "after" ? flowTargetRect.bottom : flowTargetRect.top;
     let flowOrder = null;
     let noteFlowBoundary = false;
-    let inlineBoundary = horizontalSide ? projectedTargetRight + 10 : null;
+    let inlineBoundary = horizontalSide === "left" ? targetRect.left - draggedClientWidth - 10 : horizontalSide ? projectedTargetRight + 10 : null;
     const placementMode = horizontalSide ? "inline" : "row";
     const canonicalRowKey = noteFlowPlacementRowKey({
       path: normalizeVaultPath(flowCandidate?.path || this.file?.path || ""),
@@ -23935,7 +23938,7 @@ ${selected}
     flowOrder = insertionIndex >= 0 ? insertionIndex : peers.length;
     if (peers.length) {
       if (horizontalSide) {
-        inlineBoundary = insertionIndex >= 0 ? peers[insertionIndex].left : peers[peers.length - 1].right + 8;
+        inlineBoundary = horizontalSide === "left" ? insertionIndex >= 0 ? peers[insertionIndex].left - draggedClientWidth - 8 : targetRect.left - draggedClientWidth - 10 : insertionIndex >= 0 ? peers[insertionIndex].left : peers[peers.length - 1].right + 8;
       } else {
         flowBoundary = insertionIndex >= 0 ? peers[insertionIndex].top : peers[peers.length - 1].bottom + 6;
       }
@@ -23986,7 +23989,7 @@ ${selected}
       this.clearMarkdownBlockDropTarget();
       return null;
     }
-    const side = placement.horizontalSide ? "right" : placement.side;
+    const side = placement.horizontalSide === "left" ? "left" : placement.horizontalSide === "right" ? "right" : placement.side;
     const cachedDrop = this.dragMarkdownLastValidDrop;
     const drop = cachedDrop?.element === target && cachedDrop?.side === side ? cachedDrop : this.captureMarkdownBlockDropTarget(target, side, this.markdownDropRowMetrics(target, movingElements));
     if (!drop) {
@@ -24278,7 +24281,7 @@ ${selected}
       positionVersion: 1,
       placementVersion: anchor && Number.isFinite(Number(line)) && ["before", "after"].includes(side) ? 1 : previous?.placementVersion || 0,
       placementMode,
-      inlineSide: placementMode === "inline" ? options.placement?.horizontalSide || previous?.inlineSide || "right" : null,
+      inlineSide: placementMode === "inline" ? ["left", "right"].includes(options.placement?.horizontalSide) ? options.placement.horizontalSide : ["left", "right"].includes(previous?.inlineSide) ? previous.inlineSide : "right" : null,
       leftSnap: placementMode === "row" ? options.placement?.leftSnap === true || !options.placement && previous?.leftSnap === true : false,
       flowOrder: Number.isFinite(Number(options.placement?.flowOrder)) ? Number(options.placement.flowOrder) : Number.isFinite(Number(previous?.flowOrder)) ? Number(previous.flowOrder) : null,
       rowOffset: options.rowOffset !== null && options.rowOffset !== void 0 && Number.isFinite(Number(options.rowOffset)) ? Math.max(0, Number(options.rowOffset)) : Number.isFinite(anchorCanvasY) ? Math.max(0, bounds.minY - anchorCanvasY) : Math.max(0, Number(previous?.rowOffset) || 0),
@@ -30214,7 +30217,7 @@ function normalizeNoteFlow(value) {
     positionVersion: Number(value.positionVersion) >= 1 ? 1 : 0,
     placementVersion: Number(value.placementVersion) >= 1 || hasStoredPlacement ? 1 : 0,
     placementMode,
-    inlineSide: placementMode === "inline" && value.inlineSide === "right" ? "right" : null,
+    inlineSide: placementMode === "inline" && ["left", "right"].includes(value.inlineSide) ? value.inlineSide : null,
     leftSnap: placementMode === "row" && value.leftSnap === true,
     flowOrder: Number.isFinite(Number(value.flowOrder)) ? Number(value.flowOrder) : null,
     rowOffset: clamp10(Number(value.rowOffset) || 0, 0, 2e5),

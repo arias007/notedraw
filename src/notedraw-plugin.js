@@ -20617,6 +20617,7 @@ var PreviewDrawingController = class {
       horizontalRoom
     });
     const horizontalSide = intent === "inline-right" ? "right"
+      : intent === "inline-left" ? "left"
       // Once side-by-side, stay side-by-side while the pointer stays in the
       // candidate's capture band (a line-start / left drift no longer exits
       // it — only clearly leaving the band switches back to a vertical
@@ -20642,7 +20643,9 @@ var PreviewDrawingController = class {
       : flowSide === "after" ? flowTargetRect.bottom : flowTargetRect.top;
     let flowOrder = null;
     let noteFlowBoundary = false;
-    let inlineBoundary = horizontalSide ? projectedTargetRight + 10 : null;
+    let inlineBoundary = horizontalSide === "left"
+      ? targetRect.left - draggedClientWidth - 10
+      : horizontalSide ? projectedTargetRight + 10 : null;
     const placementMode = horizontalSide ? "inline" : "row";
     const canonicalRowKey = noteFlowPlacementRowKey({
       path: normalizeVaultPath(flowCandidate?.path || this.file?.path || ""),
@@ -20698,9 +20701,13 @@ var PreviewDrawingController = class {
     flowOrder = insertionIndex >= 0 ? insertionIndex : peers.length;
     if (peers.length) {
       if (horizontalSide) {
-        inlineBoundary = insertionIndex >= 0
-          ? peers[insertionIndex].left
-          : peers[peers.length - 1].right + 8;
+        inlineBoundary = horizontalSide === "left"
+          ? insertionIndex >= 0
+            ? peers[insertionIndex].left - draggedClientWidth - 8
+            : targetRect.left - draggedClientWidth - 10
+          : insertionIndex >= 0
+            ? peers[insertionIndex].left
+            : peers[peers.length - 1].right + 8;
       } else {
         flowBoundary = insertionIndex >= 0
           ? peers[insertionIndex].top
@@ -20779,7 +20786,11 @@ var PreviewDrawingController = class {
       this.clearMarkdownBlockDropTarget();
       return null;
     }
-    const side = placement.horizontalSide ? "right" : placement.side;
+    const side = placement.horizontalSide === "left"
+      ? "left"
+      : placement.horizontalSide === "right"
+        ? "right"
+        : placement.side;
     // Reuse the cached drop while the target and side are unchanged so the
     // per-frame drag pass does not rebuild its promise chain (vault reads,
     // source index) every pointer frame.
@@ -21166,7 +21177,13 @@ var PreviewDrawingController = class {
         ? 1
         : previous?.placementVersion || 0,
       placementMode,
-      inlineSide: placementMode === "inline" ? options.placement?.horizontalSide || previous?.inlineSide || "right" : null,
+      inlineSide: placementMode === "inline"
+        ? ["left", "right"].includes(options.placement?.horizontalSide)
+          ? options.placement.horizontalSide
+          : ["left", "right"].includes(previous?.inlineSide)
+            ? previous.inlineSide
+            : "right"
+        : null,
       leftSnap: placementMode === "row" ? options.placement?.leftSnap === true || !options.placement && previous?.leftSnap === true : false,
       flowOrder: Number.isFinite(Number(options.placement?.flowOrder))
         ? Number(options.placement.flowOrder)
@@ -27471,7 +27488,9 @@ function normalizeNoteFlow(value) {
     positionVersion: Number(value.positionVersion) >= 1 ? 1 : 0,
     placementVersion: Number(value.placementVersion) >= 1 || hasStoredPlacement ? 1 : 0,
     placementMode,
-    inlineSide: placementMode === "inline" && value.inlineSide === "right" ? "right" : null,
+    inlineSide: placementMode === "inline" && ["left", "right"].includes(value.inlineSide)
+      ? value.inlineSide
+      : null,
     leftSnap: placementMode === "row" && value.leftSnap === true,
     flowOrder: Number.isFinite(Number(value.flowOrder)) ? Number(value.flowOrder) : null,
     rowOffset: clamp(Number(value.rowOffset) || 0, 0, 200_000),

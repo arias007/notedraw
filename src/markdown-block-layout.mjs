@@ -125,6 +125,13 @@ export function resolveDragDropHorizontalIntent({
   if (Number.isFinite(movingLeft) && movingLeft <= surfaceLeft + contactTolerance) {
     return "line-start";
   }
+  // A row is a two-way insertion lane. The old resolver only exposed the
+  // right half, so dragging an item back across its own row was interpreted
+  // as a vertical drop. Keep the hard left-edge magnet above, then use the
+  // target midpoint for an explicit left/right choice.
+  if (horizontalRoom && x < left + (right - left) / 2) {
+    return "inline-left";
+  }
   const rightThreshold = surfaceLeft + laneWidth * clamp(Number(rightIntentRatio) || 0.5, 0.4, 0.92);
   return horizontalRoom && x >= rightThreshold ? "inline-right" : "vertical";
 }

@@ -149,7 +149,7 @@ test("Markdown block record repair removes a repeated line-zero alias but preser
   assert.deepEqual(records.map((record) => record.id), ["footnote", "line-a", "line-b"]);
 });
 
-test("horizontal drag intent reserves the left edge for magnetic line insertion", () => {
+test("horizontal drag intent supports both sides and reserves the left edge for magnetic line insertion", () => {
   const target = {
     targetLeft: 300,
     targetRight: 700,
@@ -157,10 +157,10 @@ test("horizontal drag intent reserves the left edge for magnetic line insertion"
     laneRight: 1000
   };
 
-  assert.equal(resolveDragDropHorizontalIntent({ ...target, clientX: 320, draggedLeft: 120 }), "vertical");
+  assert.equal(resolveDragDropHorizontalIntent({ ...target, clientX: 320, draggedLeft: 120 }), "inline-left");
   assert.equal(resolveDragDropHorizontalIntent({ ...target, clientX: 500, draggedLeft: 7 }), "line-start");
-  assert.equal(resolveDragDropHorizontalIntent({ ...target, clientX: 320, draggedLeft: null }), "vertical");
-  assert.equal(resolveDragDropHorizontalIntent({ ...target, clientX: 499 }), "vertical");
+  assert.equal(resolveDragDropHorizontalIntent({ ...target, clientX: 320, draggedLeft: null }), "inline-left");
+  assert.equal(resolveDragDropHorizontalIntent({ ...target, clientX: 499 }), "inline-left");
   assert.equal(resolveDragDropHorizontalIntent({ ...target, clientX: 500 }), "inline-right");
   assert.equal(resolveDragDropHorizontalIntent({ ...target, clientX: 620 }), "inline-right");
   assert.equal(resolveDragDropHorizontalIntent({ ...target, clientX: 639, rightIntentRatio: 0.64 }), "vertical");
@@ -648,7 +648,7 @@ test("NoteFlow dragging previews the same snapped and packed placement committed
   assert.doesNotMatch(placementSource, /debounceZone|dragNoteFlowRebuildSince/);
   assert.match(placementSource, /const inlineRow = this\.markdownDropRowMetrics\(inlineTarget, movingElements\)[\s\S]*const equalLaneWidth = Math\.max\([\s\S]*MIN_INLINE_NOTE_FLOW_ITEM_WIDTH_PX[\s\S]*inlineRow\.totalCount[\s\S]*const inlineEdgeBand = clamp\(targetHeight \* 0\.10, 2, 6\)[\s\S]*const inlineCaptureBand = clamp\(targetHeight \* 0\.85, 28, 72\)[\s\S]*const sameInlineCandidate[\s\S]*const inlineRowHit = sameInlineCandidate[\s\S]*targetRect\.top - inlineCaptureBand[\s\S]*targetRect\.bottom \+ inlineCaptureBand[\s\S]*const horizontalRoom = inlineRowHit[\s\S]*inlineRow\.canFit/);
   assert.doesNotMatch(placementSource, /rightIntentRatio:/);
-  assert.match(placementSource, /const horizontalSide = intent === "inline-right" \? "right"[\s\S]*: keptPreviousInline[\s\S]*\? previousPlacement\.horizontalSide[\s\S]*: null/);
+  assert.match(placementSource, /const horizontalSide = intent === "inline-right" \? "right"[\s\S]*: intent === "inline-left" \? "left"[\s\S]*: keptPreviousInline[\s\S]*\? previousPlacement\.horizontalSide[\s\S]*: null/);
   assert.match(dragSource, /createComment\("notedraw-note-flow-drag-origin"\)[\s\S]*state\.domMarker = marker/);
   assert.match(livePreviewSource, /this\.restoreDraggedNoteFlowLivePreview\(\)[\s\S]*applyDraggedNoteFlowAnchorDomPreview\(resolved, drop\)[\s\S]*applyDraggedMarkdownDomPreview\(drop\)[\s\S]*applyDraggedNoteFlowReservationPreview\(liveResolved, movedIndexes, rowExtent\)/);
   assert.match(livePreviewSource, /const previousApplied = this\.dragNoteFlowLastAppliedPlacement[\s\S]*const previewOrderChanged = [\s\S]*previousApplied\.flowOrder !== placement\.flowOrder[\s\S]*const previewStructureChanged = [\s\S]*previousApplied\.horizontalSide !== placement\.horizontalSide[\s\S]*previousApplied\.side !== placement\.side[\s\S]*const reuseAppliedPreview = options\.skipRestore === true[\s\S]*!previewOrderChanged[\s\S]*restoreDraggedNoteFlowLivePreview\(\)/);
