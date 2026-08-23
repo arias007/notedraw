@@ -12502,19 +12502,21 @@ var PreviewDrawingController = class {
     return [
       "select-stroke",
       "edit-stroke-or-drag",
+      "drag-stroke-or-toggle",
       "select-markdown",
-      "edit-markdown-or-drag"
+      "edit-markdown-or-drag",
+      "drag-markdown-or-toggle"
     ].includes(action.type);
   }
   toggleSelectionFromLongPress(action) {
     if (!this.shouldToggleSelectionOnLongPress(action)) {
       return false;
     }
-    if (["select-stroke", "edit-stroke-or-drag"].includes(action.type)) {
+    if (["select-stroke", "edit-stroke-or-drag", "drag-stroke-or-toggle"].includes(action.type)) {
       this.toggleStrokeSelection(Number(action.index));
       return true;
     }
-    if (["select-markdown", "edit-markdown-or-drag"].includes(action.type)) {
+    if (["select-markdown", "edit-markdown-or-drag", "drag-markdown-or-toggle"].includes(action.type)) {
       this.toggleMarkdownBlockSelection(action.element);
       return true;
     }
@@ -14498,6 +14500,14 @@ ${selected}
         });
         return;
       }
+      if (!additiveSelect && this.hasHybridSelection()) {
+        this.startPendingSelectionTap(event, {
+          type: "drag-stroke-or-toggle",
+          index: hitStrokeIndex,
+          preserveSelection: preserveGroupSelection
+        });
+        return;
+      }
       this.startSelectedStrokeDrag(event, point, hitStrokeIndex, { preserveSelection: preserveGroupSelection });
       return;
     }
@@ -14542,6 +14552,14 @@ ${selected}
           type: "edit-markdown-or-drag",
           element: markdownSelectionCandidate,
           editable: selectedMarkdownEditableCandidate,
+          preserveSelection: Boolean(hitGroupId && this.isElementGroupFullySelected(hitGroupId))
+        });
+        return;
+      }
+      if (!additiveSelect && this.hasHybridSelection()) {
+        this.startPendingSelectionTap(event, {
+          type: "drag-markdown-or-toggle",
+          element: markdownSelectionCandidate,
           preserveSelection: Boolean(hitGroupId && this.isElementGroupFullySelected(hitGroupId))
         });
         return;

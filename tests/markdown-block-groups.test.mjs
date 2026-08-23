@@ -615,10 +615,13 @@ test("long press toggles another selected element without changing its element t
 
   assert.match(toggleSource, /this\.toolMode !== TOOL_SELECT[\s\S]*this\.hasHybridSelection\(\)/);
   assert.match(toggleSource, /"select-stroke"[\s\S]*"edit-stroke-or-drag"[\s\S]*"select-markdown"[\s\S]*"edit-markdown-or-drag"/);
+  assert.match(toggleSource, /"drag-stroke-or-toggle"[\s\S]*"drag-markdown-or-toggle"/);
   assert.match(toggleSource, /this\.toggleStrokeSelection\(Number\(action\.index\)\)/);
   assert.match(toggleSource, /this\.toggleMarkdownBlockSelection\(action\.element\)/);
   assert.match(toggleSource, /const toggledSelection = this\.toggleSelectionFromLongPress\(state\.pendingAction\)/);
   assert.match(toggleSource, /if \(!toggledSelection && state\.pendingAction/);
+  assert.match(source, /type: "drag-stroke-or-toggle"[\s\S]*this\.startPendingSelectionTap\(event/);
+  assert.match(source, /type: "drag-markdown-or-toggle"[\s\S]*this\.startPendingSelectionTap\(event/);
   assert.match(toggleSource, /if \(this\.hasHybridSelection\(\)\) \{\s*this\.showSelectionMenu\(state\.client\)/);
 });
 
