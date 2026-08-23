@@ -8518,6 +8518,31 @@ var PreviewDrawingController = class {
     this.previewEl?.removeClass("is-selection-menu-open");
     this.syncFloatingControlClasses();
   }
+  shouldToggleSelectionOnLongPress(action) {
+    if (this.toolMode !== TOOL_SELECT || !this.hasHybridSelection() || !action) {
+      return false;
+    }
+    return [
+      "select-stroke",
+      "edit-stroke-or-drag",
+      "select-markdown",
+      "edit-markdown-or-drag"
+    ].includes(action.type);
+  }
+  toggleSelectionFromLongPress(action) {
+    if (!this.shouldToggleSelectionOnLongPress(action)) {
+      return false;
+    }
+    if (["select-stroke", "edit-stroke-or-drag"].includes(action.type)) {
+      this.toggleStrokeSelection(Number(action.index));
+      return true;
+    }
+    if (["select-markdown", "edit-markdown-or-drag"].includes(action.type)) {
+      this.toggleMarkdownBlockSelection(action.element);
+      return true;
+    }
+    return false;
+  }
   startSelectionLongPress(event, options = {}) {
     this.clearSelectionLongPress();
     if (!this.hasHybridSelection() && !options.pendingAction) {
@@ -8534,7 +8559,8 @@ var PreviewDrawingController = class {
       }
       const state = this.selectionLongPressState;
       this.selectionLongPressConsumedPointerId = state.pointerId;
-      if (state.pendingAction && ["select-stroke", "select-markdown", "select-group"].includes(state.pendingAction.type)) {
+      const toggledSelection = this.toggleSelectionFromLongPress(state.pendingAction);
+      if (!toggledSelection && state.pendingAction && ["select-stroke", "select-markdown", "select-group"].includes(state.pendingAction.type)) {
         this.applyPendingSelectionTap(state.pendingAction);
       }
       this.pendingSelectionTap = null;
@@ -8542,7 +8568,9 @@ var PreviewDrawingController = class {
       if (this.draggingStroke) {
         this.clearSelectedStrokeDragState();
       }
-      this.showSelectionMenu(state.client);
+      if (this.hasHybridSelection()) {
+        this.showSelectionMenu(state.client);
+      }
       this.clearSelectionLongPress();
       this.render();
     }, this.longPressDelayMs());

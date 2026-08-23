@@ -609,6 +609,19 @@ test("long press opens the element menu without falling through to edit", async 
   assert.doesNotMatch(longPressSource, /startTextEdit|editFloatingTextStroke/);
 });
 
+test("long press toggles another selected element without changing its element type", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const toggleSource = source.slice(source.indexOf("  shouldToggleSelectionOnLongPress("), source.indexOf("  createFormatToolbar("));
+
+  assert.match(toggleSource, /this\.toolMode !== TOOL_SELECT[\s\S]*this\.hasHybridSelection\(\)/);
+  assert.match(toggleSource, /"select-stroke"[\s\S]*"edit-stroke-or-drag"[\s\S]*"select-markdown"[\s\S]*"edit-markdown-or-drag"/);
+  assert.match(toggleSource, /this\.toggleStrokeSelection\(Number\(action\.index\)\)/);
+  assert.match(toggleSource, /this\.toggleMarkdownBlockSelection\(action\.element\)/);
+  assert.match(toggleSource, /const toggledSelection = this\.toggleSelectionFromLongPress\(state\.pendingAction\)/);
+  assert.match(toggleSource, /if \(!toggledSelection && state\.pendingAction/);
+  assert.match(toggleSource, /if \(this\.hasHybridSelection\(\)\) \{\s*this\.showSelectionMenu\(state\.client\)/);
+});
+
 test("Markdown resize keeps continuous horizontal width inside its grid span", async () => {
   const source = await readFile(sourceUrl, "utf8");
 
