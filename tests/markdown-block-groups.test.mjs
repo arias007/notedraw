@@ -168,6 +168,25 @@ test("horizontal drag intent supports both sides and reserves the left edge for 
   assert.equal(resolveDragDropHorizontalIntent({ ...target, clientX: 640, horizontalRoom: false }), "vertical");
 });
 
+test("parallel drag requires an explicit gesture into the target row's right side", () => {
+  const target = {
+    targetLeft: 300,
+    targetRight: 700,
+    laneLeft: 0,
+    laneRight: 1000,
+    draggedLeft: 120,
+    horizontalRoom: true,
+    requireRightIntent: true
+  };
+
+  assert.equal(resolveDragDropHorizontalIntent({ ...target, clientX: 420 }), "vertical");
+  assert.equal(resolveDragDropHorizontalIntent({ ...target, clientX: 500 }), "vertical");
+  assert.equal(resolveDragDropHorizontalIntent({ ...target, clientX: 525 }), "inline-right");
+  assert.equal(resolveDragDropHorizontalIntent({ ...target, clientX: 680 }), "inline-right");
+  assert.equal(resolveDragDropHorizontalIntent({ ...target, clientX: 680, horizontalRoom: false }), "vertical");
+  assert.equal(resolveDragDropHorizontalIntent({ ...target, clientX: 680, draggedLeft: 4 }), "line-start");
+});
+
 test("Markdown blocks and inserted ink share the real NoteFlow row contract", async () => {
   const [source, styles] = await Promise.all([
     readFile(sourceUrl, "utf8"),

@@ -68,6 +68,14 @@ test("rebinding the same file rehydrates a controller that mounted before drawin
   assert.match(setFileSource, /this\.requestRender\(true\)/);
 });
 
+test("reading settlement is invalidated when the NoteDraw surface changes state", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  assert.match(source, /this\.surfaceStateGeneration\s*\+=\s*1/);
+  assert.match(source, /queueReadingSurfaceSettlement\(\)/);
+  assert.match(source, /surfaceGeneration !== this\.surfaceStateGeneration/);
+  assert.match(source, /shouldAbort: \(\) => this\.destroyed[\s\S]*this\.active[\s\S]*surfaceGeneration !== this\.surfaceStateGeneration/);
+});
+
 test("element migration waits for a stable note lane instead of transition geometry", async () => {
   const source = await readFile(sourceUrl, "utf8");
 

@@ -77,3 +77,32 @@ export function pickTextHighlightLine(rectInputs, pointInputs, {
   return best?.rect || null;
 }
 
+export function pickAnchoredTextHighlightLine(rectInputs, {
+  lineIndex = null,
+  preferredY = Number.NaN
+} = {}) {
+  const rects = (Array.isArray(rectInputs) ? rectInputs : []).map(normalizeRect).filter(Boolean);
+  if (!rects.length) {
+    return null;
+  }
+  const ordered = [...rects].sort((left, right) => (
+    finite(left.top) - finite(right.top)
+    || finite(left.left) - finite(right.left)
+  ));
+  if (Number.isInteger(lineIndex) && lineIndex >= 0) {
+    const indexed = ordered.filter((rect) => Number.isInteger(rect.lineIndex));
+    if (indexed.length) {
+      const exact = indexed.find((rect) => rect.lineIndex === lineIndex);
+      if (exact) {
+        return exact;
+      }
+    }
+  }
+  if (Number.isFinite(preferredY)) {
+    return ordered.reduce((best, rect) => {
+      const distance = Math.abs(preferredY - (rect.top + rect.height * 0.58));
+      return !best || distance < best.distance ? { rect, distance } : best;
+    }, null)?.rect || null;
+  }
+  return ordered[0] || null;
+}

@@ -2006,7 +2006,9 @@ function resolveDragDropHorizontalIntent({
   draggedLeft,
   leftContactTolerance = 8,
   rightIntentRatio = 0.5,
-  horizontalRoom = true
+  horizontalRoom = true,
+  requireRightIntent = false,
+  rightTargetRatio = 0.55
 } = {}) {
   const x = Number(clientX);
   const left = Number(targetLeft);
@@ -2021,6 +2023,13 @@ function resolveDragDropHorizontalIntent({
   const contactTolerance = clamp4(Number(leftContactTolerance) || 0, 0, 24);
   if (Number.isFinite(movingLeft) && movingLeft <= surfaceLeft + contactTolerance) {
     return "line-start";
+  }
+  if (requireRightIntent) {
+    if (!horizontalRoom) {
+      return "vertical";
+    }
+    const targetRightThreshold = left + (right - left) * clamp4(Number(rightTargetRatio) || 0.55, 0.5, 0.9);
+    return x >= targetRightThreshold ? "inline-right" : "vertical";
   }
   if (horizontalRoom && x < left + (right - left) / 2) {
     return "inline-left";
@@ -3765,6 +3774,32 @@ function pickTextHighlightLine(rectInputs, pointInputs, {
     }
   }
   return best?.rect || null;
+}
+function pickAnchoredTextHighlightLine(rectInputs, {
+  lineIndex = null,
+  preferredY = Number.NaN
+} = {}) {
+  const rects = (Array.isArray(rectInputs) ? rectInputs : []).map(normalizeRect).filter(Boolean);
+  if (!rects.length) {
+    return null;
+  }
+  const ordered = [...rects].sort((left, right) => finite11(left.top) - finite11(right.top) || finite11(left.left) - finite11(right.left));
+  if (Number.isInteger(lineIndex) && lineIndex >= 0) {
+    const indexed = ordered.filter((rect) => Number.isInteger(rect.lineIndex));
+    if (indexed.length) {
+      const exact = indexed.find((rect) => rect.lineIndex === lineIndex);
+      if (exact) {
+        return exact;
+      }
+    }
+  }
+  if (Number.isFinite(preferredY)) {
+    return ordered.reduce((best, rect) => {
+      const distance = Math.abs(preferredY - (rect.top + rect.height * 0.58));
+      return !best || distance < best.distance ? { rect, distance } : best;
+    }, null)?.rect || null;
+  }
+  return ordered[0] || null;
 }
 
 // src/mind-map.mjs
@@ -9988,6 +10023,8 @@ var PreviewDrawingController = class {
     this.initialReadingLayoutSettled = false;
     this.initialReadingSurfaceSettlement = null;
     this.initialReadingCommittedSignature = "";
+    this.readingSurfaceRepairFrameId = null;
+    this.surfaceStateGeneration = 0;
     this.readingTouchGuard = createReadingTouchGuardState();
     this.pendingEmbedTool = null;
     this.pendingMindMapFile = null;
@@ -10080,6 +10117,8 @@ var PreviewDrawingController = class {
     this.noteFlowScrollStabilityTimer = null;
     this.positionFrameId = null;
     this.layoutRefreshGeneration = 0;
+    this.layoutRefreshFrameId = null;
+    this.layoutRefreshTimerIds = /* @__PURE__ */ new Set();
     this.markdownAnnotationTimer = null;
     this.markdownAnnotationNeedsLayout = false;
     this.markdownAnnotationForce = false;
@@ -10578,8 +10617,9 @@ var PreviewDrawingController = class {
       }
     });
     const settlement = (async () => {
+      const surfaceGeneration = this.surfaceStateGeneration;
       await this.prepareInitialReadingLayout();
-      if (this.destroyed || generation !== this.drawingLoadGeneration || !this.previewEl?.isConnected) {
+      if (this.destroyed || this.active || surfaceGeneration !== this.surfaceStateGeneration || generation !== this.drawingLoadGeneration || !this.previewEl?.isConnected) {
         return false;
       }
       const hasNoteFlow = this.hasNoteFlowElements();
@@ -10587,7 +10627,7 @@ var PreviewDrawingController = class {
         await this.prepareFrozenNoteFlowLayout();
         await this.prepareNoteFlowForReading();
       }
-      if (this.destroyed || generation !== this.drawingLoadGeneration || !this.previewEl?.isConnected) {
+      if (this.destroyed || this.active || surfaceGeneration !== this.surfaceStateGeneration || generation !== this.drawingLoadGeneration || !this.previewEl?.isConnected) {
         return false;
       }
       this.repairConnectedReadingSections();
@@ -10603,9 +10643,9 @@ var PreviewDrawingController = class {
         requestFrame,
         stableFrames: 2,
         maxFrames: 6,
-        shouldAbort: () => this.destroyed || generation !== this.drawingLoadGeneration || !this.previewEl?.isConnected
+        shouldAbort: () => this.destroyed || this.active || surfaceGeneration !== this.surfaceStateGeneration || generation !== this.drawingLoadGeneration || !this.previewEl?.isConnected
       });
-      if (this.destroyed || generation !== this.drawingLoadGeneration || !this.previewEl?.isConnected) {
+      if (this.destroyed || this.active || surfaceGeneration !== this.surfaceStateGeneration || generation !== this.drawingLoadGeneration || !this.previewEl?.isConnected) {
         return false;
       }
       this.responsiveLayoutContext = null;
@@ -10665,6 +10705,31 @@ var PreviewDrawingController = class {
         console.error(`[${PLUGIN_ID}] Failed to settle changed reading layout`, error);
       }
     });
+    return true;
+  }
+  queueReadingSurfaceSettlement() {
+    if (this.destroyed || this.active || this.surfaceType !== "preview" || this.embeddedSurface || !this.drawingsLoaded || !this.previewEl?.isConnected || !(this.drawingData?.strokes?.length || this.drawingData?.markdownBlocks?.length)) {
+      return false;
+    }
+    if (this.readingSurfaceRepairFrameId !== null) {
+      return true;
+    }
+    this.initialReadingLayoutPrepared = false;
+    this.initialReadingLayoutSettled = false;
+    this.initialReadingCommittedSignature = "";
+    const generation = this.drawingLoadGeneration;
+    const run = () => {
+      this.readingSurfaceRepairFrameId = null;
+      if (this.destroyed || this.active || generation !== this.drawingLoadGeneration) {
+        return;
+      }
+      this.settleInitialReadingSurface(generation).catch((error) => {
+        if (!this.destroyed && generation === this.drawingLoadGeneration) {
+          console.error(`[${PLUGIN_ID}] Failed to settle reading surface`, error);
+        }
+      });
+    };
+    this.readingSurfaceRepairFrameId = window.requestAnimationFrame?.(run) ?? window.setTimeout(run, 16);
     return true;
   }
   applySettings() {
@@ -10811,6 +10876,10 @@ var PreviewDrawingController = class {
     }
     this.endTextEdit();
     this.endFloatingTextInput(true);
+    this.surfaceStateGeneration += 1;
+    this.initialReadingSurfaceSettlement = null;
+    this.initialReadingLayoutSettlement = null;
+    this.cancelLayoutRefresh();
     this.drawingLoadGeneration += 1;
     this.cancelNoteFlowLayout();
     this.cancelFrozenNoteFlowLayoutRestore();
@@ -10975,6 +11044,11 @@ var PreviewDrawingController = class {
     this.layoutRefreshGeneration += 1;
     this.clearButtonLongPress();
     this.cancelRenderFrame();
+    if (this.readingSurfaceRepairFrameId !== null) {
+      window.cancelAnimationFrame?.(this.readingSurfaceRepairFrameId);
+      window.clearTimeout?.(this.readingSurfaceRepairFrameId);
+      this.readingSurfaceRepairFrameId = null;
+    }
     this.cancelResizeFrame();
     this.cancelResponsiveProjectionSettle();
     this.cancelPositionFrame();
@@ -11019,6 +11093,7 @@ var PreviewDrawingController = class {
     activeDocument.removeEventListener("keydown", this.onDocumentKeyDown, true);
     this.cancelNoteFlowLayout();
     this.cancelFrozenNoteFlowLayoutRestore();
+    this.cancelLayoutRefresh();
     this.clearNoteFlowLayout();
     this.stopFormatToolbarDrag();
     this.stopToolbarDrag();
@@ -11173,6 +11248,11 @@ var PreviewDrawingController = class {
     const eager = options.eager !== false;
     const wasActive = this.active;
     this.active = Boolean(active);
+    if (wasActive !== this.active) {
+      this.surfaceStateGeneration += 1;
+      this.initialReadingSurfaceSettlement = null;
+      this.initialReadingLayoutSettlement = null;
+    }
     if (this.active && !this.embeddedSurface && isElementVisibleEnough(this.previewEl)) {
       this.plugin.setInteractionController(this);
     }
@@ -11203,6 +11283,7 @@ var PreviewDrawingController = class {
       this.syncMarkdownBlockPresentation();
       this.scheduleFrozenNoteFlowLayoutRestore();
       this.render();
+      this.queueReadingSurfaceSettlement();
     } else if (this.active && eager && (!wasActive || !this.drawingsLoaded)) {
       this.ensureDrawingsLoaded().catch((error) => {
         console.error(`[${PLUGIN_ID}] Failed to load drawings`, error);
@@ -11548,6 +11629,7 @@ var PreviewDrawingController = class {
     this.scrollEventTarget?.addEventListener("scroll", this.onScroll, { passive: true });
   }
   scheduleLayoutRefresh(options = {}) {
+    this.cancelLayoutRefresh();
     const settle = options.settle !== false;
     const generation = ++this.layoutRefreshGeneration;
     const refresh = () => {
@@ -11558,16 +11640,35 @@ var PreviewDrawingController = class {
       }
     };
     refresh();
-    window.requestAnimationFrame?.(refresh);
-    window.setTimeout(refresh, 80);
-    window.setTimeout(refresh, 350);
+    this.layoutRefreshFrameId = window.requestAnimationFrame?.(() => {
+      this.layoutRefreshFrameId = null;
+      refresh();
+    }) ?? null;
+    const scheduleRefresh = (delay) => {
+      const timerId = window.setTimeout(() => {
+        this.layoutRefreshTimerIds.delete(timerId);
+        refresh();
+      }, delay);
+      this.layoutRefreshTimerIds.add(timerId);
+    };
+    scheduleRefresh(80);
     if (settle) {
-      window.requestAnimationFrame?.(() => window.requestAnimationFrame?.(refresh));
-      window.setTimeout(refresh, 900);
+      scheduleRefresh(350);
+      scheduleRefresh(900);
       if (isMobileRuntime()) {
-        window.setTimeout(refresh, 1600);
+        scheduleRefresh(1600);
       }
     }
+  }
+  cancelLayoutRefresh() {
+    if (this.layoutRefreshFrameId !== null) {
+      window.cancelAnimationFrame?.(this.layoutRefreshFrameId);
+      this.layoutRefreshFrameId = null;
+    }
+    for (const timerId of this.layoutRefreshTimerIds || []) {
+      window.clearTimeout(timerId);
+    }
+    this.layoutRefreshTimerIds?.clear?.();
   }
   scheduleMarkdownAnnotationRefresh(options = {}) {
     const requestedForce = options.force === true || this.hasNoteFlowElements();
@@ -12082,11 +12183,12 @@ var PreviewDrawingController = class {
     this.noteFlowOperationPending = true;
     const filePath = this.file?.path || "";
     const generation = this.drawingLoadGeneration;
+    const surfaceGeneration = this.surfaceStateGeneration;
     try {
       this.applyReadingZoom();
       annotateVisibleMarkdownElements(this.plugin.app, this.previewEl, filePath);
       await annotateRenderedMarkdownLines(this.plugin.app, this.previewEl, filePath, { force: true });
-      if (this.destroyed || generation !== this.drawingLoadGeneration || this.file?.path !== filePath) {
+      if (this.destroyed || this.active || surfaceGeneration !== this.surfaceStateGeneration || generation !== this.drawingLoadGeneration || this.file?.path !== filePath) {
         return false;
       }
       this.noteFlowMarkdownAnnotationComplete = true;
@@ -17840,7 +17942,8 @@ ${selected}
       laneLeft: laneRect.left,
       laneRight: laneRect.right,
       draggedLeft: this.draggedSelectionClientLeft(),
-      horizontalRoom
+      horizontalRoom,
+      requireRightIntent: true
     });
     return verticalDistance <= maxDistance && intent !== "vertical" ? { element: nearest.element, intent } : null;
   }
@@ -17948,7 +18051,8 @@ ${selected}
       laneLeft: geometry?.laneRect?.left ?? rect.left,
       laneRight: geometry?.laneRect?.right ?? rect.right,
       draggedLeft: this.draggedSelectionClientLeft(),
-      horizontalRoom
+      horizontalRoom,
+      requireRightIntent: true
     });
     let side = verticalSide || (clientY >= rect.top + rect.height / 2 ? "after" : "before");
     if (horizontalRoom && intent === "inline-right") {
@@ -19602,6 +19706,8 @@ ${selected}
       blockId: owner.id,
       textHint: owner.textHint || normalizeRenderedText2(lineRect.element?.innerText || "").slice(0, 240),
       baseline: 0.58,
+      lineIndex: Number.isInteger(lineRect.lineIndex) ? lineRect.lineIndex : null,
+      lineKey: typeof lineRect.lineKey === "string" ? lineRect.lineKey : "",
       u: stroke.points.map((point) => {
         const canvasPoint2 = this.pointToCanvas(point);
         const clientX = canvasRect.left + canvasPoint2.x * scaleX;
@@ -19635,7 +19741,19 @@ ${selected}
       if (!anchor || anchor.mode === "detached") {
         continue;
       }
-      const lineRect = lineRects.find((rect) => anchor.ownerId && rect.blockId === anchor.ownerId) || lineRects.find((rect) => anchor.blockId && rect.blockId === anchor.blockId) || lineRects.find((rect) => normalizeVaultPath(rect.sourcePath) === anchor?.path && rect.lineStart === anchor.lineStart && rect.lineEnd === anchor.lineEnd) || lineRects.find((rect) => normalizeVaultPath(rect.sourcePath) === anchor?.path && rect.lineStart === anchor.lineStart);
+      const ownerRects = lineRects.filter((rect) => anchor.ownerId && rect.blockId === anchor.ownerId);
+      const rangeRects = lineRects.filter((rect) => normalizeVaultPath(rect.sourcePath) === anchor?.path && rect.lineStart === anchor.lineStart && (rect.lineEnd === anchor.lineEnd || !Number.isFinite(anchor.lineEnd)));
+      const candidateRects = ownerRects.length ? ownerRects : rangeRects;
+      const anchorCanvasRect = this.canvas.getBoundingClientRect();
+      const anchorScaleY = anchorCanvasRect.height / Math.max(1, this.canvasRenderHeight);
+      const preferredY = stroke.points?.length ? anchorCanvasRect.top + (this.pointToCanvas(stroke.points[Math.floor(stroke.points.length / 2)]).y - this.canvasWindowTop) * anchorScaleY : Number.NaN;
+      const lineRect = pickAnchoredTextHighlightLine(candidateRects, {
+        lineIndex: anchor.lineIndex,
+        preferredY
+      }) || pickAnchoredTextHighlightLine(lineRects.filter((rect) => normalizeVaultPath(rect.sourcePath) === anchor?.path), {
+        lineIndex: anchor.lineIndex,
+        preferredY
+      });
       if (!anchor || !lineRect || !stroke.points?.length) {
         continue;
       }
@@ -24081,7 +24199,8 @@ ${selected}
       laneLeft: laneRect.left,
       laneRight: laneRect.right,
       draggedLeft: this.draggedSelectionClientLeft(),
-      horizontalRoom
+      horizontalRoom,
+      requireRightIntent: true
     });
     const horizontalSide = intent === "inline-right" ? "right" : intent === "inline-left" ? "left" : keptPreviousInline ? previousPlacement.horizontalSide : null;
     const leftSnap = intent === "line-start";
@@ -30000,17 +30119,40 @@ function collectTextLineRectsBelowCanvas(canvas, root, ownerIds = null) {
   }
   const seenNodes = /* @__PURE__ */ new Set();
   const seenRects = /* @__PURE__ */ new Set();
-  const rects = [];
+  const lineBucketsByOwner = /* @__PURE__ */ new Map();
+  const ownerKeys = /* @__PURE__ */ new WeakMap();
+  let nextOwnerKey = 1;
+  let lineBucketCount = 0;
+  const ownerKeyFor = (element, sourcePath, lineStart, blockId) => {
+    if (blockId) {
+      return `block:${blockId}`;
+    }
+    if (element && typeof element === "object") {
+      if (!ownerKeys.has(element)) {
+        ownerKeys.set(element, `element:${nextOwnerKey++}`);
+      }
+      return ownerKeys.get(element);
+    }
+    return `line:${sourcePath}:${lineStart}`;
+  };
   const addRect = (rect, element) => {
     if (!rect || rect.width <= 1 || rect.height <= 1 || rect.bottom < canvasRect.top - 48 || rect.top > canvasRect.bottom + 48 || rect.right < canvasRect.left - 180 || rect.left > canvasRect.right + 180) {
       return;
     }
-    const key = [rect.left, rect.top, rect.right, rect.bottom].map((value) => Math.round(value * 2)).join(":");
+    const sourcePath = element.dataset.noteDrawSourcePath || element.closest?.("[data-note-draw-source-path]")?.dataset?.noteDrawSourcePath || "";
+    const lineStart = parseInteger(element.dataset.noteDrawLineStart);
+    const lineEnd = parseInteger(element.dataset.noteDrawLineEnd);
+    const blockId = String(element.dataset.noteDrawMarkdownBlockId || element.closest?.("[data-note-draw-markdown-block-id]")?.dataset?.noteDrawMarkdownBlockId || "");
+    const ownerKey = ownerKeyFor(element, sourcePath, lineStart, blockId);
+    const key = [ownerKey, rect.left, rect.top, rect.right, rect.bottom].map((value) => Math.round(Number(value) * 2) || value).join(":");
     if (seenRects.has(key)) {
       return;
     }
     seenRects.add(key);
-    rects.push({
+    const ownerBuckets = lineBucketsByOwner.get(ownerKey) || [];
+    const tolerance = Math.max(2, Math.min(rect.height, 28) * 0.45);
+    const bucket = ownerBuckets.find((candidate) => Math.abs(candidate.top - rect.top) <= tolerance);
+    const next = {
       left: rect.left,
       top: rect.top,
       right: rect.right,
@@ -30018,21 +30160,34 @@ function collectTextLineRectsBelowCanvas(canvas, root, ownerIds = null) {
       width: rect.width,
       height: rect.height,
       element,
-      sourcePath: element.dataset.noteDrawSourcePath || element.closest?.("[data-note-draw-source-path]")?.dataset?.noteDrawSourcePath || "",
-      lineStart: parseInteger(element.dataset.noteDrawLineStart),
-      lineEnd: parseInteger(element.dataset.noteDrawLineEnd),
-      blockId: String(element.dataset.noteDrawMarkdownBlockId || element.closest?.("[data-note-draw-markdown-block-id]")?.dataset?.noteDrawMarkdownBlockId || "")
-    });
+      sourcePath,
+      lineStart,
+      lineEnd,
+      blockId,
+      ownerKey
+    };
+    if (bucket) {
+      bucket.left = Math.min(bucket.left, next.left);
+      bucket.top = Math.min(bucket.top, next.top);
+      bucket.right = Math.max(bucket.right, next.right);
+      bucket.bottom = Math.max(bucket.bottom, next.bottom);
+      bucket.width = bucket.right - bucket.left;
+      bucket.height = bucket.bottom - bucket.top;
+      return;
+    }
+    ownerBuckets.push(next);
+    lineBucketsByOwner.set(ownerKey, ownerBuckets);
+    lineBucketCount += 1;
   };
   for (const textElement of root.querySelectorAll?.(MARKDOWN_TEXT_SELECTOR) || []) {
     const ownerId = String(textElement.dataset.noteDrawMarkdownBlockId || textElement.closest?.("[data-note-draw-markdown-block-id]")?.dataset?.noteDrawMarkdownBlockId || "");
     if (ownerIds && (!ownerId || !ownerIds.has(ownerId)) || textElement.closest?.(WEBVIEW_BLOCKED_EDIT_SELECTOR) || textElement.closest?.(NOTEDRAW_OWNED_MUTATION_SELECTOR) || textElement.querySelector?.(MARKDOWN_TEXT_SELECTOR)) {
       continue;
     }
-    const beforeCount = rects.length;
+    const beforeCount = lineBucketCount;
     const walker = document2.createTreeWalker(textElement, nodeFilter.SHOW_TEXT);
     let node = walker.nextNode();
-    while (node && rects.length < 1200) {
+    while (node && lineBucketCount < 1200) {
       if (!seenNodes.has(node) && String(node.nodeValue || "").trim()) {
         seenNodes.add(node);
         const range = document2.createRange();
@@ -30043,22 +30198,22 @@ function collectTextLineRectsBelowCanvas(canvas, root, ownerIds = null) {
       }
       node = walker.nextNode();
     }
-    if (beforeCount === rects.length) {
+    if (beforeCount === lineBucketCount) {
       addRect(textElement.getBoundingClientRect?.(), textElement);
     }
-    if (rects.length >= 1200) {
+    if (lineBucketCount >= 1200) {
       break;
     }
   }
   for (const textElement of root.querySelectorAll?.(".cm-line") || []) {
     const ownerId = String(textElement.dataset.noteDrawMarkdownBlockId || textElement.closest?.("[data-note-draw-markdown-block-id]")?.dataset?.noteDrawMarkdownBlockId || "");
-    if (rects.length >= 1200 || ownerIds && (!ownerId || !ownerIds.has(ownerId)) || textElement.closest?.(WEBVIEW_BLOCKED_EDIT_SELECTOR) || textElement.closest?.(NOTEDRAW_OWNED_MUTATION_SELECTOR)) {
+    if (lineBucketCount >= 1200 || ownerIds && (!ownerId || !ownerIds.has(ownerId)) || textElement.closest?.(WEBVIEW_BLOCKED_EDIT_SELECTOR) || textElement.closest?.(NOTEDRAW_OWNED_MUTATION_SELECTOR)) {
       continue;
     }
-    const beforeCount = rects.length;
+    const beforeCount = lineBucketCount;
     const walker = document2.createTreeWalker(textElement, nodeFilter.SHOW_TEXT);
     let node = walker.nextNode();
-    while (node && rects.length < 1200) {
+    while (node && lineBucketCount < 1200) {
       if (!seenNodes.has(node) && String(node.nodeValue || "").trim()) {
         seenNodes.add(node);
         const range = document2.createRange();
@@ -30069,11 +30224,26 @@ function collectTextLineRectsBelowCanvas(canvas, root, ownerIds = null) {
       }
       node = walker.nextNode();
     }
-    if (beforeCount === rects.length) {
+    if (beforeCount === lineBucketCount) {
       addRect(textElement.getBoundingClientRect?.(), textElement);
     }
   }
-  return rects;
+  const rects = Array.from(lineBucketsByOwner.values()).flat();
+  const grouped = /* @__PURE__ */ new Map();
+  for (const rect of rects) {
+    const key = rect.ownerKey || rect.blockId || `${rect.sourcePath}:${rect.lineStart ?? ""}`;
+    const group = grouped.get(key) || [];
+    group.push(rect);
+    grouped.set(key, group);
+  }
+  for (const group of grouped.values()) {
+    group.sort((left, right) => left.top - right.top || left.left - right.left);
+    group.forEach((rect, index) => {
+      rect.lineIndex = index;
+      rect.lineKey = `${Math.round(rect.top * 2)}:${Math.round(rect.bottom * 2)}`;
+    });
+  }
+  return rects.sort((left, right) => left.top - right.top || left.left - right.left);
 }
 function domPathForElement(element, root) {
   if (!element || !root?.contains(element) || element === root) {
@@ -31141,6 +31311,8 @@ function normalizeTextHighlightAnchor(value) {
     blockId: typeof value?.blockId === "string" ? value.blockId : "",
     textHint: typeof value?.textHint === "string" ? value.textHint.slice(0, 240) : "",
     baseline: clamp10(Number(value?.baseline ?? 0.58), 0, 1),
+    lineIndex: Number.isInteger(Number(value?.lineIndex)) && Number(value.lineIndex) >= 0 ? Math.round(Number(value.lineIndex)) : null,
+    lineKey: typeof value?.lineKey === "string" ? value.lineKey.slice(0, 80) : "",
     u
   };
 }

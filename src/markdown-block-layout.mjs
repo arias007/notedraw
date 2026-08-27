@@ -107,7 +107,9 @@ export function resolveDragDropHorizontalIntent({
   draggedLeft,
   leftContactTolerance = 8,
   rightIntentRatio = 0.5,
-  horizontalRoom = true
+  horizontalRoom = true,
+  requireRightIntent = false,
+  rightTargetRatio = 0.55
 } = {}) {
   const x = Number(clientX);
   const left = Number(targetLeft);
@@ -124,6 +126,15 @@ export function resolveDragDropHorizontalIntent({
   const contactTolerance = clamp(Number(leftContactTolerance) || 0, 0, 24);
   if (Number.isFinite(movingLeft) && movingLeft <= surfaceLeft + contactTolerance) {
     return "line-start";
+  }
+  if (requireRightIntent) {
+    if (!horizontalRoom) {
+      return "vertical";
+    }
+    // Parallel insertion is an explicit gesture. A row becoming narrow
+    // enough to fit is not, by itself, permission to create a new column.
+    const targetRightThreshold = left + (right - left) * clamp(Number(rightTargetRatio) || 0.55, 0.5, 0.9);
+    return x >= targetRightThreshold ? "inline-right" : "vertical";
   }
   // A row is a two-way insertion lane. The old resolver only exposed the
   // right half, so dragging an item back across its own row was interpreted
