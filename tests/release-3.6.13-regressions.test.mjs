@@ -10,11 +10,33 @@ test("startup defers global surface work and skips irrelevant embed hydration", 
   const scheduler = source.slice(source.indexOf("  scheduleSurfaceSync("), source.indexOf("  scheduleMindMapFilePicker("));
 
   assert.doesNotMatch(onload, /this\.runSurfaceSync\(\)/);
-  assert.match(onload, /this\.scheduleSurfaceSync\(24\)/);
+  assert.match(onload, /this\.scheduleSurfaceSync\(120\)/);
+  assert.match(onload, /layout-change[\s\S]*this\.scheduleSurfaceSync\(120\)/);
   assert.match(onload, /el\.matches\?\.\("img,video,audio,source,a,\.internal-embed"\)/);
   assert.match(onload, /el\.matches\?\.\(MARKDOWN_EMBED_SELECTOR\)/);
   assert.match(scheduler, /this\.surfaceSyncDueAt <= dueAt/);
   assert.match(scheduler, /window\.clearTimeout\(this\.surfaceSyncTimer\)/);
+});
+
+test("external drawing storage changes bypass caches and refresh mounted surfaces", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const onload = source.slice(source.indexOf("  async onload()"), source.indexOf("  onunload()"));
+  const refresh = source.slice(source.indexOf("  handleVaultDrawingChange("), source.indexOf("  scheduleMindMapFilePicker("));
+  const read = source.slice(source.indexOf("  async readDrawings("), source.indexOf("  async loadPortableBundle("));
+  const portableRead = source.slice(source.indexOf("  async loadPortableBundle("), source.indexOf("  rememberPortableBundle("));
+  const controllerRefresh = source.slice(source.indexOf("  refreshControllersForFile("), source.indexOf("  async handleVaultFileDelete("));
+
+  assert.match(onload, /this\.app\.vault\.on\("create"/);
+  assert.match(onload, /this\.app\.vault\.on\("modify"/);
+  assert.match(onload, /this\.app\.vault\.on\("raw"/);
+  assert.match(refresh, /scheduleExternalDrawingRefresh\(notePath, 72\)/);
+  assert.match(refresh, /refresh: true/);
+  assert.match(refresh, /busyControllers\.length/);
+  assert.match(read, /cached && options\.refresh !== true/);
+  assert.match(read, /loadPortableBundle\(file, \{ refresh: options\.refresh === true \}\)/);
+  assert.match(portableRead, /options\.refresh === true && typeof this\.app\.vault\.adapter\?\.read === "function"/);
+  assert.match(controllerRefresh, /controller\.initialReadingSurfaceSettlement = null/);
+  assert.match(controllerRefresh, /controller\.queueReadingSurfaceSettlement\(\)/);
 });
 
 test("properties and text editing retain native interaction and local history", async () => {
@@ -59,7 +81,12 @@ test("editing view defaults to Edit MD and command buttons execute only in readi
 
   assert.match(source, /defaultSourceEditMarkdown: true/);
   assert.match(source, /this\.surfaceType === "source" && this\.runtimeSettings\.defaultSourceEditMarkdown[\s\S]*TOOL_EDIT_MD/);
+  assert.match(source, /this\.surfaceType === "source" && this\.runtimeSettings\.defaultSourceEditMarkdown[\s\S]*this\.syncFloatingControlClasses\(\);[\s\S]*this\.syncSharedToolbarState\(\);/);
+  assert.match(source, /const shouldMount = Boolean\(sourceEl\) && isSourceMode\(view\) && sourceVisible/);
   assert.match(source, /this\.applySharedToolbarState\(this\.plugin\.controllerToolbarState\(this\)\);[\s\S]*this\.surfaceType === "source" && this\.runtimeSettings\.defaultSourceEditMarkdown[\s\S]*this\.toolMode = TOOL_EDIT_MD/);
+  assert.match(source, /this\.surfaceType === "preview" && sharedToolMode === TOOL_EDIT_MD[\s\S]*TOOL_SELECT/);
+  assert.match(source, /this\.surfaceType === "source" && this\.runtimeSettings\.defaultSourceEditMarkdown[\s\S]*TOOL_EDIT_MD/);
+  assert.match(source, /readingZoomLayoutMode/);
   assert.match(source, /createSettingDefinition\("defaultSourceEditMarkdown"/);
   assert.doesNotMatch(pending, /executeButtonCommand/);
   assert.match(source, /!isCommandButton \|\| this\.active \|\| this\.surfaceType !== "preview"/);

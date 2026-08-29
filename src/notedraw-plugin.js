@@ -1563,6 +1563,7 @@ var NoteDrawPlugin = class extends Plugin {
     this.saveIdleCallbacks = /* @__PURE__ */ new Map();
     this.pendingDrawingSaves = /* @__PURE__ */ new Map();
     this.drawingWritePromises = /* @__PURE__ */ new Map();
+    this.drawingExternalSyncTimers = /* @__PURE__ */ new Map();
     this.suppressedDrawingSaves = [];
     this.drawingStateCache = /* @__PURE__ */ new Map();
     this.portableBundles = /* @__PURE__ */ new Map();
@@ -1652,10 +1653,26 @@ var NoteDrawPlugin = class extends Plugin {
     this.registerEvent(this.app.workspace.on("layout-change", () => {
       this.syncMarkdownModeSurfaces();
       window.requestAnimationFrame(() => this.syncMarkdownModeSurfaces());
-      this.scheduleSurfaceSync(24);
+      // Layout changes arrive in bursts while Obsidian is opening or switching
+      // views. Keep the cheap mode sync immediate, but defer the global
+      // reconciliation until the burst settles so startup does not scan every
+      // surface repeatedly.
+      this.scheduleSurfaceSync(120);
     }));
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.scheduleSurfaceSync(40)));
     this.registerEvent(this.app.workspace.on("file-open", () => this.scheduleSurfaceSync(60)));
+    this.registerEvent(this.app.vault.on("create", (file) => {
+      this.handleVaultDrawingChange(file);
+    }));
+    this.registerEvent(this.app.vault.on("modify", (file) => {
+      this.handleVaultDrawingChange(file);
+    }));
+    // Adapter/sync changes to .obsidian data may not surface as a TFile
+    // modify event. The raw path event covers that case without scanning the
+    // vault because the handler only compares against mounted controllers.
+    this.registerEvent(this.app.vault.on("raw", (path) => {
+      this.handleVaultDrawingChange({ path });
+    }));
     this.registerEvent(this.app.vault.on("delete", (file) => {
       this.handleVaultFileDelete(file).catch((error) => {
         console.error(`[${PLUGIN_ID}] Failed to clear deleted file NoteDraw data`, error);
@@ -1725,7 +1742,10 @@ var NoteDrawPlugin = class extends Plugin {
       controller.mount();
       this.scheduleWebviewSync();
     });
-    this.scheduleSurfaceSync(24);
+    // Let Obsidian finish its first renderer/layout pass before the global
+    // controller reconciliation. Markdown post-processors still mount the
+    // active surface as soon as its content is ready.
+    this.scheduleSurfaceSync(120);
   }
   onunload() {
     this.runtimeDisposed = true;
@@ -1763,6 +1783,10 @@ var NoteDrawPlugin = class extends Plugin {
     }
     this.saveTimers.clear();
     this.saveIdleCallbacks.clear();
+    for (const timer of this.drawingExternalSyncTimers.values()) {
+      window.clearTimeout(timer);
+    }
+    this.drawingExternalSyncTimers.clear();
     this.suppressedDrawingSaves = [];
     if (this.settingsSaveTimer !== null) {
       window.clearTimeout(this.settingsSaveTimer);
@@ -1875,6 +1899,98 @@ var NoteDrawPlugin = class extends Plugin {
         run();
       }
     }, wait);
+  }
+  handleVaultDrawingChange(file) {
+    if (this.runtimeDisposed) {
+      return;
+    }
+    const changedPath = normalizeVaultPath(file?.path || "");
+    if (!changedPath) {
+      return;
+    }
+    const paths = /* @__PURE__ */ new Set();
+    for (const controller of this.getAllControllers()) {
+      if (!controller?.file?.path || !this.drawingStoragePathMatches(controller.file, changedPath)) {
+        continue;
+      }
+      paths.add(normalizeVaultPath(controller.file.path));
+    }
+    for (const notePath of paths) {
+      this.scheduleExternalDrawingRefresh(notePath, 72);
+    }
+  }
+  drawingStoragePathMatches(file, changedPath) {
+    const notePath = normalizeVaultPath(file?.path || "");
+    const normalizedChangedPath = normalizeVaultPath(changedPath || "");
+    if (!notePath || !normalizedChangedPath) {
+      return false;
+    }
+    const storageMode = this.drawingStorageModeForFile(file);
+    if (storageMode === DRAWING_STORAGE_EMBEDDED && notePath === normalizedChangedPath) {
+      return true;
+    }
+    return [
+      this.drawingPathForFile(file, storageMode),
+      this.drawingPathForFile(file, DRAWING_STORAGE_CONFIG),
+      this.legacyDrawingPathForFile(file)
+    ].some((path) => normalizeVaultPath(path) === normalizedChangedPath);
+  }
+  scheduleExternalDrawingRefresh(notePath, delay = 72) {
+    const normalizedPath = normalizeVaultPath(notePath || "");
+    if (!normalizedPath || this.runtimeDisposed) {
+      return;
+    }
+    const existing = this.drawingExternalSyncTimers.get(normalizedPath);
+    if (existing !== void 0) {
+      window.clearTimeout(existing);
+    }
+    const timer = window.setTimeout(() => {
+      this.drawingExternalSyncTimers.delete(normalizedPath);
+      this.refreshExternalDrawingFile(normalizedPath).catch((error) => {
+        if (!this.runtimeDisposed) {
+          console.error(`[${PLUGIN_ID}] Failed to refresh externally changed drawing data`, error);
+        }
+      });
+    }, Math.max(40, Number(delay) || 72));
+    this.drawingExternalSyncTimers.set(normalizedPath, timer);
+  }
+  async refreshExternalDrawingFile(notePath) {
+    const file = getVaultFileByPath(this.app.vault, notePath);
+    if (!file || this.runtimeDisposed) {
+      return 0;
+    }
+    const controllers = this.getAllControllers().filter((controller) => (
+      !controller.destroyed
+      && normalizeVaultPath(controller.file?.path || "") === normalizeVaultPath(file.path)
+      && controller.drawingsLoaded
+    ));
+    if (!controllers.length) {
+      return 0;
+    }
+    const busyControllers = controllers.filter((controller) => (
+      controller.pointerDown || controller.draggingStroke || controller.resizingSelection
+    ));
+    if (busyControllers.length) {
+      busyControllers.forEach((controller) => {
+        controller.externalDrawingRefreshPending = true;
+      });
+      this.scheduleExternalDrawingRefresh(notePath, 240);
+      return 0;
+    }
+    const data = await this.readDrawings(file, {
+      refresh: true,
+      migrateLegacy: false,
+      repair: false
+    });
+    const dataVersion = String(data?.updatedAt || "");
+    if (dataVersion && controllers.every((controller) => String(controller.drawingData?.updatedAt || "") === dataVersion)) {
+      controllers.forEach((controller) => {
+        controller.externalDrawingRefreshPending = false;
+      });
+      return 0;
+    }
+    const refreshed = this.refreshControllersForFile(file, data, { external: true });
+    return refreshed;
   }
   scheduleMindMapFilePicker(controller) {
     if (this.mindMapPickerTimer !== null) {
@@ -3560,15 +3676,17 @@ var NoteDrawPlugin = class extends Plugin {
   refreshControllersForFile(file, data, options = {}) {
     let refreshed = 0;
     for (const controller of this.getAllControllers()) {
-      if (
-        normalizeVaultPath(controller.file?.path) !== normalizeVaultPath(file?.path) ||
-        controller.drawingData === options.excludeData ||
-        controller.pointerDown ||
-        controller.draggingStroke ||
-        controller.resizingSelection
-      ) {
+      if (normalizeVaultPath(controller.file?.path) !== normalizeVaultPath(file?.path)
+        || controller.drawingData === options.excludeData) {
         continue;
       }
+      if (controller.pointerDown || controller.draggingStroke || controller.resizingSelection) {
+        if (options.external === true) {
+          controller.externalDrawingRefreshPending = true;
+        }
+        continue;
+      }
+      controller.externalDrawingRefreshPending = false;
       controller.markdownSourceRevisionChanged = Boolean(data?._notedrawSourceRevisionMismatch);
       controller.drawingData = normalizeDrawingData(data, file);
       controller.rebuildElementRelations();
@@ -3577,11 +3695,22 @@ var NoteDrawPlugin = class extends Plugin {
       controller.responsivePointsInitialized = false;
       controller.responsiveLayoutSignature = "";
       controller.responsiveLayoutContext = null;
+      controller.surfaceStateGeneration += 1;
+      controller.initialReadingLayoutPrepared = false;
+      controller.initialReadingLayoutSettlement = null;
+      controller.initialReadingLayoutSettled = false;
+      controller.initialReadingSurfaceSettlement = null;
+      controller.initialReadingCommittedSignature = "";
+      controller.cancelLayoutRefresh();
       controller.invalidateStaticCache();
       if (isElementVisibleEnough(controller.previewEl)) {
         controller.scheduleFrozenNoteFlowLayoutRestore();
-        controller.scheduleLayoutRefresh({ settle: false });
+        controller.syncMarkdownBlockPresentation();
+        controller.scheduleLayoutRefresh({ settle: false, layout: false, measure: true });
         controller.requestRender(true);
+        if (!controller.active && controller.surfaceType === "preview") {
+          controller.queueReadingSurfaceSettlement();
+        }
       }
       refreshed += 1;
     }
@@ -3807,7 +3936,11 @@ var NoteDrawPlugin = class extends Plugin {
       const sourceEl = findSourceSurfaceForView(view);
       const previewVisible = isMarkdownPreviewVisible(view, findRootPreviewForView(view));
       const sourceVisible = isMarkdownSourceVisible(view, sourceEl);
-      const shouldMount = Boolean(sourceEl) && isSourceMode(view) && sourceVisible && !previewVisible;
+      // Mobile Obsidian can keep the preview tree laid out for one or more
+      // frames while switching to the editor. The view mode is authoritative;
+      // waiting for previewVisible to become false leaves two controllers
+      // competing for the shared zoom/tool state.
+      const shouldMount = Boolean(sourceEl) && isSourceMode(view) && sourceVisible;
       const existing = this.sourceControllers.get(view);
       if (!shouldMount) {
         if (existing) {
@@ -3910,7 +4043,10 @@ var NoteDrawPlugin = class extends Plugin {
         previewController.destroy();
         previewController = null;
       }
-      if (isSourceMode(view) && sourceVisible && !previewVisible) {
+      // On mobile the old preview surface may still report a non-zero rect
+      // during the editor transition. Do not let that stale geometry keep a
+      // preview controller alive or overwrite the editor's shared state.
+      if (isSourceMode(view) && sourceVisible) {
         for (const rootPreview of findRootPreviewsForView(view)) {
           this.clearPreviewRenderRecovery(rootPreview);
           const controller = this.controllers.get(rootPreview) || rootPreview._noteDrawController;
@@ -4899,7 +5035,7 @@ var NoteDrawPlugin = class extends Plugin {
       return normalizeDrawingData(latest, file);
     }
     const cached = this.drawingStateCache.get(storageKey);
-    if (cached) {
+    if (cached && options.refresh !== true) {
       return normalizeDrawingData(cached, file);
     }
     try {
@@ -4907,7 +5043,7 @@ var NoteDrawPlugin = class extends Plugin {
       const selectedPath = storageMode === DRAWING_STORAGE_EMBEDDED ? "" : this.drawingPathForFile(file, storageMode);
       const configPath = this.drawingPathForFile(file, DRAWING_STORAGE_CONFIG);
       const legacyPath = this.legacyDrawingPathForFile(file);
-      const portableBundle = await this.loadPortableBundle(file);
+      const portableBundle = await this.loadPortableBundle(file, { refresh: options.refresh === true });
       const candidates = [];
       if (portableBundle?.drawing) {
         candidates.push({
@@ -4984,7 +5120,10 @@ var NoteDrawPlugin = class extends Plugin {
     if (!options.refresh && this.portableBundleLoads.has(key)) {
       return this.portableBundleLoads.get(key);
     }
-    const loading = this.app.vault.cachedRead(realFile).then(async (source) => {
+    const sourceRead = options.refresh === true && typeof this.app.vault.adapter?.read === "function"
+      ? this.app.vault.adapter.read(realFile.path)
+      : this.app.vault.cachedRead(realFile);
+    const loading = sourceRead.then(async (source) => {
       const decoded = await decodeNotedrawDataBlock(source);
       const bundle = normalizePortableBundle(decoded, realFile);
       this.rememberPortableBundle(realFile, bundle);
@@ -5884,6 +6023,11 @@ var PreviewDrawingController = class {
     this.floatingControlsInBody = false;
     this.textPreset = this.runtimeSettings.lastTextPreset;
     this.readingZoom = this.runtimeSettings.lastReadingZoom;
+    // Keep the source layout zoom separate from the reading surface zoom.
+    // The former preserves wrapping across a view switch; the latter is only
+    // a reading-view viewport preference and must not overwrite that layout.
+    this.inheritedReadingLayoutZoom = 1;
+    this.readingZoomLayoutMode = this.surfaceType === "source";
     this.readingZoomTarget = null;
     this.readingZoomBaseTarget = null;
     this.readingZoomBaseOrigin = null;
@@ -5948,13 +6092,42 @@ var PreviewDrawingController = class {
       for (const mode of [BRUSH_PEN, BRUSH_WATERCOLOR]) {
         this.brushVariants[mode] = normalizeBrushVariant(mode, sharedToolbarState.brushVariants?.[mode]);
       }
-      this.toolMode = sharedToolbarState.toolMode || this.toolMode;
+      const sharedToolMode = sharedToolbarState.toolMode || this.toolMode;
+      this.toolMode = this.surfaceType === "source" && this.runtimeSettings.defaultSourceEditMarkdown
+        ? TOOL_EDIT_MD
+        : this.surfaceType === "preview" && sharedToolMode === TOOL_EDIT_MD
+          ? TOOL_SELECT
+          : sharedToolMode;
+      if (this.surfaceType === "source") {
+        this.readingZoom = clamp(
+          Number(sharedToolbarState.sourceLayoutZoom ?? sharedToolbarState.readingZoom) || this.readingZoom || 1,
+          MIN_READING_ZOOM,
+          MAX_READING_ZOOM
+        );
+        this.readingZoomLayoutMode = true;
+      } else {
+        const legacyLayoutZoom = sharedToolbarState.readingZoomLayoutMode === true
+          ? sharedToolbarState.readingZoom
+          : 1;
+        this.inheritedReadingLayoutZoom = clamp(
+          Number(sharedToolbarState.sourceLayoutZoom ?? legacyLayoutZoom) || 1,
+          MIN_READING_ZOOM,
+          MAX_READING_ZOOM
+        );
+        this.readingZoom = clamp(
+          Number(sharedToolbarState.sourceLayoutZoom !== void 0 && sharedToolbarState.readingZoomLayoutMode === true
+            ? this.readingZoom
+            : sharedToolbarState.readingZoom) || this.readingZoom || 1,
+          MIN_READING_ZOOM,
+          MAX_READING_ZOOM
+        );
+        this.readingZoomLayoutMode = false;
+      }
       this.paletteOpen = Boolean(sharedToolbarState.paletteOpen);
       this.brushPanelOpen = Boolean(sharedToolbarState.brushPanelOpen);
       this.brushPanelMode = [BRUSH_PEN, BRUSH_WATERCOLOR].includes(sharedToolbarState.brushPanelMode) ? sharedToolbarState.brushPanelMode : this.brushPanelMode;
       this.textPanelOpen = Boolean(sharedToolbarState.textPanelOpen);
       this.textPreset = sharedToolbarState.textPreset || this.textPreset;
-      this.readingZoom = clamp(Number(sharedToolbarState.readingZoom) || 1, MIN_READING_ZOOM, MAX_READING_ZOOM);
       for (const mode of [BRUSH_PEN, BRUSH_WATERCOLOR]) {
         if (sharedToolbarState.brushSettings?.[mode]) {
           this.brushSettings[mode] = { ...this.brushSettings[mode], ...sharedToolbarState.brushSettings[mode] };
@@ -6022,6 +6195,7 @@ var PreviewDrawingController = class {
     this.lastObservedPreviewWidth = 0;
     this.drawingsLoaded = false;
     this.loadingDrawings = null;
+    this.externalDrawingRefreshPending = false;
     this.drawingLoadGeneration = 0;
     this.markdownSourceRevisionChanged = false;
     this.onPointerDown = this.onPointerDown.bind(this);
@@ -6421,6 +6595,10 @@ var PreviewDrawingController = class {
       this.previewEl.removeClass("is-text-panel-open");
       this.updateToolButtons();
       this.syncFloatingControlClasses();
+      // Persist the mode after the source controller is mounted. This is
+      // important on mobile, where the preview controller can be recreated
+      // immediately after the source surface and otherwise restore Select.
+      this.syncSharedToolbarState();
     }
     this.applyReadingZoom();
     this.applyActiveState(this.active);
@@ -6643,6 +6821,13 @@ var PreviewDrawingController = class {
     if (this.readingSurfaceRepairFrameId !== null) {
       return true;
     }
+    // A view switch or magic-wand transition can leave an older settlement
+    // waiting on a DOM frame from the previous surface. Invalidate it before
+    // scheduling the replacement so its promise cannot block fresh geometry.
+    this.surfaceStateGeneration += 1;
+    this.initialReadingLayoutSettlement = null;
+    this.initialReadingSurfaceSettlement = null;
+    this.cancelLayoutRefresh();
     this.initialReadingLayoutPrepared = false;
     this.initialReadingLayoutSettled = false;
     this.initialReadingCommittedSignature = "";
@@ -7990,6 +8175,7 @@ var PreviewDrawingController = class {
     this.render();
   }
   syncSharedToolbarState() {
+    const sourceSurface = this.surfaceType === "source";
     this.plugin.setControllerToolbarState(this, {
       brushMode: this.brushMode,
       brushVariants: { ...this.brushVariants },
@@ -8004,7 +8190,11 @@ var PreviewDrawingController = class {
       paletteOpen: this.paletteOpen,
       textPanelOpen: this.textPanelOpen,
       textPreset: this.textPreset,
-      readingZoom: this.readingZoom
+      // Source zoom is a layout baseline. Preview zoom is an independent
+      // visual scale relative to that baseline.
+      readingZoom: sourceSurface ? 1 : this.readingZoom,
+      sourceLayoutZoom: sourceSurface ? this.readingZoom : this.inheritedReadingLayoutZoom,
+      readingZoomLayoutMode: sourceSurface
     });
   }
   applySharedToolbarState(state) {
@@ -8013,6 +8203,8 @@ var PreviewDrawingController = class {
     }
     const previousToolMode = this.toolMode;
     const previousReadingZoom = this.readingZoom;
+    const previousReadingZoomLayoutMode = this.readingZoomLayoutMode;
+    const previousInheritedReadingLayoutZoom = this.inheritedReadingLayoutZoom;
     this.brushMode = [BRUSH_PEN, BRUSH_WATERCOLOR].includes(state.brushMode) ? state.brushMode : this.brushMode;
     for (const mode of [BRUSH_PEN, BRUSH_WATERCOLOR]) {
       this.brushVariants[mode] = normalizeBrushVariant(mode, state.brushVariants?.[mode] ?? this.brushVariants[mode]);
@@ -8025,13 +8217,40 @@ var PreviewDrawingController = class {
     if (state.brushVariantSettings) {
       this.brushVariantSettings = createBrushVariantSettings(state.brushVariantSettings, this.brushSettings);
     }
-    this.toolMode = state.toolMode || this.toolMode;
+    const sharedToolMode = state.toolMode || this.toolMode;
+    this.toolMode = this.surfaceType === "source" && this.runtimeSettings.defaultSourceEditMarkdown
+      ? TOOL_EDIT_MD
+      : this.surfaceType === "preview" && sharedToolMode === TOOL_EDIT_MD
+        ? TOOL_SELECT
+        : sharedToolMode;
+    if (this.surfaceType === "source") {
+      this.readingZoom = clamp(
+        Number(state.sourceLayoutZoom ?? state.readingZoom) || this.readingZoom || 1,
+        MIN_READING_ZOOM,
+        MAX_READING_ZOOM
+      );
+      this.readingZoomLayoutMode = true;
+    } else {
+      const legacyLayoutZoom = state.readingZoomLayoutMode === true ? state.readingZoom : 1;
+      this.inheritedReadingLayoutZoom = clamp(
+        Number(state.sourceLayoutZoom ?? legacyLayoutZoom) || 1,
+        MIN_READING_ZOOM,
+        MAX_READING_ZOOM
+      );
+      this.readingZoom = clamp(
+        Number(state.sourceLayoutZoom !== void 0 && state.readingZoomLayoutMode === true ? this.readingZoom : state.readingZoom)
+          || this.readingZoom
+          || 1,
+        MIN_READING_ZOOM,
+        MAX_READING_ZOOM
+      );
+      this.readingZoomLayoutMode = false;
+    }
     this.paletteOpen = Boolean(state.paletteOpen) && this.toolMode !== TOOL_EDIT_MD && (this.toolMode !== TOOL_SELECT || this.hasHybridSelection());
     this.brushPanelOpen = Boolean(state.brushPanelOpen) && this.toolMode === TOOL_DRAW;
     this.brushPanelMode = [BRUSH_PEN, BRUSH_WATERCOLOR].includes(state.brushPanelMode) ? state.brushPanelMode : this.brushPanelMode;
     this.textPanelOpen = Boolean(state.textPanelOpen);
     this.textPreset = state.textPreset || this.textPreset;
-    this.readingZoom = clamp(Number(state.readingZoom) || this.readingZoom || 1, MIN_READING_ZOOM, MAX_READING_ZOOM);
     this.syncCurrentBrushFields();
     this.previewEl.toggleClass("is-select-mode", this.toolMode === TOOL_SELECT);
     this.previewEl.toggleClass("is-palette-open", this.paletteOpen);
@@ -8044,7 +8263,10 @@ var PreviewDrawingController = class {
     this.syncBrushPanelButtons?.();
     this.syncTextPanelButtons?.();
     const zoomChanged = Math.abs(this.readingZoom - previousReadingZoom) >= 0.001;
-    if (zoomChanged) {
+    const zoomPresentationChanged = zoomChanged
+      || this.readingZoomLayoutMode !== previousReadingZoomLayoutMode
+      || Math.abs(this.inheritedReadingLayoutZoom - previousInheritedReadingLayoutZoom) >= 0.001;
+    if (zoomPresentationChanged) {
       this.applyReadingZoom();
       this.responsiveLayoutContext = null;
       const visualReadingZoom = this.usesVisualReadingZoom();
@@ -12725,6 +12947,18 @@ var PreviewDrawingController = class {
     element.style.setProperty("transform", `scale(${zoom})${originalTransform && originalTransform !== "none" ? ` ${originalTransform}` : ""}`);
     element.style.setProperty("transform-origin", `${-origin.x}px ${-origin.y}px`);
   }
+  applyInheritedReadingLayoutZoom(target) {
+    if (this.surfaceType !== "preview" || !target?.isConnected) {
+      return;
+    }
+    const zoom = clamp(Number(this.inheritedReadingLayoutZoom) || 1, MIN_READING_ZOOM, MAX_READING_ZOOM);
+    this.rememberReadingZoomStyles(target);
+    if (Math.abs(zoom - 1) < 0.001) {
+      target.style.removeProperty("zoom");
+      return;
+    }
+    target.style.setProperty("zoom", String(zoom));
+  }
   readingPreviewRenderer() {
     const renderer = this.view?.previewMode?.renderer;
     return renderer?.previewEl === this.previewEl && Array.isArray(renderer?.sections) ? renderer : null;
@@ -13192,6 +13426,11 @@ var PreviewDrawingController = class {
       return false;
     }
     const previousTarget = this.readingZoomTarget;
+    if (previousTarget && previousTarget !== target) {
+      this.restoreReadingZoomStyles();
+      this.readingZoomBaseTarget = null;
+      this.readingZoomBaseOrigin = null;
+    }
     this.readingZoomTarget = target;
     this.captureReadingLogicalSizerHeight();
     const visualTarget = this.usesVisualReadingZoom() ? this.ensureReadingZoomStage(target) : target;
@@ -13200,10 +13439,8 @@ var PreviewDrawingController = class {
     }
     const zoom = this.readingZoomScale();
     this.readingZoom = zoom;
-    if (previousTarget && previousTarget !== target) {
-      this.restoreReadingZoomStyles();
-      this.readingZoomBaseTarget = null;
-      this.readingZoomBaseOrigin = null;
+    if (this.usesVisualReadingZoom()) {
+      this.applyInheritedReadingLayoutZoom(target);
     }
     if (Math.abs(zoom - 1) >= 0.001) {
       this.captureReadingZoomBaseOrigin(target);
@@ -13211,13 +13448,19 @@ var PreviewDrawingController = class {
     const elements = this.readingZoomElements(target);
     if (Math.abs(zoom - 1) < 0.001) {
       this.restoreReadingZoomStyles();
+      if (this.usesVisualReadingZoom()) {
+        this.applyInheritedReadingLayoutZoom(target);
+      }
       if (!this.isReadingZoomInteractionActive()) {
         this.restoreReadingVirtualSections();
         this.readingZoomBaseTarget = null;
         this.readingZoomBaseOrigin = null;
       }
       this.previewEl.removeClass("is-reading-zoomed");
-      this.previewEl.removeClass("is-editing-layout-zoomed");
+      this.previewEl.toggleClass(
+        "is-editing-layout-zoomed",
+        Math.abs(Number(this.inheritedReadingLayoutZoom) - 1) >= 0.001
+      );
     } else {
       if (this.usesVisualReadingZoom()) {
         for (const element of elements) {
@@ -13241,7 +13484,8 @@ var PreviewDrawingController = class {
         }
       }
       this.previewEl.toggleClass("is-reading-zoomed", this.usesVisualReadingZoom());
-      this.previewEl.toggleClass("is-editing-layout-zoomed", !this.usesVisualReadingZoom());
+      this.previewEl.toggleClass("is-editing-layout-zoomed", !this.usesVisualReadingZoom()
+        || Math.abs(Number(this.inheritedReadingLayoutZoom) - 1) >= 0.001);
     }
     this.updateReadingZoomExtent(zoom, target);
     this.scheduleReadingVirtualSectionSync();
@@ -15264,6 +15508,10 @@ var PreviewDrawingController = class {
         this.captureSelectionFrameSnapshot({ force: true });
       }
     }
+    if (this.externalDrawingRefreshPending) {
+      this.externalDrawingRefreshPending = false;
+      this.plugin.scheduleExternalDrawingRefresh(this.file?.path, 0);
+    }
     this.render();
     if (didMove && markdownDrop && !noOpMarkdownDrop) {
       this.commitDraggedMarkdownBlocks(markdownDrop, drawingHistoryBefore).then((committed) => {
@@ -15355,6 +15603,10 @@ var PreviewDrawingController = class {
       this.releasePointerCapture(this.activePointerId);
     }
     this.clearSelectedStrokeDragState();
+    if (this.externalDrawingRefreshPending) {
+      this.externalDrawingRefreshPending = false;
+      this.plugin.scheduleExternalDrawingRefresh(this.file?.path, 0);
+    }
     if (restoredDrag) {
       this.scheduleNoteFlowLayout({ operation: true });
     }

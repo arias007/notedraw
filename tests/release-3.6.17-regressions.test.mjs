@@ -12,7 +12,7 @@ test("view changes synchronize source geometry immediately without projecting hi
   const onload = source.slice(source.indexOf("  async onload()"), source.indexOf("  onunload()"));
   const initialLoad = source.slice(source.indexOf("  async ensureDrawingsLoaded()"), source.indexOf("  async ensurePortableDrawingLoaded()"));
 
-  assert.match(onload, /layout-change[\s\S]*this\.syncMarkdownModeSurfaces\(\)[\s\S]*requestAnimationFrame\(\(\) => this\.syncMarkdownModeSurfaces\(\)\)[\s\S]*scheduleSurfaceSync\(24\)/);
+  assert.match(onload, /layout-change[\s\S]*this\.syncMarkdownModeSurfaces\(\)[\s\S]*requestAnimationFrame\(\(\) => this\.syncMarkdownModeSurfaces\(\)\)[\s\S]*scheduleSurfaceSync\(120\)/);
   assert.match(source, /syncMarkdownModeSurfaces\(\)[\s\S]*syncSourceControllers\(\)[\s\S]*syncMarkdownControllerModes\(\)[\s\S]*reconcileControllerActivation/);
   assert.match(initialLoad, /resizeCanvas\(\{ layout: false, measure: true \}\)[\s\S]*surfaceType === "source"[\s\S]*resizeCanvas\(\{ layout: true, measure: false \}\)/);
 });

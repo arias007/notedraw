@@ -219,7 +219,7 @@ test("3.4.84 preserves reading content and cross-view frames without hidden-surf
   assert.match(activeState, /if \(!this\.active && wasActive\)[\s\S]*this\.syncMarkdownBlockPresentation\(\);\s*this\.scheduleFrozenNoteFlowLayoutRestore\(\);\s*this\.render\(\)/);
   assert.match(activeState, /if \(wasActive !== this\.active && this\.drawingsLoaded\) \{\s*this\.scheduleResize\(\{ layout: false, measure: false \}\)/);
   const onloadSource = source.slice(source.indexOf("  async onload()"), source.indexOf("  onunload()"));
-  assert.match(onloadSource, /this\.registerMarkdownPostProcessor\([\s\S]*this\.scheduleSurfaceSync\(24\)/);
+  assert.match(onloadSource, /this\.registerMarkdownPostProcessor\([\s\S]*this\.scheduleSurfaceSync\(120\)/);
   assert.doesNotMatch(onloadSource, /this\.runSurfaceSync\(\)/);
 });
 
@@ -383,7 +383,7 @@ test("reading controllers survive zero-sized view transitions until the source s
   const syncSource = source.slice(syncStart, source.indexOf("  syncEmbeddedMarkdownControllers()", syncStart));
 
   assert.match(syncSource, /const sourceVisible = isMarkdownSourceVisible\(view, source\)/);
-  assert.match(syncSource, /if \(isSourceMode\(view\) && sourceVisible && !previewVisible\) \{\s*for \(const rootPreview of findRootPreviewsForView\(view\)\)/);
+  assert.match(syncSource, /if \(isSourceMode\(view\) && sourceVisible\) \{\s*for \(const rootPreview of findRootPreviewsForView\(view\)\)/);
   assert.match(syncSource, /sourceController\?\.syncFloatingControlClasses\(\);\s*if \(!previewVisible\) \{\s*if \(alternateSurfaceVisible\)[\s\S]*controller\.destroy\(\);[\s\S]*continue;/);
   assert.match(syncSource, /if \(previewController\?\.plugin === this && !previewController\.destroyed[\s\S]*continue;\s*}\s*if \(!isRootPreviewReady/);
   assert.match(syncSource, /if \(!isRootPreviewReady\(view, preview\)\) \{\s*previewController\?\.destroy\(\);\s*if \(this\.schedulePreviewRenderRecovery\(view, preview\)\) \{\s*continue;\s*}\s*resetDormantRootPreview\(view, preview\);\s*continue;/);

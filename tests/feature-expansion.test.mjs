@@ -91,6 +91,13 @@ test("reading zoom preserves wrapping while edit zoom can reflow", async () => {
   assert.match(source, /handleMultiTouchScroll\(event\)[\s\S]*window\.requestAnimationFrame/);
   assert.match(source, /return \["preview", "source"\]\.includes\(this\.surfaceType\) && !this\.embeddedSurface/);
   assert.match(source, /usesVisualReadingZoom\(\)/);
+  assert.match(source, /inheritedReadingLayoutZoom/);
+  assert.match(source, /applyInheritedReadingLayoutZoom\(target\)/);
+  assert.match(source, /sourceLayoutZoom: sourceSurface \? this\.readingZoom : this\.inheritedReadingLayoutZoom/);
+  assert.match(source, /state\.sourceLayoutZoom !== void 0 && state\.readingZoomLayoutMode === true \? this\.readingZoom : state\.readingZoom/);
+  assert.match(source, /sharedToolbarState\.sourceLayoutZoom !== void 0 && sharedToolbarState\.readingZoomLayoutMode === true[\s\S]*\? this\.readingZoom/);
+  assert.doesNotMatch(source, /this\.readingZoom = clamp\(Number\(sharedToolbarState\.readingZoom\) \|\| 1/);
+  assert.doesNotMatch(source, /this\.readingZoom = clamp\(Number\(state\.readingZoom\) \|\| this\.readingZoom \|\| 1/);
   assert.match(source, /readingZoomElements\(target = this\.readingZoomTarget\)/);
   assert.match(source, /element\.style\.setProperty\("transform", `scale\(\$\{zoom\}\)/);
   assert.match(source, /element\.style\.setProperty\("transform-origin", `\$\{-origin\.x\}px \$\{-origin\.y\}px`\)/);

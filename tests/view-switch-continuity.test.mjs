@@ -38,7 +38,12 @@ test("toolbar mode, brush, panels, and text preset are shared", async () => {
   }
   assert.match(source, /brushSettings:\s*\{\s*\[BRUSH_PEN\]: \{ \.\.\.this\.brushSettings\[BRUSH_PEN\] \}/s);
   assert.match(source, /applySharedToolbarState\(state\)/);
-  assert.match(source, /this\.toolMode = state\.toolMode \|\| this\.toolMode/);
+  assert.match(source, /const sharedToolMode = state\.toolMode \|\| this\.toolMode[\s\S]*this\.surfaceType === "preview" && sharedToolMode === TOOL_EDIT_MD[\s\S]*TOOL_SELECT/);
+  assert.match(source, /this\.surfaceType === "source" && this\.runtimeSettings\.defaultSourceEditMarkdown[\s\S]*TOOL_EDIT_MD/);
+  assert.match(source, /this\.surfaceType === "source" && this\.runtimeSettings\.defaultSourceEditMarkdown[\s\S]*this\.syncFloatingControlClasses\(\);[\s\S]*this\.syncSharedToolbarState\(\);/);
+  assert.match(source, /const shouldMount = Boolean\(sourceEl\) && isSourceMode\(view\) && sourceVisible/);
+  assert.match(source, /if \(isSourceMode\(view\) && sourceVisible\) \{/);
+  assert.match(source, /readingZoomLayoutMode/);
   assert.doesNotMatch(source, /drawingsVisible: this\.drawingsVisible/);
   assert.doesNotMatch(source, /this\.drawingsVisible = state\.drawingsVisible !== false/);
   assert.doesNotMatch(source, /this\.surfaceType === "source"\) \{\s*return false;/);
