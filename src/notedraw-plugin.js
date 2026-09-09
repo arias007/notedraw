@@ -11865,6 +11865,12 @@ var PreviewDrawingController = class {
     const directTaskBlock = directTaskItem && this.previewEl.contains(directTaskItem)
       ? this.markdownBlockElementForTarget(directTaskItem, point)
       : null;
+    // Capture the persisted parallel row before the task checkbox handler
+    // replaces the rendered list item. The direct-drag branch below starts a
+    // NoteFlow drag and returns, so the snapshot has to be taken first —
+    // otherwise a checked task inside a side-by-side row loses its span until
+    // the note is reopened.
+    this.rememberMarkdownIdentityMutation(event);
     if (this.active && this.toolMode === TOOL_SELECT && event.target !== this.canvas && directTaskBlock) {
       this.directMarkdownPointerId = event.pointerId;
       this.directMarkdownPointerElement = directTaskBlock;
@@ -11874,7 +11880,6 @@ var PreviewDrawingController = class {
       event.stopImmediatePropagation?.();
       return;
     }
-    this.rememberMarkdownIdentityMutation(event);
     const now = Number(event.timeStamp) || Date.now();
     const previous = this.previewPrimaryPress;
     this.previewPrimaryPress = { ...point, time: now };
@@ -11978,11 +11983,11 @@ var PreviewDrawingController = class {
     this.pendingMarkdownIdentityRefresh = {
       triggerId: block.id,
       members,
-      expiresAt: Date.now() + 3000
+      expiresAt: Date.now() + 6000
     };
     // Reapply the frozen row after checkbox handlers replace the rendered
     // list item, including renderers that do not emit a child-list mutation.
-    for (const delay of [0, 48, 180]) {
+    for (const delay of [0, 48, 180, 420, 900]) {
       window.setTimeout(() => {
         if (this.destroyed || this.pendingMarkdownIdentityRefresh?.expiresAt <= Date.now()) {
           return;
@@ -12863,6 +12868,10 @@ var PreviewDrawingController = class {
     }
   }
   onReadingClick(event) {
+    // A task checkbox can also be toggled without the pointerdown path above
+    // (keyboard, plugin command, or a renderer that swallows it). Capture the
+    // persisted parallel row here as well so the rebuilt row keeps its spans.
+    this.rememberMarkdownIdentityMutation(event);
     if (this.active) {
       if (this.toolMode === TOOL_SELECT && Date.now() <= this.directMarkdownTaskClickUntil
         && event.target?.closest?.("li.task-list-item")) {
@@ -14416,8 +14425,11 @@ var PreviewDrawingController = class {
     const horizontalRoom = row.canFit;
     const intent = resolveDragDropHorizontalIntent({
       clientX,
+      clientY,
       targetLeft: nearest.rect.left,
       targetRight: nearest.rect.right,
+      targetTop: nearest.rect.top,
+      targetBottom: nearest.rect.bottom,
       laneLeft: laneRect.left,
       laneRight: laneRect.right,
       draggedLeft: this.draggedSelectionClientLeft(),
@@ -14540,8 +14552,11 @@ var PreviewDrawingController = class {
     const horizontalRoom = row.canFit;
     const intent = forcedIntent || resolveDragDropHorizontalIntent({
       clientX,
+      clientY,
       targetLeft: rect.left,
       targetRight: rect.right,
+      targetTop: rect.top,
+      targetBottom: rect.bottom,
       laneLeft: geometry?.laneRect?.left ?? rect.left,
       laneRight: geometry?.laneRect?.right ?? rect.right,
       draggedLeft: this.draggedSelectionClientLeft(),
@@ -14557,7 +14572,11 @@ var PreviewDrawingController = class {
     // Hysteresis: once the drag settles on a side-by-side placement, keep it
     // while the pointer stays inside the target so it does not flicker
     // between inline and vertical insertion (which read as "slides up/down").
-    if ((this.dragMarkdownDropSide === "right" || this.dragMarkdownDropSide === "left")
+    const sideLatchBand = clamp(Number(rect.height) * 0.5, 12, 48);
+    const pointerNearTargetRow = Number(clientY) >= Number(rect.top) - sideLatchBand
+      && Number(clientY) <= Number(rect.bottom) + sideLatchBand;
+    if (pointerNearTargetRow
+      && (this.dragMarkdownDropSide === "right" || this.dragMarkdownDropSide === "left")
       && this.dragMarkdownDropTarget === target) {
       if (this.dragMarkdownDropSide === "right" && clientX >= rect.left + rect.width * 0.3) {
         side = "right";
@@ -21067,10 +21086,13 @@ var PreviewDrawingController = class {
       const previousRect = this.noteFlowCandidateRect(previousPlacement.candidate, "inline")
         || (previousCandidate ? this.noteFlowCandidateRect(previousCandidate, "inline") : null);
       const previousHeight = previousRect ? Math.max(1, previousRect.bottom - previousRect.top) : 0;
-      // Generous keep-band: once side-by-side, stay side-by-side while the
-      // pointer is near the block (including comfortably above/below it) so
-      // it does not drop out at the slightest nudge.
-      const verticalTolerance = Math.max(48, previousHeight * 1.1);
+      // Keep-band: once side-by-side, stay side-by-side while the pointer is
+      // near the block (including comfortably above/below it) so it does not
+      // drop out at the slightest nudge. It stays proportional to the block
+      // instead of a flat 48px: a flat band covered more than one neighbouring
+      // row, so moving the pointer to another row kept dragging the old row
+      // along and the layout flipped back and forth.
+      const verticalTolerance = clamp(previousHeight * 0.85, 24, 96);
       const lane = geometry?.laneRect;
       const remainsInLane = !lane
         || (Number(clientX) >= Number(lane.left) - 32 && Number(clientX) <= Number(lane.right) + 32);
@@ -21179,13 +21201,17 @@ var PreviewDrawingController = class {
       && inlineRow.canFit;
     const intent = resolveDragDropHorizontalIntent({
       clientX,
+      clientY,
       targetLeft: targetRect.left,
       targetRight: targetRect.right,
+      targetTop: targetRect.top,
+      targetBottom: targetRect.bottom,
       laneLeft: laneRect.left,
       laneRight: laneRect.right,
       draggedLeft: this.draggedSelectionClientLeft(),
       horizontalRoom,
-      requireRightIntent: true
+      requireRightIntent: true,
+      verticalBandTolerance: Math.max(inlineCaptureBand, 24)
     });
     const horizontalSide = intent === "inline-right" ? "right"
       : intent === "inline-left" ? "left"

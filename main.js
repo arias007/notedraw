@@ -1999,8 +1999,11 @@ function markdownClientRectsOverlap(first, second, minimumOverlap = 4) {
 }
 function resolveDragDropHorizontalIntent({
   clientX,
+  clientY = null,
   targetLeft,
   targetRight,
+  targetTop = null,
+  targetBottom = null,
   laneLeft = targetLeft,
   laneRight = targetRight,
   draggedLeft,
@@ -2008,7 +2011,8 @@ function resolveDragDropHorizontalIntent({
   rightIntentRatio = 0.5,
   horizontalRoom = true,
   requireRightIntent = false,
-  rightTargetRatio = 0.55
+  rightTargetRatio = 0.5,
+  verticalBandTolerance = 24
 } = {}) {
   const x = Number(clientX);
   const left = Number(targetLeft);
@@ -2021,15 +2025,21 @@ function resolveDragDropHorizontalIntent({
   }
   const laneWidth = surfaceRight - surfaceLeft;
   const contactTolerance = clamp4(Number(leftContactTolerance) || 0, 0, 24);
-  if (Number.isFinite(movingLeft) && movingLeft <= surfaceLeft + contactTolerance) {
-    return "line-start";
-  }
+  const bandTolerance = clamp4(Number(verticalBandTolerance) || 0, 0, 240);
+  const pointerInTargetRow = [Number(clientY), Number(targetTop), Number(targetBottom)].every(Number.isFinite) ? Number(clientY) >= Number(targetTop) - bandTolerance && Number(clientY) <= Number(targetBottom) + bandTolerance : true;
+  const canStartLine = Number.isFinite(movingLeft) && movingLeft <= surfaceLeft + contactTolerance && horizontalRoom && pointerInTargetRow;
   if (requireRightIntent) {
     if (!horizontalRoom) {
       return "vertical";
     }
-    const targetRightThreshold = left + (right - left) * clamp4(Number(rightTargetRatio) || 0.55, 0.5, 0.9);
-    return x >= targetRightThreshold ? "inline-right" : "vertical";
+    const targetRightThreshold = left + (right - left) * clamp4(Number(rightTargetRatio) || 0.5, 0.5, 0.9);
+    if (x >= targetRightThreshold) {
+      return "inline-right";
+    }
+    return canStartLine ? "line-start" : "vertical";
+  }
+  if (canStartLine) {
+    return "line-start";
   }
   if (horizontalRoom && x < left + (right - left) / 2) {
     return "inline-left";
@@ -15722,6 +15732,7 @@ ${selected}
     const point = { x: Number(event.clientX) || 0, y: Number(event.clientY) || 0 };
     const directTaskItem = event.target?.closest?.("li.task-list-item");
     const directTaskBlock = directTaskItem && this.previewEl.contains(directTaskItem) ? this.markdownBlockElementForTarget(directTaskItem, point) : null;
+    this.rememberMarkdownIdentityMutation(event);
     if (this.active && this.toolMode === TOOL_SELECT && event.target !== this.canvas && directTaskBlock) {
       this.directMarkdownPointerId = event.pointerId;
       this.directMarkdownPointerElement = directTaskBlock;
@@ -15731,7 +15742,6 @@ ${selected}
       event.stopImmediatePropagation?.();
       return;
     }
-    this.rememberMarkdownIdentityMutation(event);
     const now = Number(event.timeStamp) || Date.now();
     const previous = this.previewPrimaryPress;
     this.previewPrimaryPress = { ...point, time: now };
@@ -15813,9 +15823,9 @@ ${selected}
     this.pendingMarkdownIdentityRefresh = {
       triggerId: block.id,
       members,
-      expiresAt: Date.now() + 3e3
+      expiresAt: Date.now() + 6e3
     };
-    for (const delay of [0, 48, 180]) {
+    for (const delay of [0, 48, 180, 420, 900]) {
       window.setTimeout(() => {
         if (this.destroyed || this.pendingMarkdownIdentityRefresh?.expiresAt <= Date.now()) {
           return;
@@ -16672,6 +16682,7 @@ ${selected}
     }
   }
   onReadingClick(event) {
+    this.rememberMarkdownIdentityMutation(event);
     if (this.active) {
       if (this.toolMode === TOOL_SELECT && Date.now() <= this.directMarkdownTaskClickUntil && event.target?.closest?.("li.task-list-item")) {
         event.preventDefault();
@@ -18135,8 +18146,11 @@ ${selected}
     const horizontalRoom = row.canFit;
     const intent = resolveDragDropHorizontalIntent({
       clientX,
+      clientY,
       targetLeft: nearest.rect.left,
       targetRight: nearest.rect.right,
+      targetTop: nearest.rect.top,
+      targetBottom: nearest.rect.bottom,
       laneLeft: laneRect.left,
       laneRight: laneRect.right,
       draggedLeft: this.draggedSelectionClientLeft(),
@@ -18244,8 +18258,11 @@ ${selected}
     const horizontalRoom = row.canFit;
     const intent = forcedIntent || resolveDragDropHorizontalIntent({
       clientX,
+      clientY,
       targetLeft: rect.left,
       targetRight: rect.right,
+      targetTop: rect.top,
+      targetBottom: rect.bottom,
       laneLeft: geometry?.laneRect?.left ?? rect.left,
       laneRight: geometry?.laneRect?.right ?? rect.right,
       draggedLeft: this.draggedSelectionClientLeft(),
@@ -18258,7 +18275,9 @@ ${selected}
     } else if (horizontalRoom && intent === "line-start") {
       side = "left";
     }
-    if ((this.dragMarkdownDropSide === "right" || this.dragMarkdownDropSide === "left") && this.dragMarkdownDropTarget === target) {
+    const sideLatchBand = clamp10(Number(rect.height) * 0.5, 12, 48);
+    const pointerNearTargetRow = Number(clientY) >= Number(rect.top) - sideLatchBand && Number(clientY) <= Number(rect.bottom) + sideLatchBand;
+    if (pointerNearTargetRow && (this.dragMarkdownDropSide === "right" || this.dragMarkdownDropSide === "left") && this.dragMarkdownDropTarget === target) {
       if (this.dragMarkdownDropSide === "right" && clientX >= rect.left + rect.width * 0.3) {
         side = "right";
       } else if (this.dragMarkdownDropSide === "left" && clientX <= rect.left + rect.width * 0.7) {
@@ -24325,7 +24344,7 @@ ${selected}
       const enteredDifferentCandidate = Boolean(freshRect && freshKey && previousKey && freshKey !== previousKey && Number(clientY) >= freshRect.top && Number(clientY) <= freshRect.bottom);
       const previousRect = this.noteFlowCandidateRect(previousPlacement.candidate, "inline") || (previousCandidate ? this.noteFlowCandidateRect(previousCandidate, "inline") : null);
       const previousHeight = previousRect ? Math.max(1, previousRect.bottom - previousRect.top) : 0;
-      const verticalTolerance = Math.max(48, previousHeight * 1.1);
+      const verticalTolerance = clamp10(previousHeight * 0.85, 24, 96);
       const lane = geometry?.laneRect;
       const remainsInLane = !lane || Number(clientX) >= Number(lane.left) - 32 && Number(clientX) <= Number(lane.right) + 32;
       if (!enteredDifferentCandidate && previousRect && remainsInLane && Number(clientY) >= previousRect.top - verticalTolerance && Number(clientY) <= previousRect.bottom + verticalTolerance) {
@@ -24400,13 +24419,17 @@ ${selected}
     const horizontalRoom = inlineRowHit && movingLaneCount > 0 && inlineRow.canFit;
     const intent = resolveDragDropHorizontalIntent({
       clientX,
+      clientY,
       targetLeft: targetRect.left,
       targetRight: targetRect.right,
+      targetTop: targetRect.top,
+      targetBottom: targetRect.bottom,
       laneLeft: laneRect.left,
       laneRight: laneRect.right,
       draggedLeft: this.draggedSelectionClientLeft(),
       horizontalRoom,
-      requireRightIntent: true
+      requireRightIntent: true,
+      verticalBandTolerance: Math.max(inlineCaptureBand, 24)
     });
     const horizontalSide = intent === "inline-right" ? "right" : intent === "inline-left" ? "left" : keptPreviousInline ? previousPlacement.horizontalSide : null;
     const leftSnap = intent === "line-start";

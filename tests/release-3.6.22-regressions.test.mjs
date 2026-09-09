@@ -44,7 +44,7 @@ test("reading checkbox mutations reapply the frozen parallel row widths", async 
   const mutation = source.slice(source.indexOf("  rememberMarkdownIdentityMutation("), source.indexOf("  restorePendingMarkdownIdentityPresentation("));
   const restore = source.slice(source.indexOf("  restorePendingMarkdownIdentityWidths("), source.indexOf("  ensureReadingHeadingCollapseIndicators("));
 
-  assert.ok(mutation.includes("for (const delay of [0, 48, 180])"));
+  assert.ok(mutation.includes("for (const delay of [0, 48, 180, 420, 900])"));
   assert.ok(mutation.includes("restorePendingMarkdownIdentityPresentation()"));
   assert.ok(restore.includes("block.span = span"));
   assert.ok(restore.includes("block.widthScale = widthScale"));
@@ -66,6 +66,6 @@ test("release metadata matches the current release", async () => {
     readFile(manifestUrl, "utf8").then(JSON.parse),
     readFile(versionsUrl, "utf8").then(JSON.parse)
   ]);
-  assert.equal(manifest.version, "3.7.7");
-  assert.equal(versions["3.7.7"], manifest.minAppVersion);
+  assert.equal(manifest.version, "3.7.8");
+  assert.equal(versions["3.7.8"], manifest.minAppVersion);
 });

@@ -180,11 +180,47 @@ test("parallel drag requires an explicit gesture into the target row's right sid
   };
 
   assert.equal(resolveDragDropHorizontalIntent({ ...target, clientX: 420 }), "vertical");
-  assert.equal(resolveDragDropHorizontalIntent({ ...target, clientX: 500 }), "vertical");
+  // The full right half counts as the gesture: a threshold above the midpoint
+  // left a dead band where the drop looked parallel but previewed vertically.
+  assert.equal(resolveDragDropHorizontalIntent({ ...target, clientX: 500 }), "inline-right");
   assert.equal(resolveDragDropHorizontalIntent({ ...target, clientX: 525 }), "inline-right");
   assert.equal(resolveDragDropHorizontalIntent({ ...target, clientX: 680 }), "inline-right");
   assert.equal(resolveDragDropHorizontalIntent({ ...target, clientX: 680, horizontalRoom: false }), "vertical");
-  assert.equal(resolveDragDropHorizontalIntent({ ...target, clientX: 680, draggedLeft: 4 }), "line-start");
+  // A dragged element riding the left gutter no longer hijacks a pointer that
+  // is clearly over the target's right half.
+  assert.equal(resolveDragDropHorizontalIntent({ ...target, clientX: 680, draggedLeft: 4 }), "inline-right");
+  assert.equal(resolveDragDropHorizontalIntent({
+    ...target,
+    clientX: 340,
+    draggedLeft: 4,
+    clientY: 200,
+    targetTop: 180,
+    targetBottom: 220
+  }), "line-start");
+  const parkedLeft = { ...target, clientX: 340, draggedLeft: 4 };
+  // Same gesture, but the pointer moved to another row: the parallel row must
+  // not be re-created there (it used to snap back and flicker).
+  assert.equal(resolveDragDropHorizontalIntent({
+    ...parkedLeft,
+    clientY: 420,
+    targetTop: 180,
+    targetBottom: 220
+  }), "vertical");
+  assert.equal(resolveDragDropHorizontalIntent({
+    ...parkedLeft,
+    clientY: 260,
+    targetTop: 180,
+    targetBottom: 220,
+    verticalBandTolerance: 24
+  }), "vertical");
+  assert.equal(resolveDragDropHorizontalIntent({
+    ...parkedLeft,
+    clientY: 236,
+    targetTop: 180,
+    targetBottom: 220,
+    verticalBandTolerance: 24
+  }), "line-start");
+  assert.equal(resolveDragDropHorizontalIntent({ ...parkedLeft, horizontalRoom: false }), "vertical");
 });
 
 test("Markdown blocks and inserted ink share the real NoteFlow row contract", async () => {

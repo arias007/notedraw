@@ -100,8 +100,11 @@ export function markdownClientRectsOverlap(first, second, minimumOverlap = 4) {
 
 export function resolveDragDropHorizontalIntent({
   clientX,
+  clientY = null,
   targetLeft,
   targetRight,
+  targetTop = null,
+  targetBottom = null,
   laneLeft = targetLeft,
   laneRight = targetRight,
   draggedLeft,
@@ -109,7 +112,8 @@ export function resolveDragDropHorizontalIntent({
   rightIntentRatio = 0.5,
   horizontalRoom = true,
   requireRightIntent = false,
-  rightTargetRatio = 0.55
+  rightTargetRatio = 0.5,
+  verticalBandTolerance = 24
 } = {}) {
   const x = Number(clientX);
   const left = Number(targetLeft);
@@ -124,17 +128,34 @@ export function resolveDragDropHorizontalIntent({
   }
   const laneWidth = surfaceRight - surfaceLeft;
   const contactTolerance = clamp(Number(leftContactTolerance) || 0, 0, 24);
-  if (Number.isFinite(movingLeft) && movingLeft <= surfaceLeft + contactTolerance) {
-    return "line-start";
-  }
+  // The left-edge magnet is only valid for the row currently under the
+  // pointer. During a drag the item can stay parked at the lane gutter while
+  // the pointer travels to another row; using the parked x-coordinate alone
+  // would then steal every drop and make the preview jump back and flicker.
+  const bandTolerance = clamp(Number(verticalBandTolerance) || 0, 0, 240);
+  const pointerInTargetRow = [Number(clientY), Number(targetTop), Number(targetBottom)].every(Number.isFinite)
+    ? Number(clientY) >= Number(targetTop) - bandTolerance
+      && Number(clientY) <= Number(targetBottom) + bandTolerance
+    : true;
+  const canStartLine = Number.isFinite(movingLeft)
+    && movingLeft <= surfaceLeft + contactTolerance
+    && horizontalRoom
+    && pointerInTargetRow;
   if (requireRightIntent) {
     if (!horizontalRoom) {
       return "vertical";
     }
-    // Parallel insertion is an explicit gesture. A row becoming narrow
-    // enough to fit is not, by itself, permission to create a new column.
-    const targetRightThreshold = left + (right - left) * clamp(Number(rightTargetRatio) || 0.55, 0.5, 0.9);
-    return x >= targetRightThreshold ? "inline-right" : "vertical";
+    // The whole right half is an explicit parallel gesture. A threshold
+    // above the midpoint left a dead band where the preview silently fell
+    // back to a vertical insertion.
+    const targetRightThreshold = left + (right - left) * clamp(Number(rightTargetRatio) || 0.5, 0.5, 0.9);
+    if (x >= targetRightThreshold) {
+      return "inline-right";
+    }
+    return canStartLine ? "line-start" : "vertical";
+  }
+  if (canStartLine) {
+    return "line-start";
   }
   // A row is a two-way insertion lane. The old resolver only exposed the
   // right half, so dragging an item back across its own row was interpreted
