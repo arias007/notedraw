@@ -2466,14 +2466,39 @@ var NoteDrawPlugin = class extends Plugin {
     if (!controller || controller.destroyed || !controller.previewEl?.isConnected) {
       return;
     }
-    window.setTimeout(() => {
+    if (controller.historyRefreshFrameId !== null && controller.historyRefreshFrameId !== void 0) {
+      return;
+    }
+    const refresh = () => {
+      controller.historyRefreshFrameId = null;
       if (controller.destroyed || !controller.previewEl?.isConnected) {
         return;
       }
       controller.scheduleMarkdownAnnotationRefresh({ layout: controller.hasNoteFlowElements(), delay: 0, force: true });
       controller.scheduleEmbedRepair(0);
       controller.scheduleResize({ layout: false, measure: true });
-    }, 48);
+    };
+    if (typeof window.requestAnimationFrame === "function") {
+      controller.historyRefreshFrameId = window.requestAnimationFrame(refresh);
+    } else {
+      controller.historyRefreshFrameId = window.setTimeout(refresh, 0);
+    }
+  }
+  applyHistoryDrawingData(controller, file, data) {
+    if (!controller || controller.destroyed || !data || normalizeVaultPath(controller.file?.path) !== normalizeVaultPath(file?.path)) {
+      return false;
+    }
+    controller.drawingData = data;
+    controller.drawingsLoaded = true;
+    controller.externalDrawingRefreshPending = false;
+    controller.rebuildElementRelations();
+    controller.applyDrawingsVisibility(data.visible !== false);
+    controller.responsivePointsInitialized = false;
+    controller.responsiveLayoutSignature = "";
+    controller.responsiveLayoutContext = null;
+    controller.invalidateStaticCache();
+    controller.cancelLayoutRefresh();
+    return true;
   }
   async applyControllerHistoryEntry(entry, direction, controller = null) {
     if (entry.kind === "compound") {
@@ -2482,13 +2507,14 @@ var NoteDrawPlugin = class extends Plugin {
       if (!markdownFile || !drawingFile) {
         return false;
       }
-      const current = await this.app.vault.read(markdownFile);
+      const current = await this.app.vault.cachedRead(markdownFile);
       const expected = direction === "before" ? entry.markdownAfter : entry.markdownBefore;
       if (current !== String(expected || "")) {
         return false;
       }
       await this.app.vault.modify(markdownFile, String(direction === "before" ? entry.markdownBefore : entry.markdownAfter || ""));
       const data = cloneDrawingData(direction === "before" ? entry.drawingBefore : entry.drawingAfter, drawingFile);
+      this.applyHistoryDrawingData(controller, drawingFile, data);
       this.scheduleDrawingSave(drawingFile, data, { replace: true });
       this.emitApiEvent("markdown-changed", { file: markdownFile.path, history: direction });
       this.refreshControllerAfterMarkdownHistory(controller);
@@ -2496,6 +2522,7 @@ var NoteDrawPlugin = class extends Plugin {
     }
     if (entry.kind === "drawing") {
       const data = cloneDrawingData(entry[direction], entry.file);
+      this.applyHistoryDrawingData(controller, entry.file, data);
       this.scheduleDrawingSave(entry.file, data, { replace: true });
       return true;
     }
@@ -2504,7 +2531,7 @@ var NoteDrawPlugin = class extends Plugin {
       if (!file) {
         return false;
       }
-      const current = await this.app.vault.read(file);
+      const current = await this.app.vault.cachedRead(file);
       const expected = direction === "before" ? entry.after : entry.before;
       if (current !== String(expected || "")) {
         return false;
@@ -5841,6 +5868,8 @@ var PreviewDrawingController = class {
     this.textCommitBarrier = createAsyncCommitBarrier((error) => {
       console.error(`[${PLUGIN_ID}] Failed to settle an edit before history navigation`, error);
     });
+    this.historyNavigationPromise = null;
+    this.historyRefreshFrameId = null;
     this.routedPointerController = null;
     this.routedPointerHost = null;
     this.currentTextRange = null;
@@ -6044,6 +6073,8 @@ var PreviewDrawingController = class {
     this.readingLogicalSizerHeight = 0;
     this.readingZoomInteractionUntil = 0;
     this.readingZoomSettleTimer = null;
+    this.viewportZoomFactor = this.currentViewportZoomFactor();
+    this.viewportZoomInteractionUntil = 0;
     this.initialReadingLayoutPrepared = false;
     this.initialReadingLayoutSettlement = null;
     this.initialReadingLayoutSettled = false;
@@ -7171,6 +7202,11 @@ var PreviewDrawingController = class {
     }
     this.cancelResizeFrame();
     this.cancelResponsiveProjectionSettle();
+    if (this.historyRefreshFrameId !== null) {
+      window.cancelAnimationFrame?.(this.historyRefreshFrameId);
+      window.clearTimeout?.(this.historyRefreshFrameId);
+      this.historyRefreshFrameId = null;
+    }
     this.cancelPositionFrame();
     this.cancelReadingVirtualSectionSync();
     this.cancelReadingZoomSettle();
@@ -7532,6 +7568,7 @@ var PreviewDrawingController = class {
     if (this.embeddedSurface && !isElementLaidOut(this.previewEl)) {
       return;
     }
+    this.noteViewportZoomChange();
     this.syncFloatingControlClasses();
     this.applyReadingZoom();
     const previewWidth = Math.max(0, Number(this.previewEl?.clientWidth) || 0);
@@ -7609,6 +7646,36 @@ var PreviewDrawingController = class {
   }
   isReadingProjectionSettleSurface() {
     return this.surfaceType === "preview" && this.responsivePointsInitialized;
+  }
+  currentViewportZoomFactor() {
+    const deviceScale = Number(window.devicePixelRatio) || 1;
+    const visualScale = Number(window.visualViewport?.scale) || 1;
+    const rect = this.previewEl?.getBoundingClientRect?.();
+    const rectWidth = Number(rect?.width) || 0;
+    const layoutWidth = Number(this.previewEl?.offsetWidth) || 0;
+    const elementScale = rectWidth > 1 && layoutWidth > 1
+      ? clamp(rectWidth / layoutWidth, 0.25, 8)
+      : 1;
+    return Math.max(0.01, deviceScale * visualScale * elementScale);
+  }
+  noteViewportZoomChange() {
+    const current = this.currentViewportZoomFactor();
+    const previous = Number(this.viewportZoomFactor) || current;
+    this.viewportZoomFactor = current;
+    if (Math.abs(current - previous) < 0.01) {
+      return false;
+    }
+    // Obsidian's Ctrl+/- may change Chromium's device scale, visual viewport,
+    // or a CSS zoom on the rendered surface. During the resulting resize
+    // burst, responsive projection must not compensate by rewriting
+    // normalized points to keep their old CSS-pixel coordinates.
+    this.viewportZoomInteractionUntil = Date.now() + 1200;
+    this.responsiveProjectionPending = null;
+    this.cancelResponsiveProjectionSettle();
+    return true;
+  }
+  isViewportZoomInteractionActive() {
+    return Date.now() < this.viewportZoomInteractionUntil;
   }
   scheduleResponsiveProjectionSettle(delay = 180, options = {}) {
     if (this.destroyed || !this.isReadingProjectionSettleSurface()) {
@@ -10306,6 +10373,9 @@ var PreviewDrawingController = class {
     });
   }
   preserveAbsoluteStrokePlacement(previousWidth, previousHeight) {
+    if (this.isViewportZoomInteractionActive()) {
+      return;
+    }
     const nextWidth = this.canvasWidth();
     const nextHeight = this.canvasHeight();
     const sourceWidth = Math.max(1, Number(previousWidth) || nextWidth);
@@ -25193,23 +25263,45 @@ var PreviewDrawingController = class {
     }
     await this.textCommitBarrier.wait();
   }
+  enqueueHistoryNavigation(operation) {
+    const previous = this.historyNavigationPromise || Promise.resolve();
+    const next = previous.catch(() => false).then(async () => {
+      if (this.destroyed) {
+        return false;
+      }
+      return operation();
+    });
+    let queued;
+    queued = next.finally(() => {
+      if (this.historyNavigationPromise === queued) {
+        this.historyNavigationPromise = null;
+      }
+    });
+    this.historyNavigationPromise = queued;
+    return queued;
+  }
+  async runHistoryNavigation(direction) {
+    await this.commitActiveTextEditForHistory();
+    const changed = direction === "undo"
+      ? await this.plugin.undoControllerHistory(this)
+      : await this.plugin.redoControllerHistory(this);
+    if (changed) {
+      this.clearSelectedStrokes();
+      this.render();
+    }
+    return changed;
+  }
   async undoLastStroke() {
     if (this.applyActiveTextHistory("undo")) {
       return;
     }
-    await this.commitActiveTextEditForHistory();
-    await this.plugin.undoControllerHistory(this);
-    this.clearSelectedStrokes();
-    this.render();
+    return this.enqueueHistoryNavigation(() => this.runHistoryNavigation("undo"));
   }
   async redoLastStroke() {
     if (this.applyActiveTextHistory("redo")) {
       return;
     }
-    await this.commitActiveTextEditForHistory();
-    await this.plugin.redoControllerHistory(this);
-    this.clearSelectedStrokes();
-    this.render();
+    return this.enqueueHistoryNavigation(() => this.runHistoryNavigation("redo"));
   }
   applyActiveTextHistory(direction) {
     if (this.currentEditor?.isConnected) {
