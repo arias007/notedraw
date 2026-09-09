@@ -7672,6 +7672,9 @@ var PreviewDrawingController = class {
     this.viewportZoomInteractionUntil = Date.now() + 1200;
     this.responsiveProjectionPending = null;
     this.cancelResponsiveProjectionSettle();
+    this.resizeNeedsLayout = false;
+    this.resizePreserveNoteFlowAbsolute = false;
+    this.resizePreserveAbsolutePlacement = false;
     return true;
   }
   isViewportZoomInteractionActive() {
@@ -7714,6 +7717,7 @@ var PreviewDrawingController = class {
   scheduleResize(options = {}) {
     const noteFlowResizeSuppressed = Date.now() < this.noteFlowSuppressResizeUntil;
     const readingZoomInteractionActive = this.isReadingZoomInteractionActive();
+    const viewportZoomInteractionActive = this.isViewportZoomInteractionActive();
     const sinceScroll = Date.now() - this.lastScrollAt;
     const readingScrollActive = this.isReadingProjectionSettleSurface()
       && this.lastScrollAt > 0
@@ -7730,6 +7734,7 @@ var PreviewDrawingController = class {
       && !this.resizingSelection
       && !noteFlowResizeSuppressed
       && !readingZoomInteractionActive
+      && !viewportZoomInteractionActive
       && !readingScrollActive;
     const wantsMeasure = options.measure !== false
       && !this.resizingSelection
@@ -10721,7 +10726,7 @@ var PreviewDrawingController = class {
     const initialMeasure = this.canvasCssWidth <= 1 || this.canvasCssHeight <= 1;
     const interactionActive = this.isReadingZoomInteractionActive();
     const refreshGeometry = options.measure !== false && !interactionActive || initialMeasure;
-    const refreshLayout = options.layout === true && !interactionActive;
+    const refreshLayout = options.layout === true && !interactionActive && !this.isViewportZoomInteractionActive();
     const visualScale = this.readingZoomScale();
     let measured;
     let width;

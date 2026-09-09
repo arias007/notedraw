@@ -11702,6 +11702,9 @@ var PreviewDrawingController = class {
     this.viewportZoomInteractionUntil = Date.now() + 1200;
     this.responsiveProjectionPending = null;
     this.cancelResponsiveProjectionSettle();
+    this.resizeNeedsLayout = false;
+    this.resizePreserveNoteFlowAbsolute = false;
+    this.resizePreserveAbsolutePlacement = false;
     return true;
   }
   isViewportZoomInteractionActive() {
@@ -11743,6 +11746,7 @@ var PreviewDrawingController = class {
   scheduleResize(options = {}) {
     const noteFlowResizeSuppressed = Date.now() < this.noteFlowSuppressResizeUntil;
     const readingZoomInteractionActive = this.isReadingZoomInteractionActive();
+    const viewportZoomInteractionActive = this.isViewportZoomInteractionActive();
     const sinceScroll = Date.now() - this.lastScrollAt;
     const readingScrollActive = this.isReadingProjectionSettleSurface() && this.lastScrollAt > 0 && sinceScroll < 260;
     if (readingScrollActive && this.resizeNeedsLayout) {
@@ -11752,7 +11756,7 @@ var PreviewDrawingController = class {
     if (options.layout !== false && readingScrollActive) {
       this.scheduleResponsiveProjectionSettle(260 - sinceScroll + 40, options);
     }
-    const wantsLayout = options.layout !== false && !this.draggingStroke && !this.resizingSelection && !noteFlowResizeSuppressed && !readingZoomInteractionActive && !readingScrollActive;
+    const wantsLayout = options.layout !== false && !this.draggingStroke && !this.resizingSelection && !noteFlowResizeSuppressed && !readingZoomInteractionActive && !viewportZoomInteractionActive && !readingScrollActive;
     const wantsMeasure = options.measure !== false && !this.resizingSelection && !readingZoomInteractionActive && !readingScrollActive;
     if (wantsLayout) {
       if (!this.resizeNeedsLayout) {
@@ -14625,7 +14629,7 @@ ${selected}
     const initialMeasure = this.canvasCssWidth <= 1 || this.canvasCssHeight <= 1;
     const interactionActive = this.isReadingZoomInteractionActive();
     const refreshGeometry = options.measure !== false && !interactionActive || initialMeasure;
-    const refreshLayout = options.layout === true && !interactionActive;
+    const refreshLayout = options.layout === true && !interactionActive && !this.isViewportZoomInteractionActive();
     const visualScale = this.readingZoomScale();
     let measured;
     let width;
