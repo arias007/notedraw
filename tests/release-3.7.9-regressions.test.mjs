@@ -25,8 +25,13 @@ test("viewport zoom changes do not preserve stale CSS-pixel placement", async ()
   assert.match(viewportZoom, /this\.resizePreserveAbsolutePlacement = false/);
   assert.match(scheduleResize, /const viewportZoomInteractionActive = this\.isViewportZoomInteractionActive\(\)/);
   assert.match(scheduleResize, /!viewportZoomInteractionActive/);
-  assert.match(preserve, /if \(this\.isViewportZoomInteractionActive\(\)\) \{\s*return;/);
-  assert.match(source, /const refreshLayout = options\.layout === true && !interactionActive && !this\.isViewportZoomInteractionActive\(\)/);
+  assert.match(preserve, /if \(this\.isViewportZoomInteractionActive\(\) \|\| this\.isViewportZoomProjectionGuardActive\(\)\) \{\s*return;/);
+  assert.match(source, /const refreshLayout = options\.layout === true && !interactionActive && !viewportZoomInteractionActive/);
+  assert.match(source, /syncResponsiveLayoutSignatureAfterViewportZoom\(width, height\)/);
+  assert.match(source, /scheduleViewportZoomSettle\(1800\)/);
+  assert.match(source, /this\.scheduleResize\(\{ layout: true, measure: true \}\)/);
+  assert.match(source, /if \(this\.viewportZoomProjectionLock && this\.responsivePointsInitialized\) \{[\s\S]*this\.responsiveLayoutSignature = signature[\s\S]*this\.viewportZoomProjectionLock = Date\.now\(\) < this\.viewportZoomProjectionGuardUntil/);
+  assert.match(source, /if \(this\.isViewportZoomInteractionActive\(\) \|\| this\.isViewportZoomProjectionGuardActive\(\)\) \{[\s\S]*this\.viewportZoomProjectionLock = this\.responsivePointsInitialized/);
 });
 
 test("drawing history is applied to the live controller before persistence", async () => {
@@ -61,7 +66,7 @@ test("rapid undo and redo requests are serialized per controller", async () => {
   assert.match(history, /this\.runHistoryNavigation\("redo"\)/);
 });
 
-test("release 3.7.10 metadata and contributor documentation are present", async () => {
+test("release 3.8.0 metadata and contributor documentation are present", async () => {
   const [manifest, pkg, contributing, architecture] = await Promise.all([
     readFile(manifestUrl, "utf8"),
     readFile(packageUrl, "utf8"),
@@ -69,8 +74,8 @@ test("release 3.7.10 metadata and contributor documentation are present", async 
     readFile(architectureUrl, "utf8")
   ]);
 
-  assert.match(manifest, /"version": "3\.7\.10"/);
-  assert.match(pkg, /"version": "3\.7\.10"/);
+  assert.match(manifest, /"version": "3\.8\.0"/);
+  assert.match(pkg, /"version": "3\.8\.0"/);
   assert.match(contributing, /项目结构/);
   assert.match(contributing, /npm run verify/);
   assert.match(contributing, /Issue #2/);

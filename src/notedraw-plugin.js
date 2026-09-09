@@ -6075,6 +6075,13 @@ var PreviewDrawingController = class {
     this.readingZoomSettleTimer = null;
     this.viewportZoomFactor = this.currentViewportZoomFactor();
     this.viewportZoomInteractionUntil = 0;
+    // Ctrl +/- can emit a delayed Markdown/ResizeObserver callback after the
+    // viewport has already resized. Keep the first post-zoom layout pass as a
+    // signature confirmation only; otherwise stale responsive anchors briefly
+    // project strokes back to their pre-zoom CSS-pixel placement.
+    this.viewportZoomProjectionLock = false;
+    this.viewportZoomProjectionGuardUntil = 0;
+    this.viewportZoomSettleTimer = null;
     this.initialReadingLayoutPrepared = false;
     this.initialReadingLayoutSettlement = null;
     this.initialReadingLayoutSettled = false;
@@ -7060,6 +7067,10 @@ var PreviewDrawingController = class {
     }
     this.cancelResizeFrame();
     this.cancelResponsiveProjectionSettle();
+    if (this.viewportZoomSettleTimer !== null) {
+      window.clearTimeout(this.viewportZoomSettleTimer);
+      this.viewportZoomSettleTimer = null;
+    }
     this.cancelReadingZoomSettle();
     this.readingZoomBaseTarget = null;
     this.readingZoomBaseOrigin = null;
@@ -7122,6 +7133,8 @@ var PreviewDrawingController = class {
     this.initialReadingCommittedSignature = "";
     this.readingTouchGuard = createReadingTouchGuardState();
     this.responsiveProjectionPending = null;
+    this.viewportZoomProjectionLock = false;
+    this.viewportZoomProjectionGuardUntil = 0;
     this.invalidateStaticCache();
     this.drawingsLoaded = false;
     this.loadingDrawings = null;
@@ -7202,6 +7215,10 @@ var PreviewDrawingController = class {
     }
     this.cancelResizeFrame();
     this.cancelResponsiveProjectionSettle();
+    if (this.viewportZoomSettleTimer !== null) {
+      window.clearTimeout(this.viewportZoomSettleTimer);
+      this.viewportZoomSettleTimer = null;
+    }
     if (this.historyRefreshFrameId !== null) {
       window.cancelAnimationFrame?.(this.historyRefreshFrameId);
       window.clearTimeout?.(this.historyRefreshFrameId);
@@ -7669,7 +7686,11 @@ var PreviewDrawingController = class {
     // or a CSS zoom on the rendered surface. During the resulting resize
     // burst, responsive projection must not compensate by rewriting
     // normalized points to keep their old CSS-pixel coordinates.
-    this.viewportZoomInteractionUntil = Date.now() + 1200;
+    const now = Date.now();
+    this.viewportZoomInteractionUntil = now + 1200;
+    this.viewportZoomProjectionGuardUntil = now + 2600;
+    this.viewportZoomProjectionLock = this.responsivePointsInitialized;
+    this.scheduleViewportZoomSettle(1800);
     this.responsiveProjectionPending = null;
     this.cancelResponsiveProjectionSettle();
     this.resizeNeedsLayout = false;
@@ -7679,6 +7700,44 @@ var PreviewDrawingController = class {
   }
   isViewportZoomInteractionActive() {
     return Date.now() < this.viewportZoomInteractionUntil;
+  }
+  isViewportZoomProjectionGuardActive() {
+    return this.viewportZoomProjectionLock || Date.now() < this.viewportZoomProjectionGuardUntil;
+  }
+  scheduleViewportZoomSettle(delay = 1800) {
+    if (this.viewportZoomSettleTimer !== null) {
+      window.clearTimeout(this.viewportZoomSettleTimer);
+      this.viewportZoomSettleTimer = null;
+    }
+    if (this.destroyed || !this.viewportZoomProjectionLock) {
+      return;
+    }
+    const wait = Math.max(240, Number(delay) || 1800);
+    this.viewportZoomSettleTimer = window.setTimeout(() => {
+      this.viewportZoomSettleTimer = null;
+      if (this.destroyed || !this.viewportZoomProjectionLock) {
+        return;
+      }
+      if (this.isViewportZoomInteractionActive()) {
+        this.scheduleViewportZoomSettle(this.viewportZoomInteractionUntil - Date.now() + 120);
+        return;
+      }
+      // Use the normal resize queue so any final Markdown/ResizeObserver
+      // measurement is included. resizeCanvas consumes the lock and confirms
+      // the current signature without reprojecting from stale anchors.
+      this.scheduleResize({ layout: true, measure: true });
+    }, wait);
+  }
+  syncResponsiveLayoutSignatureAfterViewportZoom(width, height) {
+    if (this.destroyed || !this.drawingsLoaded || !this.responsivePointsInitialized) {
+      return false;
+    }
+    const frame = this.getResponsiveContentFrame();
+    const viewportHeight = measureResponsiveViewportHeight(this.previewEl, this.scrollContainer, this.responsiveViewportScale());
+    this.responsiveLayoutContext = null;
+    this.responsiveLayoutSignature = responsiveLayoutSignature(width, height, frame, this.surfaceType, viewportHeight);
+    this.responsiveProjectionPending = null;
+    return true;
   }
   scheduleResponsiveProjectionSettle(delay = 180, options = {}) {
     if (this.destroyed || !this.isReadingProjectionSettleSurface()) {
@@ -7932,7 +7991,11 @@ var PreviewDrawingController = class {
         }
         if (this.drawingsLoaded) {
           if (layout) {
-            this.responsiveLayoutSignature = "";
+            if (this.isViewportZoomInteractionActive() || this.isViewportZoomProjectionGuardActive()) {
+              this.viewportZoomProjectionLock = this.responsivePointsInitialized;
+            } else {
+              this.responsiveLayoutSignature = "";
+            }
           }
           this.scheduleResize({ layout });
           if (!this.active && this.hasNoteFlowElements()) {
@@ -10378,7 +10441,7 @@ var PreviewDrawingController = class {
     });
   }
   preserveAbsoluteStrokePlacement(previousWidth, previousHeight) {
-    if (this.isViewportZoomInteractionActive()) {
+    if (this.isViewportZoomInteractionActive() || this.isViewportZoomProjectionGuardActive()) {
       return;
     }
     const nextWidth = this.canvasWidth();
@@ -10401,6 +10464,19 @@ var PreviewDrawingController = class {
     }
   }
   initializeAndProjectResponsivePoints(context, signature, options = {}) {
+    if (this.viewportZoomProjectionLock && this.responsivePointsInitialized) {
+      // A delayed post-zoom layout callback may carry a different signature
+      // even though the canvas already scaled correctly. Confirm that current
+      // geometry instead of projecting normalized points from stale anchors.
+      this.responsiveLayoutContext = null;
+      this.responsiveLayoutSignature = signature;
+      this.responsiveProjectionPending = null;
+      this.viewportZoomProjectionLock = Date.now() < this.viewportZoomProjectionGuardUntil;
+      if (this.viewportZoomProjectionLock) {
+        this.scheduleViewportZoomSettle(this.viewportZoomProjectionGuardUntil - Date.now() + 60);
+      }
+      return true;
+    }
     const hadResponsivePoints = this.responsivePointsInitialized;
     const previousCanvasWidth = Number(options.previousCanvasWidth) > 1 ? Number(options.previousCanvasWidth) : this.canvasWidth();
     const previousCanvasHeight = Number(options.previousCanvasHeight) > 1 ? Number(options.previousCanvasHeight) : this.canvasHeight();
@@ -10726,7 +10802,8 @@ var PreviewDrawingController = class {
     const initialMeasure = this.canvasCssWidth <= 1 || this.canvasCssHeight <= 1;
     const interactionActive = this.isReadingZoomInteractionActive();
     const refreshGeometry = options.measure !== false && !interactionActive || initialMeasure;
-    const refreshLayout = options.layout === true && !interactionActive && !this.isViewportZoomInteractionActive();
+    const viewportZoomInteractionActive = this.isViewportZoomInteractionActive();
+    const refreshLayout = options.layout === true && !interactionActive && !viewportZoomInteractionActive;
     const visualScale = this.readingZoomScale();
     let measured;
     let width;
@@ -10844,11 +10921,22 @@ var PreviewDrawingController = class {
       return false;
     }
     this.staticCtx.setTransform(layerBacking.scale, 0, 0, layerBacking.scale, 0, -canvasWindow.top * layerBacking.scale);
+    if (this.drawingsLoaded && viewportZoomInteractionActive && this.responsivePointsInitialized) {
+      this.syncResponsiveLayoutSignatureAfterViewportZoom(width, height);
+    }
     if (this.drawingsLoaded && refreshLayout) {
       const frame = this.getResponsiveContentFrame();
       const viewportHeight = measureResponsiveViewportHeight(this.previewEl, this.scrollContainer, this.responsiveViewportScale());
       const signature = responsiveLayoutSignature(width, height, frame, this.surfaceType, viewportHeight);
-      if (!this.responsivePointsInitialized || signature !== this.responsiveLayoutSignature) {
+      if (this.viewportZoomProjectionLock && this.responsivePointsInitialized) {
+        this.responsiveLayoutContext = null;
+        this.responsiveLayoutSignature = signature;
+        this.responsiveProjectionPending = null;
+        this.viewportZoomProjectionLock = Date.now() < this.viewportZoomProjectionGuardUntil;
+        if (this.viewportZoomProjectionLock) {
+          this.scheduleViewportZoomSettle(this.viewportZoomProjectionGuardUntil - Date.now() + 60);
+        }
+      } else if (!this.responsivePointsInitialized || signature !== this.responsiveLayoutSignature) {
         this.responsiveLayoutContext = null;
         const context = this.getResponsiveLayoutContext(true);
         this.initializeAndProjectResponsivePoints(context, signature, {
