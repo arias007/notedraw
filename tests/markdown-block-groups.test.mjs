@@ -676,6 +676,24 @@ test("task rows above the canvas still route their first pointer tap through Not
   assert.match(clickSource, /Date\.now\(\) <= this\.directMarkdownTaskClickUntil[\s\S]*li\.task-list-item[\s\S]*stopImmediatePropagation/);
 });
 
+test("task text and attachment descendants resolve to stable selectable owners", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const pointerStart = source.indexOf("  onPointerDown(event");
+  const targetStart = source.indexOf("function markdownBlockCandidateElementForTarget(");
+  const pointerSource = source.slice(pointerStart, source.indexOf("  onPointerMove(event", pointerStart));
+  const targetSource = source.slice(targetStart, source.indexOf("function isMarkdownEmbedBlockElement(", targetStart));
+
+  assert.match(pointerSource, /const targetEmbedIndex = noteFlowPenActive \? -1 : noteDrawEmbedStrokeIndex\([\s\S]*event\.target \|\| target,[\s\S]*this\.previewEl/);
+  assert.match(pointerSource, /hitStrokeIndex = targetEmbedIndex/);
+  assert.match(targetSource, /const taskItem = markdownTaskItemForTarget\(target, root\)/);
+  assert.match(targetSource, /taskItem\.querySelectorAll\?\.\(`\$\{MARKDOWN_TEXT_SELECTOR\},\$\{NOTE_FLOW_RENDERED_BLOCK_SELECTOR\}`/);
+  assert.match(targetSource, /function markdownTaskItemForTarget\(target, root = null\)/);
+  assert.match(targetSource, /input\.task-list-item-checkbox, input\[type='checkbox'\]/);
+  assert.match(source, /function noteDrawEmbedStrokeIndex\(target, root = null\)/);
+  assert.match(source, /\.notedraw-embed\[data-note-draw-stroke-index\]/);
+  assert.match(source, /node\._noteDrawPointerDownHandler = \(event\) => \{[\s\S]*this\.onPointerDown\(event, true\)/);
+});
+
 test("long press opens the element menu without falling through to edit", async () => {
   const source = await readFile(sourceUrl, "utf8");
   const longPressSource = source.slice(source.indexOf("  startSelectionLongPress("), source.indexOf("  clearSelectionLongPress("));

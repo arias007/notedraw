@@ -11197,6 +11197,17 @@ var PreviewDrawingController = class {
       this.clearSelectedStrokes();
     }
     let hitStrokeIndex = noteFlowPenActive ? -1 : this.findStrokeAt(point, clientPoint);
+    // The active canvas normally receives the pointer above the embed layer,
+    // but some Obsidian renderers let a media child receive the event first.
+    // Resolve that child back to its owning NoteDraw stroke so an attachment
+    // has the same select/drag path as its resize frame.
+    const targetEmbedIndex = noteFlowPenActive ? -1 : noteDrawEmbedStrokeIndex(
+      event.target || target,
+      this.previewEl
+    );
+    if (targetEmbedIndex >= 0 && this.isStrokeVisibleOnSurface(this.drawingData?.strokes?.[targetEmbedIndex])) {
+      hitStrokeIndex = targetEmbedIndex;
+    }
     // A selected floating stroke owns its visible hit even when Markdown is
     // rendered underneath it. Only an unselected underlay NoteFlow stroke
     // should yield to the Markdown block target.
@@ -17151,6 +17162,17 @@ var PreviewDrawingController = class {
       if (!node) {
         node = layer.createDiv({ cls: "notedraw-embed" });
         this.embedNodes.set(key, node);
+        // An embed child can sit above the interaction canvas in some
+        // renderer states. Forward its initial pointer to the owning
+        // controller so media/file-card bodies use the same selection and
+        // drag path as the visible resize frame.
+        node._noteDrawPointerDownHandler = (event) => {
+          if (!this.active || event.button !== 0 || event.defaultPrevented) {
+            return;
+          }
+          this.onPointerDown(event, true);
+        };
+        node.addEventListener("pointerdown", node._noteDrawPointerDownHandler, true);
       } else if (node.parentElement !== layer) {
         layer.appendChild(node);
       }
@@ -26089,12 +26111,59 @@ function markdownBlockCandidateElementForTarget(target, root) {
   const mappedChild = Array.from(target.querySelectorAll?.("[data-note-draw-line-mapped='true']") || []).find((element) => {
     return isMarkdownBlockCandidateElement(element);
   });
+  // Obsidian renders task text in several shapes: direct text in <li>, a
+  // nested <p>, or a renderer/plugin wrapper around either. Resolve all of
+  // them through the nearest task item before the generic inline fallback so
+  // clicking the text and clicking its checkbox select the same block.
+  const taskItem = markdownTaskItemForTarget(target, root);
+  if (taskItem) {
+    const taskCandidates = [
+      taskItem,
+      ...Array.from(taskItem.querySelectorAll?.(`${MARKDOWN_TEXT_SELECTOR},${NOTE_FLOW_RENDERED_BLOCK_SELECTOR}`) || [])
+    ].filter((element, index, list) => (
+      element && list.indexOf(element) === index && isMarkdownBlockCandidateElement(element)
+    ));
+    const taskCandidate = taskCandidates.find((element) => (
+      element.dataset?.noteDrawMarkdownBlockId
+      || element === target
+      || element.contains?.(target)
+    )) || taskCandidates.find((element) => element?.getBoundingClientRect?.()?.width > 0);
+    if (taskCandidate) {
+      return taskCandidate;
+    }
+  }
   for (const candidate of [metadataProperty, explicitLine, marked, owner, preciselyMapped, mappedChild]) {
     if (candidate && root.contains(candidate) && isMarkdownBlockCandidateElement(candidate)) {
       return candidate;
     }
   }
   return isMarkdownBlockCandidateElement(target) ? target : null;
+}
+function markdownTaskItemForTarget(target, root = null) {
+  if (!target) {
+    return null;
+  }
+  let item = target.closest?.("li");
+  while (item && (!root || root.contains?.(item))) {
+    if (item.matches?.(".task-list-item, [data-task], [data-task-status]")) {
+      return item;
+    }
+    const checkbox = Array.from(item.querySelectorAll?.("input.task-list-item-checkbox, input[type='checkbox']") || [])
+      .find((candidate) => candidate.closest?.("li") === item);
+    if (checkbox) {
+      return item;
+    }
+    item = item.parentElement?.closest?.("li") || null;
+  }
+  return null;
+}
+function noteDrawEmbedStrokeIndex(target, root = null) {
+  const embed = target?.closest?.(".notedraw-embed[data-note-draw-stroke-index]");
+  if (!embed || root && !root.contains?.(embed)) {
+    return -1;
+  }
+  const index = Number(embed.dataset.noteDrawStrokeIndex);
+  return Number.isInteger(index) && index >= 0 ? index : -1;
 }
 function isMarkdownEmbedBlockElement(element) {
   if (!element?.matches?.(MARKDOWN_EMBED_SELECTOR)) {
