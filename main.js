@@ -4602,6 +4602,8 @@ var I18N = {
     drawingStorageNoteSubfolder: "Current folder / notedraw",
     drawingStorageNoteFolder: "Current folder",
     drawingStorageEmbedded: "Current Markdown file (hidden)",
+    embedMarkdownLinks: "Write linked resources into the hidden block",
+    embedMarkdownLinksDesc: "Keep Markdown links and embeds portable without duplicating large binary files during normal saves.",
     shareNoteDrawFile: "Share NoteDraw file",
     sharePreparing: "Packaging this note and its linked resources...",
     shareReady: "NoteDraw file is ready with {count} embedded resource(s).",
@@ -4787,6 +4789,8 @@ var I18N = {
     drawingStorageNoteSubfolder: "\u5F53\u524D\u6587\u4EF6\u5939 / notedraw",
     drawingStorageNoteFolder: "\u5F53\u524D\u6587\u4EF6\u5939",
     drawingStorageEmbedded: "\u5F53\u524D Markdown \u6587\u4EF6\uFF08\u9690\u85CF\uFF09",
+    embedMarkdownLinks: "\u94FE\u63A5\u5199\u5165\u9690\u85CF\u6570\u636E\u5757",
+    embedMarkdownLinksDesc: "\u4FDD\u5B58\u65F6\u628A Markdown \u94FE\u63A5\u548C\u5D4C\u5165\u8D44\u6E90\u5199\u5165\u9690\u85CF\u6570\u636E\u5757\uFF0C\u4F46\u4E0D\u91CD\u590D\u5185\u5D4C\u5927\u578B\u4E8C\u8FDB\u5236\u6587\u4EF6\u3002",
     shareNoteDrawFile: "\u5206\u4EAB NoteDraw \u6587\u4EF6",
     sharePreparing: "\u6B63\u5728\u6253\u5305\u7B14\u8BB0\u3001NoteDraw \u6570\u636E\u548C\u94FE\u63A5\u8D44\u6E90\u2026\u2026",
     shareReady: "NoteDraw \u6587\u4EF6\u5DF2\u5C31\u7EEA\uFF0C\u5305\u542B {count} \u4E2A\u8D44\u6E90\u3002",
@@ -4949,6 +4953,8 @@ var I18N = {
     drawingStorageNoteSubfolder: "\u76EE\u524D\u8CC7\u6599\u593E / notedraw",
     drawingStorageNoteFolder: "\u76EE\u524D\u8CC7\u6599\u593E",
     drawingStorageEmbedded: "\u76EE\u524D Markdown \u6A94\u6848\uFF08\u96B1\u85CF\uFF09",
+    embedMarkdownLinks: "\u5C07\u9023\u7D50\u5BEB\u5165\u96B1\u85CF\u8CC7\u6599\u584A",
+    embedMarkdownLinksDesc: "\u5132\u5B58\u6642\u4FDD\u7559 Markdown \u9023\u7D50\u8207\u5D4C\u5165\u8CC7\u6E90\u7684\u53EF\u651C\u8CC7\u8A0A\uFF0C\u4E0D\u91CD\u8907\u5167\u5D4C\u5927\u578B\u4E8C\u9032\u4F4D\u6A94\u6848\u3002",
     shareNoteDrawFile: "\u5206\u4EAB NoteDraw \u6A94\u6848",
     sharePreparing: "\u6B63\u5728\u5C01\u88DD\u7B46\u8A18\u3001NoteDraw \u8CC7\u6599\u8207\u9023\u7D50\u8CC7\u6E90\u2026\u2026",
     shareReady: "NoteDraw \u6A94\u6848\u5DF2\u5C31\u7DD2\uFF0C\u5305\u542B {count} \u500B\u8CC7\u6E90\u3002",
@@ -5512,7 +5518,8 @@ Object.assign(I18N, {
 });
 var DEFAULT_SETTINGS = {
   language: LANGUAGE_AUTO,
-  drawingStorageMode: DRAWING_STORAGE_CONFIG,
+  drawingStorageMode: DRAWING_STORAGE_EMBEDDED,
+  embedMarkdownLinks: true,
   defaultPenColor: "#e53935",
   defaultPenWidth: 3,
   defaultPenOpacity: DEFAULT_PEN_OPACITY,
@@ -7051,7 +7058,8 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     return clonePortableValue(await this.createPortableBundle(file2, drawing, {
       purpose: options.purpose === "share" ? "share" : "storage",
       sourceMarkdown,
-      includeMarkdownLinks: options.includeMarkdownLinks === true
+      includeMarkdownLinks: options.includeMarkdownLinks === true,
+      inlineResources: options.inlineResources !== false && options.purpose !== "storage"
     }));
   }
   async parseDrawingDataApi(input, options = {}) {
@@ -8742,16 +8750,40 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
   debugLogPath() {
     return `${this.app.vault.configDir}/plugins/${PLUGIN_ID}/${DEBUG_LOG_FILE}`;
   }
-  async importLocalAsset(fileLike) {
+  async resolveImportedAssetPath(file2, originalName) {
+    const safeName = sanitizeAssetFileName(originalName || "attachment.bin");
+    const ownerPath = normalizeVaultPath(file2?.path || "");
+    const slash = ownerPath.lastIndexOf("/");
+    const parent = slash >= 0 ? ownerPath.slice(0, slash) : "";
+    const basePath = parent ? `${parent}/${safeName}` : safeName;
+    const adapter = this.app.vault.adapter;
+    if (!await adapter.exists(basePath)) {
+      return basePath;
+    }
+    const dot = safeName.lastIndexOf(".");
+    const stem = dot > 0 ? safeName.slice(0, dot) : safeName;
+    const extension = dot > 0 ? safeName.slice(dot) : "";
+    for (let index = 1; index < 1e4; index += 1) {
+      const candidateName = `${stem}-${index}${extension}`;
+      const candidate = parent ? `${parent}/${candidateName}` : candidateName;
+      if (!await adapter.exists(candidate)) {
+        return candidate;
+      }
+    }
+    throw new Error("Could not allocate a unique NoteDraw attachment name");
+  }
+  async importLocalAsset(fileLike, ownerFile = null) {
     if (!fileLike) {
       return null;
     }
-    await this.ensureAssetDir();
     const originalName = sanitizeAssetFileName(fileLike.name || "attachment.bin");
-    const targetName = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}-${originalName}`;
-    const targetPath = this.assetPathForName(targetName);
+    const targetPath = ownerFile?.path ? await this.resolveImportedAssetPath(ownerFile, originalName) : (await this.ensureAssetDir(), this.assetPathForName(`${Date.now()}-${Math.random().toString(16).slice(2, 8)}-${originalName}`));
     const buffer = await fileLike.arrayBuffer();
-    await this.app.vault.adapter.writeBinary(targetPath, buffer);
+    if (ownerFile?.path && typeof this.app.vault.createBinary === "function") {
+      await this.app.vault.createBinary(targetPath, buffer);
+    } else {
+      await this.app.vault.adapter.writeBinary(targetPath, buffer);
+    }
     const mime = fileLike.type || guessMimeType(originalName);
     const text = isTextAssetMime(originalName, mime) && typeof fileLike.text === "function" ? await fileLike.text() : "";
     const imageDataUrl = classifyImportedAsset({ name: originalName, mime }) === EMBED_IMAGE ? arrayBufferToDataUrl(buffer, mime) : "";
@@ -8784,6 +8816,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     const sourceMarkdown = typeof options.sourceMarkdown === "string" ? stripNotedrawDataBlocks(options.sourceMarkdown) : stripNotedrawDataBlocks(await this.app.vault.cachedRead(file2));
     const collected = await this.collectPortableResources(file2, data, {
       includeMarkdownLinks: options.includeMarkdownLinks === true,
+      inlineResources: options.inlineResources === true,
       sourceMarkdown
     });
     return {
@@ -8874,7 +8907,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     const existing = normalizePortableResources(this.portableBundles.get(normalizeVaultPath(file2?.path || ""))?.resources);
     const addExisting = (reference, aliases = []) => {
       const resource = findPortableResource(existing, reference, aliases);
-      if (!resource) {
+      if (!resource || options.inlineResources === true && !resource.dataBase64) {
         return false;
       }
       resources.set(portableResourceIdentity(resource), resource);
@@ -8889,7 +8922,9 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
         return;
       }
       try {
-        const resource = await this.loadPortableResource(normalizedReference, file2, aliases);
+        const resource = await this.loadPortableResource(normalizedReference, file2, aliases, {
+          inlineResources: options.inlineResources === true
+        });
         if (resource) {
           resources.set(portableResourceIdentity(resource), resource);
         } else {
@@ -8941,17 +8976,17 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       failed: Array.from(new Set(failed))
     };
   }
-  async loadPortableResource(reference, ownerFile, aliases = []) {
+  async loadPortableResource(reference, ownerFile, aliases = [], options = {}) {
     const raw = String(reference || "").trim();
     if (!raw || raw.startsWith("#") || /^(?:mailto|tel|obsidian):/i.test(raw)) {
       return null;
     }
-    const cacheKey = /^(?:https?:|data:)/i.test(raw) ? raw : `${normalizeVaultPath(ownerFile?.path || "")}|${raw}`;
+    const cacheKey = `${/^(?:https?:|data:)/i.test(raw) ? raw : `${normalizeVaultPath(ownerFile?.path || "")}|${raw}`}|${options.inlineResources === true ? "inline" : "metadata"}`;
     const existingPromise = this.portableResourceCache.get(cacheKey);
     if (existingPromise) {
       return existingPromise;
     }
-    const loading = this.readPortableResource(raw, ownerFile, aliases).finally(() => {
+    const loading = this.readPortableResource(raw, ownerFile, aliases, options).finally(() => {
       while (this.portableResourceCache.size > PORTABLE_RESOURCE_CACHE_LIMIT) {
         this.portableResourceCache.delete(this.portableResourceCache.keys().next().value);
       }
@@ -8959,9 +8994,21 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     this.portableResourceCache.set(cacheKey, loading);
     return loading;
   }
-  async readPortableResource(reference, ownerFile, aliases = []) {
+  async readPortableResource(reference, ownerFile, aliases = [], options = {}) {
     const raw = String(reference || "").trim();
+    const inlineResources = options.inlineResources === true;
     if (/^data:[^;,]+;base64,/i.test(raw)) {
+      if (!inlineResources) {
+        return normalizePortableResource({
+          id: portableResourceId(raw),
+          source: raw,
+          resolvedPath: raw,
+          aliases,
+          name: "embedded-resource",
+          mime: portableMimeType(raw),
+          size: 0
+        });
+      }
       const comma = raw.indexOf(",");
       const mime = raw.slice(5, raw.indexOf(";", 5)) || "application/octet-stream";
       const dataBase64 = raw.slice(comma + 1).replace(/\s+/g, "");
@@ -8977,6 +9024,17 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       });
     }
     if (/^https?:\/\//i.test(raw)) {
+      if (!inlineResources) {
+        return normalizePortableResource({
+          id: portableResourceId(raw),
+          source: raw,
+          resolvedPath: raw,
+          aliases,
+          name: portableUrlName(raw),
+          mime: portableMimeType(raw),
+          size: 0
+        });
+      }
       const response = await (0, import_obsidian.requestUrl)({ url: raw, method: "GET" });
       const buffer2 = response.arrayBuffer;
       const mime = portableResponseMime(response.headers) || portableMimeType(raw);
@@ -8994,7 +9052,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     const linkPath = unwrapWikiLink(raw.replace(/^!/, "")).split("|")[0].split("#")[0].trim();
     const linkedFile = this.app.metadataCache.getFirstLinkpathDest?.(linkPath, ownerFile?.path || "") || getVaultFileByPath(this.app.vault, linkPath);
     if (linkedFile) {
-      const buffer2 = await this.app.vault.readBinary(linkedFile);
+      const buffer2 = inlineResources ? await this.app.vault.readBinary(linkedFile) : null;
       return normalizePortableResource({
         id: portableResourceId(linkedFile.path),
         source: raw,
@@ -9002,15 +9060,16 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
         aliases: [linkPath, linkedFile.name, ...aliases],
         name: linkedFile.name,
         mime: portableMimeType(linkedFile.name),
-        size: buffer2.byteLength,
-        dataBase64: arrayBufferToBase64(buffer2)
+        size: Number(linkedFile.stat?.size || buffer2?.byteLength || 0),
+        ...buffer2 ? { dataBase64: arrayBufferToBase64(buffer2) } : {}
       });
     }
     const adapterPath = normalizeVaultPath(linkPath || raw);
     if (!adapterPath || !await this.app.vault.adapter.exists(adapterPath)) {
       return null;
     }
-    const buffer = await this.app.vault.adapter.readBinary(adapterPath);
+    const buffer = inlineResources ? await this.app.vault.adapter.readBinary(adapterPath) : null;
+    const stat = typeof this.app.vault.adapter.stat === "function" ? await this.app.vault.adapter.stat(adapterPath).catch(() => null) : null;
     return normalizePortableResource({
       id: portableResourceId(adapterPath),
       source: raw,
@@ -9018,8 +9077,8 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       aliases: [adapterPath.split("/").pop(), ...aliases],
       name: adapterPath.split("/").pop() || "attachment.bin",
       mime: portableMimeType(adapterPath),
-      size: buffer.byteLength,
-      dataBase64: arrayBufferToBase64(buffer)
+      size: Number(stat?.size || buffer?.byteLength || 0),
+      ...buffer ? { dataBase64: arrayBufferToBase64(buffer) } : {}
     });
   }
   portableResource(file2, reference) {
@@ -9051,6 +9110,9 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
         continue;
       }
       const dataUrl = portableResourceDataUrl(resource);
+      if (!dataUrl) {
+        continue;
+      }
       const tag = String(element.tagName || "").toLowerCase();
       if (["img", "video", "audio", "source"].includes(tag)) {
         element.setAttribute("src", dataUrl);
@@ -9407,7 +9469,8 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       }
       const bundle = await this.createPortableBundle(realFile, normalized, {
         purpose: "storage",
-        includeMarkdownLinks: false,
+        includeMarkdownLinks: this.noteDrawSettings.embedMarkdownLinks !== false,
+        inlineResources: false,
         updatedAt
       });
       const block = await encodeNotedrawDataBlock(bundle);
@@ -10538,7 +10601,7 @@ var PreviewDrawingController = class {
         this.pendingEmbedTool = null;
         return;
       }
-      this.insertImportedAsset(file2, pending.point).catch((error) => {
+      this.insertImportedAsset(file2, pending.point, this.file).catch((error) => {
         console.error(`[${PLUGIN_ID}] Failed to import asset`, error);
         new import_obsidian.Notice(this.plugin.t("failedImportFile"));
       });
@@ -10716,7 +10779,11 @@ var PreviewDrawingController = class {
     }
     this.applyReadingZoom();
     this.applyActiveState(this.active);
-    await this.ensureDrawingsLoaded();
+    if (this.active || this.surfaceType === "source") {
+      void this.ensureDrawingsLoaded().catch((error) => {
+        console.error(`[${PLUGIN_ID}] Failed to load drawings`, error);
+      });
+    }
     this.bindSourceFormatToolbarEvents();
     this.repairConnectedReadingSections();
     this.ensureReadingHeadingCollapseIndicators();
@@ -11152,6 +11219,7 @@ var PreviewDrawingController = class {
     this.markdownSelectionActivation = null;
     this.selectionFrameSnapshot = null;
     this.clearMarkdownBlockPresentation();
+    this.releaseEmbedMediaResources();
     this.embedNodes.forEach((node) => node.remove());
     this.embedNodes.clear();
     this.embedRenderTokens.clear();
@@ -11219,6 +11287,26 @@ var PreviewDrawingController = class {
       }
     }
     this.canvasImageCache?.clear?.();
+  }
+  releaseEmbedMediaResources() {
+    for (const node of this.embedNodes?.values?.() || []) {
+      const media = [node, ...Array.from(node.querySelectorAll?.("img,video,audio,source,iframe") || [])];
+      for (const element of media) {
+        try {
+          element.pause?.();
+          element.onload = null;
+          element.onerror = null;
+          if (element.tagName?.toLowerCase() === "iframe") {
+            element.src = "about:blank";
+          } else if (["img", "video", "audio", "source"].includes(element.tagName?.toLowerCase())) {
+            element.removeAttribute("src");
+            element.load?.();
+          }
+        } catch (error) {
+          void error;
+        }
+      }
+    }
   }
   destroy(options = {}) {
     if (this.destroyed) {
@@ -11354,6 +11442,7 @@ var PreviewDrawingController = class {
     this.noteFlowDropIndicator = null;
     this.hiddenFileInput?.remove();
     this.clearMarkdownBlockPresentation();
+    this.releaseEmbedMediaResources();
     this.embedNodes.forEach((node) => node.remove());
     this.underlayEmbedLayer?.remove();
     this.embedLayer?.remove();
@@ -16691,8 +16780,8 @@ ${selected}
     this.scheduleLayoutRefresh({ settle: false });
     this.render();
   }
-  async insertImportedAsset(fileLike, point) {
-    const asset = await this.plugin.importLocalAsset(fileLike);
+  async insertImportedAsset(fileLike, point, ownerFile = this.file) {
+    const asset = await this.plugin.importLocalAsset(fileLike, ownerFile);
     if (!asset) {
       return;
     }
@@ -28270,6 +28359,12 @@ var NoteDrawSettingTab = class extends import_obsidian.PluginSettingTab {
           });
         });
       }),
+      this.createSettingDefinition("embedMarkdownLinks", "embedMarkdownLinksDesc", (setting) => {
+        setting.addToggle((component) => component.setValue(settings.embedMarkdownLinks).onChange(async (value) => {
+          this.plugin.noteDrawSettings.embedMarkdownLinks = Boolean(value);
+          await this.plugin.saveSettings();
+        }));
+      }),
       this.createSectionDefinition("settingsSectionPen"),
       this.createSettingDefinition("defaultPenColor", "defaultPenColorDesc", (setting) => {
         setting.addColorPicker((component) => component.setValue(settings.defaultPenColor).onChange(async (value) => {
@@ -28836,6 +28931,7 @@ function sanitizeSettings(settings) {
   return {
     language: normalizeLanguageCode(input.language ?? DEFAULT_SETTINGS.language),
     drawingStorageMode: normalizeDrawingStorageMode(input.drawingStorageMode ?? DEFAULT_SETTINGS.drawingStorageMode),
+    embedMarkdownLinks: input.embedMarkdownLinks !== false,
     defaultPenColor: isCssColor(input.defaultPenColor) ? input.defaultPenColor : DEFAULT_SETTINGS.defaultPenColor,
     defaultPenWidth: clamp10(Number(input.defaultPenWidth ?? DEFAULT_SETTINGS.defaultPenWidth), MIN_BRUSH_WIDTH, MAX_BRUSH_WIDTH),
     defaultPenOpacity: clamp10(Number(input.defaultPenOpacity ?? DEFAULT_SETTINGS.defaultPenOpacity), 0, 1),
@@ -31175,11 +31271,11 @@ function normalizePortableResources(value) {
 }
 function normalizePortableResource(value) {
   const dataBase64 = typeof value?.dataBase64 === "string" ? value.dataBase64.replace(/\s+/g, "") : "";
-  if (!dataBase64 || !/^[A-Za-z0-9+/]*={0,2}$/.test(dataBase64)) {
-    return null;
-  }
   const source = typeof value?.source === "string" ? value.source : "";
   const resolvedPath = typeof value?.resolvedPath === "string" ? value.resolvedPath : "";
+  if (dataBase64 && !/^[A-Za-z0-9+/]*={0,2}$/.test(dataBase64) || !dataBase64 && !source && !resolvedPath) {
+    return null;
+  }
   const name = sanitizeAssetFileName(value?.name || portableUrlName(resolvedPath || source) || "attachment.bin");
   const aliases = Array.from(new Set([
     source,
@@ -31257,11 +31353,11 @@ function portableResourceId(value) {
 }
 function portableResourceDataUrl(resource) {
   const normalized = normalizePortableResource(resource);
-  return normalized ? `data:${normalized.mime || "application/octet-stream"};base64,${normalized.dataBase64}` : "";
+  return normalized?.dataBase64 ? `data:${normalized.mime || "application/octet-stream"};base64,${normalized.dataBase64}` : "";
 }
 function portableResourceText(resource) {
   const normalized = normalizePortableResource(resource);
-  if (!normalized) {
+  if (!normalized?.dataBase64) {
     return "";
   }
   const binary = atob(normalized.dataBase64);

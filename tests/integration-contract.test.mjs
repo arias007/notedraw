@@ -289,7 +289,8 @@ test("NoteDraw storage locations and single-file sharing stay portable and backw
   const drawingDataApi = source.slice(source.indexOf("  async readDrawingDataApi("), source.indexOf("  registeredSurfaceViewportState("));
   const settingsSource = source.slice(source.indexOf("  getSettingDefinitions()"), source.indexOf("  addSliderWithValue("));
 
-  assert.match(source, /drawingStorageMode: DRAWING_STORAGE_CONFIG/);
+  assert.match(source, /drawingStorageMode: DRAWING_STORAGE_EMBEDDED/);
+  assert.match(source, /embedMarkdownLinks: true/);
   assert.match(source, /DRAWING_STORAGE_NOTE_SUBFOLDER[\s\S]*DRAWING_STORAGE_NOTE_FOLDER[\s\S]*DRAWING_STORAGE_EMBEDDED/);
   assert.match(storageSource, /resolveDrawingStoragePath\([\s\S]*mode/);
   assert.match(storageSource, /const configPath = this\.drawingPathForFile\(file, DRAWING_STORAGE_CONFIG\)/);
@@ -304,6 +305,8 @@ test("NoteDraw storage locations and single-file sharing stay portable and backw
   assert.match(drawingDataApi, /format === "json"[\s\S]*format === "block"[\s\S]*format === "markdown"/);
   assert.doesNotMatch(drawingDataApi, /vault\.(?:create|modify|process|delete|rename)|adapter\.(?:write|writeBinary|remove|rename)|changeDrawingStorageMode|writeDrawings\(/);
   assert.match(shareSource, /includeMarkdownLinks[\s\S]*metadataCache\.getFileCache[\s\S]*requestUrl\(\{ url: raw, method: "GET" \}\)/);
+  assert.match(shareSource, /inlineResources: options\.inlineResources === true/);
+  assert.match(shareSource, /options\.inlineResources === true/);
   assert.match(shareSource, /TEXT_RENDER_NOTE[\s\S]*TEXT_RENDER_MARKDOWN[\s\S]*TEXT_RENDER_HTML[\s\S]*mindMapSource/);
   assert.match(shareSource, /createAndOpenShareCopy\(file, markdown, bundle\)[\s\S]*vault\.create\(path, markdown\)[\s\S]*leaf\.openFile\(copyFile[\s\S]*mode: "preview"[\s\S]*waitForShareCopyPreview\(copyFile, leaf\)/);
   assert.match(shareSource, /waitForShareCopyPreview\(file, leaf\)[\s\S]*hydratePortableMarkdownResources\(preview, path\)[\s\S]*ensureDrawingsLoaded\(\)[\s\S]*waitForNextFrame\(\)[\s\S]*waitForNextFrame\(\)/);
