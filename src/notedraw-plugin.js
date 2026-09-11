@@ -4788,7 +4788,9 @@ var NoteDrawPlugin = class extends Plugin {
       if (!resource || options.inlineResources === true && !resource.dataBase64) {
         return false;
       }
-      resources.set(portableResourceIdentity(resource), resource);
+      resources.set(portableResourceIdentity(resource), options.inlineResources === true
+        ? resource
+        : { ...resource, dataBase64: "" });
       return true;
     };
     const addReference = async (reference, aliases = []) => {
@@ -5182,6 +5184,11 @@ var NoteDrawPlugin = class extends Plugin {
         ? selected.data.markdownBlocks.length
         : 0;
       const data = selected ? normalizeDrawingData(selected.data, file) : createEmptyDrawingData(file);
+      if (storageMode === DRAWING_STORAGE_CONFIG
+        && portableBundle?.format === "notedraw-portable"
+        && candidates.some((candidate) => candidate.kind === "config" || candidate.kind === "selected")) {
+        await this.writeAttachmentLinkBlock(file, data, portableBundle.updatedAt || (/* @__PURE__ */ new Date()).toISOString());
+      }
       const repairedMarkdownBlocks = Boolean(selected && data.markdownBlocks.length < storedMarkdownBlockCount);
       const sourceRevisionMismatch = Boolean(selected && (
         !storedRevision

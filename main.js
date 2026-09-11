@@ -8921,7 +8921,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       if (!resource || options.inlineResources === true && !resource.dataBase64) {
         return false;
       }
-      resources.set(portableResourceIdentity(resource), resource);
+      resources.set(portableResourceIdentity(resource), options.inlineResources === true ? resource : { ...resource, dataBase64: "" });
       return true;
     };
     const addReference = async (reference, aliases = []) => {
@@ -9314,6 +9314,9 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       const storedRevision = normalizeSourceRevision(selected?.data?.sourceRevision);
       const storedMarkdownBlockCount = Array.isArray(selected?.data?.markdownBlocks) ? selected.data.markdownBlocks.length : 0;
       const data = selected ? normalizeDrawingData(selected.data, file2) : createEmptyDrawingData(file2);
+      if (storageMode === DRAWING_STORAGE_CONFIG && portableBundle?.format === "notedraw-portable" && candidates.some((candidate) => candidate.kind === "config" || candidate.kind === "selected")) {
+        await this.writeAttachmentLinkBlock(file2, data, portableBundle.updatedAt || (/* @__PURE__ */ new Date()).toISOString());
+      }
       const repairedMarkdownBlocks = Boolean(selected && data.markdownBlocks.length < storedMarkdownBlockCount);
       const sourceRevisionMismatch = Boolean(selected && (!storedRevision || storedRevision !== sourceRevision));
       data.sourceRevision = sourceRevision;

@@ -66,7 +66,7 @@ test("rapid undo and redo requests are serialized per controller", async () => {
   assert.match(history, /this\.runHistoryNavigation\("redo"\)/);
 });
 
-test("release 3.8.3 metadata and contributor documentation are present", async () => {
+test("release 3.8.5 metadata and contributor documentation are present", async () => {
   const [manifest, pkg, contributing, architecture] = await Promise.all([
     readFile(manifestUrl, "utf8"),
     readFile(packageUrl, "utf8"),
@@ -74,8 +74,8 @@ test("release 3.8.3 metadata and contributor documentation are present", async (
     readFile(architectureUrl, "utf8")
   ]);
 
-  assert.match(manifest, /"version": "3\.8\.3"/);
-  assert.match(pkg, /"version": "3\.8\.3"/);
+  assert.match(manifest, /"version": "3\.8\.5"/);
+  assert.match(pkg, /"version": "3\.8\.5"/);
   assert.match(contributing, /项目结构/);
   assert.match(contributing, /npm run verify/);
   assert.match(contributing, /Issue #2/);
