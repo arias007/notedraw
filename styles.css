@@ -188,6 +188,13 @@
 .notedraw-shell.is-drawing-hidden .notedraw-underlay-embed-layer,
 .notedraw-shell.is-drawing-hidden .notedraw-embed-layer {
   opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.notedraw-shell.is-drawing-hidden .notedraw-embed {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .notedraw-embed {
@@ -408,6 +415,8 @@
 .notedraw-shell.is-drawing-hidden .notedraw-static-canvas,
 .notedraw-shell.is-drawing-hidden .notedraw-canvas {
   opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .notedraw-mind-map-source-setting {

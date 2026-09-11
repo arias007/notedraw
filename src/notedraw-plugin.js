@@ -12200,7 +12200,7 @@ var PreviewDrawingController = class {
       return;
     }
     const point = { x: Number(event.clientX) || 0, y: Number(event.clientY) || 0 };
-    const directTaskItem = event.target?.closest?.("li.task-list-item");
+    const directTaskItem = markdownTaskItemForTarget(event.target, this.previewEl);
     const directTaskBlock = directTaskItem && this.previewEl.contains(directTaskItem)
       ? this.markdownBlockElementForTarget(directTaskItem, point)
       : null;
@@ -13213,7 +13213,7 @@ var PreviewDrawingController = class {
     this.rememberMarkdownIdentityMutation(event);
     if (this.active) {
       if (this.toolMode === TOOL_SELECT && Date.now() <= this.directMarkdownTaskClickUntil
-        && event.target?.closest?.("li.task-list-item")) {
+        && markdownTaskItemForTarget(event.target, this.previewEl)) {
         event.preventDefault();
         event.stopPropagation();
         event.stopImmediatePropagation?.();
@@ -14147,8 +14147,8 @@ var PreviewDrawingController = class {
     const canBecomeElementDrag = [
       "edit-markdown-or-drag",
       "edit-stroke-or-drag",
-      "select-stroke",
-      "select-markdown",
+      "drag-stroke-or-toggle",
+      "drag-markdown-or-toggle",
       "select-group",
       "enter-stroke-group",
       "enter-markdown-group",

@@ -21,6 +21,26 @@ test("canvas layers stay hidden until their backing stores are initialized", asy
   assert.match(source, /this\.canvas\.width = 1;\s*this\.canvas\.height = 1;/s);
 });
 
+test("hiding NoteDraw makes every overlay non-interactive so Markdown below remains editable", async () => {
+  const styles = await readFile(stylesUrl, "utf8");
+  const hiddenEmbedRule = styles.slice(
+    styles.indexOf(".notedraw-shell.is-drawing-hidden .notedraw-underlay-embed-layer"),
+    styles.indexOf(".notedraw-embed {", styles.indexOf(".notedraw-shell.is-drawing-hidden .notedraw-underlay-embed-layer"))
+  );
+  const hiddenCanvasRule = styles.slice(
+    styles.indexOf(".notedraw-shell.is-drawing-hidden .notedraw-underlay-canvas"),
+    styles.indexOf(".notedraw-mind-map-source-setting", styles.indexOf(".notedraw-shell.is-drawing-hidden .notedraw-underlay-canvas"))
+  );
+
+  assert.match(hiddenEmbedRule, /opacity:\s*0/);
+  assert.match(hiddenEmbedRule, /visibility:\s*hidden/);
+  assert.match(hiddenEmbedRule, /pointer-events:\s*none/);
+  assert.match(styles, /\.notedraw-shell\.is-drawing-hidden \.notedraw-embed \{[\s\S]*visibility:\s*hidden;[\s\S]*pointer-events:\s*none;/);
+  assert.match(hiddenCanvasRule, /opacity:\s*0/);
+  assert.match(hiddenCanvasRule, /visibility:\s*hidden/);
+  assert.match(hiddenCanvasRule, /pointer-events:\s*none/);
+});
+
 test("destroyed controllers release canvas backing stores and decoded images", async () => {
   const source = await readFile(sourceUrl, "utf8");
   const destroySource = source.slice(source.indexOf("  destroy(options = {})"), source.indexOf("  async toggle()", source.indexOf("  destroy(options = {})")));

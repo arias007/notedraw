@@ -673,7 +673,7 @@ test("task rows above the canvas still route their first pointer tap through Not
   assert.match(directPointerSource, /directTaskBlock[\s\S]*this\.toolMode === TOOL_SELECT[\s\S]*this\.directMarkdownPointerId = event\.pointerId[\s\S]*this\.directMarkdownPointerElement = directTaskBlock[\s\S]*this\.onPointerDown\(event, true\)/);
   assert.match(finishSource, /this\.directMarkdownPointerId === event\.pointerId[\s\S]*this\.onPointerUp\(event\)[\s\S]*this\.directMarkdownPointerElement = null/);
   assert.match(source, /const target = this\.directMarkdownPointerId === event\.pointerId && this\.directMarkdownPointerElement\?\.isConnected[\s\S]*this\.directMarkdownPointerElement[\s\S]*this\.elementBelowCanvas/);
-  assert.match(clickSource, /Date\.now\(\) <= this\.directMarkdownTaskClickUntil[\s\S]*li\.task-list-item[\s\S]*stopImmediatePropagation/);
+  assert.match(clickSource, /Date\.now\(\) <= this\.directMarkdownTaskClickUntil[\s\S]*markdownTaskItemForTarget\(event\.target, this\.previewEl\)[\s\S]*stopImmediatePropagation/);
 });
 
 test("task text and attachment descendants resolve to stable selectable owners", async () => {
@@ -693,6 +693,17 @@ test("task text and attachment descendants resolve to stable selectable owners",
   assert.match(source, /\.notedraw-embed\[data-note-draw-stroke-index\]/);
   assert.match(source, /node\._noteDrawPointerDownHandler = \(event\) => \{[\s\S]*this\.onPointerDown\(event, true\)/);
   assert.match(source, /this\.embedRenderTokens\.get\(key\) === token && node\.childNodes\?\.length/);
+});
+
+test("selected attachments drag only on the second gesture without collapsing a hybrid selection", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const pendingSource = source.slice(source.indexOf("  updatePendingSelectionTap("), source.indexOf("  applyPendingSelectionTap(", source.indexOf("  updatePendingSelectionTap(")));
+
+  assert.match(pendingSource, /"drag-stroke-or-toggle"[\s\S]*"drag-markdown-or-toggle"/);
+  assert.doesNotMatch(pendingSource, /pending\.type === "select-stroke" \|\| pending\.type === "drag-stroke-or-toggle"/);
+  assert.doesNotMatch(pendingSource, /pending\.type === "select-markdown" \|\| pending\.type === "drag-markdown-or-toggle"/);
+  assert.match(source, /if \(!wasSelected\) \{\s*this\.startPendingSelectionTap\(event, \{\s*type: "select-stroke"/);
+  assert.match(source, /if \(!additiveSelect && this\.hasHybridSelection\(\)\) \{/);
 });
 
 test("long press opens the element menu without falling through to edit", async () => {

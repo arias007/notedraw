@@ -16069,7 +16069,7 @@ ${selected}
       return;
     }
     const point = { x: Number(event.clientX) || 0, y: Number(event.clientY) || 0 };
-    const directTaskItem = event.target?.closest?.("li.task-list-item");
+    const directTaskItem = markdownTaskItemForTarget(event.target, this.previewEl);
     const directTaskBlock = directTaskItem && this.previewEl.contains(directTaskItem) ? this.markdownBlockElementForTarget(directTaskItem, point) : null;
     this.rememberMarkdownIdentityMutation(event);
     if (this.active && this.toolMode === TOOL_SELECT && event.target !== this.canvas && directTaskBlock) {
@@ -17023,7 +17023,7 @@ ${selected}
   onReadingClick(event) {
     this.rememberMarkdownIdentityMutation(event);
     if (this.active) {
-      if (this.toolMode === TOOL_SELECT && Date.now() <= this.directMarkdownTaskClickUntil && event.target?.closest?.("li.task-list-item")) {
+      if (this.toolMode === TOOL_SELECT && Date.now() <= this.directMarkdownTaskClickUntil && markdownTaskItemForTarget(event.target, this.previewEl)) {
         event.preventDefault();
         event.stopPropagation();
         event.stopImmediatePropagation?.();
@@ -17911,8 +17911,8 @@ ${selected}
     const canBecomeElementDrag = [
       "edit-markdown-or-drag",
       "edit-stroke-or-drag",
-      "select-stroke",
-      "select-markdown",
+      "drag-stroke-or-toggle",
+      "drag-markdown-or-toggle",
       "select-group",
       "enter-stroke-group",
       "enter-markdown-group",
