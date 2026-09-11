@@ -6,11 +6,13 @@ import {
   DRAWING_STORAGE_EMBEDDED,
   DRAWING_STORAGE_NOTE_FOLDER,
   DRAWING_STORAGE_NOTE_SUBFOLDER,
+  appendNotedrawAttachmentLinkBlock,
   appendNotedrawDataBlock,
   decodeNotedrawDataBlock,
   findNotedrawDataBlock,
   normalizeDrawingStorageMode,
   resolveDrawingStoragePath,
+  stripNotedrawAttachmentLinkBlocks,
   stripNotedrawDataBlocks
 } from "../src/portable-notedraw.mjs";
 
@@ -55,4 +57,18 @@ test("writing a portable block replaces an older hidden block instead of stackin
   assert.equal(second.match(/NOTEDRAW_DATA_BEGIN/g)?.length, 1);
   assert.deepEqual(await decodeNotedrawDataBlock(second), { version: 1, drawing: { strokes: [2] } });
   assert.equal(stripNotedrawDataBlocks(second), "Body");
+});
+
+test("attachment links are hidden, real Markdown links and never carry drawing data", () => {
+  const body = "# Body\n\n[ordinary](ordinary.md)";
+  const withLinks = appendNotedrawAttachmentLinkBlock(body, [
+    { resolvedPath: "Assets/图 1.pdf", name: "图 1.pdf" },
+    { resolvedPath: "Assets/图 1.pdf", name: "图 1.pdf" }
+  ]);
+
+  assert.match(withLinks, /%% NOTEDRAW_LINKS_BEGIN/);
+  assert.match(withLinks, /\[\[Assets\/图 1\.pdf\]\]/);
+  assert.doesNotMatch(withLinks, /NOTEDRAW_DATA_BEGIN/);
+  assert.equal(stripNotedrawAttachmentLinkBlocks(withLinks), body);
+  assert.equal(appendNotedrawAttachmentLinkBlock(body, []), body);
 });

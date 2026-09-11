@@ -149,12 +149,14 @@ import {
   DRAWING_STORAGE_EMBEDDED,
   DRAWING_STORAGE_NOTE_FOLDER,
   DRAWING_STORAGE_NOTE_SUBFOLDER,
+  appendNotedrawAttachmentLinkBlock,
   appendEncodedNotedrawDataBlock,
   appendNotedrawDataBlock,
   decodeNotedrawDataBlock,
   encodeNotedrawDataBlock,
   normalizeDrawingStorageMode,
   resolveDrawingStoragePath,
+  stripNotedrawAttachmentLinkBlocks,
   stripNotedrawDataBlocks
 } from "./portable-notedraw.mjs";
 const activeDocument = window.activeWindow?.document || window.document;
@@ -382,8 +384,8 @@ var I18N = {
     drawingStorageNoteSubfolder: "Current folder / notedraw",
     drawingStorageNoteFolder: "Current folder",
     drawingStorageEmbedded: "Current Markdown file (hidden)",
-    embedMarkdownLinks: "Write linked resources into the hidden block",
-    embedMarkdownLinksDesc: "Keep Markdown links and embeds portable without duplicating large binary files during normal saves.",
+    embedMarkdownLinks: "Write imported attachment links into the hidden block",
+    embedMarkdownLinksDesc: "Keep links for attachments imported by NoteDraw in the note without writing drawing data or ordinary Markdown links.",
     shareNoteDrawFile: "Share NoteDraw file",
     sharePreparing: "Packaging this note and its linked resources...",
     shareReady: "NoteDraw file is ready with {count} embedded resource(s).",
@@ -569,8 +571,8 @@ var I18N = {
     drawingStorageNoteSubfolder: "当前文件夹 / notedraw",
     drawingStorageNoteFolder: "当前文件夹",
     drawingStorageEmbedded: "当前 Markdown 文件（隐藏）",
-    embedMarkdownLinks: "链接写入隐藏数据块",
-    embedMarkdownLinksDesc: "保存时把 Markdown 链接和嵌入资源写入隐藏数据块，但不重复内嵌大型二进制文件。",
+    embedMarkdownLinks: "附件链接写入隐藏数据块",
+    embedMarkdownLinksDesc: "仅保留 NoteDraw 导入附件的隐藏链接，不写入涂鸦数据或普通 Markdown 链接。",
     shareNoteDrawFile: "分享 NoteDraw 文件",
     sharePreparing: "正在打包笔记、NoteDraw 数据和链接资源……",
     shareReady: "NoteDraw 文件已就绪，包含 {count} 个资源。",
@@ -733,8 +735,8 @@ var I18N = {
     drawingStorageNoteSubfolder: "目前資料夾 / notedraw",
     drawingStorageNoteFolder: "目前資料夾",
     drawingStorageEmbedded: "目前 Markdown 檔案（隱藏）",
-    embedMarkdownLinks: "將連結寫入隱藏資料塊",
-    embedMarkdownLinksDesc: "儲存時保留 Markdown 連結與嵌入資源的可攜資訊，不重複內嵌大型二進位檔案。",
+    embedMarkdownLinks: "將附件連結寫入隱藏資料塊",
+    embedMarkdownLinksDesc: "僅保留 NoteDraw 匯入附件的隱藏連結，不寫入塗鴉資料或一般 Markdown 連結。",
     shareNoteDrawFile: "分享 NoteDraw 檔案",
     sharePreparing: "正在封裝筆記、NoteDraw 資料與連結資源……",
     shareReady: "NoteDraw 檔案已就緒，包含 {count} 個資源。",
@@ -4693,6 +4695,7 @@ var NoteDrawPlugin = class extends Plugin {
     const collected = await this.collectPortableResources(file, data, {
       includeMarkdownLinks: options.includeMarkdownLinks === true,
       inlineResources: options.inlineResources === true,
+      attachmentsOnly: options.attachmentsOnly === true,
       sourceMarkdown
     });
     return {
@@ -4820,6 +4823,9 @@ var NoteDrawPlugin = class extends Plugin {
       if (stroke?.assetPath) {
         drawingReferences.push(addReference(stroke.assetPath, [stroke.assetName, stroke.text].filter(Boolean)));
       }
+      if (options.attachmentsOnly) {
+        continue;
+      }
       const renderMode = normalizeTextRenderMode(stroke?.render);
       if (renderMode === TEXT_RENDER_NOTE && stroke?.text) {
         drawingReferences.push(addReference(stroke.text));
@@ -4848,7 +4854,7 @@ var NoteDrawPlugin = class extends Plugin {
       for (const reference of markdownReferences) {
         await addReference(reference);
       }
-    } else if (existing.length) {
+    } else if (!options.attachmentsOnly && existing.length) {
       for (const reference of extractPortableMarkdownLinks(options.sourceMarkdown)) {
         addExisting(reference);
       }
@@ -5404,25 +5410,38 @@ var NoteDrawPlugin = class extends Plugin {
     const source = await this.app.vault.cachedRead(realFile);
     const bundle = await this.createPortableBundle(realFile, data, {
       purpose: "links",
-      includeMarkdownLinks: true,
+      includeMarkdownLinks: false,
       inlineResources: false,
+      attachmentsOnly: true,
       sourceMarkdown: source,
       updatedAt
     });
     if (!bundle.resources.length) {
       // Remove a stale full NoteDraw block left by 3.8.2, but do not append
       // anything to notes that have no linked resources.
-      const cleanSource = stripNotedrawDataBlocks(source);
+      const cleanSource = stripNotedrawAttachmentLinkBlocks(stripNotedrawDataBlocks(source));
       if (cleanSource !== source) {
         if (typeof this.app.vault.process === "function") {
-          await this.app.vault.process(realFile, (current) => stripNotedrawDataBlocks(current));
+          await this.app.vault.process(realFile, (current) => stripNotedrawAttachmentLinkBlocks(stripNotedrawDataBlocks(current)));
         } else {
           await this.app.vault.modify(realFile, cleanSource);
         }
       }
       return false;
     }
-    const linkBundle = {
+    const nextSource = appendNotedrawAttachmentLinkBlock(
+      stripNotedrawDataBlocks(source),
+      bundle.resources
+    );
+    if (nextSource === source) {
+      return false;
+    }
+    if (typeof this.app.vault.process === "function") {
+      await this.app.vault.process(realFile, (current) => appendNotedrawAttachmentLinkBlock(stripNotedrawDataBlocks(current), bundle.resources));
+    } else {
+      await this.app.vault.modify(realFile, nextSource);
+    }
+    this.rememberPortableBundle(realFile, {
       format: "notedraw-links",
       version: 1,
       purpose: "links",
@@ -5430,18 +5449,7 @@ var NoteDrawPlugin = class extends Plugin {
       updatedAt,
       resources: bundle.resources,
       skippedResources: bundle.skippedResources
-    };
-    const block = await encodeNotedrawDataBlock(linkBundle);
-    const nextSource = appendEncodedNotedrawDataBlock(source, block);
-    if (nextSource === source) {
-      return false;
-    }
-    if (typeof this.app.vault.process === "function") {
-      await this.app.vault.process(realFile, (current) => appendEncodedNotedrawDataBlock(current, block));
-    } else {
-      await this.app.vault.modify(realFile, nextSource);
-    }
-    this.rememberPortableBundle(realFile, linkBundle);
+    });
     return true;
   }
   async injectExportSnapshot(file, container) {

@@ -61,6 +61,8 @@ The **NoteDraw data location** setting provides four choices:
 
 Changing the setting preserves old data and copies the active note's current drawing into the selected location. NoteDraw can still read existing config-folder, embedded, and legacy data and uses the newest valid copy.
 
+With the default config-folder mode, imported attachments are saved beside the current note. If enabled, NoteDraw appends only their hidden link metadata to the Markdown file so the attachments remain associated with the note. Drawing data and ordinary Markdown links stay out of the note.
+
 **Share NoteDraw file** is available in the note menu and command palette. It creates a uniquely named `<note>.notedraw.md` copy containing the readable Markdown body plus a hidden portable bundle with the drawing layer, NoteDraw attachments, internal linked files, and reachable HTTP/HTTPS resources. NoteDraw opens that copy in Obsidian reading view and waits for its Markdown, resources, and drawing layer to render before opening system sharing. The source note and existing copies are never overwritten. Normal Markdown readers ignore the hidden block; NoteDraw restores it when the file is opened in a compatible Obsidian environment.
 
 ## Migration
@@ -326,4 +328,4 @@ The current package focuses on the local Obsidian plugin runtime. The API and DO
 
 ## Version
 
-Current version: `3.8.5`.
+Current version: `3.8.6`.

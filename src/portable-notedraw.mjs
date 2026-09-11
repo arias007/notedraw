@@ -12,8 +12,11 @@ export const DRAWING_STORAGE_MODES = [
 
 export const NOTEDRAW_DATA_BEGIN = "NOTEDRAW_DATA_BEGIN";
 export const NOTEDRAW_DATA_END = "NOTEDRAW_DATA_END";
+export const NOTEDRAW_LINKS_BEGIN = "NOTEDRAW_LINKS_BEGIN";
+export const NOTEDRAW_LINKS_END = "NOTEDRAW_LINKS_END";
 
 const DATA_BLOCK_PATTERN = /<!--\s*NOTEDRAW_DATA_BEGIN\s+([a-z0-9-]+)\s*\r?\n([A-Za-z0-9+/=\r\n]+?)\r?\nNOTEDRAW_DATA_END\s*-->/gi;
+const LINK_BLOCK_PATTERN = /%%\s*NOTEDRAW_LINKS_BEGIN\s*\r?\n([\s\S]*?)\r?\nNOTEDRAW_LINKS_END\s*%%/gi;
 
 export function normalizeDrawingStorageMode(value) {
   return DRAWING_STORAGE_MODES.includes(value) ? value : DRAWING_STORAGE_CONFIG;
@@ -96,6 +99,32 @@ export async function appendNotedrawDataBlock(markdown, bundle, options = {}) {
 export function appendEncodedNotedrawDataBlock(markdown, block) {
   const body = stripNotedrawDataBlocks(markdown);
   return `${body}${body ? "\n\n" : ""}${block}\n`;
+}
+
+export function stripNotedrawAttachmentLinkBlocks(markdown) {
+  return String(markdown || "").replace(LINK_BLOCK_PATTERN, "").replace(/[ \t]+$/gm, "").trimEnd();
+}
+
+export function appendNotedrawAttachmentLinkBlock(markdown, resources) {
+  const links = Array.from(resources || []).map((resource) => {
+    const path = typeof resource === "string"
+      ? resource
+      : resource?.resolvedPath || resource?.source || "";
+    const normalized = String(path || "").trim().replace(/[\r\n\]]/g, "");
+    if (!normalized || /^(?:data:|mailto:|tel:|obsidian:)/i.test(normalized)) {
+      return "";
+    }
+    if (/^https?:\/\//i.test(normalized)) {
+      const label = String(resource?.name || normalized).replace(/[\r\n\]]/g, "");
+      return `[${label}](${normalized.replace(/[\r\n)]/g, "")})`;
+    }
+    return `[[${normalized.replace(/^\/+/, "")}]]`;
+  }).filter(Boolean);
+  const body = stripNotedrawAttachmentLinkBlocks(markdown);
+  if (!links.length) {
+    return body;
+  }
+  return `${body}${body ? "\n\n" : ""}%% ${NOTEDRAW_LINKS_BEGIN}\n${Array.from(new Set(links)).join("\n")}\n${NOTEDRAW_LINKS_END} %%\n`;
 }
 
 function normalizePath(value) {

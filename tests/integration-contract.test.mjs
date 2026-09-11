@@ -296,6 +296,10 @@ test("NoteDraw storage locations and single-file sharing stay portable and backw
   assert.match(storageSource, /const configPath = this\.drawingPathForFile\(file, DRAWING_STORAGE_CONFIG\)/);
   assert.match(storageSource, /candidates\.sort\(\(a, b\) => portableTimestamp\(b\.updatedAt\) - portableTimestamp\(a\.updatedAt\)/);
   assert.match(storageSource, /this\.app\.vault\.process\(realFile, \(source\) => appendEncodedNotedrawDataBlock\(source, block\)\)/);
+  assert.match(storageSource, /writeAttachmentLinkBlock\(file, data, updatedAt\)[\s\S]*includeMarkdownLinks: false[\s\S]*attachmentsOnly: true/);
+  assert.match(storageSource, /appendNotedrawAttachmentLinkBlock\(/);
+  assert.match(shareSource, /attachmentsOnly: options\.attachmentsOnly === true/);
+  assert.match(shareSource, /if \(options\.attachmentsOnly\) \{\s*continue;\s*\}/);
   assert.match(settingsSource, /drawingStorageMode[\s\S]*drawingStorageConfig[\s\S]*drawingStorageNoteSubfolder[\s\S]*drawingStorageNoteFolder[\s\S]*drawingStorageEmbedded/);
   assert.match(source, /this\.app\.workspace\.on\("file-menu"[\s\S]*shareNoteDrawFile[\s\S]*setIcon\("share-2"\)/);
   assert.match(source, /drawingDataExchange: \["read", "parse", "normalize", "inspect", "serialize"\]/);

@@ -4258,7 +4258,10 @@ var DRAWING_STORAGE_MODES = [
 ];
 var NOTEDRAW_DATA_BEGIN = "NOTEDRAW_DATA_BEGIN";
 var NOTEDRAW_DATA_END = "NOTEDRAW_DATA_END";
+var NOTEDRAW_LINKS_BEGIN = "NOTEDRAW_LINKS_BEGIN";
+var NOTEDRAW_LINKS_END = "NOTEDRAW_LINKS_END";
 var DATA_BLOCK_PATTERN = /<!--\s*NOTEDRAW_DATA_BEGIN\s+([a-z0-9-]+)\s*\r?\n([A-Za-z0-9+/=\r\n]+?)\r?\nNOTEDRAW_DATA_END\s*-->/gi;
+var LINK_BLOCK_PATTERN = /%%\s*NOTEDRAW_LINKS_BEGIN\s*\r?\n([\s\S]*?)\r?\nNOTEDRAW_LINKS_END\s*%%/gi;
 function normalizeDrawingStorageMode(value) {
   return DRAWING_STORAGE_MODES.includes(value) ? value : DRAWING_STORAGE_CONFIG;
 }
@@ -4333,6 +4336,31 @@ async function appendNotedrawDataBlock(markdown, bundle, options = {}) {
 function appendEncodedNotedrawDataBlock(markdown, block) {
   const body = stripNotedrawDataBlocks(markdown);
   return `${body}${body ? "\n\n" : ""}${block}
+`;
+}
+function stripNotedrawAttachmentLinkBlocks(markdown) {
+  return String(markdown || "").replace(LINK_BLOCK_PATTERN, "").replace(/[ \t]+$/gm, "").trimEnd();
+}
+function appendNotedrawAttachmentLinkBlock(markdown, resources) {
+  const links = Array.from(resources || []).map((resource) => {
+    const path = typeof resource === "string" ? resource : resource?.resolvedPath || resource?.source || "";
+    const normalized = String(path || "").trim().replace(/[\r\n\]]/g, "");
+    if (!normalized || /^(?:data:|mailto:|tel:|obsidian:)/i.test(normalized)) {
+      return "";
+    }
+    if (/^https?:\/\//i.test(normalized)) {
+      const label = String(resource?.name || normalized).replace(/[\r\n\]]/g, "");
+      return `[${label}](${normalized.replace(/[\r\n)]/g, "")})`;
+    }
+    return `[[${normalized.replace(/^\/+/, "")}]]`;
+  }).filter(Boolean);
+  const body = stripNotedrawAttachmentLinkBlocks(markdown);
+  if (!links.length) {
+    return body;
+  }
+  return `${body}${body ? "\n\n" : ""}%% ${NOTEDRAW_LINKS_BEGIN}
+${Array.from(new Set(links)).join("\n")}
+${NOTEDRAW_LINKS_END} %%
 `;
 }
 function normalizePath(value) {
@@ -4602,8 +4630,8 @@ var I18N = {
     drawingStorageNoteSubfolder: "Current folder / notedraw",
     drawingStorageNoteFolder: "Current folder",
     drawingStorageEmbedded: "Current Markdown file (hidden)",
-    embedMarkdownLinks: "Write linked resources into the hidden block",
-    embedMarkdownLinksDesc: "Keep Markdown links and embeds portable without duplicating large binary files during normal saves.",
+    embedMarkdownLinks: "Write imported attachment links into the hidden block",
+    embedMarkdownLinksDesc: "Keep links for attachments imported by NoteDraw in the note without writing drawing data or ordinary Markdown links.",
     shareNoteDrawFile: "Share NoteDraw file",
     sharePreparing: "Packaging this note and its linked resources...",
     shareReady: "NoteDraw file is ready with {count} embedded resource(s).",
@@ -4789,8 +4817,8 @@ var I18N = {
     drawingStorageNoteSubfolder: "\u5F53\u524D\u6587\u4EF6\u5939 / notedraw",
     drawingStorageNoteFolder: "\u5F53\u524D\u6587\u4EF6\u5939",
     drawingStorageEmbedded: "\u5F53\u524D Markdown \u6587\u4EF6\uFF08\u9690\u85CF\uFF09",
-    embedMarkdownLinks: "\u94FE\u63A5\u5199\u5165\u9690\u85CF\u6570\u636E\u5757",
-    embedMarkdownLinksDesc: "\u4FDD\u5B58\u65F6\u628A Markdown \u94FE\u63A5\u548C\u5D4C\u5165\u8D44\u6E90\u5199\u5165\u9690\u85CF\u6570\u636E\u5757\uFF0C\u4F46\u4E0D\u91CD\u590D\u5185\u5D4C\u5927\u578B\u4E8C\u8FDB\u5236\u6587\u4EF6\u3002",
+    embedMarkdownLinks: "\u9644\u4EF6\u94FE\u63A5\u5199\u5165\u9690\u85CF\u6570\u636E\u5757",
+    embedMarkdownLinksDesc: "\u4EC5\u4FDD\u7559 NoteDraw \u5BFC\u5165\u9644\u4EF6\u7684\u9690\u85CF\u94FE\u63A5\uFF0C\u4E0D\u5199\u5165\u6D82\u9E26\u6570\u636E\u6216\u666E\u901A Markdown \u94FE\u63A5\u3002",
     shareNoteDrawFile: "\u5206\u4EAB NoteDraw \u6587\u4EF6",
     sharePreparing: "\u6B63\u5728\u6253\u5305\u7B14\u8BB0\u3001NoteDraw \u6570\u636E\u548C\u94FE\u63A5\u8D44\u6E90\u2026\u2026",
     shareReady: "NoteDraw \u6587\u4EF6\u5DF2\u5C31\u7EEA\uFF0C\u5305\u542B {count} \u4E2A\u8D44\u6E90\u3002",
@@ -4953,8 +4981,8 @@ var I18N = {
     drawingStorageNoteSubfolder: "\u76EE\u524D\u8CC7\u6599\u593E / notedraw",
     drawingStorageNoteFolder: "\u76EE\u524D\u8CC7\u6599\u593E",
     drawingStorageEmbedded: "\u76EE\u524D Markdown \u6A94\u6848\uFF08\u96B1\u85CF\uFF09",
-    embedMarkdownLinks: "\u5C07\u9023\u7D50\u5BEB\u5165\u96B1\u85CF\u8CC7\u6599\u584A",
-    embedMarkdownLinksDesc: "\u5132\u5B58\u6642\u4FDD\u7559 Markdown \u9023\u7D50\u8207\u5D4C\u5165\u8CC7\u6E90\u7684\u53EF\u651C\u8CC7\u8A0A\uFF0C\u4E0D\u91CD\u8907\u5167\u5D4C\u5927\u578B\u4E8C\u9032\u4F4D\u6A94\u6848\u3002",
+    embedMarkdownLinks: "\u5C07\u9644\u4EF6\u9023\u7D50\u5BEB\u5165\u96B1\u85CF\u8CC7\u6599\u584A",
+    embedMarkdownLinksDesc: "\u50C5\u4FDD\u7559 NoteDraw \u532F\u5165\u9644\u4EF6\u7684\u96B1\u85CF\u9023\u7D50\uFF0C\u4E0D\u5BEB\u5165\u5857\u9D09\u8CC7\u6599\u6216\u4E00\u822C Markdown \u9023\u7D50\u3002",
     shareNoteDrawFile: "\u5206\u4EAB NoteDraw \u6A94\u6848",
     sharePreparing: "\u6B63\u5728\u5C01\u88DD\u7B46\u8A18\u3001NoteDraw \u8CC7\u6599\u8207\u9023\u7D50\u8CC7\u6E90\u2026\u2026",
     shareReady: "NoteDraw \u6A94\u6848\u5DF2\u5C31\u7DD2\uFF0C\u5305\u542B {count} \u500B\u8CC7\u6E90\u3002",
@@ -8828,6 +8856,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     const collected = await this.collectPortableResources(file2, data, {
       includeMarkdownLinks: options.includeMarkdownLinks === true,
       inlineResources: options.inlineResources === true,
+      attachmentsOnly: options.attachmentsOnly === true,
       sourceMarkdown
     });
     return {
@@ -8951,6 +8980,9 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       if (stroke?.assetPath) {
         drawingReferences.push(addReference(stroke.assetPath, [stroke.assetName, stroke.text].filter(Boolean)));
       }
+      if (options.attachmentsOnly) {
+        continue;
+      }
       const renderMode = normalizeTextRenderMode(stroke?.render);
       if (renderMode === TEXT_RENDER_NOTE && stroke?.text) {
         drawingReferences.push(addReference(stroke.text));
@@ -8977,7 +9009,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       for (const reference of markdownReferences) {
         await addReference(reference);
       }
-    } else if (existing.length) {
+    } else if (!options.attachmentsOnly && existing.length) {
       for (const reference of extractPortableMarkdownLinks(options.sourceMarkdown)) {
         addExisting(reference);
       }
@@ -9526,23 +9558,36 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     const source = await this.app.vault.cachedRead(realFile);
     const bundle = await this.createPortableBundle(realFile, data, {
       purpose: "links",
-      includeMarkdownLinks: true,
+      includeMarkdownLinks: false,
       inlineResources: false,
+      attachmentsOnly: true,
       sourceMarkdown: source,
       updatedAt
     });
     if (!bundle.resources.length) {
-      const cleanSource = stripNotedrawDataBlocks(source);
+      const cleanSource = stripNotedrawAttachmentLinkBlocks(stripNotedrawDataBlocks(source));
       if (cleanSource !== source) {
         if (typeof this.app.vault.process === "function") {
-          await this.app.vault.process(realFile, (current) => stripNotedrawDataBlocks(current));
+          await this.app.vault.process(realFile, (current) => stripNotedrawAttachmentLinkBlocks(stripNotedrawDataBlocks(current)));
         } else {
           await this.app.vault.modify(realFile, cleanSource);
         }
       }
       return false;
     }
-    const linkBundle = {
+    const nextSource = appendNotedrawAttachmentLinkBlock(
+      stripNotedrawDataBlocks(source),
+      bundle.resources
+    );
+    if (nextSource === source) {
+      return false;
+    }
+    if (typeof this.app.vault.process === "function") {
+      await this.app.vault.process(realFile, (current) => appendNotedrawAttachmentLinkBlock(stripNotedrawDataBlocks(current), bundle.resources));
+    } else {
+      await this.app.vault.modify(realFile, nextSource);
+    }
+    this.rememberPortableBundle(realFile, {
       format: "notedraw-links",
       version: 1,
       purpose: "links",
@@ -9550,18 +9595,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       updatedAt,
       resources: bundle.resources,
       skippedResources: bundle.skippedResources
-    };
-    const block = await encodeNotedrawDataBlock(linkBundle);
-    const nextSource = appendEncodedNotedrawDataBlock(source, block);
-    if (nextSource === source) {
-      return false;
-    }
-    if (typeof this.app.vault.process === "function") {
-      await this.app.vault.process(realFile, (current) => appendEncodedNotedrawDataBlock(current, block));
-    } else {
-      await this.app.vault.modify(realFile, nextSource);
-    }
-    this.rememberPortableBundle(realFile, linkBundle);
+    });
     return true;
   }
   async injectExportSnapshot(file2, container) {
