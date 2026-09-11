@@ -1555,8 +1555,21 @@ var NoteDrawCommandSuggestModal = class extends FuzzySuggestModal {
 var NoteDrawPlugin = class extends Plugin {
   async onload() {
     const savedSettings = await this.loadData();
+    const migrateLegacyStorageDefault = savedSettings
+      && !Object.prototype.hasOwnProperty.call(savedSettings, "embedMarkdownLinks")
+      && savedSettings.drawingStorageMode === DRAWING_STORAGE_CONFIG;
     this.runtimeDisposed = false;
-    this.noteDrawSettings = sanitizeSettings({ ...DEFAULT_SETTINGS, ...(savedSettings || {}) });
+    this.noteDrawSettings = sanitizeSettings({
+      ...DEFAULT_SETTINGS,
+      ...(savedSettings || {}),
+      ...(migrateLegacyStorageDefault ? {
+        drawingStorageMode: DRAWING_STORAGE_EMBEDDED,
+        embedMarkdownLinks: true
+      } : {})
+    });
+    if (migrateLegacyStorageDefault) {
+      await this.saveData(this.noteDrawSettings);
+    }
     this.controllers = /* @__PURE__ */ new WeakMap();
     this.liveControllers = /* @__PURE__ */ new Set();
     this.sourceControllers = /* @__PURE__ */ new Map();
