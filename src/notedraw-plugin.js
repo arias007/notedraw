@@ -17213,7 +17213,10 @@ var PreviewDrawingController = class {
   renderEmbedNode(node, stroke, index) {
     const token = getEmbedRenderToken(stroke);
     const key = String(index);
-    if (this.embedRenderTokens.get(key) === token) {
+    // Obsidian can detach and reattach the embed shell during a reading-view
+    // rebuild. The cached token then survives while the shell's children are
+    // gone, so token equality alone must not suppress the recovery render.
+    if (this.embedRenderTokens.get(key) === token && node.childNodes?.length) {
       return;
     }
     this.embedRenderTokens.set(key, token);

@@ -15091,7 +15091,10 @@ ${selected}
       this.clearSelectedStrokes();
     }
     let hitStrokeIndex = noteFlowPenActive ? -1 : this.findStrokeAt(point, clientPoint);
-    const targetEmbedIndex = noteFlowPenActive ? -1 : noteDrawEmbedStrokeIndex(target, this.previewEl);
+    const targetEmbedIndex = noteFlowPenActive ? -1 : noteDrawEmbedStrokeIndex(
+      event.target || target,
+      this.previewEl
+    );
     if (targetEmbedIndex >= 0 && this.isStrokeVisibleOnSurface(this.drawingData?.strokes?.[targetEmbedIndex])) {
       hitStrokeIndex = targetEmbedIndex;
     }
@@ -20740,7 +20743,7 @@ ${selected}
   renderEmbedNode(node, stroke, index) {
     const token = getEmbedRenderToken(stroke);
     const key = String(index);
-    if (this.embedRenderTokens.get(key) === token) {
+    if (this.embedRenderTokens.get(key) === token && node.childNodes?.length) {
       return;
     }
     this.embedRenderTokens.set(key, token);

@@ -692,6 +692,7 @@ test("task text and attachment descendants resolve to stable selectable owners",
   assert.match(source, /function noteDrawEmbedStrokeIndex\(target, root = null\)/);
   assert.match(source, /\.notedraw-embed\[data-note-draw-stroke-index\]/);
   assert.match(source, /node\._noteDrawPointerDownHandler = \(event\) => \{[\s\S]*this\.onPointerDown\(event, true\)/);
+  assert.match(source, /this\.embedRenderTokens\.get\(key\) === token && node\.childNodes\?\.length/);
 });
 
 test("long press opens the element menu without falling through to edit", async () => {
