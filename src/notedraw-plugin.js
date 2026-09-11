@@ -1298,7 +1298,7 @@ Object.assign(I18N, {
 });
 var DEFAULT_SETTINGS = {
   language: LANGUAGE_AUTO,
-  drawingStorageMode: DRAWING_STORAGE_EMBEDDED,
+  drawingStorageMode: DRAWING_STORAGE_CONFIG,
   embedMarkdownLinks: true,
   defaultPenColor: "#e53935",
   defaultPenWidth: 3,
@@ -1556,14 +1556,14 @@ var NoteDrawPlugin = class extends Plugin {
   async onload() {
     const savedSettings = await this.loadData();
     const migrateLegacyStorageDefault = savedSettings
-      && !Object.prototype.hasOwnProperty.call(savedSettings, "embedMarkdownLinks")
-      && savedSettings.drawingStorageMode === DRAWING_STORAGE_CONFIG;
+      && (!Object.prototype.hasOwnProperty.call(savedSettings, "embedMarkdownLinks")
+        || savedSettings.drawingStorageMode === DRAWING_STORAGE_EMBEDDED);
     this.runtimeDisposed = false;
     this.noteDrawSettings = sanitizeSettings({
       ...DEFAULT_SETTINGS,
       ...(savedSettings || {}),
       ...(migrateLegacyStorageDefault ? {
-        drawingStorageMode: DRAWING_STORAGE_EMBEDDED,
+        drawingStorageMode: DRAWING_STORAGE_CONFIG,
         embedMarkdownLinks: true
       } : {})
     });
@@ -5141,7 +5141,7 @@ var NoteDrawPlugin = class extends Plugin {
       const legacyPath = this.legacyDrawingPathForFile(file);
       const portableBundle = await this.loadPortableBundle(file, { refresh: options.refresh === true });
       const candidates = [];
-      if (portableBundle?.drawing) {
+      if (portableBundle?.drawing && portableBundle.format !== "notedraw-links") {
         candidates.push({
           kind: "portable",
           priority: storageMode === DRAWING_STORAGE_EMBEDDED ? 4 : portableBundle.purpose === "share" ? 3 : 2,
@@ -5375,6 +5375,9 @@ var NoteDrawPlugin = class extends Plugin {
         updatedAt
       }, null, 2);
       await this.app.vault.adapter.write(path, body);
+      if (storageMode === DRAWING_STORAGE_CONFIG && this.noteDrawSettings.embedMarkdownLinks !== false) {
+        await this.writeAttachmentLinkBlock(file, normalized, updatedAt);
+      }
     }
     if (options.refresh !== false) {
       this.refreshControllersForFile(file, normalized, { excludeData: data });
@@ -5385,6 +5388,54 @@ var NoteDrawPlugin = class extends Plugin {
       strokeCount: normalized.strokes.length,
       updatedAt
     });
+  }
+  async writeAttachmentLinkBlock(file, data, updatedAt) {
+    const realFile = getVaultFileByPath(this.app.vault, file?.path || "");
+    if (!realFile || String(realFile.extension || "").toLowerCase() !== "md") {
+      return false;
+    }
+    const source = await this.app.vault.cachedRead(realFile);
+    const bundle = await this.createPortableBundle(realFile, data, {
+      purpose: "links",
+      includeMarkdownLinks: true,
+      inlineResources: false,
+      sourceMarkdown: source,
+      updatedAt
+    });
+    if (!bundle.resources.length) {
+      // Remove a stale full NoteDraw block left by 3.8.2, but do not append
+      // anything to notes that have no linked resources.
+      const cleanSource = stripNotedrawDataBlocks(source);
+      if (cleanSource !== source) {
+        if (typeof this.app.vault.process === "function") {
+          await this.app.vault.process(realFile, (current) => stripNotedrawDataBlocks(current));
+        } else {
+          await this.app.vault.modify(realFile, cleanSource);
+        }
+      }
+      return false;
+    }
+    const linkBundle = {
+      format: "notedraw-links",
+      version: 1,
+      purpose: "links",
+      sourcePath: realFile.path,
+      updatedAt,
+      resources: bundle.resources,
+      skippedResources: bundle.skippedResources
+    };
+    const block = await encodeNotedrawDataBlock(linkBundle);
+    const nextSource = appendEncodedNotedrawDataBlock(source, block);
+    if (nextSource === source) {
+      return false;
+    }
+    if (typeof this.app.vault.process === "function") {
+      await this.app.vault.process(realFile, (current) => appendEncodedNotedrawDataBlock(current, block));
+    } else {
+      await this.app.vault.modify(realFile, nextSource);
+    }
+    this.rememberPortableBundle(realFile, linkBundle);
+    return true;
   }
   async injectExportSnapshot(file, container) {
     if (!file || !(container instanceof HTMLElement)) {
@@ -6713,7 +6764,7 @@ var PreviewDrawingController = class {
     // Do not block Obsidian's first preview paint on NoteDraw JSON, media
     // decoding, and note-flow measurement. Active/source surfaces request the
     // data immediately; an inactive reading surface loads it on activation.
-    if (this.active || this.surfaceType === "source") {
+    if (this.surfaceType === "preview" || this.active || this.surfaceType === "source") {
       void this.ensureDrawingsLoaded().catch((error) => {
         console.error(`[${PLUGIN_ID}] Failed to load drawings`, error);
       });
@@ -28598,7 +28649,22 @@ function portableTimestamp(value) {
   return Number.isFinite(timestamp) ? timestamp : 0;
 }
 function normalizePortableBundle(value, file) {
-  if (!value || typeof value !== "object" || !value.drawing || typeof value.drawing !== "object") {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  if (value.format === "notedraw-links") {
+    return {
+      format: "notedraw-links",
+      version: Math.max(1, Number(value.version) || 1),
+      purpose: "links",
+      sourcePath: normalizeVaultPath(value.sourcePath || file?.path || ""),
+      updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : null,
+      drawing: null,
+      resources: normalizePortableResources(value.resources),
+      skippedResources: Array.isArray(value.skippedResources) ? value.skippedResources.map(String).filter(Boolean) : []
+    };
+  }
+  if (!value.drawing || typeof value.drawing !== "object") {
     return null;
   }
   return {

@@ -289,7 +289,7 @@ test("NoteDraw storage locations and single-file sharing stay portable and backw
   const drawingDataApi = source.slice(source.indexOf("  async readDrawingDataApi("), source.indexOf("  registeredSurfaceViewportState("));
   const settingsSource = source.slice(source.indexOf("  getSettingDefinitions()"), source.indexOf("  addSliderWithValue("));
 
-  assert.match(source, /drawingStorageMode: DRAWING_STORAGE_EMBEDDED/);
+  assert.match(source, /drawingStorageMode: DRAWING_STORAGE_CONFIG/);
   assert.match(source, /embedMarkdownLinks: true/);
   assert.match(source, /DRAWING_STORAGE_NOTE_SUBFOLDER[\s\S]*DRAWING_STORAGE_NOTE_FOLDER[\s\S]*DRAWING_STORAGE_EMBEDDED/);
   assert.match(storageSource, /resolveDrawingStoragePath\([\s\S]*mode/);
