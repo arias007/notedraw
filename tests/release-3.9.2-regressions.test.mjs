@@ -63,11 +63,11 @@ test("closing the toolbar does not cancel an asynchronous Markdown drop", async 
   assert.match(cancel, /if \(!preserveTransaction\) \{[\s\S]*completeDragTransaction/);
 });
 
-test("release metadata advances to 3.9.5", async () => {
+test("release metadata advances to 3.9.6", async () => {
   const [manifest, versions] = await Promise.all([
     readFile(manifestUrl, "utf8").then(JSON.parse),
     readFile(versionsUrl, "utf8").then(JSON.parse)
   ]);
-  assert.equal(manifest.version, "3.9.5");
-  assert.equal(versions["3.9.5"], manifest.minAppVersion);
+  assert.equal(manifest.version, "3.9.6");
+  assert.equal(versions["3.9.6"], manifest.minAppVersion);
 });

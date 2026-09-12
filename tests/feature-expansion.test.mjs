@@ -65,7 +65,7 @@ test("scrolling refreshes only the canvas window while real layout changes can r
   assert.match(source, /const atScrollEnd = scrollHeight > clientHeight && scrollTop \+ clientHeight >= scrollHeight - 3/);
   assert.doesNotMatch(scrollSource, /scheduleMarkdownAnnotationRefresh/);
   assert.match(source, /resizeCanvas\(options = \{\}\)[\s\S]*const refreshGeometry = options\.measure !== false/);
-  assert.match(source, /if \(this\.drawingsLoaded && refreshLayout\) \{\s*const frame = this\.getResponsiveContentFrame\(\)/);
+  assert.match(source, /if \(this\.drawingsLoaded && refreshLayout && !dragGeometryAuthoritative\) \{\s*const frame = this\.getResponsiveContentFrame\(\)/);
   assert.match(source, /const readingScrollActive = this\.isReadingProjectionSettleSurface\(\)[\s\S]*sinceScroll < 260/);
   assert.match(source, /if \(readingScrollActive && this\.resizeNeedsLayout\) \{\s*this\.resizeNeedsLayout = false/);
   assert.match(source, /scheduleResponsiveProjectionSettle\(delay = 180[\s\S]*this\.scheduleResize\(\{ layout: true, preserveNoteFlowAbsolute \}\)/);

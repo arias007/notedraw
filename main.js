@@ -14933,6 +14933,7 @@ ${selected}
       }
     }
     this.rebuildElementRelations();
+    this.captureCanonicalProjectionSource();
   }
   captureNoteFlowResponsiveAnchors(stroke, context = this.getResponsiveLayoutContext()) {
     const noteFlow = normalizeNoteFlow(stroke?.noteFlow);
@@ -15407,6 +15408,7 @@ ${selected}
     const refreshGeometry = options.measure !== false && !interactionActive || initialMeasure;
     const viewportZoomInteractionActive = this.isViewportZoomInteractionActive();
     const refreshLayout = options.layout === true && !interactionActive && !viewportZoomInteractionActive;
+    const dragGeometryAuthoritative = this.draggingStroke || this.dragTransactionPending;
     const visualScale = this.readingZoomScale();
     let measured;
     let width;
@@ -15519,7 +15521,7 @@ ${selected}
     if (this.drawingsLoaded && viewportZoomInteractionActive && this.responsivePointsInitialized) {
       this.syncResponsiveLayoutSignatureAfterViewportZoom(width, height);
     }
-    if (this.drawingsLoaded && refreshLayout) {
+    if (this.drawingsLoaded && refreshLayout && !dragGeometryAuthoritative) {
       const frame = this.getResponsiveContentFrame();
       const viewportHeight = measureResponsiveViewportHeight(this.previewEl, this.scrollContainer, this.responsiveViewportScale());
       const signature = responsiveLayoutSignature(width, height, frame, this.surfaceType, viewportHeight);
@@ -19887,9 +19889,6 @@ ${selected}
             state.block.floatBox = { ...state.previewFloatBox };
           }
         }
-      }
-      if (!affectsNoteFlow && movedIndexes.length && (!markdownDrop || markdownDrop.side === "left" || markdownDrop.side === "right")) {
-        this.applyDraggedEdgeInsertion(event, movedIndexes);
       }
       this.updateDraggedElementGroupMembership(event, movedIndexes, Array.from(this.dragMarkdownOriginalElements?.values?.() || []).map((state) => state.block));
       this.invalidateStaticCache();

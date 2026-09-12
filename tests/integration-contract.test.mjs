@@ -478,7 +478,8 @@ test("note pen ignores element selection and selection-only gestures preserve Ma
   assert.match(moveSource, /if \(!this\.dragStrokeMoved && movedDistance <= this\.selectedDragActivationDistancePx\(event\.pointerType\)\) \{[\s\S]*return;[\s\S]*this\.cancelResizeFrame\(\);[\s\S]*this\.prepareReadingBottomExtentForDrag\(\)/);
   assert.match(finishSource, /const didMove = this\.dragStrokeMoved;[\s\S]*scheduleNoteFlowLayout\(\{ operation: true, defer: true \}\)[\s\S]*clearSelectedStrokeDragState\(\{ preserveMarkdownDom:[\s\S]*scheduleNoteFlowLayout\(\{ immediate: true \}\)/);
   assert.doesNotMatch(finishSource, /this\.clearNoteFlowLayout\(\)/);
-  assert.match(finishSource, /const affectsNoteFlow = movedNoteFlowIndexes\.length > 0;[\s\S]*if \(!affectsNoteFlow && movedIndexes\.length[\s\S]*this\.applyDraggedEdgeInsertion\(event, movedIndexes\)/);
+  assert.match(finishSource, /const affectsNoteFlow = movedNoteFlowIndexes\.length > 0;[\s\S]*A normal selection drag is a direct placement operation/);
+  assert.doesNotMatch(finishSource, /this\.applyDraggedEdgeInsertion\(event, movedIndexes\)/);
   assert.match(source, /const boundedDx = clamp\(dx, -selectedBounds\.minX, canvasWidth - selectedBounds\.maxX\);[\s\S]*const boundedDy = clamp\(dy, -selectedBounds\.minY, canvasHeight - selectedBounds\.maxY\);/);
   assert.doesNotMatch(finishSource, /cancelSelectedStrokeDrag\(true\)/);
   assert.doesNotMatch(selectionStateSource, /clearNoteFlowLayout|scheduleNoteFlowLayout|scheduleResize|scheduleLayoutRefresh|noteFlowOperationPending/);

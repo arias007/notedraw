@@ -11051,6 +11051,11 @@ var PreviewDrawingController = class {
       }
     }
     this.rebuildElementRelations();
+    // A user drag is the authoritative edit. Keep the canonical projection
+    // source in step with the committed geometry; otherwise the next resize,
+    // tab switch, or view change can project the element from its pre-drag
+    // coordinates and make it appear to slide back to an old position.
+    this.captureCanonicalProjectionSource();
   }
   captureNoteFlowResponsiveAnchors(stroke, context = this.getResponsiveLayoutContext()) {
     const noteFlow = normalizeNoteFlow(stroke?.noteFlow);
@@ -11564,6 +11569,10 @@ var PreviewDrawingController = class {
     const refreshGeometry = options.measure !== false && !interactionActive || initialMeasure;
     const viewportZoomInteractionActive = this.isViewportZoomInteractionActive();
     const refreshLayout = options.layout === true && !interactionActive && !viewportZoomInteractionActive;
+    // During a drag, including the short async-save window after pointer-up,
+    // the current points are the only authoritative geometry. A responsive
+    // projection triggered by DOM measurement must not compete with them.
+    const dragGeometryAuthoritative = this.draggingStroke || this.dragTransactionPending;
     const visualScale = this.readingZoomScale();
     let measured;
     let width;
@@ -11688,7 +11697,7 @@ var PreviewDrawingController = class {
     if (this.drawingsLoaded && viewportZoomInteractionActive && this.responsivePointsInitialized) {
       this.syncResponsiveLayoutSignatureAfterViewportZoom(width, height);
     }
-    if (this.drawingsLoaded && refreshLayout) {
+    if (this.drawingsLoaded && refreshLayout && !dragGeometryAuthoritative) {
       const frame = this.getResponsiveContentFrame();
       const viewportHeight = measureResponsiveViewportHeight(this.previewEl, this.scrollContainer, this.responsiveViewportScale());
       const signature = responsiveLayoutSignature(width, height, frame, this.surfaceType, viewportHeight);
@@ -16347,9 +16356,12 @@ var PreviewDrawingController = class {
           }
         }
       }
-      if (!affectsNoteFlow && movedIndexes.length && (!markdownDrop || markdownDrop.side === "left" || markdownDrop.side === "right")) {
-        this.applyDraggedEdgeInsertion(event, movedIndexes);
-      }
+      // A normal selection drag is a direct placement operation. Do not
+      // reinterpret dropping a doodle over another element as an implicit
+      // edge insertion: that second placement is what made the element slide
+      // away from the position shown under the pointer. Explicit Markdown
+      // NoteFlow placement is handled by the branch above; freehand elements
+      // must keep the exact pointer-derived geometry they previewed.
       this.updateDraggedElementGroupMembership(event, movedIndexes, Array.from(this.dragMarkdownOriginalElements?.values?.() || []).map((state) => state.block));
       this.invalidateStaticCache();
       if (affectsNoteFlow) {

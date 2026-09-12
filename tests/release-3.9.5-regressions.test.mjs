@@ -19,11 +19,32 @@ test("a released doodle remains protected until its serialized write finishes", 
   assert.match(active, /preserveDragCommit = awaitingMarkdownCommit \|\| releasedDragCommit \|\| pendingReleasedDragCommit/);
 });
 
-test("release metadata advances to 3.9.5", async () => {
+test("release metadata advances to 3.9.6", async () => {
   const [manifest, versions] = await Promise.all([
     readFile(manifestUrl, "utf8").then(JSON.parse),
     readFile(versionsUrl, "utf8").then(JSON.parse)
   ]);
-  assert.equal(manifest.version, "3.9.5");
-  assert.equal(versions["3.9.5"], manifest.minAppVersion);
+  assert.equal(manifest.version, "3.9.6");
+  assert.equal(versions["3.9.6"], manifest.minAppVersion);
+});
+
+test("a doodle drop keeps pointer geometry authoritative across projection and release", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const anchors = source.slice(
+    source.indexOf("  captureResponsiveAnchorsForIndexes("),
+    source.indexOf("  captureNoteFlowResponsiveAnchors(")
+  );
+  const resize = source.slice(
+    source.indexOf("  resizeCanvas("),
+    source.indexOf("  onPointerDown(", source.indexOf("  resizeCanvas("))
+  );
+  const finish = source.slice(
+    source.indexOf("  finishSelectedStrokeDrag("),
+    source.indexOf("  cancelSelectedStrokeDrag(", source.indexOf("  finishSelectedStrokeDrag("))
+  );
+
+  assert.match(anchors, /this\.rebuildElementRelations\(\);[\s\S]*this\.captureCanonicalProjectionSource\(\);/);
+  assert.match(resize, /const dragGeometryAuthoritative = this\.draggingStroke \|\| this\.dragTransactionPending;/);
+  assert.match(resize, /if \(this\.drawingsLoaded && refreshLayout && !dragGeometryAuthoritative\)/);
+  assert.doesNotMatch(finish, /this\.applyDraggedEdgeInsertion\(event, movedIndexes\)/);
 });
