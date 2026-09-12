@@ -8168,7 +8168,15 @@ var PreviewDrawingController = class {
         && this.dragStrokeMoved
         && !this.pointerDown
       );
-      const preserveDragCommit = awaitingMarkdownCommit || releasedDragCommit;
+      // completeDragTransaction keeps dragTransactionPending true until the
+      // plugin's serialized write really finishes. This also covers the
+      // short interval after pointer-up, when dragStrokeMoved has already
+      // been cleared but the final drawing snapshot is still authoritative.
+      const pendingReleasedDragCommit = Boolean(
+        this.dragTransactionPending
+        && !this.pointerDown
+      );
+      const preserveDragCommit = awaitingMarkdownCommit || releasedDragCommit || pendingReleasedDragCommit;
       this.cancelSelectedStrokeDrag(!preserveDragCommit, {
         preserveTransaction: preserveDragCommit,
         preserveMarkdownDom: awaitingMarkdownCommit
@@ -16601,13 +16609,17 @@ var PreviewDrawingController = class {
       return;
     }
     this.plugin.publishDrawingDragTransaction(this, transactionId);
-    this.dragTransactionPending = false;
     this.plugin.completeDrawingDragTransaction(this, transactionId).then(() => {
+      // Keep the controller transaction flag set until the plugin has flushed
+      // the final snapshot. Closing the toolbar during this window must not
+      // treat the released drag as a cancellation and restore old geometry.
+      this.dragTransactionPending = false;
       if (this.externalDrawingRefreshPending) {
         this.externalDrawingRefreshPending = false;
         this.plugin.scheduleExternalDrawingRefresh(this.file?.path, 0);
       }
     }).catch((error) => {
+      this.dragTransactionPending = false;
       if (!this.destroyed) {
         console.error(`[${PLUGIN_ID}] Failed to finalize drag transaction`, error);
       }

@@ -12159,7 +12159,10 @@ var PreviewDrawingController = class {
       const releasedDragCommit = Boolean(
         this.dragTransactionPending && this.dragStrokeMoved && !this.pointerDown
       );
-      const preserveDragCommit = awaitingMarkdownCommit || releasedDragCommit;
+      const pendingReleasedDragCommit = Boolean(
+        this.dragTransactionPending && !this.pointerDown
+      );
+      const preserveDragCommit = awaitingMarkdownCommit || releasedDragCommit || pendingReleasedDragCommit;
       this.cancelSelectedStrokeDrag(!preserveDragCommit, {
         preserveTransaction: preserveDragCommit,
         preserveMarkdownDom: awaitingMarkdownCommit
@@ -20112,13 +20115,14 @@ ${selected}
       return;
     }
     this.plugin.publishDrawingDragTransaction(this, transactionId);
-    this.dragTransactionPending = false;
     this.plugin.completeDrawingDragTransaction(this, transactionId).then(() => {
+      this.dragTransactionPending = false;
       if (this.externalDrawingRefreshPending) {
         this.externalDrawingRefreshPending = false;
         this.plugin.scheduleExternalDrawingRefresh(this.file?.path, 0);
       }
     }).catch((error) => {
+      this.dragTransactionPending = false;
       if (!this.destroyed) {
         console.error(`[${PLUGIN_ID}] Failed to finalize drag transaction`, error);
       }
