@@ -19,13 +19,13 @@ test("a released doodle remains protected until its serialized write finishes", 
   assert.match(active, /preserveDragCommit = awaitingMarkdownCommit \|\| releasedDragCommit \|\| pendingReleasedDragCommit/);
 });
 
-test("release metadata advances to 3.9.6", async () => {
+test("release metadata advances to 3.9.7", async () => {
   const [manifest, versions] = await Promise.all([
     readFile(manifestUrl, "utf8").then(JSON.parse),
     readFile(versionsUrl, "utf8").then(JSON.parse)
   ]);
-  assert.equal(manifest.version, "3.9.6");
-  assert.equal(versions["3.9.6"], manifest.minAppVersion);
+  assert.equal(manifest.version, "3.9.7");
+  assert.equal(versions["3.9.7"], manifest.minAppVersion);
 });
 
 test("a doodle drop keeps pointer geometry authoritative across projection and release", async () => {

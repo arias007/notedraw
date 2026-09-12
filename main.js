@@ -11761,9 +11761,15 @@ var PreviewDrawingController = class {
   isSurfaceAuthoritative() {
     return this.plugin.isControllerSurfaceAuthoritative(this);
   }
-  captureCanonicalProjectionSource() {
-    this.canonicalProjectionPoints.clear();
+  captureCanonicalProjectionSource(options = {}) {
+    const requestedIndexes = Array.isArray(options.indexes) ? new Set(options.indexes.filter((index) => Number.isInteger(index) && index >= 0)) : null;
+    if (!requestedIndexes) {
+      this.canonicalProjectionPoints.clear();
+    }
     for (const [index, stroke] of (this.drawingData?.strokes || []).entries()) {
+      if (requestedIndexes && !requestedIndexes.has(index)) {
+        continue;
+      }
       const layout = normalizeElementLayout(stroke.layout);
       const points = layout && !elementLayoutNeedsRepair(layout) && stroke.points.some((point) => point.anchor) ? projectElementPoints(stroke.points, layout, {
         id: layout.id,
@@ -14922,7 +14928,7 @@ ${selected}
       })
     };
   }
-  captureResponsiveAnchorsForIndexes(indexes) {
+  captureResponsiveAnchorsForIndexes(indexes, options = {}) {
     const context = this.getResponsiveLayoutContext(true);
     for (const index of indexes) {
       const stroke = this.drawingData?.strokes?.[index];
@@ -14932,8 +14938,12 @@ ${selected}
         this.captureElementLayoutForStroke(stroke, context, index);
       }
     }
-    this.rebuildElementRelations();
-    this.captureCanonicalProjectionSource();
+    if (options.isolated !== true) {
+      this.rebuildElementRelations();
+      this.captureCanonicalProjectionSource();
+    } else {
+      this.captureCanonicalProjectionSource({ indexes });
+    }
   }
   captureNoteFlowResponsiveAnchors(stroke, context = this.getResponsiveLayoutContext()) {
     const noteFlow = normalizeNoteFlow(stroke?.noteFlow);
@@ -15409,6 +15419,7 @@ ${selected}
     const viewportZoomInteractionActive = this.isViewportZoomInteractionActive();
     const refreshLayout = options.layout === true && !interactionActive && !viewportZoomInteractionActive;
     const dragGeometryAuthoritative = this.draggingStroke || this.dragTransactionPending;
+    const drawingGeometryAuthoritative = Boolean(this.currentStroke);
     const visualScale = this.readingZoomScale();
     let measured;
     let width;
@@ -15521,7 +15532,9 @@ ${selected}
     if (this.drawingsLoaded && viewportZoomInteractionActive && this.responsivePointsInitialized) {
       this.syncResponsiveLayoutSignatureAfterViewportZoom(width, height);
     }
-    if (this.drawingsLoaded && refreshLayout && !dragGeometryAuthoritative) {
+    if (drawingGeometryAuthoritative) {
+      this.responsiveProjectionPending = null;
+    } else if (this.drawingsLoaded && refreshLayout && !dragGeometryAuthoritative) {
       const frame = this.getResponsiveContentFrame();
       const viewportHeight = measureResponsiveViewportHeight(this.previewEl, this.scrollContainer, this.responsiveViewportScale());
       const signature = responsiveLayoutSignature(width, height, frame, this.surfaceType, viewportHeight);
@@ -15605,7 +15618,7 @@ ${selected}
     const canEditMarkdownText = this.toolMode === TOOL_EDIT_MD;
     const clientPoint = { x: event.clientX, y: event.clientY };
     const editableCandidate = canEditMarkdownText ? findEditableTarget(targetForInteraction, this.previewEl, clientPoint) : null;
-    const markdownSelectionCandidate = this.toolMode === TOOL_SELECT ? this.markdownBlockElementForTarget(target, clientPoint) || this.markdownBlockElementForTarget(metadataTarget, clientPoint) : null;
+    const markdownSelectionCandidate = this.toolMode === TOOL_SELECT ? this.markdownBlockElementForTarget(target, clientPoint) || this.markdownBlockElementForTarget(metadataTarget, clientPoint) || this.markdownBlockElementAtClientPoint(clientPoint) : null;
     const selectedMarkdownEditableCandidate = markdownSelectionCandidate ? findEditableTarget(target, this.previewEl, clientPoint) || findEditableTarget(markdownSelectionCandidate, this.previewEl, clientPoint) || findEditableTarget(targetForInteraction, this.previewEl, clientPoint) : null;
     const editableFile = editableCandidate ? this.plugin.resolveEditableFile(editableCandidate, this.file) : null;
     const editsEmbeddedFile = Boolean(editableFile?.path && editableFile.path !== this.file?.path);
@@ -16499,7 +16512,7 @@ ${selected}
           this.scheduleMarkdownAnnotationRefresh({ layout: false, delay: 0, force: true });
         }
       }
-      this.captureResponsiveAnchorsForIndexes([insertedIndex]);
+      this.captureResponsiveAnchorsForIndexes([insertedIndex], { isolated: !insertedNoteFlow });
       this.syncConnectorElementGroups();
       this.clearSelectedStrokes();
       this.redoStack = [];
@@ -22906,21 +22919,56 @@ ${selected}
     const matching = candidates.filter((block) => compatible(block) && (!block.textHint || block.textHint === hint));
     return mapped || rangeMatching[0] || matching.find((block) => Number.isFinite(info.lineStart) && block.lineStart === info.lineStart) || matching.find((block) => block.textHint && block.textHint === hint) || null;
   }
+  markdownBlockElementAtClientPoint(clientPoint = null) {
+    if (this.surfaceType !== "preview" || !clientPoint || !this.previewEl?.isConnected) {
+      return null;
+    }
+    const candidates = markdownBlockCandidateElements(this.previewEl);
+    const hits = candidates.map((element, order) => {
+      if (!element?.isConnected || !this.markdownElementContainsClientPoint(element, clientPoint)) {
+        return null;
+      }
+      const rect = this.markdownElementVisibleClientRect(element) || element.getBoundingClientRect?.();
+      if (!rect || rect.width <= 0 || rect.height <= 0) {
+        return null;
+      }
+      const record = this.findMarkdownBlockRecordForElement(element);
+      const bound = record ? this.markdownBlockElement(record) : null;
+      const boundRect = bound ? this.markdownElementVisibleClientRect(bound) : null;
+      const area = Math.max(1, rect.width * rect.height);
+      return {
+        element: bound?.isConnected ? bound : element,
+        area: boundRect ? Math.max(1, boundRect.width * boundRect.height) : area,
+        order,
+        distance: Math.abs(clientPoint.x - (rect.left + rect.width / 2)) + Math.abs(clientPoint.y - (rect.top + rect.height / 2))
+      };
+    }).filter(Boolean);
+    hits.sort((left, right) => left.area - right.area || left.distance - right.distance || right.order - left.order);
+    return hits[0]?.element || null;
+  }
   markdownBlockElementForTarget(target, clientPoint = null) {
     if (this.surfaceType !== "preview" || !target || !this.previewEl?.contains?.(target)) {
       return null;
     }
+    const boundMarkdownElement = (element) => {
+      if (!element || !this.previewEl.contains(element)) {
+        return null;
+      }
+      const record = this.findMarkdownBlockRecordForElement(element);
+      const bound = record ? this.markdownBlockElement(record) : null;
+      return bound?.isConnected ? bound : element;
+    };
     const embeddedBlock = findMarkdownEmbedBlockElement(target, this.previewEl);
     if (embeddedBlock) {
-      return this.markdownElementContainsClientPoint(embeddedBlock, clientPoint) ? embeddedBlock : null;
+      return this.markdownElementContainsClientPoint(embeddedBlock, clientPoint) ? boundMarkdownElement(embeddedBlock) : null;
     }
     const renderedBlock = markdownBlockCandidateElementForTarget(target, this.previewEl);
     if (renderedBlock && this.markdownElementContainsClientPoint(renderedBlock, clientPoint)) {
-      return renderedBlock;
+      return boundMarkdownElement(renderedBlock);
     }
     const marked = target.closest?.(".notedraw-md-block");
     if (marked && this.previewEl.contains(marked) && isConcreteMarkdownBlockElement(marked)) {
-      return this.markdownElementContainsClientPoint(marked, clientPoint) ? marked : null;
+      return this.markdownElementContainsClientPoint(marked, clientPoint) ? boundMarkdownElement(marked) : null;
     }
     const taskCheckbox = target.closest?.("input.task-list-item-checkbox, input[type='checkbox']");
     const taskItem = taskCheckbox?.closest?.("li");
@@ -22930,7 +22978,7 @@ ${selected}
       });
       const taskBlock = taskBlocks.find((element) => element.classList?.contains("notedraw-md-block")) || taskBlocks[0];
       if (taskBlock) {
-        return this.markdownElementContainsClientPoint(taskBlock, clientPoint) ? taskBlock : null;
+        return this.markdownElementContainsClientPoint(taskBlock, clientPoint) ? boundMarkdownElement(taskBlock) : null;
       }
     }
     const editable = findEditableTarget(target, this.previewEl);
@@ -22939,7 +22987,7 @@ ${selected}
     }
     const block = this.findMarkdownBlockRecordForElement(editable);
     const blockElement = block ? this.markdownBlockElement(block) || editable : editable;
-    return this.markdownElementContainsClientPoint(blockElement, clientPoint) ? blockElement : null;
+    return this.markdownElementContainsClientPoint(blockElement, clientPoint) ? boundMarkdownElement(blockElement) : null;
   }
   canonicalMarkdownFlowTarget(rawTarget) {
     const candidate = isConcreteMarkdownBlockElement(rawTarget) ? rawTarget : findNoteFlowInlineMeasureElement(rawTarget);

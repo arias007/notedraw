@@ -32,11 +32,11 @@ test("closing the wand preserves a released drag while its transaction is flushi
   assert.match(active, /cancelSelectedStrokeDrag\(!preserveDragCommit, \{[\s\S]*preserveTransaction: preserveDragCommit/);
 });
 
-test("release metadata advances to 3.9.6", async () => {
+test("release metadata advances to 3.9.7", async () => {
   const [manifest, versions] = await Promise.all([
     readFile(manifestUrl, "utf8").then(JSON.parse),
     readFile(versionsUrl, "utf8").then(JSON.parse)
   ]);
-  assert.equal(manifest.version, "3.9.6");
-  assert.equal(versions["3.9.6"], manifest.minAppVersion);
+  assert.equal(manifest.version, "3.9.7");
+  assert.equal(versions["3.9.7"], manifest.minAppVersion);
 });
