@@ -1876,16 +1876,27 @@ var NoteDrawPlugin = class extends Plugin {
         controller.button = this.installHeaderButton(controller);
       }
       controller.syncFloatingControlClasses();
-      if (isElementVisibleEnough(controller.previewEl)) {
+      const activeLeaf = this.app.workspace?.activeLeaf;
+      const ownerLeaf = controller.view?.leaf || findOwningLeaf(this.app, controller.view?.containerEl || controller.previewEl);
+      const isCurrentLeaf = controller.surfaceType !== "preview" || !activeLeaf || !ownerLeaf || activeLeaf === ownerLeaf;
+      if (isElementVisibleEnough(controller.previewEl) && isCurrentLeaf) {
         controller.scheduleFrozenNoteFlowLayoutRestore();
         controller.scheduleResize({ layout: false, measure: false });
         const becameVisible = controller.lastObservedSurfaceVisibility === false;
+        const becameCurrentLeaf = controller.lastObservedSurfaceActive === false;
         controller.lastObservedSurfaceVisibility = true;
-        if (becameVisible) {
+        controller.lastObservedSurfaceActive = true;
+        if (becameVisible || becameCurrentLeaf) {
           controller.scheduleReadingSurfaceVisibilityRecovery();
         }
       } else {
-        controller.lastObservedSurfaceVisibility = false;
+        if (!isCurrentLeaf) {
+          controller.lastObservedSurfaceActive = false;
+          controller.setReadingSurfaceSettling(true);
+        }
+        if (!isElementVisibleEnough(controller.previewEl)) {
+          controller.lastObservedSurfaceVisibility = false;
+        }
       }
     }
   }
@@ -6354,6 +6365,8 @@ var PreviewDrawingController = class {
     this.readingVisibilityRecoveryFrameId = null;
     this.readingVisibilityRecoveryTimer = null;
     this.lastObservedSurfaceVisibility = null;
+    this.lastObservedSurfaceActive = null;
+    this.readingSurfaceSettling = false;
     this.surfaceStateGeneration = 0;
     this.readingTouchGuard = createReadingTouchGuardState();
     this.pendingEmbedTool = null;
@@ -7015,11 +7028,17 @@ var PreviewDrawingController = class {
         window.setTimeout(resolve, 16);
       }
     });
+    const settlementGeneration = this.surfaceStateGeneration;
     const settlement = (async () => {
+      this.setReadingSurfaceSettling(true);
+      try {
       const surfaceGeneration = this.surfaceStateGeneration;
       await this.prepareInitialReadingLayout();
       if (this.destroyed || this.active || surfaceGeneration !== this.surfaceStateGeneration
         || generation !== this.drawingLoadGeneration || !this.previewEl?.isConnected) {
+        if (!this.destroyed && surfaceGeneration === this.surfaceStateGeneration) {
+          this.setReadingSurfaceSettling(false);
+        }
         return false;
       }
       const hasNoteFlow = this.hasNoteFlowElements();
@@ -7029,6 +7048,9 @@ var PreviewDrawingController = class {
       }
       if (this.destroyed || this.active || surfaceGeneration !== this.surfaceStateGeneration
         || generation !== this.drawingLoadGeneration || !this.previewEl?.isConnected) {
+        if (!this.destroyed && surfaceGeneration === this.surfaceStateGeneration) {
+          this.setReadingSurfaceSettling(false);
+        }
         return false;
       }
       this.repairConnectedReadingSections();
@@ -7070,7 +7092,13 @@ var PreviewDrawingController = class {
       this.render();
       this.initialReadingCommittedSignature = this.readingSurfaceGeometrySignature();
       this.initialReadingLayoutSettled = true;
+      this.setReadingSurfaceSettling(false);
       return true;
+      } finally {
+        if (settlementGeneration === this.surfaceStateGeneration) {
+          this.setReadingSurfaceSettling(false);
+        }
+      }
     })();
     this.initialReadingSurfaceSettlement = settlement;
     try {
@@ -7119,6 +7147,7 @@ var PreviewDrawingController = class {
       return false;
     }
     const generation = this.drawingLoadGeneration;
+    this.setReadingSurfaceSettling(true);
     this.initialReadingLayoutPrepared = false;
     this.initialReadingLayoutSettled = false;
     this.settleInitialReadingSurface(generation).catch((error) => {
@@ -7181,6 +7210,7 @@ var PreviewDrawingController = class {
     }
     const generation = this.drawingLoadGeneration;
     const surfaceGeneration = ++this.surfaceStateGeneration;
+    this.setReadingSurfaceSettling(true);
     this.initialReadingLayoutPrepared = false;
     this.initialReadingLayoutSettled = false;
     this.initialReadingCommittedSignature = "";
@@ -7196,6 +7226,9 @@ var PreviewDrawingController = class {
       }
       if (this.destroyed || this.active || generation !== this.drawingLoadGeneration
         || surfaceGeneration !== this.surfaceStateGeneration || !isElementVisibleEnough(this.previewEl)) {
+        if (!this.destroyed && surfaceGeneration === this.surfaceStateGeneration) {
+          this.setReadingSurfaceSettling(false);
+        }
         return;
       }
       this.repairConnectedReadingSections();
@@ -7212,6 +7245,9 @@ var PreviewDrawingController = class {
         || surfaceGeneration !== this.surfaceStateGeneration) {
         this.readingVisibilityRecoveryFrameId = null;
         this.readingVisibilityRecoveryTimer = null;
+        if (!this.destroyed && surfaceGeneration === this.surfaceStateGeneration) {
+          this.setReadingSurfaceSettling(false);
+        }
         return;
       }
       this.readingVisibilityRecoveryFrameId = window.requestAnimationFrame?.(settle) ?? null;
@@ -7232,6 +7268,13 @@ var PreviewDrawingController = class {
       window.clearTimeout(this.readingVisibilityRecoveryTimer);
       this.readingVisibilityRecoveryTimer = null;
     }
+  }
+  setReadingSurfaceSettling(settling) {
+    if (this.surfaceType !== "preview") {
+      return;
+    }
+    this.readingSurfaceSettling = Boolean(settling);
+    this.previewEl?.toggleClass("is-notedraw-layout-settling", this.readingSurfaceSettling);
   }
   applySettings() {
     const settings = sanitizeSettings(this.plugin?.noteDrawSettings || {});
@@ -7857,6 +7900,9 @@ var PreviewDrawingController = class {
       // fresh reading pass queued below. Its generation checks make it inert.
       this.initialReadingSurfaceSettlement = null;
       this.initialReadingLayoutSettlement = null;
+      if (this.active) {
+        this.setReadingSurfaceSettling(false);
+      }
     }
     if (this.active && !this.embeddedSurface && isElementVisibleEnough(this.previewEl)) {
       this.plugin.setInteractionController(this);
@@ -7871,6 +7917,7 @@ var PreviewDrawingController = class {
       this.prepareNoteFlowForEditing();
     }
     if (!this.active && wasActive) {
+      this.setReadingSurfaceSettling(true);
       this.cancelNoteFlowLayout();
       this.endTextEdit();
       this.endFloatingTextInput(true);
@@ -7887,7 +7934,6 @@ var PreviewDrawingController = class {
       this.resetTouchGestureState();
       this.syncMarkdownBlockPresentation();
       this.scheduleFrozenNoteFlowLayoutRestore();
-      this.render();
       this.queueReadingSurfaceSettlement();
     } else if (this.active && eager && (!wasActive || !this.drawingsLoaded)) {
       this.ensureDrawingsLoaded().catch((error) => {
@@ -7972,6 +8018,10 @@ var PreviewDrawingController = class {
         this.initialReadingLayoutPrepared = false;
         this.initialReadingLayoutSettled = false;
         await this.settleInitialReadingSurface(generation);
+        if (this.markdownBlockRecords().length) {
+          this.scheduleMarkdownAnnotationRefresh({ layout: false, delay: 0, force: true });
+        }
+        return;
       }
       if (this.destroyed || generation !== this.drawingLoadGeneration || this.file?.path !== file?.path) {
         return;

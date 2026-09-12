@@ -126,6 +126,18 @@ test("reading settlement is invalidated when the NoteDraw surface changes state"
   assert.match(source, /shouldAbort: \(\) => this\.destroyed[\s\S]*this\.active[\s\S]*surfaceGeneration !== this\.surfaceStateGeneration/);
 });
 
+test("reading recovery hides stale overlays until one final projected frame is ready", async () => {
+  const [source, styles] = await Promise.all([
+    readFile(sourceUrl, "utf8"),
+    readFile(stylesUrl, "utf8")
+  ]);
+
+  assert.match(source, /lastObservedSurfaceActive === false[\s\S]*scheduleReadingSurfaceVisibilityRecovery/);
+  assert.match(source, /setReadingSurfaceSettling\(true\)[\s\S]*waitForStableReadingLayout[\s\S]*this\.render\(\);[\s\S]*this\.setReadingSurfaceSettling\(false\)/);
+  assert.match(source, /await this\.settleInitialReadingSurface\(generation\);\s*if \(this\.markdownBlockRecords\(\)\.length\) \{\s*this\.scheduleMarkdownAnnotationRefresh\(\{ layout: false, delay: 0, force: true \}\);\s*\}\s*return;/);
+  assert.match(styles, /is-notedraw-layout-settling \.notedraw-canvas[\s\S]*visibility:\s*hidden !important/);
+});
+
 test("element migration waits for a stable note lane instead of transition geometry", async () => {
   const source = await readFile(sourceUrl, "utf8");
 
@@ -147,7 +159,7 @@ test("laid-out embedded Markdown loads its own editable drawings without scannin
   assert.match(source, /scheduleEmbeddedMarkdownSync\(\)[\s\S]*this\.syncEmbeddedMarkdownControllers\(\)/);
   assert.match(source, /querySelectorAll\("\.markdown-embed-content"\)/);
   assert.match(source, /surfaceType: "embedded",\s*embeddedSurface: true/);
-  assert.match(source, /await this\.settleInitialReadingSurface\(generation\);\s*}\s*if \(this\.destroyed \|\| generation !== this\.drawingLoadGeneration \|\| this\.file\?\.path !== file\?\.path\) \{\s*return;\s*}/);
+  assert.match(source, /await this\.settleInitialReadingSurface\(generation\);\s*if \(this\.markdownBlockRecords\(\)\.length\) \{\s*this\.scheduleMarkdownAnnotationRefresh\(\{ layout: false, delay: 0, force: true \}\);\s*\}\s*return;/);
   assert.match(source, /await this\.prepareFrozenNoteFlowLayout\(\)\.catch\(\(error\) => \{\s*void error;\s*return false;\s*}\);\s*if \(this\.destroyed \|\| generation !== this\.drawingLoadGeneration \|\| this\.file\?\.path !== file\?\.path\) \{\s*return;\s*}\s*this\.syncMarkdownBlockPresentation\(\);\s*this\.resizeCanvas\(\{ layout: false, measure: true \}\);[\s\S]{0,500}this\.render\(\)/);
   assert.doesNotMatch(source, /await this\.ensureDrawingsLoaded\(\);\s*this\.resizeCanvas\(\);\s*this\.render\(\)/);
   assert.match(source, /if \(!isElementNearViewport\(surface\)\) \{\s*continue;\s*}\s*activeSurfaces\.add\(surface\)/);

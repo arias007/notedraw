@@ -183,7 +183,7 @@ test("3.4.84 preserves reading content and cross-view frames without hidden-surf
   const responsiveMigration = source.slice(source.indexOf("  initializeAndProjectResponsivePoints("), source.indexOf("  resizeCanvas(options = {})"));
   const surfaceSync = source.slice(source.indexOf("  runSurfaceSync()"), source.indexOf("  scheduleSurfaceSync(", source.indexOf("  runSurfaceSync()")));
   assert.doesNotMatch(responsiveMigration, /scheduleDrawingSave|writeDrawings/);
-  assert.match(source, /for \(const controller of this\.liveControllers\) \{[\s\S]*controller\.syncFloatingControlClasses\(\);\s*if \(isElementVisibleEnough\(controller\.previewEl\)\) \{\s*controller\.scheduleFrozenNoteFlowLayoutRestore\(\);\s*controller\.scheduleResize\(\{ layout: false, measure: false \}\);/);
+  assert.match(source, /for \(const controller of this\.liveControllers\) \{[\s\S]*controller\.syncFloatingControlClasses\(\);\s*const activeLeaf = this\.app\.workspace\?\.activeLeaf[\s\S]*const isCurrentLeaf = controller\.surfaceType !== \"preview\"[\s\S]*if \(isElementVisibleEnough\(controller\.previewEl\) && isCurrentLeaf\) \{\s*controller\.scheduleFrozenNoteFlowLayoutRestore\(\);\s*controller\.scheduleResize\(\{ layout: false, measure: false \}\);/);
   assert.doesNotMatch(surfaceSync, /clearNoteFlowLayout/);
   assert.match(source, /pickRootPreview\(previews, rendererPreview, isElementVisibleEnough, isElementLaidOut\)/);
   assert.match(source, /for \(const alternatePreview of findRootPreviewsForView\(view\)\)/);
@@ -216,7 +216,7 @@ test("3.4.84 preserves reading content and cross-view frames without hidden-surf
   assert.match(source, /const refreshLayout = options\.layout === true && !interactionActive/);
   const activeState = source.slice(source.indexOf("  applyActiveState(active, options = {})"), source.indexOf("  controlsShouldBeVisible()", source.indexOf("  applyActiveState(active, options = {})")));
   assert.doesNotMatch(activeState, /scheduleLayoutRefresh/);
-  assert.match(activeState, /if \(!this\.active && wasActive\)[\s\S]*this\.syncMarkdownBlockPresentation\(\);\s*this\.scheduleFrozenNoteFlowLayoutRestore\(\);\s*this\.render\(\)/);
+  assert.match(activeState, /if \(!this\.active && wasActive\)[\s\S]*this\.setReadingSurfaceSettling\(true\)[\s\S]*this\.syncMarkdownBlockPresentation\(\);\s*this\.scheduleFrozenNoteFlowLayoutRestore\(\);\s*this\.queueReadingSurfaceSettlement\(\)/);
   assert.match(activeState, /if \(wasActive !== this\.active && this\.drawingsLoaded\) \{\s*this\.scheduleResize\(\{ layout: false, measure: false \}\)/);
   const onloadSource = source.slice(source.indexOf("  async onload()"), source.indexOf("  onunload()"));
   assert.match(onloadSource, /this\.registerMarkdownPostProcessor\([\s\S]*this\.scheduleSurfaceSync\(120\)/);
