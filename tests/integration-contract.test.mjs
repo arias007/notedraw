@@ -173,11 +173,11 @@ test("3.4.84 preserves reading content and cross-view frames without hidden-surf
   assert.match(source, /const requestFrame = \(\) => new Promise[\s\S]*window\.requestAnimationFrame\(finish\)[\s\S]*window\.setTimeout\(finish, 120\)/);
   assert.match(source, /if \(!this\.responsivePointsInitialized \|\| signature !== this\.responsiveLayoutSignature\)/);
   assert.match(source, /captureElementLayoutForStroke/);
-  assert.match(source, /projectElementPoints\(stroke\.points, layout, box/);
+  assert.match(source, /const sourcePoints = this\.canonicalPointsForStroke\(stroke, index\)[\s\S]*projectElementPoints\(sourcePoints, layout, box/);
   assert.doesNotMatch(source, /stabilizeElementRelations\(projected, layoutsById\)/);
   assert.match(source, /const transitionProjected = \[\.\.\.projected\];/);
   assert.match(source, /const projectedById = new Map\(projected\.map\(\(box\) =>/);
-  assert.match(source, /controller\.drawingData = normalizeDrawingData\(data, file\);\s*controller\.rebuildElementRelations\(\);/);
+  assert.match(source, /controller\.drawingData = normalizeDrawingData\(data, file\);\s*controller\.captureCanonicalProjectionSource\(\);\s*controller\.rebuildElementRelations\(\);/);
   assert.match(source, /elementLayoutNeedsRepair\(existingLayout\)/);
   assert.match(source, /function normalizeDrawingDataForStorage\(data, file\)/);
   const responsiveMigration = source.slice(source.indexOf("  initializeAndProjectResponsivePoints("), source.indexOf("  resizeCanvas(options = {})"));
@@ -204,7 +204,7 @@ test("3.4.84 preserves reading content and cross-view frames without hidden-surf
   assert.doesNotMatch(source, /this\.readingZoomStage\?\.scroll(?:Width|Height)/);
   assert.doesNotMatch(source.slice(source.indexOf("  resizeCanvas(options = {})"), source.indexOf("  onPointerDown(", source.indexOf("  resizeCanvas(options = {})"))), /applyElementStyles\(this\.readingZoomStage/);
   assert.match(source, /const layerBacking = this\.drawingsVisible && this\.drawingsLoaded \? backingStore : \{ width: 1, height: 1, scale: 1 \}/);
-  assert.match(source, /const activeBacking = this\.drawingsVisible && this\.drawingsLoaded && this\.active \? backingStore : \{ width: 1, height: 1, scale: 1 \}/);
+  assert.match(source, /const activeBacking = this\.drawingsVisible && this\.drawingsLoaded\s+&& \(this\.surfaceType === "preview" \|\| this\.active\)\s+\? backingStore/);
   assert.match(source, /hasVisibleAlternateWorkspaceSurface\(view, preview\)[\s\S]*findWebviewSurfaces\(view\.containerEl\)/);
   assert.match(source, /isDominantEmbeddedWebviewSurface\(preview, surface\)/);
   assert.match(source, /const primaryDocumentSurface = preview\.classList\?\.contains\("mwv-note-browser-document"\)[\s\S]*otherBodyBlocks\.length === 0/);
@@ -421,7 +421,7 @@ test("non-empty floating text commits before wand, view, file, or controller tea
   const source = await readFile(sourceUrl, "utf8");
 
   assert.match(source, /async setFile\(file\)[\s\S]*this\.endTextEdit\(\);\s*this\.endFloatingTextInput\(true\)/);
-  assert.match(source, /destroy\(options = \{\}\)[\s\S]*else \{\s*this\.endTextEdit\(\);\s*this\.endFloatingTextInput\(true\);\s*\}[\s\S]*this\.clearDraggedNoteFlowPlacement\(\);\s*this\.destroyed = true/);
+  assert.match(source, /destroy\(options = \{\}\)[\s\S]*else \{\s*this\.endTextEdit\(\);\s*this\.endFloatingTextInput\(true\);\s*\}[\s\S]*this\.clearDraggedNoteFlowPlacement\(\);[\s\S]*this\.destroyed = true/);
   assert.match(source, /if \(!this\.active && wasActive\)[\s\S]*this\.endFloatingTextInput\(true\)/);
   assert.match(source, /setEditMarkdownMode\(\)[\s\S]*this\.endFloatingTextInput\(true\)/);
   assert.match(source, /openFloatingTextInput\(point, index = -1\) \{\s*this\.endFloatingTextInput\(true\)/);
@@ -540,7 +540,7 @@ test("selection tool previews and commits exact NoteFlow Markdown insertion targ
   assert.match(flowLayoutSource, /const side = exactPlacement \? currentNoteFlow\.side/);
   assert.match(projectionSource, /const noteFlowProjectedById = new Map\(\)/);
   assert.match(projectionSource, /noteFlowProjectedById\.set\(transitionId, projectedBox\)/);
-  assert.match(projectionSource, /projectElementPoints\(stroke\.points, layout, box/);
+  assert.match(projectionSource, /projectElementPoints\(sourcePoints, layout, box/);
   assert.match(reservedRowSource, /this\.draggingStroke \|\| this\.resizingSelection/);
   assert.match(reservedRowSource, /noteFlowStoredRowCanvasY\(noteFlow, candidates, strokeTop\)/);
   assert.match(reservedRowSource, /projectStableNoteFlowBox\([\s\S]*boxLeftRatio:[\s\S]*boxWidthRatio:[\s\S]*boxHeightRatio:/);

@@ -5834,6 +5834,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     this.viewToolbarState = /* @__PURE__ */ new WeakMap();
     this.viewEditHistory = /* @__PURE__ */ new WeakMap();
     this.viewInteractionController = /* @__PURE__ */ new WeakMap();
+    this.viewSurfaceAuthority = /* @__PURE__ */ new WeakMap();
     this.textSaveStates = /* @__PURE__ */ new WeakMap();
     this.apiListeners = /* @__PURE__ */ new Map();
     this.elementClipboard = null;
@@ -6086,6 +6087,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       return;
     }
     this.pruneDisconnectedControllers();
+    this.retireObsoleteMarkdownControllers();
     this.syncRenderedMarkdownAnnotations();
     this.syncSourceControllers();
     this.syncMarkdownControllerModes();
@@ -6108,6 +6110,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     if (this.runtimeDisposed) {
       return;
     }
+    this.retireObsoleteMarkdownControllers();
     this.syncSourceControllers();
     this.syncMarkdownControllerModes();
     for (const controller of this.liveControllers) {
@@ -6542,6 +6545,77 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     const view = controller?.view;
     return view?.leaf || findOwningLeaf(this.app, view?.containerEl || controller?.previewEl) || view || controller?.previewEl || null;
   }
+  controllerUsesExclusiveMarkdownSurface(controller) {
+    return Boolean(controller && !controller.embeddedSurface && !controller.workspaceSurface && !controller.registeredSurface && (controller.surfaceType === "preview" || controller.surfaceType === "source") && controller.view);
+  }
+  isMarkdownControllerAttached(controller) {
+    if (!this.controllerUsesExclusiveMarkdownSurface(controller)) {
+      return true;
+    }
+    const view = controller?.view;
+    const leaf = view?.leaf;
+    if (!view || !leaf || !view.containerEl?.isConnected || !controller.previewEl?.isConnected) {
+      return false;
+    }
+    const leaves = this.app.workspace.getLeavesOfType?.("markdown") || [];
+    return leaves.some((candidate) => candidate === leaf && candidate.view === view && candidate.view?.file?.path === controller.file?.path && candidate.view?.containerEl?.contains(controller.previewEl));
+  }
+  claimControllerSurface(controller) {
+    if (!this.controllerUsesExclusiveMarkdownSurface(controller)) {
+      controller.surfaceAuthorityGeneration = 0;
+      controller.surfaceAuthorityCurrent = true;
+      return true;
+    }
+    const key = this.controllerStateKey(controller);
+    if (!this.isMarkdownControllerAttached(controller) || !key || currentMarkdownSurfaceType(controller.view) !== controller.surfaceType) {
+      controller.surfaceAuthorityCurrent = false;
+      controller.syncSurfaceAuthorityVisibility?.();
+      return false;
+    }
+    const previous = this.viewSurfaceAuthority.get(key);
+    const generation = Number(previous?.generation || 0) + 1;
+    this.viewSurfaceAuthority.set(key, { controller, generation, surfaceType: controller.surfaceType });
+    if (previous?.controller && previous.controller !== controller) {
+      previous.controller.setSurfaceAuthorityCurrent?.(false);
+      previous.controller.destroy();
+    }
+    controller.surfaceAuthorityGeneration = generation;
+    controller.surfaceAuthorityCurrent = true;
+    controller.syncSurfaceAuthorityVisibility?.();
+    return true;
+  }
+  releaseControllerSurface(controller) {
+    if (!this.controllerUsesExclusiveMarkdownSurface(controller)) {
+      return;
+    }
+    const key = this.controllerStateKey(controller);
+    const record = key ? this.viewSurfaceAuthority.get(key) : null;
+    if (record?.controller === controller) {
+      this.viewSurfaceAuthority.delete(key);
+    }
+  }
+  isControllerSurfaceAuthoritative(controller) {
+    if (!this.controllerUsesExclusiveMarkdownSurface(controller)) {
+      return !controller?.destroyed;
+    }
+    if (!controller || controller.destroyed || !controller.previewEl?.isConnected || !this.isMarkdownControllerAttached(controller)) {
+      return false;
+    }
+    const key = this.controllerStateKey(controller);
+    const record = key ? this.viewSurfaceAuthority.get(key) : null;
+    return Boolean(record?.controller === controller && record.generation === controller.surfaceAuthorityGeneration && currentMarkdownSurfaceType(controller.view) === controller.surfaceType);
+  }
+  retireObsoleteMarkdownControllers() {
+    for (const controller of Array.from(this.liveControllers)) {
+      if (!this.controllerUsesExclusiveMarkdownSurface(controller) || controller.destroyed) {
+        continue;
+      }
+      if (!this.isMarkdownControllerAttached(controller) || currentMarkdownSurfaceType(controller.view) !== controller.surfaceType) {
+        controller.setSurfaceAuthorityCurrent?.(false);
+        controller.destroy();
+      }
+    }
+  }
   controllerToolbarState(controller) {
     const key = this.controllerStateKey(controller);
     return key ? this.viewToolbarState.get(key) || null : null;
@@ -6549,11 +6623,11 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
   interactionController(controller) {
     const key = this.controllerStateKey(controller);
     const preferred = key ? this.viewInteractionController.get(key) : null;
-    if (preferred && !preferred.destroyed && preferred.previewEl?.isConnected && isElementVisibleEnough(preferred.previewEl)) {
+    if (preferred && !preferred.destroyed && preferred.previewEl?.isConnected && this.isControllerSurfaceAuthoritative(preferred) && isElementVisibleEnough(preferred.previewEl)) {
       return preferred;
     }
     const fallback = Array.from(this.liveControllers).find((candidate) => {
-      return !candidate.destroyed && !candidate.embeddedSurface && candidate.previewEl?.isConnected && this.controllerStateKey(candidate) === key && isElementVisibleEnough(candidate.previewEl);
+      return !candidate.destroyed && !candidate.embeddedSurface && candidate.previewEl?.isConnected && this.controllerStateKey(candidate) === key && this.isControllerSurfaceAuthoritative(candidate) && isElementVisibleEnough(candidate.previewEl);
     }) || controller;
     if (key && fallback) {
       this.viewInteractionController.set(key, fallback);
@@ -6713,10 +6787,11 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       return false;
     }
     controller.drawingData = data;
+    controller.captureCanonicalProjectionSource();
     controller.drawingsLoaded = true;
     controller.externalDrawingRefreshPending = false;
     controller.rebuildElementRelations();
-    controller.applyDrawingsVisibility(data.visible !== false);
+    controller.applyDrawingsVisibility(drawingsVisibleFromData(data));
     controller.responsivePointsInitialized = false;
     controller.responsiveLayoutSignature = "";
     controller.responsiveLayoutContext = null;
@@ -6785,7 +6860,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     });
     const enabled = Boolean(this.viewDrawingActive.get(key));
     const visible = candidates.filter((candidate) => {
-      return !candidate.embeddedSurface && candidate.previewEl?.isConnected && isElementVisibleEnough(candidate.previewEl);
+      return !candidate.embeddedSurface && candidate.previewEl?.isConnected && this.isControllerSurfaceAuthoritative(candidate) && isElementVisibleEnough(candidate.previewEl);
     });
     const preferred = enabled ? visible.find((candidate) => candidate === controller) || visible.find((candidate) => candidate === this.viewInteractionController.get(key)) || visible[0] || (controller && !controller.embeddedSurface && controller.previewEl?.isConnected ? controller : null) : null;
     for (const candidate of candidates) {
@@ -7921,9 +7996,10 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       controller.externalDrawingRefreshPending = false;
       controller.markdownSourceRevisionChanged = Boolean(data?._notedrawSourceRevisionMismatch);
       controller.drawingData = normalizeDrawingData(data, file2);
+      controller.captureCanonicalProjectionSource();
       controller.rebuildElementRelations();
       controller.drawingsLoaded = true;
-      controller.applyDrawingsVisibility(controller.drawingData.visible !== false);
+      controller.applyDrawingsVisibility(drawingsVisibleFromData(controller.drawingData));
       controller.responsivePointsInitialized = false;
       controller.responsiveLayoutSignature = "";
       controller.responsiveLayoutContext = null;
@@ -9421,6 +9497,13 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       this.suppressedDrawingSaves.splice(0, Math.max(0, this.suppressedDrawingSaves.length - 20));
       return false;
     }
+    if (options.userOperation === true || options.replace === true) {
+      for (const controller of this.getAllControllers()) {
+        if (controller.drawingData === data) {
+          controller.captureCanonicalProjectionSource();
+        }
+      }
+    }
     this.pendingDrawingSaves.set(path, coalesceDrawingSaveRequest(
       this.pendingDrawingSaves.get(path),
       {
@@ -10117,6 +10200,8 @@ var PreviewDrawingController = class {
     this.registeredSurfaceCapabilities = options.registeredSurfaceCapabilities || null;
     this.registeredSurfaceViewport = options.registeredSurfaceViewport || null;
     this.destroyed = false;
+    this.surfaceAuthorityGeneration = 0;
+    this.surfaceAuthorityCurrent = !this.plugin.controllerUsesExclusiveMarkdownSurface(this);
     this.plugin.liveControllers?.add(this);
     this.runtimeSettings = sanitizeSettings(this.plugin?.noteDrawSettings || {});
     this.active = this.plugin.controllerActivationState(this);
@@ -10447,6 +10532,7 @@ var PreviewDrawingController = class {
     this.responsiveLayoutSignature = "";
     this.responsivePointsInitialized = false;
     this.responsiveLayoutContext = null;
+    this.canonicalProjectionPoints = /* @__PURE__ */ new Map();
     this.renderFrameId = null;
     this.pendingDomRender = false;
     this.pendingInteractionRender = false;
@@ -10567,9 +10653,15 @@ var PreviewDrawingController = class {
     if (this.destroyed) {
       return;
     }
+    if (!this.plugin.claimControllerSurface(this)) {
+      this.destroy({ discardEdits: true });
+      return;
+    }
     cleanupDrawingUi(this.previewEl);
     this.previewEl._noteDrawController = this;
     this.previewEl.addClass("notedraw-shell");
+    this.syncSurfaceAuthorityVisibility();
+    this.previewEl.toggleClass("is-notedraw-preview-shell", this.surfaceType === "preview");
     this.previewEl.addClass("is-notedraw-responsive-layout");
     this.previewEl.toggleClass("is-notedraw-source-shell", this.surfaceType === "source");
     this.previewEl.toggleClass("is-notedraw-webview-shell", this.surfaceType === "webview");
@@ -11322,6 +11414,7 @@ var PreviewDrawingController = class {
     this.embedRenderTokens.clear();
     this.embedGeometryTokens.clear();
     this.releaseCanvasImageCache();
+    this.canonicalProjectionPoints.clear();
     this.responsiveLayoutSignature = "";
     this.responsivePointsInitialized = false;
     this.responsiveLayoutContext = null;
@@ -11343,6 +11436,56 @@ var PreviewDrawingController = class {
       return;
     }
     await this.ensureDrawingsLoaded();
+  }
+  isSurfaceAuthoritative() {
+    return this.plugin.isControllerSurfaceAuthoritative(this);
+  }
+  captureCanonicalProjectionSource() {
+    this.canonicalProjectionPoints.clear();
+    for (const [index, stroke] of (this.drawingData?.strokes || []).entries()) {
+      const layout = normalizeElementLayout(stroke.layout);
+      const points = layout && !elementLayoutNeedsRepair(layout) && stroke.points.some((point) => point.anchor) ? projectElementPoints(stroke.points, layout, {
+        id: layout.id,
+        x: layout.box.x,
+        y: layout.box.y,
+        width: layout.box.width,
+        height: layout.box.height,
+        scale: 1
+      }, {
+        canvasWidth: layout.sourceFrame.surfaceWidth,
+        canvasHeight: layout.sourceFrame.documentHeight
+      }) : stroke.points;
+      this.canonicalProjectionPoints.set(projectionStrokeKey(stroke, index), points.map((point) => ({
+        ...point,
+        anchor: point.anchor ? { ...point.anchor } : null
+      })));
+    }
+  }
+  canonicalPointsForStroke(stroke, index) {
+    const points = this.canonicalProjectionPoints.get(projectionStrokeKey(stroke, index));
+    return points?.length ? points : stroke.points;
+  }
+  syncSurfaceAuthorityVisibility() {
+    this.previewEl?.toggleClass("is-notedraw-surface-inactive", !this.surfaceAuthorityCurrent);
+  }
+  setSurfaceAuthorityCurrent(current) {
+    const next = Boolean(current);
+    if (this.surfaceAuthorityCurrent === next) {
+      this.syncSurfaceAuthorityVisibility();
+      return;
+    }
+    this.surfaceAuthorityCurrent = next;
+    this.surfaceStateGeneration += 1;
+    this.syncSurfaceAuthorityVisibility();
+    if (!next) {
+      this.cancelRenderFrame();
+      this.cancelResizeFrame();
+      this.cancelResponsiveProjectionSettle();
+      this.cancelLayoutRefresh();
+      clearCanvasContext(this.ctx, this.canvas);
+      clearCanvasContext(this.underlayCtx, this.underlayCanvas);
+      clearCanvasContext(this.staticCtx, this.staticCanvas);
+    }
   }
   resetCanvasSurface() {
     this.previewEl.removeClass("has-notedraw-canvas");
@@ -11422,6 +11565,8 @@ var PreviewDrawingController = class {
     this.cancelDraggedNoteFlowStrokeAnimation(false);
     this.clearDraggedMarkdownDomMarkers();
     this.clearDraggedNoteFlowPlacement();
+    this.setSurfaceAuthorityCurrent(false);
+    this.plugin.releaseControllerSurface(this);
     this.destroyed = true;
     this.drawingLoadGeneration += 1;
     this.layoutRefreshGeneration += 1;
@@ -11564,7 +11709,9 @@ var PreviewDrawingController = class {
     this.readingBottomSpacer = null;
     this.readingBottomSpacerHeight = 0;
     this.previewEl.removeClass("notedraw-shell");
+    this.previewEl.removeClass("is-notedraw-preview-shell");
     this.previewEl.removeClass("is-notedraw-responsive-layout");
+    this.previewEl.removeClass("is-notedraw-surface-inactive");
     this.previewEl.removeClass("is-notedraw-controls-visible");
     this.previewEl.removeClass("is-drawing-active");
     this.previewEl.removeClass("is-drawing-hidden");
@@ -11740,6 +11887,7 @@ var PreviewDrawingController = class {
         return;
       }
       this.drawingData = data;
+      this.captureCanonicalProjectionSource();
       const relationGroupsChanged = this.syncConnectorElementGroups();
       if (relationGroupsChanged) {
         this.plugin.scheduleDrawingSave(file2, this.drawingData, { userOperation: true, replace: true });
@@ -11750,7 +11898,7 @@ var PreviewDrawingController = class {
         this.plugin.scheduleDrawingSave(file2, this.drawingData, { userOperation: true, replace: true });
       }
       this.drawingsLoaded = true;
-      this.applyDrawingsVisibility(data.visible !== false);
+      this.applyDrawingsVisibility(drawingsVisibleFromData(data));
       this.invalidateStaticCache();
       if (this.destroyed || generation !== this.drawingLoadGeneration || this.file?.path !== file2?.path) {
         return;
@@ -11982,6 +12130,9 @@ var PreviewDrawingController = class {
     this.responsiveProjectionPreserveNoteFlowAbsolute = false;
   }
   scheduleResize(options = {}) {
+    if (this.destroyed || !this.isSurfaceAuthoritative()) {
+      return;
+    }
     const noteFlowResizeSuppressed = Date.now() < this.noteFlowSuppressResizeUntil;
     const readingZoomInteractionActive = this.isReadingZoomInteractionActive();
     const viewportZoomInteractionActive = this.isViewportZoomInteractionActive();
@@ -12021,7 +12172,7 @@ var PreviewDrawingController = class {
       window.clearTimeout(this.resizeFallbackTimer);
       this.resizeFallbackTimer = null;
     }
-    if (this.destroyed) {
+    if (this.destroyed || !this.isSurfaceAuthoritative()) {
       return;
     }
     const layout = this.resizeNeedsLayout;
@@ -14312,6 +14463,7 @@ ${selected}
   setDrawingsVisible(visible, options = {}) {
     this.applyDrawingsVisibility(visible);
     this.drawingData.visible = this.drawingsVisible;
+    this.drawingData.hiddenByUser = !this.drawingsVisible;
     if (options.persist === true) {
       this.plugin.scheduleDrawingSave(this.file, this.drawingData, { userOperation: true });
     }
@@ -14634,6 +14786,7 @@ ${selected}
     }
     if (migrated) {
       this.rebuildElementRelations();
+      this.captureCanonicalProjectionSource();
     }
     const projected = [];
     const layoutsById = /* @__PURE__ */ new Map();
@@ -14687,7 +14840,8 @@ ${selected}
         noteFlow = normalizeNoteFlow(stroke.noteFlow);
         migrated = true;
       }
-      const projectedPoints = (stroke.points || []).map((point) => {
+      const sourcePoints = this.canonicalPointsForStroke(stroke, index);
+      const projectedPoints = sourcePoints.map((point) => {
         const projectedPoint = projectResponsivePoint(point, {
           canvasWidth: this.canvasWidth(),
           canvasHeight: this.canvasHeight(),
@@ -14758,6 +14912,7 @@ ${selected}
       if (isConnectorStroke(stroke)) {
         continue;
       }
+      const sourcePoints = this.canonicalPointsForStroke(stroke, index);
       if (normalizeNoteFlow(stroke?.noteFlow)) {
         if (options.preserveNoteFlowAbsolute) {
           stroke.points = preserveAbsoluteNoteFlowPoints(stroke.points, {
@@ -14793,7 +14948,7 @@ ${selected}
           })
         } : box2;
         if (layout2 && stableFlowBox) {
-          stroke.points = projectElementPoints(stroke.points, layout2, stableFlowBox, {
+          stroke.points = projectElementPoints(sourcePoints, layout2, stableFlowBox, {
             canvasWidth: this.canvasWidth(),
             canvasHeight: this.canvasHeight(),
             preserveAspectRatio: !isTextLikeStroke(stroke) && !isEmbedStroke(stroke)
@@ -14809,7 +14964,7 @@ ${selected}
           continue;
         }
         const previousPoints = stroke.points;
-        const projectedPoints = stroke.points.map((point) => {
+        const projectedPoints = sourcePoints.map((point) => {
           const projectedPoint = projectResponsivePoint(point, {
             canvasWidth: this.canvasWidth(),
             canvasHeight: this.canvasHeight(),
@@ -14827,7 +14982,7 @@ ${selected}
       const layout = normalizeElementLayout(stroke.layout);
       const box = layout?.id ? projectedById.get(layout.id) : null;
       if (layout && box) {
-        stroke.points = projectElementPoints(stroke.points, layout, box, {
+        stroke.points = projectElementPoints(sourcePoints, layout, box, {
           canvasWidth: this.canvasWidth(),
           canvasHeight: this.canvasHeight(),
           preserveAspectRatio: !isTextLikeStroke(stroke) && !isEmbedStroke(stroke)
@@ -14851,7 +15006,7 @@ ${selected}
           stroke.previewHeight = metrics.previewHeight;
         }
       } else {
-        stroke.points = stroke.points.map((point) => projectResponsivePoint(point, {
+        stroke.points = sourcePoints.map((point) => projectResponsivePoint(point, {
           canvasWidth: this.canvasWidth(),
           canvasHeight: this.canvasHeight(),
           frame: context.frame,
@@ -14875,6 +15030,9 @@ ${selected}
     return true;
   }
   resizeCanvas(options = {}) {
+    if (this.destroyed || !this.isSurfaceAuthoritative()) {
+      return false;
+    }
     this.refreshScrollContainer();
     const previousCanvasWidth = this.canvasCssWidth;
     const previousCanvasHeight = this.canvasCssHeight;
@@ -14934,7 +15092,7 @@ ${selected}
     });
     const geometryChanged = width !== this.canvasCssWidth || height !== this.canvasCssHeight || canvasWindow.changed || Math.abs(backingStore.scale - this.canvasBackingScale) > 1e-6;
     const layerBacking = this.drawingsVisible && this.drawingsLoaded ? backingStore : { width: 1, height: 1, scale: 1 };
-    const activeBacking = this.drawingsVisible && this.drawingsLoaded && this.active ? backingStore : { width: 1, height: 1, scale: 1 };
+    const activeBacking = this.drawingsVisible && this.drawingsLoaded && (this.surfaceType === "preview" || this.active) ? backingStore : { width: 1, height: 1, scale: 1 };
     const backingStoreChanged = this.canvas.width !== activeBacking.width || this.canvas.height !== activeBacking.height || this.underlayCanvas.width !== layerBacking.width || this.underlayCanvas.height !== layerBacking.height || this.staticCanvas.width !== layerBacking.width || this.staticCanvas.height !== layerBacking.height;
     this.canvasCssWidth = width;
     this.canvasCssHeight = height;
@@ -20506,6 +20664,9 @@ ${selected}
     return Math.max(1, this.canvasCssHeight || this.canvas?.clientHeight || 1);
   }
   requestRender(refreshDom = false) {
+    if (this.destroyed || !this.isSurfaceAuthoritative()) {
+      return;
+    }
     this.pendingDomRender = this.pendingDomRender || refreshDom === true;
     this.pendingInteractionRender = this.pendingInteractionRender || refreshDom === "interaction";
     if (this.renderFrameId !== null) {
@@ -20535,7 +20696,7 @@ ${selected}
     this.pendingInteractionRender = false;
   }
   render() {
-    if (!this.ctx) {
+    if (!this.ctx || !this.isSurfaceAuthoritative()) {
       return;
     }
     if (this.syncBoundConnectors()) {
@@ -20547,7 +20708,7 @@ ${selected}
     this.renderCanvas();
   }
   renderInteractionFrame() {
-    if (!this.ctx) {
+    if (!this.ctx || !this.isSurfaceAuthoritative()) {
       return;
     }
     if (this.getSelectedMarkdownBlocks().length || this.usesDraggedNoteFlowPlacement()) {
@@ -20570,7 +20731,7 @@ ${selected}
     return this.syncBoundConnectors({ elementIds: this.dragMovedElementIds });
   }
   renderCanvas() {
-    if (!this.ctx) {
+    if (!this.ctx || !this.isSurfaceAuthoritative()) {
       return;
     }
     if (this.draggingStroke && this.syncPendingDraggedConnectors()) {
@@ -30412,14 +30573,6 @@ function findPrimaryMarkdownSurface(view) {
   return isSourceMode(view) ? source || preview : preview || source;
 }
 function currentMarkdownSurfaceType(view) {
-  const preview = findRootPreviewForView(view);
-  if (isMarkdownPreviewVisible(view, preview)) {
-    return "preview";
-  }
-  const source = findSourceSurfaceForView(view);
-  if (isMarkdownSourceVisible(view, source)) {
-    return "source";
-  }
   return isSourceMode(view) ? "source" : "preview";
 }
 function isReadingSurfaceVisible(view) {
@@ -31715,11 +31868,13 @@ async function writeTextToClipboard(text) {
 }
 function normalizeDrawingData(data, file2) {
   const strokes = Array.isArray(data?.strokes) ? data.strokes : [];
+  const hiddenByUser = data?.hiddenByUser === true && data?.visible === false;
   return {
     version: Math.max(1, Number.isFinite(data?.version) ? data.version : 1),
     sourcePath: file2.path,
     sourceRevision: normalizeSourceRevision(data?.sourceRevision) || sourceRevisionForFile(file2),
-    visible: data?.visible !== false,
+    visible: !hiddenByUser,
+    hiddenByUser,
     strokes: strokes.map(normalizeStroke).map((stroke) => ({
       ...stroke,
       points: compactStrokePoints(stroke.points)
@@ -31730,6 +31885,14 @@ function normalizeDrawingData(data, file2) {
     webEdits: normalizeWebEdits(data?.webEdits),
     updatedAt: data?.updatedAt || null
   };
+}
+function drawingsVisibleFromData(data) {
+  return !(data?.hiddenByUser === true && data?.visible === false);
+}
+function projectionStrokeKey(stroke, index) {
+  const layoutId = normalizeElementLayout(stroke?.layout)?.id;
+  const elementId = typeof stroke?.elementId === "string" ? stroke.elementId : "";
+  return layoutId || elementId || `stroke:${index}`;
 }
 function parseExplicitMarkdownLineGroup(value) {
   const parts = String(value || "").split("\0");

@@ -16,6 +16,42 @@ test("magic wand state follows the stable leaf across Markdown surfaces", async 
   assert.doesNotMatch(source, /Failed to close source NoteDraw controller/);
 });
 
+test("view switches give exactly one Markdown surface authority to render", async () => {
+  const [source, styles] = await Promise.all([
+    readFile(sourceUrl, "utf8"),
+    readFile(stylesUrl, "utf8")
+  ]);
+
+  assert.match(source, /this\.viewSurfaceAuthority\s*=\s*\/\* @__PURE__ \*\/ new WeakMap\(\)/);
+  assert.match(source, /claimControllerSurface\(controller\)[\s\S]*previous\.controller\.setSurfaceAuthorityCurrent\?\.\(false\)[\s\S]*previous\.controller\.destroy\(\)/);
+  assert.match(source, /currentMarkdownSurfaceType\(controller\.view\) !== controller\.surfaceType/);
+  assert.match(source, /scheduleResize\(options = \{\}\) \{\s*if \(this\.destroyed \|\| !this\.isSurfaceAuthoritative\(\)\)/);
+  assert.match(source, /renderCanvas\(\) \{\s*if \(!this\.ctx \|\| !this\.isSurfaceAuthoritative\(\)\)/);
+  assert.match(source, /function currentMarkdownSurfaceType\(view\) \{[\s\S]*return isSourceMode\(view\) \? "source" : "preview";/);
+  assert.match(styles, /\.notedraw-shell\.is-notedraw-surface-inactive \.notedraw-underlay-canvas,[\s\S]*display:\s*none !important;[\s\S]*visibility:\s*hidden !important;/);
+});
+
+test("closed Markdown leaves cannot keep rendering controllers alive", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+
+  assert.match(source, /isMarkdownControllerAttached\(controller\)[\s\S]*getLeavesOfType\?\.\("markdown"\)[\s\S]*candidate === leaf && candidate\.view === view[\s\S]*candidate\.view\?\.containerEl\?\.contains\(controller\.previewEl\)/);
+  assert.match(source, /if \(!this\.isMarkdownControllerAttached\(controller\)\s*\|\| !key \|\| currentMarkdownSurfaceType\(controller\.view\) !== controller\.surfaceType\)/);
+  assert.match(source, /if \(!this\.isMarkdownControllerAttached\(controller\)\s*\|\| currentMarkdownSurfaceType\(controller\.view\) !== controller\.surfaceType\)/);
+});
+
+test("responsive reprojection always starts from canonical stored points", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const projectionStart = source.indexOf("  initializeAndProjectResponsivePoints(");
+  const projectionSource = source.slice(projectionStart, source.indexOf("  resizeCanvas(options = {})", projectionStart));
+
+  assert.match(source, /this\.canonicalProjectionPoints\s*=\s*\/\* @__PURE__ \*\/ new Map\(\)/);
+  assert.match(source, /captureCanonicalProjectionSource\(\)[\s\S]*projectElementPoints\(stroke\.points, layout,[\s\S]*canvasWidth: layout\.sourceFrame\.surfaceWidth/);
+  assert.match(projectionSource, /const sourcePoints = this\.canonicalPointsForStroke\(stroke, index\)/);
+  assert.match(projectionSource, /projectElementPoints\(sourcePoints, layout, stableFlowBox/);
+  assert.match(projectionSource, /projectElementPoints\(sourcePoints, layout, box/);
+  assert.match(source, /scheduleDrawingSave\(file, data, options = \{\}\)[\s\S]*controller\.captureCanonicalProjectionSource\(\)/);
+});
+
 test("only the active visible surface exposes body-portal controls", async () => {
   const [source, styles] = await Promise.all([
     readFile(sourceUrl, "utf8"),
@@ -57,10 +93,19 @@ test("opening the magic wand reveals drawings while long press and right click t
   assert.match(source, /onButtonContextMenu\(event\)[\s\S]*this\.toggleDrawingsVisiblePersisted\(\)/);
   assert.match(source, /async toggleDrawingsVisiblePersisted\(\) \{\s*await this\.ensureDrawingsLoaded\(\);\s*this\.toggleDrawingsVisible\(\)/);
   assert.match(source, /toggleDrawingsVisible\(\) \{\s*this\.setDrawingsVisible\(!this\.drawingsVisible, \{ persist: true \}\)/);
-  assert.match(source, /setDrawingsVisible\(visible, options = \{\}\) \{\s*this\.applyDrawingsVisibility\(visible\);\s*this\.drawingData\.visible = this\.drawingsVisible;\s*if \(options\.persist === true\) \{\s*this\.plugin\.scheduleDrawingSave\(this\.file, this\.drawingData, \{ userOperation: true \}\)/);
-  assert.match(source, /visible: data\?\.visible !== false/);
-  assert.match(source, /this\.applyDrawingsVisibility\(data\.visible !== false\)/);
-  assert.match(source, /controller\.applyDrawingsVisibility\(controller\.drawingData\.visible !== false\)/);
+  assert.match(source, /setDrawingsVisible\(visible, options = \{\}\) \{\s*this\.applyDrawingsVisibility\(visible\);\s*this\.drawingData\.visible = this\.drawingsVisible;\s*this\.drawingData\.hiddenByUser = !this\.drawingsVisible;\s*if \(options\.persist === true\) \{\s*this\.plugin\.scheduleDrawingSave\(this\.file, this\.drawingData, \{ userOperation: true \}\)/);
+  assert.match(source, /const hiddenByUser = data\?\.hiddenByUser === true && data\?\.visible === false/);
+  assert.match(source, /visible: !hiddenByUser/);
+  assert.match(source, /hiddenByUser,/);
+  assert.match(source, /function drawingsVisibleFromData\(data\)/);
+  assert.match(source, /this\.applyDrawingsVisibility\(drawingsVisibleFromData\(data\)\)/);
+  assert.match(source, /controller\.applyDrawingsVisibility\(drawingsVisibleFromData\(controller\.drawingData\)\)/);
+});
+
+test("legacy visibility flags default to visible while explicit user hiding persists", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  assert.match(source, /function drawingsVisibleFromData\(data\) \{\s*return !\(data\?\.hiddenByUser === true && data\?\.visible === false\);\s*\}/);
+  assert.match(source, /const hiddenByUser = data\?\.hiddenByUser === true && data\?\.visible === false/);
 });
 
 test("rebinding the same file rehydrates a controller that mounted before drawing data finished loading", async () => {
