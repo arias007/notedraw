@@ -328,4 +328,4 @@ The current package focuses on the local Obsidian plugin runtime. The API and DO
 
 ## Version
 
-Current version: `3.8.13`.
+Current version: `3.9.0`.
