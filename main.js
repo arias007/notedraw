@@ -5823,6 +5823,8 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     this.pendingDrawingSaves = /* @__PURE__ */ new Map();
     this.drawingWritePromises = /* @__PURE__ */ new Map();
     this.drawingExternalSyncTimers = /* @__PURE__ */ new Map();
+    this.drawingDragTransactions = /* @__PURE__ */ new Map();
+    this.drawingCommitSnapshots = /* @__PURE__ */ new Map();
     this.suppressedDrawingSaves = [];
     this.drawingStateCache = /* @__PURE__ */ new Map();
     this.portableBundles = /* @__PURE__ */ new Map();
@@ -6037,6 +6039,8 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       window.clearTimeout(timer);
     }
     this.drawingExternalSyncTimers.clear();
+    this.drawingDragTransactions.clear();
+    this.drawingCommitSnapshots.clear();
     this.suppressedDrawingSaves = [];
     if (this.settingsSaveTimer !== null) {
       window.clearTimeout(this.settingsSaveTimer);
@@ -6104,15 +6108,17 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       const ownerLeaf = controller.view?.leaf || findOwningLeaf(this.app, controller.view?.containerEl || controller.previewEl);
       const isCurrentLeaf = controller.surfaceType !== "preview" || !activeLeaf || !ownerLeaf || activeLeaf === ownerLeaf;
       if (isElementVisibleEnough(controller.previewEl) && isCurrentLeaf) {
-        controller.scheduleFrozenNoteFlowLayoutRestore();
-        controller.scheduleResize({ layout: false, measure: false });
         const becameVisible = controller.lastObservedSurfaceVisibility === false;
         const becameCurrentLeaf = controller.lastObservedSurfaceActive === false;
         controller.lastObservedSurfaceVisibility = true;
         controller.lastObservedSurfaceActive = true;
         if (becameVisible || becameCurrentLeaf) {
+          controller.cancelFrozenNoteFlowLayoutRestore();
           controller.scheduleReadingSurfaceVisibilityRecovery();
+        } else {
+          controller.scheduleFrozenNoteFlowLayoutRestore();
         }
+        controller.scheduleResize({ layout: false, measure: false });
       } else {
         if (!isCurrentLeaf) {
           controller.lastObservedSurfaceActive = false;
@@ -6233,6 +6239,13 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     if (!controllers.length) {
       return 0;
     }
+    if (this.hasDrawingDragTransaction(file2)) {
+      controllers.forEach((controller) => {
+        controller.externalDrawingRefreshPending = true;
+      });
+      this.scheduleExternalDrawingRefresh(notePath, 240);
+      return 0;
+    }
     if (this.hasPendingDrawingWrite(file2) || controllers.some((controller) => controller.dragTransactionPending)) {
       controllers.forEach((controller) => {
         controller.externalDrawingRefreshPending = true;
@@ -6253,6 +6266,13 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
       migrateLegacy: false,
       repair: false
     });
+    if (this.hasDrawingDragTransaction(file2)) {
+      controllers.forEach((controller) => {
+        controller.externalDrawingRefreshPending = true;
+      });
+      this.scheduleExternalDrawingRefresh(notePath, 240);
+      return 0;
+    }
     const dataVersion = String(data?.updatedAt || "");
     if (dataVersion && controllers.every((controller) => String(controller.drawingData?.updatedAt || "") === dataVersion)) {
       controllers.forEach((controller) => {
@@ -6270,6 +6290,137 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     }
     const path = normalizeVaultPath(file2?.path || "");
     return Array.from(this.pendingDrawingSaves.values()).some((request) => normalizeVaultPath(request?.file?.path || "") === path);
+  }
+  rememberDrawingCommitSnapshot(file2, data) {
+    const storageKey = this.drawingStorageKey(file2);
+    if (!storageKey || !data) {
+      return null;
+    }
+    const normalized = normalizeDrawingData(data, file2);
+    this.drawingCommitSnapshots.set(storageKey, {
+      data: normalized,
+      committedAt: Date.now(),
+      updatedAt: String(normalized?.updatedAt || "")
+    });
+    this.drawingStateCache.set(storageKey, normalized);
+    return normalized;
+  }
+  committedDrawingSnapshot(file2) {
+    const storageKey = this.drawingStorageKey(file2);
+    const entry = storageKey ? this.drawingCommitSnapshots.get(storageKey) : null;
+    return entry?.data ? normalizeDrawingData(entry.data, file2) : null;
+  }
+  preferCommittedDrawingSnapshot(file2, selected) {
+    const storageKey = this.drawingStorageKey(file2);
+    const entry = storageKey ? this.drawingCommitSnapshots.get(storageKey) : null;
+    if (!entry?.data) {
+      return selected;
+    }
+    const committedAt = portableTimestamp(entry.updatedAt);
+    const selectedAt = portableTimestamp(selected?.updatedAt);
+    if (!selected || !committedAt || selectedAt <= committedAt) {
+      return {
+        kind: "committed",
+        priority: Number.MAX_SAFE_INTEGER,
+        updatedAt: entry.updatedAt,
+        data: entry.data
+      };
+    }
+    this.drawingCommitSnapshots.delete(storageKey);
+    return selected;
+  }
+  drawingDragTransactionKey(file2) {
+    return normalizeVaultPath(typeof file2 === "string" ? file2 : file2?.path || "");
+  }
+  hasDrawingDragTransaction(file2) {
+    const key = this.drawingDragTransactionKey(file2);
+    return Boolean(key && this.drawingDragTransactions?.has(key));
+  }
+  beginDrawingDragTransaction(controller, transactionId) {
+    const key = this.drawingDragTransactionKey(controller?.file);
+    if (!key || !controller || !Number.isFinite(Number(transactionId))) {
+      return false;
+    }
+    const existing = this.drawingDragTransactions.get(key);
+    if (existing && (existing.controller !== controller || existing.transactionId !== transactionId)) {
+      return false;
+    }
+    this.drawingDragTransactions.set(key, {
+      controller,
+      transactionId,
+      pendingRefresh: false,
+      didMove: false,
+      finalData: null,
+      completionStarted: false
+    });
+    return true;
+  }
+  markDrawingDragTransaction(controller, transactionId, options = {}) {
+    const key = this.drawingDragTransactionKey(controller?.file);
+    const transaction = key ? this.drawingDragTransactions.get(key) : null;
+    if (!transaction || transaction.controller !== controller || transaction.transactionId !== transactionId) {
+      return false;
+    }
+    transaction.didMove = Boolean(options.didMove);
+    return true;
+  }
+  publishDrawingDragTransaction(controller, transactionId) {
+    const key = this.drawingDragTransactionKey(controller?.file);
+    const transaction = key ? this.drawingDragTransactions.get(key) : null;
+    if (!transaction || transaction.controller !== controller || transaction.transactionId !== transactionId) {
+      return false;
+    }
+    transaction.finalData = controller?.drawingData || null;
+    if (transaction.finalData) {
+      this.rememberDrawingCommitSnapshot(controller.file, transaction.finalData);
+    }
+    return true;
+  }
+  async completeDrawingDragTransaction(controller, transactionId) {
+    const key = this.drawingDragTransactionKey(controller?.file);
+    const transaction = key ? this.drawingDragTransactions.get(key) : null;
+    if (!transaction || transaction.controller !== controller || transaction.transactionId !== transactionId) {
+      return false;
+    }
+    if (transaction.completionStarted) {
+      return true;
+    }
+    transaction.completionStarted = true;
+    const file2 = controller.file;
+    const finalData = transaction.finalData || controller.drawingData;
+    const storageKey = this.drawingStorageKey(file2);
+    try {
+      if (transaction.didMove && finalData) {
+        this.cancelScheduledDrawingSave(storageKey);
+        this.pendingDrawingSaves.delete(storageKey);
+        this.scheduleDrawingSave(file2, finalData, { userOperation: true, replace: true });
+        await this.flushDrawingSave(storageKey);
+      } else if (this.pendingDrawingSaves.has(storageKey)) {
+        await this.flushDrawingSave(storageKey);
+      }
+      const current = this.drawingDragTransactions.get(key);
+      if (!current || current.controller !== controller || current.transactionId !== transactionId) {
+        return false;
+      }
+      const committedData = current.finalData || controller.drawingData;
+      if (committedData) {
+        this.drawingStateCache.set(storageKey, normalizeDrawingData(committedData, file2));
+      }
+      this.drawingDragTransactions.delete(key);
+      if (committedData) {
+        this.refreshControllersForFile(file2, committedData, {
+          excludeData: committedData,
+          dragTransactionCommit: true
+        });
+      }
+      return true;
+    } catch (error) {
+      const current = this.drawingDragTransactions.get(key);
+      if (current?.controller === controller && current.transactionId === transactionId) {
+        this.drawingDragTransactions.delete(key);
+      }
+      throw error;
+    }
   }
   scheduleMindMapFilePicker(controller) {
     if (this.mindMapPickerTimer !== null) {
@@ -6367,6 +6518,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     }
     this.noteDrawSettings.drawingStorageMode = nextMode;
     this.drawingStateCache.clear();
+    this.drawingCommitSnapshots.clear();
     await this.saveSettings();
     if (activeSnapshot) {
       await this.writeDrawings(activeFile, activeSnapshot);
@@ -8015,6 +8167,26 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     });
   }
   refreshControllersForFile(file2, data, options = {}) {
+    const dragTransaction = this.drawingDragTransactions?.get(this.drawingDragTransactionKey(file2));
+    if (dragTransaction && options.dragTransactionCommit !== true) {
+      for (const controller of this.getAllControllers()) {
+        if (normalizeVaultPath(controller.file?.path) === normalizeVaultPath(file2?.path)) {
+          controller.externalDrawingRefreshPending = true;
+        }
+      }
+      return 0;
+    }
+    const storageKey = this.drawingStorageKey(file2);
+    const committed = storageKey ? this.drawingCommitSnapshots?.get(storageKey) : null;
+    if (committed?.data) {
+      const committedAt = portableTimestamp(committed.updatedAt);
+      const incomingAt = portableTimestamp(data?.updatedAt);
+      if (!data || !committedAt || incomingAt <= committedAt) {
+        data = committed.data;
+      } else {
+        this.drawingCommitSnapshots.delete(storageKey);
+      }
+    }
     let refreshed = 0;
     for (const controller of this.getAllControllers()) {
       if (normalizeVaultPath(controller.file?.path) !== normalizeVaultPath(file2?.path) || controller.drawingData === options.excludeData) {
@@ -8119,6 +8291,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     await Promise.all(Array.from(storageKeys).map((key) => this.drawingWritePromises.get(key)).filter(Boolean).map((write) => write.catch(() => void 0)));
     for (const key of storageKeys) {
       this.drawingStateCache.delete(key);
+      this.drawingCommitSnapshots.delete(key);
       this.drawingWritePromises.delete(key);
     }
     for (const path of storagePaths) {
@@ -9396,6 +9569,10 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
   async readDrawings(file2, options = {}) {
     const storageMode = this.drawingStorageModeForFile(file2);
     const storageKey = this.drawingStorageKey(file2, storageMode);
+    const dragTransaction = this.drawingDragTransactions?.get(this.drawingDragTransactionKey(file2));
+    if (dragTransaction?.controller?.drawingData) {
+      return normalizeDrawingData(dragTransaction.controller.drawingData, file2);
+    }
     const pending = this.pendingDrawingSaves.get(storageKey);
     if (pending?.entries?.length) {
       const latest = materializeDrawingSaveRequest(
@@ -9450,7 +9627,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
         }
       }
       candidates.sort((a, b) => portableTimestamp(b.updatedAt) - portableTimestamp(a.updatedAt) || b.priority - a.priority);
-      const selected = candidates[0] || null;
+      const selected = this.preferCommittedDrawingSnapshot(file2, candidates[0] || null);
       const sourceRevision = sourceRevisionForFile(file2);
       const storedRevision = normalizeSourceRevision(selected?.data?.sourceRevision);
       const storedMarkdownBlockCount = Array.isArray(selected?.data?.markdownBlocks) ? selected.data.markdownBlocks.length : 0;
@@ -9536,6 +9713,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
           controller.captureCanonicalProjectionSource();
         }
       }
+      this.rememberDrawingCommitSnapshot(file2, data);
     }
     this.pendingDrawingSaves.set(path, coalesceDrawingSaveRequest(
       this.pendingDrawingSaves.get(path),
@@ -9620,6 +9798,7 @@ var NoteDrawPlugin = class extends import_obsidian.Plugin {
     const normalized = options.normalized === true ? data : normalizeDrawingDataForStorage(data, file2);
     const updatedAt = (/* @__PURE__ */ new Date()).toISOString();
     normalized.updatedAt = updatedAt;
+    this.rememberDrawingCommitSnapshot(file2, normalized);
     if (options.updateCache !== false) {
       this.drawingStateCache.set(storageKey, normalizeDrawingData(normalized, file2));
     }
@@ -11089,6 +11268,10 @@ var PreviewDrawingController = class {
     if (this.surfaceType !== "preview" || this.active || this.embeddedSurface || !this.drawingsLoaded || !this.previewEl?.isConnected) {
       return false;
     }
+    if (!this.isCurrentReadingSurface()) {
+      this.setReadingSurfaceSettling(true);
+      return false;
+    }
     if (generation !== this.drawingLoadGeneration || this.initialReadingLayoutSettled) {
       return false;
     }
@@ -11191,7 +11374,7 @@ var PreviewDrawingController = class {
     ].join(":");
   }
   reconcileSettledReadingSurface() {
-    if (this.destroyed || this.active || this.surfaceType !== "preview" || this.embeddedSurface || !this.drawingsLoaded || !this.initialReadingLayoutSettled || this.initialReadingSurfaceSettlement || !(this.drawingData?.strokes?.length || this.drawingData?.markdownBlocks?.length)) {
+    if (this.destroyed || this.active || this.surfaceType !== "preview" || this.embeddedSurface || !this.drawingsLoaded || !this.initialReadingLayoutSettled || this.initialReadingSurfaceSettlement || !(this.drawingData?.strokes?.length || this.drawingData?.markdownBlocks?.length) || !this.isCurrentReadingSurface() || this.pointerDown || this.draggingStroke || this.resizingSelection || this.dragTransactionPending) {
       return false;
     }
     const currentSignature = this.readingSurfaceGeometrySignature();
@@ -11210,7 +11393,10 @@ var PreviewDrawingController = class {
     return true;
   }
   queueReadingSurfaceSettlement() {
-    if (this.destroyed || this.active || this.surfaceType !== "preview" || this.embeddedSurface || !this.drawingsLoaded || !this.previewEl?.isConnected || !(this.drawingData?.strokes?.length || this.drawingData?.markdownBlocks?.length)) {
+    if (this.destroyed || this.active || this.surfaceType !== "preview" || this.embeddedSurface || !this.drawingsLoaded || !this.previewEl?.isConnected || !(this.drawingData?.strokes?.length || this.drawingData?.markdownBlocks?.length) || !this.isCurrentReadingSurface()) {
+      if (this.surfaceType === "preview" && !this.isCurrentReadingSurface()) {
+        this.setReadingSurfaceSettling(true);
+      }
       return false;
     }
     if (this.readingSurfaceRepairFrameId !== null) {
@@ -11239,7 +11425,10 @@ var PreviewDrawingController = class {
     return true;
   }
   scheduleReadingSurfaceVisibilityRecovery() {
-    if (this.destroyed || this.active || this.surfaceType !== "preview" || this.embeddedSurface || !this.drawingsLoaded || !this.previewEl?.isConnected || !(this.drawingData?.strokes?.length || this.drawingData?.markdownBlocks?.length)) {
+    if (this.destroyed || this.active || this.surfaceType !== "preview" || this.embeddedSurface || !this.drawingsLoaded || !this.previewEl?.isConnected || !(this.drawingData?.strokes?.length || this.drawingData?.markdownBlocks?.length) || !this.isCurrentReadingSurface() || this.pointerDown || this.draggingStroke || this.resizingSelection || this.dragTransactionPending) {
+      if (this.surfaceType === "preview" && !this.isCurrentReadingSurface()) {
+        this.setReadingSurfaceSettling(true);
+      }
       return false;
     }
     if (this.readingVisibilityRecoveryFrameId !== null || this.readingVisibilityRecoveryTimer !== null) {
@@ -11608,6 +11797,9 @@ var PreviewDrawingController = class {
     }
     this.surfaceAuthorityCurrent = next;
     this.surfaceStateGeneration += 1;
+    if (this.surfaceType === "preview") {
+      this.setReadingSurfaceSettling(!next || !this.isCurrentReadingSurface());
+    }
     this.syncSurfaceAuthorityVisibility();
     if (!next) {
       this.cancelRenderFrame();
@@ -11618,6 +11810,14 @@ var PreviewDrawingController = class {
       clearCanvasContext(this.underlayCtx, this.underlayCanvas);
       clearCanvasContext(this.staticCtx, this.staticCanvas);
     }
+  }
+  isCurrentReadingSurface() {
+    if (this.surfaceType !== "preview") {
+      return true;
+    }
+    const activeLeaf = this.plugin?.app?.workspace?.activeLeaf;
+    const ownerLeaf = this.view?.leaf || findOwningLeaf(this.plugin?.app, this.view?.containerEl || this.previewEl);
+    return !activeLeaf || !ownerLeaf || activeLeaf === ownerLeaf;
   }
   resetCanvasSurface() {
     this.previewEl.removeClass("has-notedraw-canvas");
@@ -11953,7 +12153,17 @@ var PreviewDrawingController = class {
       this.clearSelectionLongPress();
       this.cancelCurrentStroke();
       this.cancelSelectionDrag(true);
-      this.cancelSelectedStrokeDrag(true);
+      const awaitingMarkdownCommit = Boolean(
+        this.dragTransactionPending && this.selectionFrameAwaitingMarkdownSync
+      );
+      const releasedDragCommit = Boolean(
+        this.dragTransactionPending && this.dragStrokeMoved && !this.pointerDown
+      );
+      const preserveDragCommit = awaitingMarkdownCommit || releasedDragCommit;
+      this.cancelSelectedStrokeDrag(!preserveDragCommit, {
+        preserveTransaction: preserveDragCommit,
+        preserveMarkdownDom: awaitingMarkdownCommit
+      });
       this.cancelSelectedStrokeResize(true);
       this.clearSelectedStrokes();
       this.resetTouchGestureState();
@@ -12039,6 +12249,10 @@ var PreviewDrawingController = class {
       if (this.destroyed || generation !== this.drawingLoadGeneration || this.file?.path !== file2?.path) {
         return;
       }
+      if (this.surfaceType === "preview" && !this.isCurrentReadingSurface()) {
+        this.setReadingSurfaceSettling(true);
+        return;
+      }
       if (!this.active && this.surfaceType === "preview") {
         this.initialReadingLayoutPrepared = false;
         this.initialReadingLayoutSettled = false;
@@ -12089,6 +12303,11 @@ var PreviewDrawingController = class {
   }
   onResize() {
     if (this.embeddedSurface && !isElementLaidOut(this.previewEl)) {
+      return;
+    }
+    if (this.surfaceType === "preview" && !this.isCurrentReadingSurface()) {
+      this.lastObservedSurfaceActive = false;
+      this.setReadingSurfaceSettling(true);
       return;
     }
     this.noteViewportZoomChange();
@@ -12959,7 +13178,7 @@ var PreviewDrawingController = class {
     return true;
   }
   async prepareNoteFlowForReading() {
-    if (this.destroyed || this.surfaceType !== "preview" || this.active || !this.drawingsLoaded || !this.drawingsVisible || !this.supportsNoteFlow() || this.noteFlowReadingRepairAttempted || !this.hasNoteFlowElements()) {
+    if (this.destroyed || this.surfaceType !== "preview" || this.active || !this.drawingsLoaded || !this.drawingsVisible || !this.supportsNoteFlow() || !this.isCurrentReadingSurface() || this.noteFlowReadingRepairAttempted || !this.hasNoteFlowElements()) {
       return false;
     }
     this.noteFlowReadingRepairAttempted = true;
@@ -15171,6 +15390,10 @@ ${selected}
   }
   resizeCanvas(options = {}) {
     if (this.destroyed || !this.isSurfaceAuthoritative()) {
+      return false;
+    }
+    if (this.surfaceType === "preview" && !this.isCurrentReadingSurface()) {
+      this.setReadingSurfaceSettling(true);
       return false;
     }
     this.refreshScrollContainer();
@@ -18533,6 +18756,11 @@ ${selected}
     this.dragDrawingHistoryBefore = this.captureDrawingHistorySnapshot();
     this.dragTransactionId += 1;
     this.dragTransactionPending = true;
+    if (!this.plugin.beginDrawingDragTransaction(this, this.dragTransactionId)) {
+      this.dragTransactionPending = false;
+      this.clearSelectedStrokeDragState();
+      return;
+    }
     this.dragStrokeOriginalBounds = this.getStrokeIndexesNormalizedBounds(movableIndexes);
     this.dragElementGroupBounds = new Map(this.elementGroupRecords().filter((group) => group.boxed || group.locked).map((group) => [group.id, this.getElementGroupBounds(group.id)]));
     this.dragHasBoxBackground = Array.from(this.dragElementGroupBounds.keys()).some((id) => Boolean(this.elementGroup(id)?.backgroundColor));
@@ -19750,6 +19978,9 @@ ${selected}
     if (didMove) {
       this.settleReadingBottomExtent();
     }
+    this.plugin.markDrawingDragTransaction(this, dragTransactionId, {
+      didMove: didMove && !noOpMarkdownDrop
+    });
     this.releasePointerCapture(event.pointerId);
     this.clearSelectedStrokeDragState({ preserveMarkdownDom: Boolean(markdownDrop?.domPreview && !noOpMarkdownDrop) });
     if (this.restoreTextHighlightAnchors()) {
@@ -19819,8 +20050,9 @@ ${selected}
     event.preventDefault();
     event.stopPropagation();
   }
-  cancelSelectedStrokeDrag(restoreOriginal = false) {
+  cancelSelectedStrokeDrag(restoreOriginal = false, options = {}) {
     const dragTransactionId = this.dragTransactionId;
+    const preserveTransaction = options.preserveTransaction === true;
     this.clearSelectionLongPress();
     this.cancelDraggedNoteFlowStrokeAnimation(false);
     this.restoreDraggedNoteFlowLivePreview();
@@ -19851,8 +20083,12 @@ ${selected}
     if (this.activePointerId !== null) {
       this.releasePointerCapture(this.activePointerId);
     }
-    this.clearSelectedStrokeDragState();
-    this.completeDragTransaction(dragTransactionId);
+    this.clearSelectedStrokeDragState({
+      preserveMarkdownDom: options.preserveMarkdownDom === true
+    });
+    if (!preserveTransaction) {
+      this.completeDragTransaction(dragTransactionId);
+    }
     if (restoredDrag) {
       this.scheduleNoteFlowLayout({ operation: true });
     }
@@ -19875,11 +20111,18 @@ ${selected}
     if (transactionId !== this.dragTransactionId) {
       return;
     }
+    this.plugin.publishDrawingDragTransaction(this, transactionId);
     this.dragTransactionPending = false;
-    if (this.externalDrawingRefreshPending) {
-      this.externalDrawingRefreshPending = false;
-      this.plugin.scheduleExternalDrawingRefresh(this.file?.path, 0);
-    }
+    this.plugin.completeDrawingDragTransaction(this, transactionId).then(() => {
+      if (this.externalDrawingRefreshPending) {
+        this.externalDrawingRefreshPending = false;
+        this.plugin.scheduleExternalDrawingRefresh(this.file?.path, 0);
+      }
+    }).catch((error) => {
+      if (!this.destroyed) {
+        console.error(`[${PLUGIN_ID}] Failed to finalize drag transaction`, error);
+      }
+    });
   }
   clearSelectedStrokeDragState(options = {}) {
     this.cancelDraggedNoteFlowStrokeAnimation(false);
@@ -26352,6 +26595,10 @@ ${selected}
     if (this.destroyed || this.surfaceType !== "preview" || !this.drawingsLoaded || !this.previewEl?.isConnected) {
       return Promise.resolve(false);
     }
+    if (!this.isCurrentReadingSurface()) {
+      this.setReadingSurfaceSettling(true);
+      return Promise.resolve(false);
+    }
     if (this.noteFlowOperationPending || this.draggingStroke || this.resizingSelection || this.currentStroke?.noteFlow?.enabled) {
       return Promise.resolve(false);
     }
@@ -26532,6 +26779,10 @@ ${selected}
   }
   restoreFrozenNoteFlowLayout() {
     if (this.surfaceType !== "preview" || !this.supportsNoteFlow() || !this.previewEl?.isConnected) {
+      return false;
+    }
+    if (!this.isCurrentReadingSurface()) {
+      this.setReadingSurfaceSettling(true);
       return false;
     }
     this.pruneDisconnectedNoteFlowLayout();

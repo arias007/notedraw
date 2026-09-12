@@ -183,7 +183,7 @@ test("3.4.84 preserves reading content and cross-view frames without hidden-surf
   const responsiveMigration = source.slice(source.indexOf("  initializeAndProjectResponsivePoints("), source.indexOf("  resizeCanvas(options = {})"));
   const surfaceSync = source.slice(source.indexOf("  runSurfaceSync()"), source.indexOf("  scheduleSurfaceSync(", source.indexOf("  runSurfaceSync()")));
   assert.doesNotMatch(responsiveMigration, /scheduleDrawingSave|writeDrawings/);
-  assert.match(source, /for \(const controller of this\.liveControllers\) \{[\s\S]*controller\.syncFloatingControlClasses\(\);\s*const activeLeaf = this\.app\.workspace\?\.activeLeaf[\s\S]*const isCurrentLeaf = controller\.surfaceType !== \"preview\"[\s\S]*if \(isElementVisibleEnough\(controller\.previewEl\) && isCurrentLeaf\) \{\s*controller\.scheduleFrozenNoteFlowLayoutRestore\(\);\s*controller\.scheduleResize\(\{ layout: false, measure: false \}\);/);
+  assert.match(source, /for \(const controller of this\.liveControllers\) \{[\s\S]*controller\.syncFloatingControlClasses\(\);\s*const activeLeaf = this\.app\.workspace\?\.activeLeaf[\s\S]*const isCurrentLeaf = controller\.surfaceType !== \"preview\"[\s\S]*if \(isElementVisibleEnough\(controller\.previewEl\) && isCurrentLeaf\) \{[\s\S]*controller\.scheduleResize\(\{ layout: false, measure: false \}\);/);
   assert.doesNotMatch(surfaceSync, /clearNoteFlowLayout/);
   assert.match(source, /pickRootPreview\(previews, rendererPreview, isElementVisibleEnough, isElementLaidOut\)/);
   assert.match(source, /for \(const alternatePreview of findRootPreviewsForView\(view\)\)/);
