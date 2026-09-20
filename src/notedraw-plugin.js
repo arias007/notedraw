@@ -1684,6 +1684,7 @@ var NoteDrawPlugin = class extends Plugin {
     });
     this.addSettingTab(new NoteDrawSettingTab(this.app, this));
     this.registerEvent(this.app.workspace.on("layout-change", () => {
+      this.openReadingProjectionGates(450);
       this.syncMarkdownModeSurfaces();
       window.requestAnimationFrame(() => this.syncMarkdownModeSurfaces());
       // Layout changes arrive in bursts while Obsidian is opening or switching
@@ -1692,7 +1693,10 @@ var NoteDrawPlugin = class extends Plugin {
       // surface repeatedly.
       this.scheduleSurfaceSync(120);
     }));
-    this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.scheduleSurfaceSync(40)));
+    this.registerEvent(this.app.workspace.on("active-leaf-change", () => {
+      this.openReadingProjectionGates(450);
+      this.scheduleSurfaceSync(40);
+    }));
     this.registerEvent(this.app.workspace.on("file-open", () => this.scheduleSurfaceSync(60)));
     this.registerEvent(this.app.vault.on("create", (file) => {
       this.handleVaultDrawingChange(file);
@@ -1925,6 +1929,16 @@ var NoteDrawPlugin = class extends Plugin {
       if (!controller.destroyed) {
         this.reconcileControllerActivation(controller);
         controller.syncFloatingControlClasses();
+      }
+    }
+  }
+  openReadingProjectionGates(duration = 450) {
+    // Layout bursts and leaf switches move every reading surface at once.
+    // Open the projection gate on each preview controller so strokes hold
+    // their authoritative placement instead of chasing transient frames.
+    for (const controller of this.liveControllers) {
+      if (!controller?.destroyed && controller.surfaceType === "preview") {
+        controller.openReadingProjectionGate?.(duration);
       }
     }
   }
@@ -6561,6 +6575,11 @@ var PreviewDrawingController = class {
     this.lastObservedSurfaceVisibility = null;
     this.lastObservedSurfaceActive = null;
     this.readingSurfaceSettling = false;
+    // View-transition guard: while a reading surface is switching views or
+    // toggling edit mode, its Markdown DOM frame is transient. Re-projecting
+    // strokes against that transient frame paints them at a position that is
+    // about to change again, which is the visible "doodles drift" glitch.
+    this.readingProjectionGateUntil = 0;
     this.surfaceStateGeneration = 0;
     this.readingTouchGuard = createReadingTouchGuardState();
     this.pendingEmbedTool = null;
@@ -7089,7 +7108,12 @@ var PreviewDrawingController = class {
             // The drag preview moves markdown blocks in the DOM on every
             // pointer frame; those are not content changes. Running the full
             // repair/sync here would do an O(blocks) pass per frame and
-            // starve Obsidian (frequent lag while dragging).
+            // starve Obsidian (frequent lag while dragging). Only the frozen
+            // side-by-side row has to survive, otherwise a parallel row
+            // (e.g. side-by-side tasks) visually collapses while dragging.
+            if (this.pendingMarkdownIdentityRefresh?.expiresAt > Date.now()) {
+              this.restorePendingMarkdownIdentityPresentation(mutations);
+            }
             return;
           }
           if (this.pendingMarkdownIdentityRefresh?.expiresAt > Date.now()) {
@@ -7489,7 +7513,25 @@ var PreviewDrawingController = class {
       return;
     }
     this.readingSurfaceSettling = Boolean(settling);
+    if (this.readingSurfaceSettling) {
+      // Every transition starts by marking the surface as settling. Hold the
+      // last authoritative stroke placement while the DOM frame moves.
+      this.openReadingProjectionGate(600);
+    }
     this.previewEl?.toggleClass("is-notedraw-layout-settling", this.readingSurfaceSettling);
+  }
+  openReadingProjectionGate(duration = 450) {
+    if (this.surfaceType !== "preview" || this.destroyed) {
+      return;
+    }
+    const wait = Math.max(120, Number(duration) || 450);
+    this.readingProjectionGateUntil = Math.max(this.readingProjectionGateUntil, Date.now() + wait);
+  }
+  readingProjectionGated() {
+    return this.surfaceType === "preview"
+      && this.responsivePointsInitialized === true
+      && !this.destroyed
+      && Date.now() < this.readingProjectionGateUntil;
   }
   applySettings() {
     const settings = sanitizeSettings(this.plugin?.noteDrawSettings || {});
@@ -8131,6 +8173,11 @@ var PreviewDrawingController = class {
     const wasActive = this.active;
     this.active = Boolean(active);
     if (wasActive !== this.active) {
+      // Entering or leaving edit mode can shift the reading frame (toolbar,
+      // floating controls). Hold stroke placement while the frame settles.
+      if (this.surfaceType === "preview") {
+        this.openReadingProjectionGate(450);
+      }
       this.surfaceStateGeneration += 1;
       // Do not let a settlement started on the opposite surface block the
       // fresh reading pass queued below. Its generation checks make it inert.
@@ -11730,6 +11777,15 @@ var PreviewDrawingController = class {
         if (this.viewportZoomProjectionLock) {
           this.scheduleViewportZoomSettle(this.viewportZoomProjectionGuardUntil - Date.now() + 60);
         }
+      } else if (this.readingProjectionGated()) {
+        // A view transition is still moving the Markdown frame. Projecting
+        // now would anchor strokes to a transient DOM state and visibly
+        // drift them; keep the current absolute placement and project once
+        // after the transition settles.
+        this.preserveAbsoluteStrokePlacement(previousCanvasWidth, previousCanvasHeight);
+        this.scheduleResponsiveProjectionSettle(this.readingProjectionGateUntil - Date.now() + 120, {
+          preserveNoteFlowAbsolute: options.preserveNoteFlowAbsolute === true && previousCanvasWidth > 1 && previousCanvasHeight > 1
+        });
       } else if (!this.responsivePointsInitialized || signature !== this.responsiveLayoutSignature) {
         this.responsiveLayoutContext = null;
         const context = this.getResponsiveLayoutContext(true);
@@ -18564,7 +18620,11 @@ var PreviewDrawingController = class {
     const hitPoint = this.pointToCanvas(point);
     const width = this.canvasWidth();
     const height = this.canvasHeight();
+    const hitPadding = Math.min(12, this.selectionHitPaddingPx());
     let boxHit = -1;
+    let boxFromDomRect = false;
+    let fringeStroke = -1;
+    let fringeStrokeRatio = Number.POSITIVE_INFINITY;
     for (let index = this.drawingData.strokes.length - 1; index >= 0; index -= 1) {
       const stroke = this.drawingData.strokes[index];
       if (!this.isStrokeVisibleOnSurface(stroke)) {
@@ -18576,19 +18636,45 @@ var PreviewDrawingController = class {
         ? this.embedNodes?.get?.(String(index))
         : null;
       const domRect = domNode?.isConnected ? domNode.getBoundingClientRect?.() : null;
-      const hit = domRect && clientPoint
-        ? clientPointInRect(domRect, clientPoint)
-        : strokeHitTest(stroke, hitPoint, width, height, threshold);
+      if (domRect && clientPoint) {
+        // Embed/rich-text elements are painted above the canvas. A zero
+        // tolerance rect made small embeds nearly impossible to select; give
+        // them the same hit padding the stroke hit test enjoys.
+        if (boxHit < 0 && clientPointInRect(domRect, clientPoint, hitPadding)) {
+          boxHit = index;
+          boxFromDomRect = true;
+        }
+        continue;
+      }
+      const hit = strokeHitTest(stroke, hitPoint, width, height, threshold);
       if (!hit) {
         continue;
       }
       if (isTextLikeStroke(stroke) || isEmbedStroke(stroke)) {
         if (boxHit < 0) {
           boxHit = index;
+          boxFromDomRect = false;
         }
       } else {
-        return index;
+        // A hit well inside the threshold (the core zone) selects the stroke
+        // immediately, as before. A fringe hit (only inside the padding ring)
+        // must not steal the pointer from text/embed content painted above
+        // the canvas — that used to make such elements unselectable.
+        const ratio = strokeHitDistanceRatio(stroke, hitPoint, width, height, threshold);
+        if (ratio <= 0.5) {
+          return index;
+        }
+        if (ratio < fringeStrokeRatio) {
+          fringeStroke = index;
+          fringeStrokeRatio = ratio;
+        }
       }
+    }
+    if (boxFromDomRect) {
+      return boxHit;
+    }
+    if (fringeStroke >= 0) {
+      return fringeStroke;
     }
     return boxHit;
   }
@@ -19238,7 +19324,14 @@ var PreviewDrawingController = class {
           && item.explicitLineGroup === group
           && item.textHint === hint);
         if (!block) {
-          const base = template || {
+          // A re-render creates fresh default records (span=12). When a
+          // pending identity snapshot already confirmed this block as part of
+          // a side-by-side row, inherit that layout so the row never paints
+          // as a single column while the record is rebuilt.
+          const pendingMember = this.pendingMarkdownIdentityRefresh?.expiresAt > Date.now()
+            ? (this.pendingMarkdownIdentityRefresh.members || []).find((member) => member.path === path && Number(member.lineStart) === line)
+            : null;
+          const defaultBase = {
             path,
             span: 12,
             noteFlowAutoSpan: false,
@@ -19255,6 +19348,14 @@ var PreviewDrawingController = class {
             locked: false,
             groupId: ""
           };
+          const base = template || (pendingMember
+            ? {
+              ...defaultBase,
+              span: pendingMember.span,
+              widthScale: pendingMember.widthScale,
+              noteFlowAutoSpan: false
+            }
+            : defaultBase);
           block = normalizeMarkdownBlocks([{
             ...base,
             id: `${base.id || `md-${Date.now().toString(36)}`}-${hashString(`${group}:${line}:${hint}`)}`,
@@ -20242,8 +20343,13 @@ var PreviewDrawingController = class {
         block.floating = false;
         block.floatingExplicit = false;
         block.floatBox = null;
-        block.span = 12;
-        block.widthScale = 1;
+        // Returning a block to the flow must not erase a user-confirmed
+        // side-by-side layout. Resetting the span here used to collapse a
+        // parallel row whenever a transient overlap repair ran mid-render.
+        if (!(Number(block.span) >= 1 && Number(block.span) < 12)) {
+          block.span = 12;
+          block.widthScale = 1;
+        }
         element.removeClass("is-floating");
         this.applyMarkdownBlockFlowPresentation(block, element);
         for (const property of ["--notedraw-md-float-x", "--notedraw-md-float-y", "--notedraw-md-float-width"]) {
@@ -31330,6 +31436,34 @@ function distanceToSegment(point, start, end) {
     y: start.y + t * dy
   };
   return pointerDistance(point, projection);
+}
+// Distance from the hit point to a stroke as a ratio of its hit threshold:
+// 0 means dead center, 1 means right at the threshold edge. Callers use it to
+// separate solid "core" hits from fringe hits inside the padding ring.
+function strokeHitDistanceRatio(stroke, hitPoint, width, height, threshold) {
+  if (!(threshold > 0)) {
+    return 1;
+  }
+  if (stroke.points.length === 1) {
+    return pointerDistance({
+      x: stroke.points[0].x * width,
+      y: stroke.points[0].y * height
+    }, hitPoint) / threshold;
+  }
+  let best = Number.POSITIVE_INFINITY;
+  let previous = {
+    x: stroke.points[0].x * width,
+    y: stroke.points[0].y * height
+  };
+  for (let index = 1; index < stroke.points.length; index += 1) {
+    const current = {
+      x: stroke.points[index].x * width,
+      y: stroke.points[index].y * height
+    };
+    best = Math.min(best, distanceToSegment(hitPoint, previous, current));
+    previous = current;
+  }
+  return Number.isFinite(best) ? best / threshold : 1;
 }
 function clampCanvasFrameForDisplay(frame, canvasWidth, canvasHeight) {
   if (!frame || !Number.isFinite(frame.x) || !Number.isFinite(frame.y)

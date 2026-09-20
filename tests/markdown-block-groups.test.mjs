@@ -1106,7 +1106,7 @@ test("Markdown editing and drop commits use the same visible target snapshot", a
 
   assert.match(source, /markdownElementVisibleClientRect\(element\)[\s\S]*trimMarkdownClientRect/);
   assert.match(source, /markdownElementContainsClientPoint\(element, clientPoint/);
-  assert.match(source, /findStrokeAt\(point, clientPoint = null\)[\s\S]*clientPointInRect\(domRect, clientPoint\)/);
+  assert.match(source, /findStrokeAt\(point, clientPoint = null\)[\s\S]*clientPointInRect\(domRect, clientPoint, hitPadding\)/);
   assert.match(dropSource, /lockedTargetPromise[\s\S]*resolveSourceDropTarget/);
   assert.match(dropSource, /lockedMovingTargets[\s\S]*strictMoving: true/);
   assert.match(dropSource, /drop\.row \|\| this\.markdownDropRowMetrics/);

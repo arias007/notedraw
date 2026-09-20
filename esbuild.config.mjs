@@ -16,5 +16,9 @@ await esbuild.build({
   outfile: "main.js",
   sourcemap: false,
   treeShaking: true,
+  // Minifying roughly halves the bundle Obsidian must parse at startup, and
+  // keeping UTF-8 verbatim avoids bloating Chinese text into escape sequences.
+  minify: true,
+  charset: "utf8",
   legalComments: "none",
 });
