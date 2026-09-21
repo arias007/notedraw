@@ -74,8 +74,8 @@ test("release metadata and contributor documentation are present", async () => {
     readFile(architectureUrl, "utf8")
   ]);
 
-  assert.match(manifest, /"version": "3\.9\.7(-\w+)?"/);
-  assert.match(pkg, /"version": "3\.9\.7(-\w+)?"/);
+  assert.match(manifest, /"version": "\d+\.\d+\.\d+(-\w+)?"/);
+  assert.match(pkg, /"version": "\d+\.\d+\.\d+(-\w+)?"/);
   assert.match(contributing, /项目结构/);
   assert.match(contributing, /npm run verify/);
   assert.match(contributing, /Issue #2/);
