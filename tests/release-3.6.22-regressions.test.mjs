@@ -44,7 +44,9 @@ test("reading checkbox mutations reapply the frozen parallel row widths", async 
   const mutation = source.slice(source.indexOf("  rememberMarkdownIdentityMutation("), source.indexOf("  restorePendingMarkdownIdentityPresentation("));
   const restore = source.slice(source.indexOf("  restorePendingMarkdownIdentityWidths("), source.indexOf("  ensureReadingHeadingCollapseIndicators("));
 
-  assert.ok(mutation.includes("for (const delay of [0, 48, 180, 420, 900])"));
+  assert.ok(mutation.includes("this.cancelMarkdownIdentityRestore()"));
+  assert.ok(mutation.includes("this.scheduleMarkdownIdentityRestore()"));
+  assert.ok(mutation.includes("markdownIdentityRestoreInFlight"));
   assert.ok(mutation.includes("restorePendingMarkdownIdentityPresentation()"));
   assert.ok(restore.includes("block.span = span"));
   assert.ok(restore.includes("block.widthScale = widthScale"));

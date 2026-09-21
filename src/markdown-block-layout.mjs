@@ -66,16 +66,17 @@ export function trimMarkdownClientRect(rect, {
   };
 }
 
-export function clientPointInRect(rect, clientPoint = {}) {
+export function clientPointInRect(rect, clientPoint = {}, padding = 0) {
   const x = Number(clientPoint?.x);
   const y = Number(clientPoint?.y);
+  const pad = Math.max(0, Number(padding) || 0);
   return Boolean(rect)
     && Number.isFinite(x)
     && Number.isFinite(y)
-    && x >= rect.left
-    && x <= rect.right
-    && y >= rect.top
-    && y <= rect.bottom;
+    && x >= rect.left - pad
+    && x <= rect.right + pad
+    && y >= rect.top - pad
+    && y <= rect.bottom + pad;
 }
 
 export function markdownClientRectsOverlap(first, second, minimumOverlap = 4) {

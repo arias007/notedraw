@@ -235,7 +235,8 @@ test("Markdown blocks and inserted ink share the real NoteFlow row contract", as
   assert.match(presentation, /return isNoteFlowCollectionBlock\(container\) \? null : container/);
   assert.match(presentation, /const gridContainer = this\.ensureMarkdownBlockGridRow\(block, element\)[\s\S]*this\.markdownBlockGridContainer\(element\)/);
   assert.match(presentation, /flowElement\.classList\.toggle\("notedraw-md-grid-item", Boolean\(gridContainer\)\)/);
-  assert.match(presentation, /flowElement\.style\.gridColumn = `span/);
+  assert.match(presentation, /const desiredColumn = !gridContainer \|\| block\?\.floating \? "" : `span \$\{inlineSpan\}`/);
+  assert.match(presentation, /flowElement\.style\.gridColumn = desiredColumn/);
   assert.match(presentation, /markdownBlockGridContainer\(element\)/);
   assert.match(styles, /\.notedraw-md-grid > \.notedraw-md-grid-item/);
   assert.doesNotMatch(styles, /@container \(max-width: 520px\)[\s\S]*grid-column: 1 \/ -1 !important/);
@@ -1003,7 +1004,10 @@ test("Markdown DOM replacement preserves parallel width when rendered text chang
   assert.match(presentationSource, /scored\.score >= 1000/);
   assert.match(presentationSource, /takeUnused\(exactCandidates\.get\(exactKey\), block\)[\s\S]*takeUnused\(hintCandidates\.get\(hintKey\), block\)/);
   assert.doesNotMatch(presentationSource, /takeUnused\(lineCandidates\.get\(lineKey\)/);
-  assert.match(recordSource, /const compatible = \(block\) => explicitGroup[\s\S]*const matching = candidates\.filter\(\(block\) => compatible\(block\)/);
+  assert.match(recordSource, /const compatible = \(block\) => explicitGroup[\s\S]*const hintMatching = candidates\.filter\(\(block\) => compatible\(block\)/);
+  // Rendered text is the stable identity signal; a bare line range is only
+  // consulted last because Obsidian rewrites `data-line` on every re-render.
+  assert.match(recordSource, /hintMatching\.find\([\s\S]*\|\| \(rangeFallbackAllowed \? rangeMatching\[0\] : null\)/);
   assert.match(reconcileSource, /activeInlineFlows[\s\S]*hasSemanticInlineMatch/);
   assert.match(reconcileSource, /!this\.noteFlowMarkdownAnnotationComplete \|\| !this\.markdownBlockElement\(block\)\?\.isConnected/);
 });
@@ -1106,7 +1110,7 @@ test("Markdown editing and drop commits use the same visible target snapshot", a
 
   assert.match(source, /markdownElementVisibleClientRect\(element\)[\s\S]*trimMarkdownClientRect/);
   assert.match(source, /markdownElementContainsClientPoint\(element, clientPoint/);
-  assert.match(source, /findStrokeAt\(point, clientPoint = null\)[\s\S]*clientPointInRect\(domRect, clientPoint\)/);
+  assert.match(source, /findStrokeAt\(point, clientPoint = null\)[\s\S]*clientPointInRect\(domRect, clientPoint, hitPadding\)/);
   assert.match(dropSource, /lockedTargetPromise[\s\S]*resolveSourceDropTarget/);
   assert.match(dropSource, /lockedMovingTargets[\s\S]*strictMoving: true/);
   assert.match(dropSource, /drop\.row \|\| this\.markdownDropRowMetrics/);
@@ -1285,4 +1289,108 @@ test("boxed and locked groups keep member selection, exact frames, and drag memb
   assert.match(styles, /\.notedraw-md-block \{/);
   assert.match(styles, /isolation: isolate/);
   assert.match(styles, /pointer-events: none/);
+});
+
+test("Markdown block dedupe collapses two records that claim the same text on overlapping lines", () => {
+  // Reproduces the real persisted state of a parallel task list: the live task
+  // at line 2..2 and a stale capture of the whole list at 2..6, both labelled
+  // "Task B". Identity matching could bind either one to the rendered element,
+  // so the row repacked differently on every pass.
+  const records = dedupeMarkdownBlockRecords([
+    {
+      id: "task-b-live",
+      path: "note.md",
+      lineStart: 2,
+      lineEnd: 2,
+      textHint: "Task B",
+      span: 3,
+      widthScale: 1,
+      noteFlowAutoSpan: false
+    },
+    {
+      id: "task-b-stale-list-capture",
+      path: "note.md",
+      lineStart: 2,
+      lineEnd: 6,
+      textHint: "Task B",
+      span: 3,
+      widthScale: 1,
+      noteFlowAutoSpan: false
+    },
+    {
+      id: "task-a",
+      path: "note.md",
+      lineStart: 4,
+      lineEnd: 4,
+      textHint: "Task A",
+      span: 3,
+      widthScale: 1,
+      noteFlowAutoSpan: false
+    }
+  ]);
+
+  assert.equal(records.length, 2);
+  const taskB = records.filter((record) => record.textHint === "Task B");
+  assert.equal(taskB.length, 1);
+  // The tighter description wins, so the surviving record keeps the live range.
+  assert.equal(taskB[0].id, "task-b-live");
+  assert.equal(taskB[0].lineStart, 2);
+  assert.equal(taskB[0].lineEnd, 2);
+  assert.equal(taskB[0].span, 3);
+});
+
+test("Markdown block dedupe keeps identical text on separate lines apart", () => {
+  const records = dedupeMarkdownBlockRecords([
+    {
+      id: "morning",
+      path: "note.md",
+      lineStart: 3,
+      lineEnd: 3,
+      textHint: "- [ ] Workout",
+      span: 6,
+      widthScale: 1
+    },
+    {
+      id: "evening",
+      path: "note.md",
+      lineStart: 20,
+      lineEnd: 20,
+      textHint: "- [ ] Workout",
+      span: 6,
+      widthScale: 1
+    }
+  ]);
+
+  assert.equal(records.length, 2);
+  assert.deepEqual(records.map((record) => record.id).sort(), ["evening", "morning"]);
+});
+
+test("a parallel row interaction freezes the layout so no second pass can repack it", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+
+  // The intent is captured from the live DOM, and blocks that were not already
+  // inline may not start an inline row while the window is open.
+  assert.match(source, /this\.markdownLayoutHoldUntil = Date\.now\(\) \+ MARKDOWN_LAYOUT_HOLD_MS;/);
+  assert.match(source, /this\.markdownLayoutHoldSpans = new Map\(members\.map\(\(member\) => \[/);
+  assert.match(source, /markdownLayoutHoldSpanFor\(blockId, blockPath = ""\)/);
+  assert.match(source, /const frozen = this\.markdownLayoutHoldSpanFor\(block\?\.id, String\(block\?\.path \|\| ""\)\);/);
+  assert.match(source, /const inlineSpan = clamp\(Math\.round\(Number\(frozen\?\.span \?\? block\?\.span\) \|\| 12\), 1, 12\);/);
+  assert.match(source, /if \(this\.markdownLayoutHoldActive\(\) && !frozen && !alreadyInlineElement\) \{[\s\S]*?return flowElement;/);
+  assert.match(source, /const alreadyInlineElement = Boolean\(flowElement\?\.classList\?\.contains\("notedraw-md-inline-grid-item"\)\);/);
+
+  // The coalesced sync must not run a competing presentation pass in that window.
+  assert.match(source, /if \(this\.markdownLayoutHoldActive\(\)\) \{[\s\S]*?this\.scheduleMarkdownLayoutHoldSettle\(\);[\s\S]*?return;/);
+  // The idle rAF/fallback pass must not fall through to the heavy reconciliation.
+  assert.match(source, /if \(this\.markdownLayoutHoldActive\(\)\) \{[\s\S]*?return true;[\s\S]*?\n    \}\n    this\.syncMarkdownBlockPresentation\(\);/);
+  // A renderer that only toggles attributes emits no mutation payload, so the
+  // idle pass still needs unbound candidates to rebind against.
+  assert.match(source, /if \(!addedCandidates\.length\) \{[\s\S]*?if \(!candidate\?\.dataset\?\.noteDrawMarkdownBlockId\) \{/);
+  // Exactly one reconciliation pass, after the window closes.
+  assert.match(source, /scheduleMarkdownLayoutHoldSettle\(\) \{[\s\S]*?this\.syncMarkdownBlockPresentation\(\);[\s\S]*?this\.releaseMarkdownLayoutHold\(\);[\s\S]*?this\.scheduleResize\(\{ layout: true, measure: true \}\);/);
+  // The drawing must not chase the reflow: one bounded projection hold per burst.
+  assert.match(source, /this\.openReadingProjectionGate\(MARKDOWN_LAYOUT_HOLD_MS\);/);
+  assert.match(source, /armMarkdownRepackProjectionGate\(\) \{[\s\S]*?if \(Date\.now\(\) >= Number\(this\.readingProjectionGateUntil \|\| 0\)\) \{[\s\S]*?this\.openReadingProjectionGate\(450\);/);
+  assert.match(source, /this\.armMarkdownRepackProjectionGate\(\);/);
+  // Cleanup.
+  assert.match(source, /markdownLayoutHoldSettleTimer = null;[\s\S]{0,40}this\.markdownLayoutHoldUntil = 0;[\s\S]{0,40}this\.markdownLayoutHoldSpans = null;/);
 });

@@ -227,6 +227,14 @@ var MAX_READING_ZOOM = 100;
 var READING_ZOOM_NORMALIZATION_EPSILON = 0.03;
 var DRAG_PEER_ANIMATION_MS = 150;
 var DRAG_STROKE_ANIMATION_MS = 160;
+// A single user action on a parallel row (for example ticking a task) makes
+// Obsidian replace the list DOM, and several of NoteDraw's own passes can then
+// re-read that DOM. Every one of those passes used to be free to repack the row
+// from freshly annotated records; when two passes disagree the row visibly
+// jitters. For this long, the layout intent captured from the live DOM at the
+// moment of the action is the only authority, and blocks that were not already
+// part of an inline row may not start one.
+var MARKDOWN_LAYOUT_HOLD_MS = 1200;
 var MOUSE_SELECTED_DRAG_ACTIVATION_PX = 3;
 var TOUCH_SELECTED_DRAG_ACTIVATION_PX = 5;
 var MIN_INLINE_NOTE_FLOW_ITEM_WIDTH_PX = 18;
@@ -1684,6 +1692,7 @@ var NoteDrawPlugin = class extends Plugin {
     });
     this.addSettingTab(new NoteDrawSettingTab(this.app, this));
     this.registerEvent(this.app.workspace.on("layout-change", () => {
+      this.openReadingProjectionGates(450);
       this.syncMarkdownModeSurfaces();
       window.requestAnimationFrame(() => this.syncMarkdownModeSurfaces());
       // Layout changes arrive in bursts while Obsidian is opening or switching
@@ -1692,7 +1701,10 @@ var NoteDrawPlugin = class extends Plugin {
       // surface repeatedly.
       this.scheduleSurfaceSync(120);
     }));
-    this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.scheduleSurfaceSync(40)));
+    this.registerEvent(this.app.workspace.on("active-leaf-change", () => {
+      this.openReadingProjectionGates(450);
+      this.scheduleSurfaceSync(40);
+    }));
     this.registerEvent(this.app.workspace.on("file-open", () => this.scheduleSurfaceSync(60)));
     this.registerEvent(this.app.vault.on("create", (file) => {
       this.handleVaultDrawingChange(file);
@@ -1925,6 +1937,16 @@ var NoteDrawPlugin = class extends Plugin {
       if (!controller.destroyed) {
         this.reconcileControllerActivation(controller);
         controller.syncFloatingControlClasses();
+      }
+    }
+  }
+  openReadingProjectionGates(duration = 450) {
+    // Layout bursts and leaf switches move every reading surface at once.
+    // Open the projection gate on each preview controller so strokes hold
+    // their authoritative placement instead of chasing transient frames.
+    for (const controller of this.liveControllers) {
+      if (!controller?.destroyed && controller.surfaceType === "preview") {
+        controller.openReadingProjectionGate?.(duration);
       }
     }
   }
@@ -6379,6 +6401,14 @@ var PreviewDrawingController = class {
     this.enteredElementGroupIds = /* @__PURE__ */ new Set();
     this.selectionFrameSnapshot = null;
     this.selectionFrameAwaitingMarkdownSync = null;
+    // Timestamp for the wait flag above. Without it a commit whose follow-up
+    // Markdown sync never runs keeps the flag forever, and every later
+    // selection paints without a frame.
+    this.selectionFrameAwaitingMarkdownSyncAt = 0;
+    this.selectionFrameRecoveryFrameId = null;
+    this.markdownIdentityRestoreFrameId = null;
+    this.markdownIdentityRestoreFallbackTimer = null;
+    this.markdownIdentityRestoreInFlight = false;
     this.embedRepairTimer = null;
     this.markdownMutationSyncTimer = null;
     this.deletedTextHighlightPruneTimer = null;
@@ -6486,6 +6516,10 @@ var PreviewDrawingController = class {
     this.previewPrimaryPress = null;
     this.pendingMarkdownIdentityRefresh = null;
     this.allowMarkdownPresentationDuringDrag = false;
+    this.markdownLayoutHoldUntil = 0;
+    this.markdownLayoutHoldFile = "";
+    this.markdownLayoutHoldSpans = null;
+    this.markdownLayoutHoldSettleTimer = null;
     this.noteFlowDropIndicator = null;
     this.resizingSelection = false;
     this.resizeSelectionHandle = null;
@@ -6561,6 +6595,18 @@ var PreviewDrawingController = class {
     this.lastObservedSurfaceVisibility = null;
     this.lastObservedSurfaceActive = null;
     this.readingSurfaceSettling = false;
+    // View-transition guard: while a reading surface is switching views or
+    // toggling edit mode, its Markdown DOM frame is transient. Re-projecting
+    // strokes against that transient frame paints them where they will not
+    // stay, which is the visible "doodles drift / display unstable" glitch.
+    this.readingProjectionGateUntil = 0;
+    // Confirmed measurement cache. A single transient measurement (Obsidian
+    // re-layouts several times during a view switch) must not be committed as
+    // the canvas geometry: that produces a wrong scale for one or more frames
+    // and the correction is visible as a jump.
+    this.stableMeasurement = null;
+    this.geometryHoldScheduledUntil = 0;
+    this.geometryHoldTimer = null;
     this.surfaceStateGeneration = 0;
     this.readingTouchGuard = createReadingTouchGuardState();
     this.pendingEmbedTool = null;
@@ -7089,7 +7135,12 @@ var PreviewDrawingController = class {
             // The drag preview moves markdown blocks in the DOM on every
             // pointer frame; those are not content changes. Running the full
             // repair/sync here would do an O(blocks) pass per frame and
-            // starve Obsidian (frequent lag while dragging).
+            // starve Obsidian (frequent lag while dragging). The frozen
+            // side-by-side row still has to survive, otherwise a parallel row
+            // (for example side-by-side tasks) collapses while being dragged.
+            if (this.pendingMarkdownIdentityRefresh?.expiresAt > Date.now()) {
+              this.restorePendingMarkdownIdentityPresentation(mutations);
+            }
             return;
           }
           if (this.pendingMarkdownIdentityRefresh?.expiresAt > Date.now()) {
@@ -7489,7 +7540,95 @@ var PreviewDrawingController = class {
       return;
     }
     this.readingSurfaceSettling = Boolean(settling);
+    if (this.readingSurfaceSettling) {
+      // Every transition starts by marking the surface as settling. Hold the
+      // last authoritative stroke placement while the DOM frame moves.
+      this.openReadingProjectionGate(600);
+    }
     this.previewEl?.toggleClass("is-notedraw-layout-settling", this.readingSurfaceSettling);
+  }
+  openReadingProjectionGate(duration = 450) {
+    if (this.surfaceType !== "preview" || this.destroyed) {
+      return;
+    }
+    const wait = Math.max(120, Number(duration) || 450);
+    this.readingProjectionGateUntil = Math.max(this.readingProjectionGateUntil, Date.now() + wait);
+  }
+  readingProjectionGated() {
+    return this.surfaceType === "preview"
+      && this.responsivePointsInitialized === true
+      && !this.destroyed
+      && Date.now() < this.readingProjectionGateUntil;
+  }
+  markdownLayoutHoldActive() {
+    if (this.destroyed || !(Number(this.markdownLayoutHoldUntil) > Date.now())) {
+      return false;
+    }
+    return true;
+  }
+  // Whenever the plugin itself repacks a row, the Markdown frame is about to
+  // move under the drawing. Hold the absolute stroke placement for one short
+  // window so the strokes do not chase the intermediate frames. The window is
+  // never extended by a later write in the same burst, so a note with many
+  // inline rows still settles promptly instead of holding the drawing forever.
+  armMarkdownRepackProjectionGate() {
+    if (this.draggingStroke || this.resizingSelection) {
+      return;
+    }
+    if (Date.now() >= Number(this.readingProjectionGateUntil || 0)) {
+      this.openReadingProjectionGate(450);
+    }
+  }
+  // The frozen layout for a block, if the user just interacted with its row.
+  markdownLayoutHoldSpanFor(blockId, blockPath = "") {
+    if (!this.markdownLayoutHoldActive()) {
+      return null;
+    }
+    if (this.markdownLayoutHoldFile && blockPath && this.markdownLayoutHoldFile !== blockPath) {
+      return null;
+    }
+    const frozen = this.markdownLayoutHoldSpans?.get?.(blockId);
+    return frozen && Number(frozen.span) >= 1 && Number(frozen.span) < 12 ? frozen : null;
+  }
+  releaseMarkdownLayoutHold() {
+    if (this.markdownLayoutHoldSettleTimer !== null) {
+      window.clearTimeout(this.markdownLayoutHoldSettleTimer);
+      this.markdownLayoutHoldSettleTimer = null;
+    }
+    this.markdownLayoutHoldUntil = 0;
+    this.markdownLayoutHoldSpans = null;
+    this.markdownLayoutHoldFile = "";
+  }
+  // One reconciliation pass, after the frozen window closes. While the window
+  // is open every competing pass is suppressed, so this is the only moment the
+  // row is allowed to be rebuilt from persisted records.
+  scheduleMarkdownLayoutHoldSettle() {
+    if (this.markdownLayoutHoldSettleTimer !== null) {
+      window.clearTimeout(this.markdownLayoutHoldSettleTimer);
+    }
+    const remaining = Math.max(80, Number(this.markdownLayoutHoldUntil) - Date.now() + 60);
+    this.markdownLayoutHoldSettleTimer = window.setTimeout(() => {
+      this.markdownLayoutHoldSettleTimer = null;
+      if (this.destroyed || !this.previewEl?.isConnected) {
+        this.releaseMarkdownLayoutHold();
+        return;
+      }
+      // Run the pass while the frozen intent is still in force, then release.
+      this.syncMarkdownBlockPresentation();
+      this.releaseMarkdownLayoutHold();
+      this.scheduleResize({ layout: true, measure: true });
+    }, remaining);
+  }
+  // A measurement is only trusted once the same CSS size is observed twice in
+  // a row. During view transitions Obsidian reports intermediate sizes; acting
+  // on them wobbles the whole drawing surface.
+  confirmCanvasMeasurement(width, height) {
+    const previous = this.stableMeasurement;
+    const rounded = { width: Math.round(width), height: Math.round(height) };
+    this.stableMeasurement = { ...rounded, at: Date.now() };
+    return Boolean(previous
+      && Math.abs(previous.width - rounded.width) <= 1
+      && Math.abs(previous.height - rounded.height) <= 1);
   }
   applySettings() {
     const settings = sanitizeSettings(this.plugin?.noteDrawSettings || {});
@@ -7933,6 +8072,19 @@ var PreviewDrawingController = class {
     this.cancelPositionFrame();
     this.cancelReadingVirtualSectionSync();
     this.cancelReadingZoomSettle();
+    this.cancelSelectionFrameRecovery();
+    this.cancelMarkdownIdentityRestore();
+    if (this.markdownLayoutHoldSettleTimer !== null) {
+      window.clearTimeout(this.markdownLayoutHoldSettleTimer);
+      this.markdownLayoutHoldSettleTimer = null;
+    }
+    this.markdownLayoutHoldUntil = 0;
+    this.markdownLayoutHoldSpans = null;
+    this.markdownLayoutHoldFile = "";
+    if (this.geometryHoldTimer !== null) {
+      window.clearTimeout(this.geometryHoldTimer);
+      this.geometryHoldTimer = null;
+    }
     if (this.scrollSettleTimer !== null) {
       window.clearTimeout(this.scrollSettleTimer);
       this.scrollSettleTimer = null;
@@ -8131,6 +8283,11 @@ var PreviewDrawingController = class {
     const wasActive = this.active;
     this.active = Boolean(active);
     if (wasActive !== this.active) {
+      // Entering or leaving edit mode shifts the reading frame (toolbar,
+      // floating controls). Hold stroke placement while it settles.
+      if (this.surfaceType === "preview") {
+        this.openReadingProjectionGate(450);
+      }
       this.surfaceStateGeneration += 1;
       // Do not let a settlement started on the opposite surface block the
       // fresh reading pass queued below. Its generation checks make it inert.
@@ -8776,6 +8933,17 @@ var PreviewDrawingController = class {
       }
       this.repairConnectedReadingSections();
       this.reconcileSettledReadingSurface();
+      if (this.markdownLayoutHoldActive()) {
+        // The user just acted on a parallel row and the renderer is still
+        // swapping nodes. Repairing the reading surface is safe, but running a
+        // second presentation pass here would repack the row from records that
+        // were annotated a moment ago — the row then jumps twice.
+        this.scheduleReadingVirtualSectionSync();
+        this.scheduleResize({ layout: false, measure: false });
+        this.scheduleEmbedRepair();
+        this.scheduleMarkdownLayoutHoldSettle();
+        return;
+      }
       const editingLayout = this.active && (
         this.toolMode === TOOL_EDIT_MD
         || this.noteFlowOperationPending
@@ -11612,6 +11780,36 @@ var PreviewDrawingController = class {
       measured = { visibleWidth: Math.max(1, this.previewEl.getBoundingClientRect?.().width || width) };
     }
     const visible = measureVisibleSurfaceWindow(this.previewEl, this.scrollContainer, height, visualScale);
+    // A view transition reports intermediate preview sizes for a few frames.
+    // Committing one of them rescales every stroke and then rescales them back
+    // — the visible wobble. While a transition is armed, hold the last
+    // confirmed geometry and re-measure once it settles. Only one follow-up
+    // measurement is scheduled per transition window, so this cannot spin.
+    if (refreshGeometry && !initialMeasure
+      && this.surfaceType === "preview"
+      && (this.readingSurfaceSettling || Date.now() < this.readingProjectionGateUntil)
+      && (Math.abs(width - previousCanvasWidth) > 1 || Math.abs(height - previousCanvasHeight) > 1)) {
+      const retryAt = Math.max(Date.now() + 80, this.readingProjectionGateUntil + 120);
+      if (!(this.geometryHoldScheduledUntil >= retryAt - 40)) {
+        this.geometryHoldScheduledUntil = retryAt;
+        const wait = Math.max(80, retryAt - Date.now());
+        if (this.geometryHoldTimer !== null) {
+          window.clearTimeout(this.geometryHoldTimer);
+        }
+        this.geometryHoldTimer = window.setTimeout(() => {
+          this.geometryHoldTimer = null;
+          if (this.destroyed) {
+            return;
+          }
+          this.scheduleResize({ layout: true, measure: true });
+        }, wait);
+      }
+      return false;
+    }
+    if (refreshGeometry && !initialMeasure && this.surfaceType === "preview") {
+      this.geometryHoldScheduledUntil = 0;
+      this.confirmCanvasMeasurement(width, height);
+    }
     const isMobile = isMobileRuntime();
     const devicePixelRatio = window.devicePixelRatio || 1;
     const maxDevicePixelRatio = isMobile ? 4 : 3;
@@ -11730,6 +11928,15 @@ var PreviewDrawingController = class {
         if (this.viewportZoomProjectionLock) {
           this.scheduleViewportZoomSettle(this.viewportZoomProjectionGuardUntil - Date.now() + 60);
         }
+      } else if (this.readingProjectionGated()) {
+        // A view transition is still moving the Markdown frame. Projecting
+        // now would anchor strokes to a transient DOM state and visibly
+        // drift them; keep the current absolute placement and project once
+        // after the transition settles.
+        this.preserveAbsoluteStrokePlacement(previousCanvasWidth, previousCanvasHeight);
+        this.scheduleResponsiveProjectionSettle(this.readingProjectionGateUntil - Date.now() + 120, {
+          preserveNoteFlowAbsolute: options.preserveNoteFlowAbsolute === true && previousCanvasWidth > 1 && previousCanvasHeight > 1
+        });
       } else if (!this.responsivePointsInitialized || signature !== this.responsiveLayoutSignature) {
         this.responsiveLayoutContext = null;
         const context = this.getResponsiveLayoutContext(true);
@@ -12954,16 +13161,77 @@ var PreviewDrawingController = class {
       members,
       expiresAt: Date.now() + 6000
     };
-    // Reapply the frozen row after checkbox handlers replace the rendered
-    // list item, including renderers that do not emit a child-list mutation.
-    for (const delay of [0, 48, 180, 420, 900]) {
-      window.setTimeout(() => {
-        if (this.destroyed || this.pendingMarkdownIdentityRefresh?.expiresAt <= Date.now()) {
-          return;
-        }
-        this.restorePendingMarkdownIdentityPresentation();
-        this.syncMarkdownBlockPresentation();
-      }, delay);
+    // Freeze what the row looks like right now. While the window is open the
+    // frozen spans win over anything a fresh annotation pass may compute, and
+    // no block outside this row may start a new inline layout. Without this,
+    // the observer pass and the coalesced sync pass could disagree and the row
+    // visibly jabbed twice.
+    this.markdownLayoutHoldUntil = Date.now() + MARKDOWN_LAYOUT_HOLD_MS;
+    this.markdownLayoutHoldFile = String(block.path || this.file?.path || "");
+    this.markdownLayoutHoldSpans = new Map(members.map((member) => [
+      member.id,
+      { span: member.span, widthScale: member.widthScale }
+    ]));
+    // The renderer is about to move Markdown underneath the drawing. Hold the
+    // absolute stroke placement until it settles so the strokes do not chase
+    // every intermediate frame.
+    this.openReadingProjectionGate(MARKDOWN_LAYOUT_HOLD_MS);
+    this.cancelMarkdownIdentityRestore();
+    this.scheduleMarkdownIdentityRestore();
+    // Guarantee exactly one reconciling pass when the window closes, even if
+    // the renderer never emits a content mutation (an attribute-only checkbox
+    // toggle does not), so the persisted records always end up authoritative.
+    this.scheduleMarkdownLayoutHoldSettle();
+  }
+  scheduleMarkdownIdentityRestore() {
+    // This used to be five unconditional passes (0/48/180/420/900 ms), each
+    // running a restore *and* a full presentation sync. Every pass rewrote the
+    // same classes and inline styles while Obsidian was still rebuilding the
+    // list item, so completing a task in a parallel row visibly jittered.
+    // Now: one deduplicated pass per frame, plus a single fallback timer for
+    // renderers that emit no mutation at all.
+    if (this.destroyed || this.surfaceType !== "preview") {
+      return;
+    }
+    if (this.markdownIdentityRestoreFrameId === null && typeof window.requestAnimationFrame === "function") {
+      this.markdownIdentityRestoreFrameId = window.requestAnimationFrame(() => {
+        this.markdownIdentityRestoreFrameId = null;
+        this.runMarkdownIdentityRestore();
+      });
+    }
+    if (this.markdownIdentityRestoreFallbackTimer === null) {
+      this.markdownIdentityRestoreFallbackTimer = window.setTimeout(() => {
+        this.markdownIdentityRestoreFallbackTimer = null;
+        this.runMarkdownIdentityRestore();
+      }, 260);
+    }
+  }
+  cancelMarkdownIdentityRestore() {
+    if (this.markdownIdentityRestoreFrameId !== null) {
+      window.cancelAnimationFrame?.(this.markdownIdentityRestoreFrameId);
+      this.markdownIdentityRestoreFrameId = null;
+    }
+    if (this.markdownIdentityRestoreFallbackTimer !== null) {
+      window.clearTimeout(this.markdownIdentityRestoreFallbackTimer);
+      this.markdownIdentityRestoreFallbackTimer = null;
+    }
+  }
+  runMarkdownIdentityRestore() {
+    const pending = this.pendingMarkdownIdentityRefresh;
+    if (this.destroyed || !pending || pending.expiresAt <= Date.now()) {
+      return false;
+    }
+    if (this.markdownIdentityRestoreInFlight) {
+      return false;
+    }
+    this.markdownIdentityRestoreInFlight = true;
+    try {
+      // restorePendingMarkdownIdentityPresentation already runs a full
+      // presentation sync when it cannot rebind anything, so the caller must
+      // not run a second one — duplicated syncs are what made rows flicker.
+      return this.restorePendingMarkdownIdentityPresentation();
+    } finally {
+      this.markdownIdentityRestoreInFlight = false;
     }
   }
   restorePendingMarkdownIdentityPresentation(mutations = []) {
@@ -13011,6 +13279,18 @@ var PreviewDrawingController = class {
         addCandidate(markdownBlockCandidateElementForTarget(node, this.previewEl), replacedPendingFlow);
         for (const candidate of markdownBlockCandidateElements(node)) {
           addCandidate(candidate, replacedPendingFlow);
+        }
+      }
+    }
+    if (!addedCandidates.length) {
+      // A task renderer can refresh a checked item without emitting a childList
+      // mutation (attribute/character-data only). Without a mutation payload
+      // there is nothing to rebind against, so fall back to the candidates that
+      // no block owns yet. Only unbound nodes are considered, so an unrelated
+      // block cannot be stolen.
+      for (const candidate of markdownBlockCandidateElements(this.previewEl)) {
+        if (!candidate?.dataset?.noteDrawMarkdownBlockId) {
+          addCandidate(candidate, false);
         }
       }
     }
@@ -13090,6 +13370,13 @@ var PreviewDrawingController = class {
       if (members.some((member) => this.selectedMarkdownBlockIds.has(member.id))) {
         this.invalidateSelectionFrameSnapshot();
       }
+      return true;
+    }
+    if (this.markdownLayoutHoldActive()) {
+      // The frozen window owns the layout. The queued rAF/fallback pass finds
+      // nothing to rebind because the observer pass already handled the fresh
+      // nodes; running the heavy reconciliation here would be the second
+      // competing pass that jabbed the row.
       return true;
     }
     this.syncMarkdownBlockPresentation();
@@ -16352,6 +16639,7 @@ var PreviewDrawingController = class {
     const noOpMarkdownDrop = didMove && markdownDrop ? this.markdownDropIsNoOp(markdownDrop) : false;
     if (didMove && markdownDrop && !noOpMarkdownDrop) {
       this.selectionFrameAwaitingMarkdownSync = { committed: false };
+      this.selectionFrameAwaitingMarkdownSyncAt = Date.now();
       this.invalidateSelectionFrameSnapshot();
     }
     const drawingHistoryBefore = this.dragDrawingHistoryBefore;
@@ -18564,7 +18852,11 @@ var PreviewDrawingController = class {
     const hitPoint = this.pointToCanvas(point);
     const width = this.canvasWidth();
     const height = this.canvasHeight();
+    const hitPadding = Math.min(12, this.selectionHitPaddingPx());
     let boxHit = -1;
+    let boxFromDomRect = false;
+    let fringeStroke = -1;
+    let fringeStrokeRatio = Number.POSITIVE_INFINITY;
     for (let index = this.drawingData.strokes.length - 1; index >= 0; index -= 1) {
       const stroke = this.drawingData.strokes[index];
       if (!this.isStrokeVisibleOnSurface(stroke)) {
@@ -18576,19 +18868,45 @@ var PreviewDrawingController = class {
         ? this.embedNodes?.get?.(String(index))
         : null;
       const domRect = domNode?.isConnected ? domNode.getBoundingClientRect?.() : null;
-      const hit = domRect && clientPoint
-        ? clientPointInRect(domRect, clientPoint)
-        : strokeHitTest(stroke, hitPoint, width, height, threshold);
+      if (domRect && clientPoint) {
+        // Embed/rich-text elements are painted above the canvas. A zero
+        // tolerance rect made small embeds nearly impossible to select; give
+        // them the same hit padding the stroke hit test enjoys.
+        if (boxHit < 0 && clientPointInRect(domRect, clientPoint, hitPadding)) {
+          boxHit = index;
+          boxFromDomRect = true;
+        }
+        continue;
+      }
+      const hit = strokeHitTest(stroke, hitPoint, width, height, threshold);
       if (!hit) {
         continue;
       }
       if (isTextLikeStroke(stroke) || isEmbedStroke(stroke)) {
         if (boxHit < 0) {
           boxHit = index;
+          boxFromDomRect = false;
         }
       } else {
-        return index;
+        // A hit well inside the threshold (the core zone) selects the stroke
+        // immediately, as before. A fringe hit (only inside the padding ring)
+        // must not steal the pointer from text/embed content painted above
+        // the canvas — that used to make such elements unselectable.
+        const ratio = strokeHitDistanceRatio(stroke, hitPoint, width, height, threshold);
+        if (ratio <= 0.5) {
+          return index;
+        }
+        if (ratio < fringeStrokeRatio) {
+          fringeStroke = index;
+          fringeStrokeRatio = ratio;
+        }
       }
+    }
+    if (boxFromDomRect) {
+      return boxHit;
+    }
+    if (fringeStroke >= 0) {
+      return fringeStroke;
     }
     return boxHit;
   }
@@ -19238,7 +19556,14 @@ var PreviewDrawingController = class {
           && item.explicitLineGroup === group
           && item.textHint === hint);
         if (!block) {
-          const base = template || {
+          // A re-render creates fresh default records (span=12). When a
+          // pending identity snapshot already confirmed this block as part of
+          // a side-by-side row, inherit that layout so the row never paints
+          // as a single column while the record is rebuilt.
+          const pendingMember = this.pendingMarkdownIdentityRefresh?.expiresAt > Date.now()
+            ? (this.pendingMarkdownIdentityRefresh.members || []).find((member) => member.path === path && Number(member.lineStart) === line)
+            : null;
+          const defaultBase = {
             path,
             span: 12,
             noteFlowAutoSpan: false,
@@ -19255,6 +19580,14 @@ var PreviewDrawingController = class {
             locked: false,
             groupId: ""
           };
+          const base = template || (pendingMember
+            ? {
+              ...defaultBase,
+              span: pendingMember.span,
+              widthScale: pendingMember.widthScale,
+              noteFlowAutoSpan: false
+            }
+            : defaultBase);
           block = normalizeMarkdownBlocks([{
             ...base,
             id: `${base.id || `md-${Date.now().toString(36)}`}-${hashString(`${group}:${line}:${hint}`)}`,
@@ -19483,15 +19816,50 @@ var PreviewDrawingController = class {
   }
   applyMarkdownBlockFlowPresentation(block, element) {
     const flowElement = this.markdownBlockFlowElement(element);
-    const inlineSpan = clamp(Math.round(Number(block?.span) || 12), 1, 12);
+    // While the frozen window is open the layout that was captured from the
+    // live DOM wins over the record, and blocks that were not already inline
+    // are not allowed to become inline. A stale or duplicate record could
+    // otherwise start a brand-new parallel row in the middle of the burst and
+    // squeeze an unrelated block, which reads as the row "jumping".
+    const frozen = this.markdownLayoutHoldSpanFor(block?.id, String(block?.path || ""));
+    const alreadyInlineElement = Boolean(flowElement?.classList?.contains("notedraw-md-inline-grid-item"));
+    const inlineSpan = clamp(Math.round(Number(frozen?.span ?? block?.span) || 12), 1, 12);
+    const widthScale = frozen?.widthScale ?? block?.widthScale;
     const inlineLane = !block?.floating ? this.markdownBlockInlineLane(flowElement) : null;
     if (inlineLane && inlineSpan < 12) {
+      if (this.markdownLayoutHoldActive() && !frozen && !alreadyInlineElement) {
+        return flowElement;
+      }
+      const widthCss = markdownInlineWidthCss(inlineSpan, widthScale, flowElement);
+      // Re-applying an identical inline presentation used to rewrite classes
+      // and inline styles on every pass, and Obsidian re-measured the row
+      // between those writes — a completed task in a parallel row visibly
+      // jittered. When the DOM already matches the target, do nothing at all.
+      const alreadyInline = flowElement.classList.contains("notedraw-md-inline-grid-item")
+        && !flowElement.classList.contains("notedraw-md-grid-item")
+        && !flowElement.style.getPropertyValue("grid-column")
+        && flowElement.style.getPropertyValue("--notedraw-md-inline-span") === String(inlineSpan)
+        && flowElement.style.getPropertyValue("--notedraw-md-inline-width") === widthCss
+        && !this.isOwnedMarkdownGridRow(flowElement.parentElement);
+      if (alreadyInline) {
+        return flowElement;
+      }
+      const previousInlineSpan = flowElement.style.getPropertyValue("--notedraw-md-inline-span");
       this.releaseMarkdownBlockGridRow(flowElement);
       flowElement.classList.add("notedraw-md-inline-grid-item");
       flowElement.classList.remove("notedraw-md-grid-item");
       flowElement.style.setProperty("--notedraw-md-inline-span", String(inlineSpan));
-      flowElement.style.setProperty("--notedraw-md-inline-width", markdownInlineWidthCss(inlineSpan, block?.widthScale, flowElement));
+      flowElement.style.setProperty("--notedraw-md-inline-width", widthCss);
       flowElement.style.removeProperty("grid-column");
+      if (previousInlineSpan !== String(inlineSpan)) {
+        this.armMarkdownRepackProjectionGate();
+      }
+      return flowElement;
+    }
+    if (frozen && !block?.floating) {
+      // The row is frozen but the renderer has not given us a lane back yet.
+      // Rebuilding it as a grid row now would move it twice, so leave the DOM
+      // exactly as it is and let the settle pass decide.
       return flowElement;
     }
     flowElement?.classList?.remove("notedraw-md-inline-grid-item");
@@ -19503,11 +19871,19 @@ var PreviewDrawingController = class {
     if (!flowElement) {
       return null;
     }
+    const desiredColumn = !gridContainer || block?.floating ? "" : `span ${inlineSpan}`;
+    if (flowElement.classList.contains("notedraw-md-grid-item") === Boolean(gridContainer)
+      && (flowElement.style.getPropertyValue("grid-column") || "") === desiredColumn) {
+      return flowElement;
+    }
+    if ((flowElement.style.getPropertyValue("grid-column") || "") !== desiredColumn) {
+      this.armMarkdownRepackProjectionGate();
+    }
     flowElement.classList.toggle("notedraw-md-grid-item", Boolean(gridContainer));
-    if (!gridContainer || block?.floating) {
+    if (!desiredColumn) {
       flowElement.style.removeProperty("grid-column");
     } else {
-      flowElement.style.gridColumn = `span ${clamp(Math.round(Number(block?.span) || 12), 1, 12)}`;
+      flowElement.style.gridColumn = desiredColumn;
     }
     return flowElement;
   }
@@ -19547,16 +19923,29 @@ var PreviewDrawingController = class {
       ? String(block.explicitLineGroup || "") === explicitGroup
       : !block.explicitLineGroup;
     const mapped = candidates.find((block) => this.markdownBlockElements?.get?.(block.id) === blockElement);
+    const hintMatching = candidates.filter((block) => compatible(block)
+      && (!block.textHint || block.textHint === hint));
     const rangeMatching = candidates.filter((block) => compatible(block)
       && Number.isFinite(info.lineStart)
       && block.lineStart === info.lineStart
       && block.lineEnd === (info.lineEnd ?? info.lineStart));
-    const matching = candidates.filter((block) => compatible(block)
-      && (!block.textHint || block.textHint === hint));
+    // Rendered line numbers are re-written by Obsidian on every re-render,
+    // while the rendered text survives. Matching the bare line range first let
+    // a stale record claim whichever block now happened to sit on its old line,
+    // which then got persisted back as that record's identity. Prefer whatever
+    // still proves identity by text; use a bare range only when the element
+    // exposes no text to compare against.
+    //
+    // A task item is never allowed to use that range fallback at all: task
+    // renderers synthesise a fresh 0-based line sequence per list, so the range
+    // carries no identity. Leaving it in made an unrecorded task resolve to a
+    // neighbour's record, which in turn stopped the missing record from being
+    // recreated and left that task stuck in a vertical row.
+    const rangeFallbackAllowed = Boolean(hint) && !blockElement.matches?.("li.task-list-item");
     return mapped
-      || rangeMatching[0]
-      || matching.find((block) => Number.isFinite(info.lineStart) && block.lineStart === info.lineStart)
-      || matching.find((block) => block.textHint && block.textHint === hint)
+      || hintMatching.find((block) => Number.isFinite(info.lineStart) && block.lineStart === info.lineStart)
+      || hintMatching.find((block) => block.textHint && block.textHint === hint)
+      || (rangeFallbackAllowed ? rangeMatching[0] : null)
       || null;
   }
   markdownBlockElementAtClientPoint(clientPoint = null) {
@@ -19660,7 +20049,17 @@ var PreviewDrawingController = class {
     const blockElement = element.closest?.(".notedraw-md-block") || element;
     const existing = this.findMarkdownBlockRecordForElement(blockElement);
     if (existing) {
-      existing.renderKind = markdownElementRenderKind(blockElement) || existing.renderKind || "";
+      // Element type is authoritative here: a transient re-render used to bind
+      // a paragraph record to a task item, and the stale "task" kind was then
+      // kept forever by the old `|| existing.renderKind` fallback. Worse, a
+      // paragraph that still claims to be a task keeps entering the task-list
+      // reconciliations and gets rebound again on every later pass.
+      const kind = markdownElementRenderKind(blockElement);
+      if (kind) {
+        existing.renderKind = kind;
+      } else if (isConcreteMarkdownBlockElement(blockElement)) {
+        existing.renderKind = "";
+      }
       return existing;
     }
     const info = getSourceInfo(blockElement);
@@ -19669,6 +20068,16 @@ var PreviewDrawingController = class {
     if (!path || !textHint) {
       return null;
     }
+    // A block that is already shown in a parallel row must never be described
+    // by a fresh full-width record: that record wins the next pass and
+    // collapses the row to vertical, which is exactly the "finish the task and
+    // it jumps once, then turns vertical" symptom. Adopt the live span instead.
+    const liveInlineSpan = blockElement.classList?.contains("notedraw-md-inline-grid-item")
+      ? Number.parseInt(blockElement.style?.getPropertyValue?.("--notedraw-md-inline-span"), 10)
+      : Number.NaN;
+    const span = Number.isFinite(liveInlineSpan) && liveInlineSpan >= 1 && liveInlineSpan < 12
+      ? liveInlineSpan
+      : 12;
     const record = normalizeMarkdownBlocks([{
       id: `md-${Date.now().toString(36)}-${hashString(`${path}:${info.lineStart ?? "x"}:${textHint}`)}`,
       path,
@@ -19676,7 +20085,7 @@ var PreviewDrawingController = class {
       lineEnd: info.lineEnd,
       textHint,
       renderKind: markdownElementRenderKind(blockElement),
-      span: 12
+      span
     }], this.file)[0];
     if (!record) {
       return null;
@@ -20002,33 +20411,55 @@ var PreviewDrawingController = class {
     const taskOrdinalMatches = /* @__PURE__ */ new Map();
     const taskOrdinalElements = /* @__PURE__ */ new Set();
     for (const group of taskCandidateGroups.values()) {
-      let anchoredSequence = null;
-      for (const [candidateIndex, candidate] of group.entries()) {
-        const matchingRecordIndexes = taskRecords.map((block, recordIndex) => (
-          normalizeRenderedText(block.textHint) === candidate.meta.hint ? recordIndex : -1
-        )).filter((recordIndex) => recordIndex >= 0);
-        if (matchingRecordIndexes.length !== 1) {
-          continue;
+      const pairAt = (recordIndex, candidateIndex) => {
+        const block = taskRecords[recordIndex];
+        const element = group[candidateIndex]?.element;
+        if (!block || !element || taskOrdinalMatches.has(block.id) || taskOrdinalElements.has(element)) {
+          return;
         }
-        const startIndex = matchingRecordIndexes[0] - candidateIndex;
-        const sequence = taskRecords.slice(startIndex, startIndex + group.length);
-        if (startIndex >= 0 && sequence.length === group.length
-          && sequence.every((block) => block.path === candidate.meta.path)) {
-          anchoredSequence = sequence;
-          break;
-        }
-      }
-      if (!anchoredSequence && taskCandidateGroups.size === 1 && taskRecords.length === group.length) {
-        anchoredSequence = taskRecords;
-      }
-      anchoredSequence?.forEach((block, index) => {
-        const element = group[index]?.element;
-        if (!element || taskOrdinalMatches.has(block.id) || taskOrdinalElements.has(element)) {
+        if (block.path !== (candidateMeta.get(element)?.path || block.path)) {
           return;
         }
         taskOrdinalMatches.set(block.id, element);
         taskOrdinalElements.add(element);
-      });
+      };
+      // Find a candidate whose rendered text uniquely identifies one record;
+      // that pair anchors the whole list, and every other row is matched by its
+      // offset from the anchor. Uniqueness is required because two tasks may
+      // legitimately share their text.
+      let anchor = null;
+      for (const [candidateIndex, candidate] of group.entries()) {
+        const hits = taskRecords.reduce((indexes, block, recordIndex) => {
+          if (normalizeRenderedText(block.textHint) === candidate.meta.hint
+            && block.path === candidate.meta.path) {
+            indexes.push(recordIndex);
+          }
+          return indexes;
+        }, []);
+        if (hits.length === 1) {
+          anchor = { recordIndex: hits[0], candidateIndex };
+          break;
+        }
+      }
+      if (anchor) {
+        // Partial pairing is intentional: a renderer can drop or add a single
+        // row, and the old code bailed out completely unless the record count
+        // exactly matched the rendered row count. That is how one finished task
+        // lost its side-by-side slot and turned vertical while its siblings
+        // stayed parallel.
+        for (let index = 0; index < group.length; index += 1) {
+          pairAt(anchor.recordIndex + (index - anchor.candidateIndex), index);
+        }
+        continue;
+      }
+      // No usable text anchor at all: fall back to positional pairing. Rendered
+      // task order mirrors source order and `taskRecords` is sorted the same
+      // way, so this restores the row instead of leaving the whole list flat.
+      if (taskCandidateGroups.size === 1 && taskRecords.length) {
+        for (let index = 0; index < Math.min(group.length, taskRecords.length); index += 1) {
+          pairAt(index, index);
+        }
+      }
     }
     const identityMatches = (block, element) => {
       if (!element || !explicitGroupMatches(block, element)) {
@@ -20042,37 +20473,128 @@ var PreviewDrawingController = class {
     };
     const takeUnused = (values, block = null) => values?.find((element) => !used.has(element) && identityMatches(block, element)) || null;
     const takeUnusedRange = (values, block = null) => values?.find((element) => !used.has(element) && explicitGroupMatches(block, element)) || null;
+    // Which texts exist somewhere in the current render. A record whose own
+    // text is missing from the render has genuinely been edited in the source;
+    // one whose text is still rendered elsewhere has simply been renumbered.
+    const renderedHintSet = new Set(Array.from(candidateMeta.values()).map((meta) => meta.hint).filter(Boolean));
+    const rangeOwnerCount = /* @__PURE__ */ new Map();
+    const sortedRecords = this.markdownBlockRecords().slice().sort((left, right) => (
+      (Number(left.lineStart) || 0) - (Number(right.lineStart) || 0)
+    ));
+    for (const record of sortedRecords) {
+      const key = `${record.path}\u0000${record.lineStart}\u0000${record.lineEnd ?? record.lineStart}\u0000${String(record.explicitLineGroup || "")}`;
+      rangeOwnerCount.set(key, (rangeOwnerCount.get(key) || 0) + 1);
+    }
+    const holdActive = this.markdownLayoutHoldActive();
     const next = /* @__PURE__ */ new Map();
-    for (const block of this.markdownBlockRecords()) {
+    for (const block of sortedRecords) {
       const previous = this.markdownBlockElements.get(block.id);
       const previousMeta = candidateMeta.get(previous);
-      const previousMatches = previousMeta && !used.has(previous) && previousMeta.path === block.path
+      // The plugin wrote this marker itself, so it is the strongest identity
+      // proof available. Re-deriving the text to "confirm" it used to fail
+      // whenever the renderer touched the text node, which dropped the binding
+      // and collapsed the row.
+      const previousMatches = !used.has(previous) && previous?.isConnected
         && previous?.dataset?.noteDrawMarkdownBlockId === block.id
-        && identityMatches(block, previous);
+        && (!previousMeta || previousMeta.path === block.path);
       const exactKey = `${block.path}\u0000${block.lineStart}\u0000${block.textHint}`;
       const rangeKey = `${block.path}\u0000${block.lineStart}\u0000${block.lineEnd ?? block.lineStart}\u0000${String(block.explicitLineGroup || "")}`;
       const hintKey = `${block.path}\u0000${block.textHint}`;
-      let element = previousMatches
-        ? previous
-        : takeUnused(idCandidates.get(block.id), block)
-          || takeUnusedRange(rangeCandidates.get(rangeKey), block)
-          || takeUnused(exactCandidates.get(exactKey), block)
-          || takeUnused(hintCandidates.get(hintKey), block)
-          || (!used.has(taskOrdinalMatches.get(block.id)) ? taskOrdinalMatches.get(block.id) : null);
+      // `verified`  -> the binding is proven by a signal we trust (identity
+      //                marker, or rendered text).
+      // `adoptText` -> the element is close enough to teach this record its new
+      //                text/line. Only then may a record be rewritten. Writing
+      //                unconditionally is what permanently corrupted records:
+      //                one stale line number made a record adopt a different
+      //                block's text, and the wrong text was saved back.
+      let verified = false;
+      let adoptText = false;
+      let element = null;
+      if (previousMatches) {
+        element = previous;
+        verified = true;
+        adoptText = true;
+      }
+      if (!element) {
+        const match = takeUnused(idCandidates.get(block.id), block);
+        if (match) {
+          element = match;
+          verified = true;
+          adoptText = true;
+        }
+      }
+      if (!element) {
+        const match = takeUnused(exactCandidates.get(exactKey), block);
+        if (match) {
+          element = match;
+          verified = true;
+          adoptText = true;
+        }
+      }
+      if (!element) {
+        const match = takeUnused(hintCandidates.get(hintKey), block);
+        if (match) {
+          element = match;
+          verified = true;
+          adoptText = true;
+        }
+      }
+      if (!element) {
+        // A bare line range is the weakest signal: it survives neither a
+        // renumber nor a simultaneous text edit. Only accept it when the record
+        // holds no text yet, when the element's text agrees, or when the old
+        // text is provably gone from the render (a real source edit). Otherwise
+        // leave the block unbound for this pass; the retention step below keeps
+        // its current presentation alive instead of collapsing it. Task items
+        // are excluded outright because their rendered lines are a synthetic
+        // 0-based sequence; they are resolved by text or by list order instead.
+        const match = takeUnusedRange(rangeCandidates.get(rangeKey), block);
+        if (match && !match.matches?.("li.task-list-item")) {
+          const blockHint = normalizeRenderedText(block.textHint);
+          const elementHint = normalizeRenderedText(renderedMarkdownIdentityText(match)).slice(0, 240);
+          const rangeUnique = (rangeOwnerCount.get(rangeKey) || 0) <= 1;
+          const blockHintStillRendered = Boolean(blockHint) && renderedHintSet.has(blockHint);
+          if (!blockHint || !elementHint || blockHint === elementHint || (rangeUnique && !blockHintStillRendered)) {
+            element = match;
+            verified = true;
+            adoptText = blockHint === elementHint || (rangeUnique && !blockHintStillRendered);
+          }
+        }
+      }
+      if (!element) {
+        const match = taskOrdinalMatches.get(block.id);
+        if (match && !used.has(match)) {
+          element = match;
+          verified = true;
+          adoptText = true;
+        }
+      }
       const pendingMember = pendingIdentityMembers.get(block.id);
       if (!element && pendingMember?.path === block.path) {
         // Task renderers can replace the complete list. Preserve every member
         // of the captured inline row by source identity so no peer briefly
-        // falls back to span 12 while the new DOM is being annotated.
+        // falls back to span 12 while the new DOM is being annotated. The
+        // captured text is a far better key than the captured line numbers,
+        // which the renderer itself renumbers.
+        const pendingHint = normalizeRenderedText(pendingMember.textHint);
         element = candidates.find((candidate) => {
           if (used.has(candidate) || !explicitGroupMatches(block, candidate)) {
             return false;
           }
           const meta = candidateMeta.get(candidate);
-          return meta?.path === block.path
-            && Number(meta.info?.lineStart) === pendingMember.lineStart
+          if (meta?.path !== block.path) {
+            return false;
+          }
+          if (pendingHint && meta.hint) {
+            return meta.hint === pendingHint;
+          }
+          return Number(meta.info?.lineStart) === pendingMember.lineStart
             && Number(meta.info?.lineEnd ?? meta.info?.lineStart) === pendingMember.lineEnd;
         }) || null;
+        if (element) {
+          verified = true;
+          adoptText = true;
+        }
       }
       if (!element) {
         const blockHint = normalizeRenderedText(block.textHint);
@@ -20093,37 +20615,60 @@ var PreviewDrawingController = class {
         // never consume an unrelated Markdown element just to fill a gap.
         if (scored && scored.score >= 1000) {
           element = scored.candidate;
+          verified = true;
+          adoptText = true;
         }
       }
       // Obsidian can replace/measure a rendered section in several DOM steps.
       // Keep a still-connected binding alive for that short gap instead of
-      // clearing its presentation and making the Markdown block disappear.
+      // clearing its presentation and making the Markdown block disappear. The
+      // dataset marker is written by this plugin, so it is proof on its own;
+      // re-deriving the text here only added another way to lose the binding.
       if (!element && previous?.isConnected && !used.has(previous)
         && previous?.dataset?.noteDrawMarkdownBlockId === block.id
-        && (!candidateMeta.has(previous) || candidateMeta.get(previous)?.path === block.path)
-        && identityMatches(block, previous)) {
+        && (!candidateMeta.has(previous) || candidateMeta.get(previous)?.path === block.path)) {
         element = previous;
+        verified = true;
+        adoptText = true;
       }
-      if (!element) {
+      if (!element || !verified) {
         continue;
       }
       used.add(element);
       next.set(block.id, element);
       const meta = candidateMeta.get(element) || { info: getSourceInfo(element), hint: normalizeRenderedText(renderedMarkdownIdentityText(element)).slice(0, 240) };
       const info = meta.info;
-      if (Number.isFinite(info.lineStart) && !taskSourceRangeLooksRelative(block, element, info)) {
+      // Never learn source lines from a renderer that is mid-flight: that is
+      // exactly when Obsidian hands out stale `data-line` values, and a record
+      // that adopts one stops matching its own block afterwards.
+      //
+      // Task renderers are worse than stale — they synthesise a fresh 0-based
+      // sequence for the items of every list (a task whose real source line is
+      // 2 comes back as `data-line="0"`). Adopting that value rewrote records
+      // onto their neighbours' lines, so a task list is never allowed to teach
+      // a record its line; its text is the identifier we trust instead.
+      const elementIsTask = Boolean(element.matches?.("li.task-list-item"));
+      if (adoptText && !holdActive && !elementIsTask
+        && Number.isFinite(info.lineStart) && !taskSourceRangeLooksRelative(block, element, info)) {
         markdownMetadataChanged = markdownMetadataChanged
           || block.lineStart !== info.lineStart
           || block.lineEnd !== (info.lineEnd ?? info.lineStart);
         block.lineStart = info.lineStart;
         block.lineEnd = info.lineEnd ?? info.lineStart;
       }
-      if (meta.hint) {
+      if (adoptText && meta.hint) {
         markdownMetadataChanged = markdownMetadataChanged || block.textHint !== meta.hint;
         block.textHint = meta.hint;
       }
       element.dataset.noteDrawMarkdownBlockId = block.id;
-      block.renderKind = markdownElementRenderKind(element) || block.renderKind || "";
+      // Element type wins whenever we trust the binding; a stale "task" kind on
+      // a paragraph kept that paragraph inside the task reconciliations.
+      const elementKind = markdownElementRenderKind(element);
+      if (elementKind) {
+        block.renderKind = elementKind;
+      } else if (adoptText) {
+        block.renderKind = "";
+      }
       element.addClass("notedraw-md-block");
       element.toggleClass("is-selected", this.selectedMarkdownBlockIds.has(block.id));
       element.toggleClass("is-locked", Boolean(block.locked));
@@ -20184,9 +20729,24 @@ var PreviewDrawingController = class {
         }
       }
     }
+    const liveRecordsById = new Map(this.markdownBlockRecords().map((block) => [block.id, block]));
     for (const element of previousElements) {
       const id = element.dataset?.noteDrawMarkdownBlockId;
       if (id && next.get(id) === element) {
+        continue;
+      }
+      const record = id ? liveRecordsById.get(id) : null;
+      // A re-render can leave a block momentarily unmatched (Obsidian replaces
+      // the section in several DOM steps). Stripping its presentation right
+      // then is what turned a hiccup into a visible collapse to a vertical
+      // row, and nothing ever put the row back. Retain the live element and
+      // re-assert its persisted layout; the next pass re-verifies it.
+      if (id && record && !next.has(id) && element?.isConnected && !used.has(element)) {
+        used.add(element);
+        next.set(id, element);
+        element.dataset.noteDrawMarkdownBlockId = id;
+        this.applyMarkdownBlockFlowPresentation(record, element);
+        this.applyMarkdownBlockWidthPresentation(record, element);
         continue;
       }
       this.clearMarkdownBlockElementPresentation(element);
@@ -20242,8 +20802,13 @@ var PreviewDrawingController = class {
         block.floating = false;
         block.floatingExplicit = false;
         block.floatBox = null;
-        block.span = 12;
-        block.widthScale = 1;
+        // Returning a block to the flow must not erase a user-confirmed
+        // side-by-side layout. Resetting the span here collapsed a parallel
+        // row whenever this repair ran against a transient overlap.
+        if (!(Number(block.span) >= 1 && Number(block.span) < 12)) {
+          block.span = 12;
+          block.widthScale = 1;
+        }
         element.removeClass("is-floating");
         this.applyMarkdownBlockFlowPresentation(block, element);
         for (const property of ["--notedraw-md-float-x", "--notedraw-md-float-y", "--notedraw-md-float-width"]) {
@@ -20407,6 +20972,7 @@ var PreviewDrawingController = class {
     const frame = this.captureSelectionFrameSnapshot({ force: true });
     if (!frame) {
       this.markdownSelectionActivation = null;
+      this.scheduleSelectionFrameRecovery();
       return false;
     }
     this.markdownSelectionActivation = {
@@ -20431,6 +20997,7 @@ var PreviewDrawingController = class {
     const frame = this.captureSelectionFrameSnapshot({ force: true });
     if (!frame) {
       this.markdownSelectionActivation = null;
+      this.scheduleSelectionFrameRecovery();
       return false;
     }
     this.markdownSelectionActivation = {
@@ -25027,6 +25594,13 @@ var PreviewDrawingController = class {
     return [];
   }
   isStrokeSelected(index) {
+    // An index past the end of the strokes array can never be a real
+    // selection (undo/redo can swap the array). Reporting it as selected
+    // while getSelectedStrokeIndexes() filters it out produced selections
+    // with no frame and taps acting on the wrong element.
+    if (!(index >= 0 && index < (this.drawingData?.strokes?.length || 0))) {
+      return false;
+    }
     return Boolean(this.selectedStrokeIndexes?.has(index)) || !this.selectedStrokeIndexes?.size && this.selectedStrokeIndex === index;
   }
   selectionHasDomStrokes() {
@@ -25078,10 +25652,56 @@ var PreviewDrawingController = class {
   invalidateSelectionFrameSnapshot() {
     this.selectionFrameSnapshot = null;
   }
+  cancelSelectionFrameRecovery() {
+    if (this.selectionFrameRecoveryFrameId !== null) {
+      window.cancelAnimationFrame?.(this.selectionFrameRecoveryFrameId);
+      window.clearTimeout(this.selectionFrameRecoveryFrameId);
+      this.selectionFrameRecoveryFrameId = null;
+    }
+  }
+  scheduleSelectionFrameRecovery() {
+    // A tap can commit a selection while the Markdown DOM is still settling
+    // (re-render replacing blocks, inline grid re-flow, an awaiting-sync
+    // window). The first render paints no frame because the bounds are not
+    // measurable yet, and nothing else was scheduled to try again — the
+    // element looked unselected until the next tap. Retry once per frame
+    // until a frame can be captured, then repaint.
+    if (this.destroyed || this.selectionFrameRecoveryFrameId !== null) {
+      return;
+    }
+    let attempts = 0;
+    const maxAttempts = 48;
+    const run = () => {
+      this.selectionFrameRecoveryFrameId = null;
+      if (this.destroyed || !this.hasHybridSelection()) {
+        return;
+      }
+      const frame = this.captureSelectionFrameSnapshot({ force: true });
+      if (frame) {
+        this.render();
+        return;
+      }
+      attempts += 1;
+      if (attempts < maxAttempts) {
+        this.selectionFrameRecoveryFrameId = window.requestAnimationFrame?.(run) ?? window.setTimeout(run, 16);
+      }
+    };
+    this.selectionFrameRecoveryFrameId = window.requestAnimationFrame?.(run) ?? window.setTimeout(run, 16);
+  }
   captureSelectionFrameSnapshot({ force = false } = {}) {
     if (this.selectionFrameAwaitingMarkdownSync && !this.draggingStroke) {
-      this.selectionFrameSnapshot = null;
-      return null;
+      // The wait flag is only valid while the follow-up Markdown sync is
+      // genuinely imminent. If that sync never ran (renderer produced no
+      // mutation, or the commit path never marked itself committed), expire
+      // the flag instead of blocking every future selection frame.
+      const sinceAwait = Date.now() - (this.selectionFrameAwaitingMarkdownSyncAt || 0);
+      if (!(sinceAwait >= 0 && sinceAwait < 2000)) {
+        this.selectionFrameAwaitingMarkdownSync = null;
+        this.selectionFrameAwaitingMarkdownSyncAt = 0;
+      } else {
+        this.selectionFrameSnapshot = null;
+        return null;
+      }
     }
     if (!this.hasHybridSelection()) {
       this.selectionFrameSnapshot = null;
@@ -31330,6 +31950,34 @@ function distanceToSegment(point, start, end) {
     y: start.y + t * dy
   };
   return pointerDistance(point, projection);
+}
+// Distance from the hit point to a stroke as a ratio of its hit threshold:
+// 0 means dead center, 1 means right at the threshold edge. Callers use it to
+// separate solid "core" hits from fringe hits inside the padding ring.
+function strokeHitDistanceRatio(stroke, hitPoint, width, height, threshold) {
+  if (!(threshold > 0)) {
+    return 1;
+  }
+  if (stroke.points.length === 1) {
+    return pointerDistance({
+      x: stroke.points[0].x * width,
+      y: stroke.points[0].y * height
+    }, hitPoint) / threshold;
+  }
+  let best = Number.POSITIVE_INFINITY;
+  let previous = {
+    x: stroke.points[0].x * width,
+    y: stroke.points[0].y * height
+  };
+  for (let index = 1; index < stroke.points.length; index += 1) {
+    const current = {
+      x: stroke.points[index].x * width,
+      y: stroke.points[index].y * height
+    };
+    best = Math.min(best, distanceToSegment(hitPoint, previous, current));
+    previous = current;
+  }
+  return Number.isFinite(best) ? best / threshold : 1;
 }
 function clampCanvasFrameForDisplay(frame, canvasWidth, canvasHeight) {
   if (!frame || !Number.isFinite(frame.x) || !Number.isFinite(frame.y)
