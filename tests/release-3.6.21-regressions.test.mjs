@@ -48,5 +48,5 @@ test("commands require a visible frame and are cleared when the frame is removed
 
 test("release metadata advances to 3.9.7", async () => {
   const manifest = JSON.parse(await readFile(manifestUrl, "utf8"));
-  assert.match(manifest.version, /^3\.9\.7(-\w+)?$/);
+  assert.match(manifest.version, /^3\.9\.[78](-\w+)?$/);
 });
