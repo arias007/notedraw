@@ -189,6 +189,11 @@ var SELECTION_FRAME_SYNC_TIMEOUT_MS = 1200;
 // placement for this long instead of being re-anchored to a frame that is
 // about to move again (the visible "doodles drift" glitch).
 var READING_PROJECTION_GATE_MS = 700;
+// A transient layout measurement (scrollbar appearance, strike-through
+// reflow, embed hydration) changes the canvas height by a pixel and would
+// otherwise re-anchor every stroke to that one-off frame. Require the new
+// layout signature to persist for this long before strokes move.
+var RESPONSIVE_SIGNATURE_CONFIRM_MS = 160;
 var READING_PROJECTION_SETTLE_GATE_MS = 900;
 var MIN_FRAME_CORNER_RADIUS = 0;
 var MAX_FRAME_CORNER_RADIUS = 24;
@@ -6778,6 +6783,9 @@ var PreviewDrawingController = class {
     this.responsiveProjectionPending = null;
     this.responsiveProjectionSettleTimer = null;
     this.responsiveProjectionPreserveNoteFlowAbsolute = false;
+    this.pendingResponsiveSignature = null;
+    this.pendingResponsiveSignatureAt = 0;
+    this.pendingResponsiveSignatureTimer = null;
     this.scrollSettleTimer = null;
     this.noteFlowScrollStabilityTimer = null;
     this.positionFrameId = null;
@@ -7858,6 +7866,10 @@ var PreviewDrawingController = class {
     this.selectedMarkdownBlockIds.clear();
     this.markdownSelectionActivation = null;
     this.selectionFrameSnapshot = null;
+    // Last frame that was actually measured for the current selection. It
+    // survives invalidation so a selection can keep an outline on screen
+    // while the Markdown re-render that follows a commit is still in flight.
+    this.lastKnownSelectionFrameRect = null;
     this.clearMarkdownBlockPresentation();
     this.releaseEmbedMediaResources();
     this.embedNodes.forEach((node) => node.remove());
@@ -7974,6 +7986,7 @@ var PreviewDrawingController = class {
     this.responsiveLayoutSignature = "";
     this.responsivePointsInitialized = false;
     this.responsiveLayoutContext = null;
+    this.clearPendingResponsiveSignature();
     for (const canvas of [this.underlayCanvas, this.staticCanvas, this.canvas]) {
       if (!canvas) {
         continue;
@@ -8119,6 +8132,7 @@ var PreviewDrawingController = class {
       window.clearTimeout(this.markdownMutationSyncTimer);
       this.markdownMutationSyncTimer = null;
     }
+    this.clearPendingResponsiveSignature();
     if (this.deletedTextHighlightPruneTimer !== null) {
       window.clearTimeout(this.deletedTextHighlightPruneTimer);
       this.deletedTextHighlightPruneTimer = null;
@@ -8619,6 +8633,38 @@ var PreviewDrawingController = class {
       this.scheduleResize({ layout: true, measure: true });
     }, wait);
   }
+  confirmResponsiveLayoutSignature(signature) {
+    // First sighting of a changed signature: record it and re-check after a
+    // short confirmation window instead of moving strokes immediately.
+    if (this.pendingResponsiveSignature !== signature) {
+      this.pendingResponsiveSignature = signature;
+      this.pendingResponsiveSignatureAt = Date.now();
+      if (this.pendingResponsiveSignatureTimer === null) {
+        this.pendingResponsiveSignatureTimer = window.setTimeout(() => {
+          this.pendingResponsiveSignatureTimer = null;
+          if (!this.destroyed && this.pendingResponsiveSignature && this.drawingsLoaded
+            && !this.draggingStroke && !this.resizingSelection && this.previewEl?.isConnected) {
+            this.scheduleResize({ layout: true, measure: true });
+          }
+        }, RESPONSIVE_SIGNATURE_CONFIRM_MS);
+      }
+      return false;
+    }
+    // Same signature observed again after the confirmation window: the new
+    // layout is real, so projection may proceed.
+    if (Date.now() - this.pendingResponsiveSignatureAt >= RESPONSIVE_SIGNATURE_CONFIRM_MS) {
+      this.clearPendingResponsiveSignature();
+      return true;
+    }
+    return false;
+  }
+  clearPendingResponsiveSignature() {
+    this.pendingResponsiveSignature = null;
+    if (this.pendingResponsiveSignatureTimer !== null) {
+      window.clearTimeout(this.pendingResponsiveSignatureTimer);
+      this.pendingResponsiveSignatureTimer = null;
+    }
+  }
   syncResponsiveLayoutSignatureAfterViewportZoom(width, height) {
     if (this.destroyed || !this.drawingsLoaded || !this.responsivePointsInitialized) {
       return false;
@@ -8909,9 +8955,24 @@ var PreviewDrawingController = class {
     }
     this.markdownMutationSyncTimer = window.setTimeout(() => {
       this.markdownMutationSyncTimer = null;
-      if (this.destroyed || !this.previewEl?.isConnected) {
-        return;
+      // Run the coalesced pass inside an animation frame: the frame callback
+      // executes before the browser paints, so a rebuilt list item receives
+      // its side-by-side presentation before the first frame in which it
+      // could otherwise flash as a single-column row. Hidden windows never
+      // paint, so fall back to a direct pass when rAF is suspended.
+      const run = () => this.runMarkdownMutationSync();
+      if (!this.destroyed && typeof window.requestAnimationFrame === "function" && document.visibilityState === "visible") {
+        window.requestAnimationFrame(run);
+      } else {
+        run();
       }
+    }, 40);
+  }
+  runMarkdownMutationSync() {
+    if (this.destroyed || !this.previewEl?.isConnected) {
+      return;
+    }
+    {
       this.repairConnectedReadingSections();
       this.reconcileSettledReadingSurface();
       const editingLayout = this.active && (
@@ -8925,6 +8986,12 @@ var PreviewDrawingController = class {
         // Task plugins replace the checked list item with a fresh DOM node.
         // That node has no source-line metadata yet, so the captured block ID
         // cannot recover its persisted inline span until annotation runs.
+        // Outside an active edit gesture, re-apply the persisted parallel
+        // presentation first so the rebuilt row never paints as a single
+        // column in the frames before its span is recovered.
+        if (identityMutationPending && !editingLayout) {
+          this.syncMarkdownBlockPresentation();
+        }
         this.scheduleMarkdownAnnotationRefresh({
           layout: false,
           delay: identityMutationPending ? 0 : void 0,
@@ -8937,7 +9004,7 @@ var PreviewDrawingController = class {
         this.scheduleResize({ layout: false, measure: false });
         this.scheduleEmbedRepair();
       }
-    }, 40);
+    }
   }
   updateFloatingControlsPosition() {
     this.syncFloatingControlClasses();
@@ -11912,14 +11979,29 @@ var PreviewDrawingController = class {
           preserveNoteFlowAbsolute: options.preserveNoteFlowAbsolute === true && previousCanvasWidth > 1 && previousCanvasHeight > 1
         });
       } else if (!this.responsivePointsInitialized || signature !== this.responsiveLayoutSignature) {
-        this.responsiveLayoutContext = null;
-        const context = this.getResponsiveLayoutContext(true);
-        this.initializeAndProjectResponsivePoints(context, signature, {
-          preserveNoteFlowAbsolute: options.preserveNoteFlowAbsolute === true && previousCanvasWidth > 1 && previousCanvasHeight > 1,
-          previousCanvasWidth,
-          previousCanvasHeight
-        });
+        if (this.responsivePointsInitialized && !this.confirmResponsiveLayoutSignature(signature)) {
+          // The signature just changed: hold strokes at their current
+          // placement until the new layout proves stable, so a transient
+          // frame (scrollbar, strike-through reflow, embed hydration) can
+          // never anchor strokes to coordinates that are about to revert.
+          // The canvas backbuffer may already have been resized in this same
+          // pass, so the normalized points must be rescaled too; skipping
+          // that step is what made a waiting stroke visibly jump and then
+          // snap back once the real projection ran.
+          this.preserveAbsoluteStrokePlacement(previousCanvasWidth, previousCanvasHeight);
+          this.responsiveLayoutContext = null;
+        } else {
+          this.clearPendingResponsiveSignature();
+          this.responsiveLayoutContext = null;
+          const context = this.getResponsiveLayoutContext(true);
+          this.initializeAndProjectResponsivePoints(context, signature, {
+            preserveNoteFlowAbsolute: options.preserveNoteFlowAbsolute === true && previousCanvasWidth > 1 && previousCanvasHeight > 1,
+            previousCanvasWidth,
+            previousCanvasHeight
+          });
+        }
       } else if (this.responsiveProjectionPending) {
+        this.clearPendingResponsiveSignature();
         this.preserveAbsoluteStrokePlacement(previousCanvasWidth, previousCanvasHeight);
         this.responsiveProjectionPending = null;
         this.cancelResponsiveProjectionSettle();
@@ -19781,7 +19863,8 @@ var PreviewDrawingController = class {
   }
   applyMarkdownBlockFlowPresentation(block, element) {
     const flowElement = this.markdownBlockFlowElement(element);
-    const inlineSpan = clamp(Math.round(Number(block?.span) || 12), 1, 12);
+    const recordedSpan = Number(block?.span);
+    const inlineSpan = clamp(Math.round(Number.isFinite(recordedSpan) ? recordedSpan : 12), 1, 12);
     const inlineLane = !block?.floating ? this.markdownBlockInlineLane(flowElement) : null;
     if (inlineLane && inlineSpan < 12) {
       this.releaseMarkdownBlockGridRow(flowElement);
@@ -19790,6 +19873,16 @@ var PreviewDrawingController = class {
       flowElement.style.setProperty("--notedraw-md-inline-span", String(inlineSpan));
       flowElement.style.setProperty("--notedraw-md-inline-width", markdownInlineWidthCss(inlineSpan, block?.widthScale, flowElement));
       flowElement.style.removeProperty("grid-column");
+      return flowElement;
+    }
+    // A freshly rebuilt DOM node has no source-line metadata yet, so its
+    // persisted span cannot be recovered for a few frames. Treating that
+    // missing record as "single column" tore down a genuine side-by-side row
+    // and repainted it one frame later -- exactly the parallel-row flicker
+    // users see when toggling tasks. When the element is already presented as
+    // an inline grid item and the record has no usable span, keep it.
+    if (!Number.isFinite(recordedSpan)
+      && flowElement?.classList?.contains("notedraw-md-inline-grid-item")) {
       return flowElement;
     }
     flowElement?.classList?.remove("notedraw-md-inline-grid-item");
@@ -25400,6 +25493,17 @@ var PreviewDrawingController = class {
     if (this.selectionFrameAwaitingMarkdownSync && !this.draggingStroke) {
       const startedAt = Number(this.selectionFrameAwaitingMarkdownSync.startedAt) || 0;
       if (!startedAt || Date.now() - startedAt <= SELECTION_FRAME_SYNC_TIMEOUT_MS) {
+        // The Markdown re-render that follows a commit is still in flight.
+        // Keep painting the frame already measured for this same selection
+        // instead of blanking it: dropping the rect here is exactly what made
+        // a real selection look like it had no box around it.
+        const key = this.selectionStateKey();
+        if (this.selectionFrameSnapshot?.key === key) {
+          return this.selectionFrameSnapshot.rect;
+        }
+        if (this.lastKnownSelectionFrameRect?.key === key) {
+          return this.lastKnownSelectionFrameRect.rect;
+        }
         this.selectionFrameSnapshot = null;
         return null;
       }
@@ -25435,6 +25539,7 @@ var PreviewDrawingController = class {
     }
     rect.width = Math.max(1, rect.width);
     this.selectionFrameSnapshot = { key, rect };
+    this.lastKnownSelectionFrameRect = { key, rect };
     return rect;
   }
   effectiveSelectionFramePaddingPx() {

@@ -70,7 +70,7 @@ test("scrolling refreshes only the canvas window while real layout changes can r
   assert.match(source, /if \(readingScrollActive && this\.resizeNeedsLayout\) \{\s*this\.resizeNeedsLayout = false/);
   assert.match(source, /scheduleResponsiveProjectionSettle\(delay = 180[\s\S]*this\.scheduleResize\(\{ layout: true, preserveNoteFlowAbsolute \}\)/);
   assert.match(source, /settleProjectedElementTransition\([\s\S]*this\.responsiveProjectionPending[\s\S]*this\.preserveAbsoluteStrokePlacement\(previousCanvasWidth, previousCanvasHeight\)/);
-  assert.match(source, /else if \(this\.responsiveProjectionPending\) \{\s*this\.preserveAbsoluteStrokePlacement\(previousCanvasWidth, previousCanvasHeight\);\s*this\.responsiveProjectionPending = null/);
+  assert.match(source, /else if \(this\.responsiveProjectionPending\) \{\s*this\.clearPendingResponsiveSignature\(\);\s*this\.preserveAbsoluteStrokePlacement\(previousCanvasWidth, previousCanvasHeight\);\s*this\.responsiveProjectionPending = null/);
 });
 
 test("reading zoom preserves wrapping while edit zoom can reflow", async () => {
