@@ -1286,3 +1286,25 @@ test("boxed and locked groups keep member selection, exact frames, and drag memb
   assert.match(styles, /isolation: isolate/);
   assert.match(styles, /pointer-events: none/);
 });
+
+test("a collapsed parallel row self-heals after the identity restore ladder ends", async () => {
+  const source = await readFile(sourceUrl, "utf8");
+  const mutationSource = source.slice(
+    source.indexOf("  rememberMarkdownIdentityMutation("),
+    source.indexOf("  restorePendingMarkdownIdentityPresentation(")
+  );
+  // Completing a parallel-row task can leave the row collapsed when the
+  // renderer replaces members in a way identity restore cannot match. The
+  // restore ladder is followed by a signature-guarded reading re-settle (the
+  // same recovery a magic-wand toggle provided), so the row snaps back
+  // without user action.
+  assert.match(mutationSource, /for \(const delay of \[0, 48, 180, 420, 900\]\)/);
+  assert.match(mutationSource, /for \(const delay of \[1100, 2200\]\)[\s\S]*reconcileSettledReadingSurface\(\)/);
+  const reconcile = source.slice(
+    source.indexOf("  reconcileSettledReadingSurface() {"),
+    source.indexOf("  queueReadingSurfaceSettlement() {")
+  );
+  // The auto-recovery is the guarded variant: it re-settles only when the
+  // geometry signature really changed (row collapsed), never unconditionally.
+  assert.match(reconcile, /currentSignature === this\.initialReadingCommittedSignature\) \{\s*return false/);
+});

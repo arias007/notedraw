@@ -13021,6 +13021,21 @@ var PreviewDrawingController = class {
         this.syncMarkdownBlockPresentation();
       }, delay);
     }
+    // Identity restore can still lose the row when the renderer replaces its
+    // members in a way the parent+index fallback cannot match; the row then
+    // stayed collapsed until the user toggled the toolbar (a full reading
+    // re-settle). Offer the same recovery automatically once the restore
+    // ladder ends. reconcileSettledReadingSurface is signature-guarded: it
+    // re-settles only when the sizer height really collapsed, and is a no-op
+    // when the ladder already restored the parallel presentation.
+    for (const delay of [1100, 2200]) {
+      window.setTimeout(() => {
+        if (this.destroyed) {
+          return;
+        }
+        this.reconcileSettledReadingSurface();
+      }, delay);
+    }
   }
   restorePendingMarkdownIdentityPresentation(mutations = []) {
     const pending = this.pendingMarkdownIdentityRefresh;
