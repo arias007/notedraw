@@ -985,7 +985,7 @@ test("Markdown DOM replacement and async drops rebuild the selection frame", asy
 
   assert.match(presentationSource, /selectedElementChanged[\s\S]*previousMarkdownBlockElements\.get\(id\) !== next\.get\(id\)/);
   assert.match(presentationSource, /selectionFrameAwaitingMarkdownSync\?\.committed[\s\S]*captureSelectionFrameSnapshot\(\{ force: true \}\)/);
-  assert.match(dragFinishSource, /selectionFrameAwaitingMarkdownSync = \{ committed: false \}/);
+  assert.match(dragFinishSource, /selectionFrameAwaitingMarkdownSync = \{ committed: false, startedAt: Date\.now\(\) \}/);
   assert.match(dragFinishSource, /commitDraggedMarkdownBlocks\([\s\S]*if \(!committed && this\.selectionFrameAwaitingMarkdownSync\)/);
   assert.match(snapshotSource, /selectionFrameAwaitingMarkdownSync && !this\.draggingStroke/);
 });

@@ -75,7 +75,12 @@ test("first reading surface settles after drawings load instead of relying on to
   assert.match(initialSource, /generation !== this\.drawingLoadGeneration/);
   assert.match(settleSource, /await this\.prepareInitialReadingLayout\(\)/);
   assert.match(settleSource, /this\.resizeCanvas\(\{ layout: true, measure: true \}\)/);
-  assert.match(settleSource, /this\.responsivePointsInitialized = false/);
+  // A view switch keeps the projection marked as initialized: only the
+  // signature is cleared, so the transition gate and settle guard stay armed
+  // and a projection that would move strokes abruptly is held back instead of
+  // being committed against a frame the switch is still moving.
+  assert.doesNotMatch(settleSource, /this\.responsivePointsInitialized = false/);
+  assert.match(settleSource, /this\.responsiveLayoutSignature = ""/);
   assert.match(settleSource, /waitForStableReadingLayout/);
   assert.match(settleSource, /this\.initialReadingCommittedSignature = this\.readingSurfaceGeometrySignature\(\)/);
   assert.match(source, /reconcileSettledReadingSurface\(\)[\s\S]*readingSurfaceGeometrySignature\(\)[\s\S]*settleInitialReadingSurface\(generation\)/);

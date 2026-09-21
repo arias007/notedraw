@@ -175,7 +175,7 @@ test("3.4.84 preserves reading content and cross-view frames without hidden-surf
   assert.match(source, /captureElementLayoutForStroke/);
   assert.match(source, /const sourcePoints = this\.canonicalPointsForStroke\(stroke, index\)[\s\S]*projectElementPoints\(sourcePoints, layout, box/);
   assert.doesNotMatch(source, /stabilizeElementRelations\(projected, layoutsById\)/);
-  assert.match(source, /const transitionProjected = \[\.\.\.projected\];/);
+  assert.match(source, /const transitionProjected = \[\.\.\.projected, \.\.\.transitionProjectedFree\];/);
   assert.match(source, /const projectedById = new Map\(projected\.map\(\(box\) =>/);
   assert.match(source, /controller\.drawingData = normalizeDrawingData\(data, file\);\s*controller\.captureCanonicalProjectionSource\(\);\s*controller\.rebuildElementRelations\(\);/);
   assert.match(source, /elementLayoutNeedsRepair\(existingLayout\)/);

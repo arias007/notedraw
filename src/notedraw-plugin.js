@@ -181,6 +181,15 @@ var SELECT_RESIZE_HANDLE_SIZE = 9;
 var SELECT_RESIZE_HANDLE_HIT_RADIUS = 22;
 var SELECTION_FRAME_COLOR = "rgba(124, 58, 237, 0.96)";
 var SELECTION_FRAME_LINE_WIDTH = 1.5;
+// How long the selection frame may wait for the Markdown re-render that
+// follows a source commit before it stops waiting and repaints itself.
+var SELECTION_FRAME_SYNC_TIMEOUT_MS = 1200;
+// While Obsidian is switching views, toggling edit mode or re-laying out the
+// workspace, the reading DOM frame is transient. Strokes keep their absolute
+// placement for this long instead of being re-anchored to a frame that is
+// about to move again (the visible "doodles drift" glitch).
+var READING_PROJECTION_GATE_MS = 700;
+var READING_PROJECTION_SETTLE_GATE_MS = 900;
 var MIN_FRAME_CORNER_RADIUS = 0;
 var MAX_FRAME_CORNER_RADIUS = 24;
 var SELECTION_FRAME_DRAG_FILL = "rgba(124, 58, 237, 0.10)";
@@ -1683,18 +1692,27 @@ var NoteDrawPlugin = class extends Plugin {
       }
     });
     this.addSettingTab(new NoteDrawSettingTab(this.app, this));
+    // Layout changes arrive in bursts while Obsidian is opening or switching
+    // views, and each pass measures every live controller. Collapse a burst
+    // into one immediate pass plus one animation-frame pass; the debounced
+    // global reconciliation below still covers anything a skipped event saw.
+    let layoutBurstPassScheduled = false;
     this.registerEvent(this.app.workspace.on("layout-change", () => {
-      this.openReadingProjectionGates(450);
-      this.syncMarkdownModeSurfaces();
-      window.requestAnimationFrame(() => this.syncMarkdownModeSurfaces());
-      // Layout changes arrive in bursts while Obsidian is opening or switching
-      // views. Keep the cheap mode sync immediate, but defer the global
-      // reconciliation until the burst settles so startup does not scan every
-      // surface repeatedly.
+      this.openReadingProjectionGates(READING_PROJECTION_GATE_MS);
+      if (!layoutBurstPassScheduled) {
+        layoutBurstPassScheduled = true;
+        this.syncMarkdownModeSurfaces();
+        window.requestAnimationFrame(() => {
+          layoutBurstPassScheduled = false;
+          this.syncMarkdownModeSurfaces();
+        });
+      }
+      // Defer the global reconciliation until the burst settles so startup
+      // does not scan every surface repeatedly.
       this.scheduleSurfaceSync(120);
     }));
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => {
-      this.openReadingProjectionGates(450);
+      this.openReadingProjectionGates(READING_PROJECTION_GATE_MS);
       this.scheduleSurfaceSync(40);
     }));
     this.registerEvent(this.app.workspace.on("file-open", () => this.scheduleSurfaceSync(60)));
@@ -1726,7 +1744,11 @@ var NoteDrawPlugin = class extends Plugin {
       });
     }));
     activeDocument.addEventListener("click", this.onElementLinkClick, true);
-    this.installWebviewObserver();
+    // The observer classifies every workspace DOM change, so installing it
+    // while Obsidian is still building the workspace means paying for that
+    // classification throughout startup. Wait for the first layout instead;
+    // nothing it feeds (embed, webview, workspace sync) can exist before it.
+    this.app.workspace.onLayoutReady(() => this.installWebviewObserver());
     this.registerMarkdownPostProcessor((el, ctx) => {
       if (this.runtimeDisposed) {
         return;
@@ -1932,7 +1954,7 @@ var NoteDrawPlugin = class extends Plugin {
       }
     }
   }
-  openReadingProjectionGates(duration = 450) {
+  openReadingProjectionGates(duration = READING_PROJECTION_GATE_MS) {
     // Layout bursts and leaf switches move every reading surface at once.
     // Open the projection gate on each preview controller so strokes hold
     // their authoritative placement instead of chasing transient frames.
@@ -2910,18 +2932,39 @@ var NoteDrawPlugin = class extends Plugin {
     if (typeof MutationObserver === "undefined" || !activeDocument?.body) {
       return;
     }
+    // This observer watches the whole workspace, so every keystroke, hover and
+    // theme class flip in Obsidian reaches it. Classify each record in a single
+    // pass instead of walking the whole list once per consumer, and stop as
+    // soon as every consumer has been triggered. Four independent `some()`
+    // scans over a large record list were a measurable editing/typing cost.
     this.webviewMutationObserver = new MutationObserver((mutations) => {
-      if (mutations.some((mutation) => isEmbeddedSurfaceSyncMutation(mutation))) {
-        this.scheduleEmbeddedMarkdownSync();
-      }
-      if (mutations.some((mutation) => isWebviewSyncMutation(mutation))) {
-        this.scheduleWebviewSync();
-      }
-      if (mutations.some((mutation) => isWorkspaceSurfaceMutation(mutation))) {
-        this.scheduleWorkspaceSync();
-      }
-      if (mutations.some((mutation) => isFloatingControlsVisibilityMutation(mutation))) {
-        this.scheduleFloatingControlsSync();
+      let embed = false;
+      let webview = false;
+      let workspace = false;
+      let floating = false;
+      for (const mutation of mutations) {
+        if (isNoteDrawOwnedMutation(mutation)) {
+          continue;
+        }
+        if (!embed && isEmbeddedSurfaceSyncMutation(mutation)) {
+          embed = true;
+          this.scheduleEmbeddedMarkdownSync();
+        }
+        if (!webview && isWebviewSyncMutation(mutation)) {
+          webview = true;
+          this.scheduleWebviewSync();
+        }
+        if (!workspace && isWorkspaceSurfaceMutation(mutation)) {
+          workspace = true;
+          this.scheduleWorkspaceSync();
+        }
+        if (!floating && isFloatingControlsVisibilityMutation(mutation)) {
+          floating = true;
+          this.scheduleFloatingControlsSync();
+        }
+        if (embed && webview && workspace && floating) {
+          break;
+        }
       }
     });
     this.webviewMutationObserver.observe(activeDocument.body, {
@@ -7280,9 +7323,13 @@ var PreviewDrawingController = class {
       // The first reading pass must project against the final rendered content
       // frame. A measure-only resize leaves responsive coordinates from the
       // previous surface, which is why toggling the toolbar used to fix it.
+      // Clearing only the signature forces a fresh projection while keeping
+      // `responsivePointsInitialized` true: that keeps the transition gate and
+      // the settle guard armed, so a projection that would move strokes
+      // abruptly is held back instead of being committed against a frame the
+      // view switch is still moving.
       this.responsiveLayoutContext = null;
       this.responsiveLayoutSignature = "";
-      this.responsivePointsInitialized = false;
       this.resizeCanvas({ layout: true, measure: true });
       await waitForStableReadingLayout(() => {
         const sizer = rootPreviewSizer(this.previewEl);
@@ -7303,10 +7350,11 @@ var PreviewDrawingController = class {
       }
       // NoteFlow reservations can move all later Markdown blocks. Reproject
       // once after that synchronous DOM change so the first painted frame is
-      // already the same frame users get after reopening the toolbar.
+      // already the same frame users get after reopening the toolbar. Keep
+      // the projection marked as initialized here too, so the settle guard
+      // still compares against the placement the user is looking at.
       this.responsiveLayoutContext = null;
       this.responsiveLayoutSignature = "";
-      this.responsivePointsInitialized = false;
       this.resizeCanvas({ layout: true, measure: true });
       if (hasNoteFlow) {
         this.restoreFrozenNoteFlowLayout();
@@ -7516,11 +7564,11 @@ var PreviewDrawingController = class {
     if (this.readingSurfaceSettling) {
       // Every transition starts by marking the surface as settling. Hold the
       // last authoritative stroke placement while the DOM frame moves.
-      this.openReadingProjectionGate(600);
+      this.openReadingProjectionGate(READING_PROJECTION_SETTLE_GATE_MS);
     }
     this.previewEl?.toggleClass("is-notedraw-layout-settling", this.readingSurfaceSettling);
   }
-  openReadingProjectionGate(duration = 450) {
+  openReadingProjectionGate(duration = READING_PROJECTION_GATE_MS) {
     if (this.surfaceType !== "preview" || this.destroyed) {
       return;
     }
@@ -8176,7 +8224,7 @@ var PreviewDrawingController = class {
       // Entering or leaving edit mode can shift the reading frame (toolbar,
       // floating controls). Hold stroke placement while the frame settles.
       if (this.surfaceType === "preview") {
-        this.openReadingProjectionGate(450);
+        this.openReadingProjectionGate(READING_PROJECTION_GATE_MS);
       }
       this.surfaceStateGeneration += 1;
       // Do not let a settlement started on the opposite surface block the
@@ -11347,7 +11395,14 @@ var PreviewDrawingController = class {
     const projected = [];
     const layoutsById = new Map();
     const currentBoundsById = new Map();
-    for (const stroke of this.drawingData?.strokes || []) {
+    // Freehand strokes have no element layout, so they were historically
+    // re-projected unconditionally on every layout pass. When a view
+    // transition moved their anchor lines they jumped around. Project them
+    // here too and cache the result, so the settle guard below can hold their
+    // absolute placement until the projection is genuinely stable.
+    const freeStrokeProjections = new Map();
+    const transitionProjectedFree = [];
+    for (const [index, stroke] of (this.drawingData?.strokes || []).entries()) {
       if (isConnectorStroke(stroke)) {
         continue;
       }
@@ -11359,6 +11414,29 @@ var PreviewDrawingController = class {
         }
       }
       if (normalizeNoteFlow(stroke?.noteFlow)) {
+        continue;
+      }
+      if (!layout?.id) {
+        const transitionId = `free-stroke:${strokeElementId(stroke) || index}`;
+        const previousBounds = getStrokeBounds(stroke, previousCanvasWidth, previousCanvasHeight);
+        const projectedPoints = this.canonicalPointsForStroke(stroke, index).map((point) => projectResponsivePoint(point, {
+          canvasWidth: this.canvasWidth(),
+          canvasHeight: this.canvasHeight(),
+          frame: context.frame,
+          lineToCanvasY
+        }));
+        freeStrokeProjections.set(index, projectedPoints);
+        const projectedBounds = getStrokeBounds({ ...stroke, points: projectedPoints }, this.canvasWidth(), this.canvasHeight());
+        if (previousBounds && projectedBounds) {
+          currentBoundsById.set(transitionId, previousBounds);
+          transitionProjectedFree.push({
+            id: transitionId,
+            x: projectedBounds.minX,
+            y: projectedBounds.minY,
+            width: Math.max(1, projectedBounds.maxX - projectedBounds.minX),
+            height: Math.max(1, projectedBounds.maxY - projectedBounds.minY)
+          });
+        }
         continue;
       }
       const box = projectElementLayout(layout, {
@@ -11376,7 +11454,7 @@ var PreviewDrawingController = class {
     }
     // Nearby elements are independent unless the user explicitly groups them
     // or connects them. Never let legacy proximity relations move content.
-    const transitionProjected = [...projected];
+    const transitionProjected = [...projected, ...transitionProjectedFree];
     const noteFlowProjectedById = new Map();
     for (const [index, stroke] of (this.drawingData?.strokes || []).entries()) {
       let noteFlow = normalizeNoteFlow(stroke?.noteFlow);
@@ -11591,6 +11669,10 @@ var PreviewDrawingController = class {
           stroke.previewWidth = metrics.previewWidth;
           stroke.previewHeight = metrics.previewHeight;
         }
+      } else if (freeStrokeProjections.has(index)) {
+        // Reuse the projection already computed while measuring the
+        // transition, so freehand strokes are projected exactly once.
+        stroke.points = freeStrokeProjections.get(index);
       } else {
         stroke.points = sourcePoints.map((point) => projectResponsivePoint(point, {
           canvasWidth: this.canvasWidth(),
@@ -12990,6 +13072,15 @@ var PreviewDrawingController = class {
       if (!(Number(span) >= 1 && Number(span) < 12)) {
         return null;
       }
+      // Remember where the member sits. Obsidian replaces the rendered node
+      // when a task is toggled, and the fresh node carries neither NoteDraw's
+      // ids nor its source ranges yet, so id/text matching alone can miss it
+      // for several frames — which is exactly the "parallel row collapses and
+      // flashes" glitch. Same parent + same child index survives a re-render.
+      const parentElement = flowElement?.parentElement || null;
+      const siblingIndex = parentElement
+        ? Array.prototype.indexOf.call(parentElement.children, flowElement)
+        : -1;
       return {
         id: memberBlock.id,
         path: memberBlock.path,
@@ -12997,6 +13088,8 @@ var PreviewDrawingController = class {
         lineEnd: Number.isFinite(Number(memberBlock.lineEnd)) ? Number(memberBlock.lineEnd) : Number(memberBlock.lineStart),
         textHint: normalizeRenderedText(renderedMarkdownIdentityText(memberElement)).slice(0, 240),
         flowElement,
+        parentElement,
+        siblingIndex,
         span,
         widthScale: normalizeMarkdownBlockWidthScale(memberBlock.widthScale),
         order
@@ -13012,6 +13105,15 @@ var PreviewDrawingController = class {
     };
     // Reapply the frozen row after checkbox handlers replace the rendered
     // list item, including renderers that do not emit a child-list mutation.
+    // The animation frame runs before the browser paints the rebuilt row, so a
+    // successful restore there makes the parallel layout visually continuous.
+    window.requestAnimationFrame(() => {
+      if (this.destroyed || this.pendingMarkdownIdentityRefresh?.expiresAt <= Date.now()) {
+        return;
+      }
+      this.restorePendingMarkdownIdentityPresentation();
+      this.syncMarkdownBlockPresentation();
+    });
     for (const delay of [0, 48, 180, 420, 900]) {
       window.setTimeout(() => {
         if (this.destroyed || this.pendingMarkdownIdentityRefresh?.expiresAt <= Date.now()) {
@@ -13021,6 +13123,27 @@ var PreviewDrawingController = class {
         this.syncMarkdownBlockPresentation();
       }, delay);
     }
+  }
+  pendingIdentityMemberByPosition(member, used = null) {
+    // Fallback match: the row member still lives under the same parent at the
+    // same child index even after the renderer replaced its node. This is the
+    // only signal that survives a re-render before NoteDraw has re-annotated
+    // the fresh DOM, and without it a parallel row repaints as a single
+    // column for one or more frames.
+    const parent = member?.parentElement;
+    const index = Number(member?.siblingIndex);
+    if (!parent?.isConnected || !this.previewEl?.contains?.(parent) || !Number.isFinite(index) || index < 0) {
+      return null;
+    }
+    const candidate = parent.children?.[index] || null;
+    if (!candidate || candidate === member.flowElement || !candidate.isConnected || !this.previewEl.contains(candidate)) {
+      return null;
+    }
+    const resolved = markdownBlockCandidateElementForTarget(candidate, this.previewEl) || candidate;
+    if (used?.has?.(resolved)) {
+      return null;
+    }
+    return resolved;
   }
   restorePendingMarkdownIdentityPresentation(mutations = []) {
     const pending = this.pendingMarkdownIdentityRefresh;
@@ -13092,9 +13215,11 @@ var PreviewDrawingController = class {
       const matchingHint = member.textHint
         ? candidateMeta.filter((meta) => !used.has(meta.element) && meta.path === member.path && meta.hint === member.textHint)
         : [];
+      const positionCandidate = this.pendingIdentityMemberByPosition(member, used);
       const freshElement = candidateMeta.find((meta) => !used.has(meta.element) && meta.id === member.id)?.element
         || takeUnique(matchingRange)
-        || takeUnique(matchingHint);
+        || takeUnique(matchingHint)
+        || positionCandidate;
       if (freshElement) {
         used.add(freshElement);
         matched.set(member.id, freshElement);
@@ -16407,7 +16532,7 @@ var PreviewDrawingController = class {
     // gap each time the user dropped back to the original spot.
     const noOpMarkdownDrop = didMove && markdownDrop ? this.markdownDropIsNoOp(markdownDrop) : false;
     if (didMove && markdownDrop && !noOpMarkdownDrop) {
-      this.selectionFrameAwaitingMarkdownSync = { committed: false };
+      this.selectionFrameAwaitingMarkdownSync = { committed: false, startedAt: Date.now() };
       this.invalidateSelectionFrameSnapshot();
     }
     const drawingHistoryBefore = this.dragDrawingHistoryBefore;
@@ -18481,7 +18606,26 @@ var PreviewDrawingController = class {
     }
     let frame = this.getVisibleSelectionFrameCanvasRect();
     if (!frame) {
+      // A stale snapshot, an expiring sync wait, or a block whose DOM node was
+      // just replaced can leave the frame empty while the selection is still
+      // real. Recompute once before giving up, otherwise the user sees an
+      // element selected with no box around it.
+      this.captureSelectionFrameSnapshot({ force: true });
+      frame = this.getVisibleSelectionFrameCanvasRect();
+    }
+    if (!frame) {
       return;
+    }
+    // An element that is still measuring (empty text, an embed whose node was
+    // just swapped) can report a zero-height box. Give the frame a small
+    // minimum size before clamping, so a real selection is never painted
+    // without any outline at all.
+    const minFrame = SELECT_RESIZE_HANDLE_SIZE * 1.5;
+    if (frame.width < minFrame) {
+      frame.width = minFrame;
+    }
+    if (frame.height < minFrame) {
+      frame.height = minFrame;
     }
     frame = clampCanvasFrameForDisplay(frame, this.canvasWidth(), this.canvasHeight());
     if (!frame) {
@@ -25185,9 +25329,18 @@ var PreviewDrawingController = class {
     this.selectionFrameSnapshot = null;
   }
   captureSelectionFrameSnapshot({ force = false } = {}) {
+    // The wait flag is cleared by the Markdown sync that follows a source
+    // commit. When that re-render never arrives (Obsidian skipped its
+    // incremental render, the leaf changed mid-commit, a sync plugin rewrote
+    // the file) the flag used to stay set forever, silently leaving a real
+    // selection without any frame. Expire it so the frame always comes back.
     if (this.selectionFrameAwaitingMarkdownSync && !this.draggingStroke) {
-      this.selectionFrameSnapshot = null;
-      return null;
+      const startedAt = Number(this.selectionFrameAwaitingMarkdownSync.startedAt) || 0;
+      if (!startedAt || Date.now() - startedAt <= SELECTION_FRAME_SYNC_TIMEOUT_MS) {
+        this.selectionFrameSnapshot = null;
+        return null;
+      }
+      this.selectionFrameAwaitingMarkdownSync = null;
     }
     if (!this.hasHybridSelection()) {
       this.selectionFrameSnapshot = null;
@@ -29200,8 +29353,13 @@ function isEmbeddedSurfaceSyncMutation(mutation) {
   }
   const selector = ".markdown-embed, .markdown-embed-content, .internal-embed";
   if (mutation.type === "attributes") {
+    // Class flips are by far the noisiest mutation Obsidian emits (hover,
+    // theme, drag state). Only the target itself or its ancestors can matter
+    // here. A `querySelector` subtree scan per flip is far too expensive for a
+    // document-wide observer, and embed insertion is already covered by the
+    // childList branch below.
     return mutation.attributeName === "class" && Boolean(
-      mutation.target?.matches?.(selector) || mutation.target?.closest?.(selector) || mutation.target?.querySelector?.(selector)
+      mutation.target?.matches?.(selector) || mutation.target?.closest?.(selector)
     );
   }
   if (mutation.type !== "childList") {

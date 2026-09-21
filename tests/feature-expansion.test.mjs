@@ -627,7 +627,8 @@ test("hidden and offscreen embeds avoid redundant controllers and scroll work", 
   const scrollStart = source.indexOf("  onScroll()");
   const scrollSource = source.slice(scrollStart, source.indexOf("  scheduleResize(options", scrollStart));
 
-  assert.match(observerSource, /mutations\.some\(\(mutation\) => isEmbeddedSurfaceSyncMutation\(mutation\)\)/);
+  // One pass over the records, not one `some()` scan per consumer.
+  assert.match(observerSource, /for \(const mutation of mutations\)[\s\S]*isEmbeddedSurfaceSyncMutation\(mutation\)[\s\S]*isWebviewSyncMutation\(mutation\)[\s\S]*isWorkspaceSurfaceMutation\(mutation\)[\s\S]*isFloatingControlsVisibilityMutation\(mutation\)/);
   assert.doesNotMatch(observerSource, /mutations\.some\(\(mutation\) => mutation\.type === "childList"\)/);
   assert.match(embeddedSource, /return isElementLaidOut\(surface\) && !surface\.closest\("\.notedraw-embed"\)/);
   assert.match(scrollSource, /this\.embeddedSurface && !isElementNearViewport\(this\.previewEl\)/);
