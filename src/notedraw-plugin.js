@@ -19243,7 +19243,14 @@ var PreviewDrawingController = class {
           && item.explicitLineGroup === group
           && item.textHint === hint);
         if (!block) {
-          const base = template || {
+          // A re-render creates fresh default records (span=12). When a
+          // pending identity snapshot already confirmed this block as part of
+          // a side-by-side row, inherit that layout so the row never paints
+          // as a single column while the record is rebuilt.
+          const pendingMember = this.pendingMarkdownIdentityRefresh?.expiresAt > Date.now()
+            ? (this.pendingMarkdownIdentityRefresh.members || []).find((member) => member.path === path && Number(member.lineStart) === line)
+            : null;
+          const defaultBase = {
             path,
             span: 12,
             noteFlowAutoSpan: false,
@@ -19260,6 +19267,14 @@ var PreviewDrawingController = class {
             locked: false,
             groupId: ""
           };
+          const base = template || (pendingMember
+            ? {
+              ...defaultBase,
+              span: pendingMember.span,
+              widthScale: pendingMember.widthScale,
+              noteFlowAutoSpan: false
+            }
+            : defaultBase);
           block = normalizeMarkdownBlocks([{
             ...base,
             id: `${base.id || `md-${Date.now().toString(36)}`}-${hashString(`${group}:${line}:${hint}`)}`,
@@ -20247,8 +20262,13 @@ var PreviewDrawingController = class {
         block.floating = false;
         block.floatingExplicit = false;
         block.floatBox = null;
-        block.span = 12;
-        block.widthScale = 1;
+        // Returning a block to the flow must not erase a user-confirmed
+        // side-by-side layout. Resetting the span here used to collapse a
+        // parallel row whenever a transient overlap repair ran mid-render.
+        if (!(Number(block.span) >= 1 && Number(block.span) < 12)) {
+          block.span = 12;
+          block.widthScale = 1;
+        }
         element.removeClass("is-floating");
         this.applyMarkdownBlockFlowPresentation(block, element);
         for (const property of ["--notedraw-md-float-x", "--notedraw-md-float-y", "--notedraw-md-float-width"]) {
