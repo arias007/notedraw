@@ -11160,6 +11160,9 @@ var PreviewDrawingController = class {
           }
           this.noteFlowMarkdownAnnotationComplete = false;
           if (this.draggingStroke || this.resizingSelection || this.pointerDown) {
+            if (this.pendingMarkdownIdentityRefresh?.expiresAt > Date.now()) {
+              this.restorePendingMarkdownIdentityPresentation(mutations);
+            }
             return;
           }
           if (this.pendingMarkdownIdentityRefresh?.expiresAt > Date.now()) {
