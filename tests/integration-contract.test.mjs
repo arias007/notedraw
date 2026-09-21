@@ -188,8 +188,8 @@ test("3.4.84 preserves reading content and cross-view frames without hidden-surf
   assert.match(source, /pickRootPreview\(previews, rendererPreview, isElementVisibleEnough, isElementLaidOut\)/);
   assert.match(source, /for \(const alternatePreview of findRootPreviewsForView\(view\)\)/);
   assert.match(source, /!this\.canvas\?\.isConnected \|\| !isElementVisibleEnough\(this\.previewEl\)/);
-  const activationSource = source.slice(source.indexOf("  setControllerActivation(controller, active)"), source.indexOf("  installWebviewObserver()", source.indexOf("  setControllerActivation(controller, active)")));
-  assert.match(activationSource, /setControllerActivation\(controller, active\)[\s\S]*this\.viewDrawingActive\.set\(key, enabled\)[\s\S]*this\.reconcileControllerActivation\(controller\)/);
+  const activationSource = source.slice(source.indexOf("  setControllerActivation(controller, active, { explicit = false } = {})"), source.indexOf("  installWebviewObserver()"));
+  assert.match(activationSource, /setControllerActivation\(controller, active, \{ explicit = false \} = \{\}\)[\s\S]*this\.viewDrawingActive\.set\(key, enabled\)[\s\S]*viewDrawingExplicitOff/);
   assert.match(activationSource, /reconcileControllerActivation\(controller = null\)[\s\S]*const visible = candidates\.filter\([\s\S]*!candidate\.embeddedSurface[\s\S]*isElementVisibleEnough\(candidate\.previewEl\)/);
   assert.match(activationSource, /const preferred = enabled[\s\S]*visible\.find\(\(candidate\) => candidate === controller\)[\s\S]*visible\[0\]/);
   assert.match(activationSource, /const nextActive = Boolean\(enabled && candidate === preferred\);[\s\S]*candidate\.applyActiveState\(nextActive, \{ eager: nextActive \|\| !enabled \}\)/);
@@ -273,7 +273,7 @@ test("reading and source controllers share the latest in-memory drawing state", 
   assert.match(source, /const canonical = materializeDrawingSaveRequest\([\s\S]*this\.drawingStateCache\.set\(path, canonical\);[\s\S]*refreshControllersForFile\(request\.file, canonical/);
   assert.match(source, /this\.scheduleDrawingSave\(entry\.file, data, \{ replace: true \}\)/);
   assert.match(source, /writeDrawings\(request\.file, compacted, \{ normalized: true, refresh: false, updateCache: false \}\)/);
-  assert.match(source, /this\.plugin\.setControllerActivation\(this, nextActive\)/);
+  assert.match(source, /this\.plugin\.setControllerActivation\(this, nextActive, \{ explicit: true \}\)/);
   assert.match(source, /controller\.scheduleLayoutRefresh\(\{ settle: false \}\);\s*controller\.requestRender\(true\)/);
   assert.match(source, /this\.textPanel = createNoteDrawControlElement\(this\.floatingControlsHost, "notedraw-text-panel"\)/);
   assert.doesNotMatch(source, /if \(this\.surfaceType !== "source"\) \{\s*this\.textButton/);

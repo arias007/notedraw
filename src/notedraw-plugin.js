@@ -386,6 +386,8 @@ var I18N = {
     settingsLanguageDesc: "Plugin UI language. Auto follows Obsidian when possible.",
     defaultSourceEditMarkdown: "Default to Edit MD in editing view",
     defaultSourceEditMarkdownDesc: "Open NoteDraw in Edit MD mode when switching from reading view to editing view.",
+    autoActivateDrawing: "Auto-open toolbar with the note",
+    autoActivateDrawingDesc: "Off by default: saved drawings always show with the note, and the magic wand opens the toolbar. When enabled, the editing layer (toolbar) also opens automatically.",
     languageAuto: "Auto",
     drawingStorageMode: "NoteDraw data location",
     drawingStorageModeDesc: "Where each note's NoteDraw JSON is stored. The plugin config folder remains the default.",
@@ -573,6 +575,8 @@ var I18N = {
     settingsLanguageDesc: "插件界面语言。自动模式会尽量跟随 Obsidian。",
     defaultSourceEditMarkdown: "编辑视图默认进入编辑 MD",
     defaultSourceEditMarkdownDesc: "从阅读视图切换到编辑视图时，NoteDraw 默认进入编辑 MD 工具。",
+    autoActivateDrawing: "打开笔记自动开启工具栏",
+    autoActivateDrawingDesc: "默认关闭：已保存的涂鸦与布局始终跟随笔记显示，魔法棒负责开关工具栏。开启后，编辑图层（含工具栏）也会随笔记自动打开。",
     languageAuto: "自动",
     drawingStorageMode: "NoteDraw 数据位置",
     drawingStorageModeDesc: "设置每篇笔记的 NoteDraw 数据文件位置。默认仍为插件配置文件夹。",
@@ -1326,6 +1330,9 @@ var DEFAULT_SETTINGS = {
   lastReadingZoom: 1,
   mindMapAffectsSource: true,
   defaultSourceEditMarkdown: true,
+  // Saved drawings always render with the note regardless of activation.
+  // This flag only auto-opens the editing layer (toolbar) with the note.
+  autoActivateDrawing: false,
   frameCornerRadius: 0,
   toolbarTopOffset: 6,
   toolbarPosition: null,
@@ -1610,6 +1617,7 @@ var NoteDrawPlugin = class extends Plugin {
     this.sharePackagePromises = /* @__PURE__ */ new Map();
     this.previewRenderRecovery = /* @__PURE__ */ new Map();
     this.viewDrawingActive = /* @__PURE__ */ new WeakMap();
+    this.viewDrawingExplicitOff = /* @__PURE__ */ new WeakSet();
     this.viewToolbarState = /* @__PURE__ */ new WeakMap();
     this.viewEditHistory = /* @__PURE__ */ new WeakMap();
     this.viewInteractionController = /* @__PURE__ */ new WeakMap();
@@ -2574,6 +2582,18 @@ var NoteDrawPlugin = class extends Plugin {
     const key = this.controllerStateKey(controller);
     return key ? Boolean(this.viewDrawingActive.get(key)) : false;
   }
+  shouldAutoActivateController(controller) {
+    if (!this.noteDrawSettings?.autoActivateDrawing) {
+      return false;
+    }
+    if (!controller || controller.destroyed || controller.embeddedSurface
+      || controller.registeredSurface || controller.workspaceSurface
+      || controller.surfaceType !== "preview") {
+      return false;
+    }
+    const key = this.controllerStateKey(controller);
+    return key ? !this.viewDrawingExplicitOff.has(key) : false;
+  }
   controllerStateKey(controller) {
     const view = controller?.view;
     return view?.leaf || findOwningLeaf(this.app, view?.containerEl || controller?.previewEl) || view || controller?.previewEl || null;
@@ -2890,11 +2910,18 @@ var NoteDrawPlugin = class extends Plugin {
     }
     return false;
   }
-  setControllerActivation(controller, active) {
+  setControllerActivation(controller, active, { explicit = false } = {}) {
     const key = this.controllerStateKey(controller);
     const enabled = Boolean(active);
     if (key) {
       this.viewDrawingActive.set(key, enabled);
+      if (explicit) {
+        if (enabled) {
+          this.viewDrawingExplicitOff.delete(key);
+        } else {
+          this.viewDrawingExplicitOff.add(key);
+        }
+      }
     }
     this.reconcileControllerActivation(controller);
   }
@@ -6373,6 +6400,15 @@ var PreviewDrawingController = class {
     this.plugin.liveControllers?.add(this);
     this.runtimeSettings = sanitizeSettings(this.plugin?.noteDrawSettings || {});
     this.active = this.plugin.controllerActivationState(this);
+    if (!this.active && this.plugin.shouldAutoActivateController(this)) {
+      this.active = true;
+      // Record the auto state so activation reconciles keep it. Only an
+      // explicit magic-wand toggle may clear it (viewDrawingExplicitOff).
+      const activationKey = this.plugin.controllerStateKey(this);
+      if (activationKey) {
+        this.plugin.viewDrawingActive.set(activationKey, true);
+      }
+    }
     this.drawingData = {
       version: 3,
       sourcePath: file.path,
@@ -7107,7 +7143,14 @@ var PreviewDrawingController = class {
             }
           }
           this.markdownMutationBurstCount += Math.max(1, mutations.length);
-          if (this.markdownMutationBurstCount > 20) {
+          // A single legitimate re-render (a checkbox toggle rebuilds a whole
+          // section, an embed hydrates, tasks-plugin refreshes a list) easily
+          // produces 40-100 childList records in one second window. The old
+          // threshold of 20 paused this observer for 4+ seconds on every task
+          // toggle, which is exactly when the parallel-row restore needs it,
+          // and rows visibly flashed while nothing was watching. 200 still
+          // catches real render feedback loops within one window.
+          if (this.markdownMutationBurstCount > 200) {
             // A renderer/plugin feedback loop can otherwise keep rebuilding
             // the same preview until the Electron renderer reaches GBs of
             // retained DOM. Pause this observer and let the next stable
@@ -8198,7 +8241,7 @@ var PreviewDrawingController = class {
       return;
     }
     const nextActive = !this.active;
-    this.plugin.setControllerActivation(this, nextActive);
+    this.plugin.setControllerActivation(this, nextActive, { explicit: true });
     if (!nextActive) {
       return;
     }
@@ -13191,6 +13234,16 @@ var PreviewDrawingController = class {
         for (const candidate of markdownBlockCandidateElements(node)) {
           addCandidate(candidate, replacedPendingFlow);
         }
+      }
+    }
+    if (!(mutations || []).length) {
+      // The timer-based restores (rAF, 48/180/420/900ms) run without mutation
+      // records, and the content observer may even be paused by the burst
+      // guard when the rebuild lands. Feed the whole preview as candidates so
+      // id/hint matching still finds the replaced row members; disconnected
+      // nodes are already rejected by addCandidate.
+      for (const candidate of markdownBlockCandidateElements(this.previewEl)) {
+        addCandidate(candidate);
       }
     }
     const documentOrder = new Map(markdownBlockCandidateElements(this.previewEl).map((element, order) => [element, order]));
@@ -19914,6 +19967,14 @@ var PreviewDrawingController = class {
     if (!path || !textHint) {
       return null;
     }
+    // A record created while a parallel-row restore is still pending must not
+    // appear as a fresh default (span=12) owner: that erased the user's
+    // side-by-side layout for several frames on every task toggle.
+    const pendingMember = this.pendingMarkdownIdentityRefresh?.expiresAt > Date.now()
+      ? (this.pendingMarkdownIdentityRefresh.members || []).find((member) => (
+        member.path === path && Number(member.lineStart) === Number(info.lineStart)
+      ))
+      : null;
     const record = normalizeMarkdownBlocks([{
       id: `md-${Date.now().toString(36)}-${hashString(`${path}:${info.lineStart ?? "x"}:${textHint}`)}`,
       path,
@@ -19921,7 +19982,9 @@ var PreviewDrawingController = class {
       lineEnd: info.lineEnd,
       textHint,
       renderKind: markdownElementRenderKind(blockElement),
-      span: 12
+      span: pendingMember ? Number(pendingMember.span) : 12,
+      widthScale: pendingMember ? normalizeMarkdownBlockWidthScale(pendingMember.widthScale) : 1,
+      noteFlowAutoSpan: false
     }], this.file)[0];
     if (!record) {
       return null;
@@ -26782,6 +26845,22 @@ var NoteDrawSettingTab = class extends PluginSettingTab {
             await this.plugin.saveSettings();
           }));
       }),
+      this.createSettingDefinition("autoActivateDrawing", "autoActivateDrawingDesc", (setting) => {
+        setting.addToggle((component) => component
+          .setValue(settings.autoActivateDrawing)
+          .onChange(async (value) => {
+            this.plugin.noteDrawSettings.autoActivateDrawing = value;
+            if (!value) {
+              for (const controller of Array.from(this.plugin.liveControllers)) {
+                if (!controller.destroyed && controller.active && controller.surfaceType === "preview"
+                  && !controller.embeddedSurface && !controller.registeredSurface && !controller.workspaceSurface) {
+                  controller.plugin.setControllerActivation(controller, false);
+                }
+              }
+            }
+            await this.plugin.saveSettings();
+          }));
+      }),
       this.createSettingDefinition("longPressMs", "longPressMsDesc", (setting) => {
         this.addSliderWithValue(setting, {
           value: settings.longPressMs,
@@ -27373,6 +27452,7 @@ function sanitizeSettings(settings) {
     lastReadingZoom: clamp(Number(input.lastReadingZoom ?? DEFAULT_SETTINGS.lastReadingZoom), MIN_READING_ZOOM, MAX_READING_ZOOM),
     mindMapAffectsSource: input.mindMapAffectsSource !== false,
     defaultSourceEditMarkdown: input.defaultSourceEditMarkdown !== false,
+    autoActivateDrawing: input.autoActivateDrawing !== false,
     frameCornerRadius: clamp(Number(input.frameCornerRadius ?? DEFAULT_SETTINGS.frameCornerRadius), MIN_FRAME_CORNER_RADIUS, MAX_FRAME_CORNER_RADIUS),
     toolbarTopOffset: clamp(Number(input.toolbarTopOffset ?? DEFAULT_SETTINGS.toolbarTopOffset), 0, 48),
     toolbarPosition: normalizeToolbarPosition(input.toolbarPosition),

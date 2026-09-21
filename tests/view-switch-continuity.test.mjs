@@ -11,7 +11,7 @@ test("magic wand state follows the stable leaf across Markdown surfaces", async 
   assert.match(source, /this\.viewDrawingActive\s*=\s*\/\* @__PURE__ \*\/ new WeakMap\(\)/);
   assert.match(source, /this\.viewToolbarState\s*=\s*\/\* @__PURE__ \*\/ new WeakMap\(\)/);
   assert.match(source, /controllerStateKey\(controller\)\s*\{\s*const view = controller\?\.view;\s*return view\?\.leaf \|\| findOwningLeaf\(this\.app, view\?\.containerEl \|\| controller\?\.previewEl\) \|\| view \|\| controller\?\.previewEl/s);
-  assert.match(source, /this\.plugin\.setControllerActivation\(this, nextActive\)/);
+  assert.match(source, /this\.plugin\.setControllerActivation\(this, nextActive, \{ explicit: true \}\)/);
   assert.match(source, /candidate\.applySharedToolbarState\(next\)/);
   assert.doesNotMatch(source, /Failed to close source NoteDraw controller/);
 });
@@ -88,7 +88,7 @@ test("toolbar mode, brush, panels, and text preset are shared", async () => {
 test("opening the magic wand reveals drawings while long press and right click toggle visibility", async () => {
   const source = await readFile(sourceUrl, "utf8");
 
-  assert.match(source, /const nextActive = !this\.active;\s*this\.plugin\.setControllerActivation\(this, nextActive\);\s*if \(!nextActive\) \{\s*return;\s*\}\s*if \(nextActive\) \{\s*await this\.ensureDrawingsLoaded\(\);\s*if \(this\.destroyed \|\| !this\.active\) \{\s*return;\s*\}\s*if \(!this\.drawingsVisible\) \{\s*this\.setDrawingsVisible\(true\)/);
+  assert.match(source, /const nextActive = !this\.active;\s*this\.plugin\.setControllerActivation\(this, nextActive, \{ explicit: true \}\);\s*if \(!nextActive\) \{\s*return;\s*\}\s*if \(nextActive\) \{\s*await this\.ensureDrawingsLoaded\(\);\s*if \(this\.destroyed \|\| !this\.active\) \{\s*return;\s*\}\s*if \(!this\.drawingsVisible\) \{\s*this\.setDrawingsVisible\(true\)/);
   assert.match(source, /this\.buttonLongPressed = true;\s*this\.toggleDrawingsVisiblePersisted\(\)/);
   assert.match(source, /onButtonContextMenu\(event\)[\s\S]*this\.toggleDrawingsVisiblePersisted\(\)/);
   assert.match(source, /async toggleDrawingsVisiblePersisted\(\) \{\s*await this\.ensureDrawingsLoaded\(\);\s*this\.toggleDrawingsVisible\(\)/);
