@@ -22623,7 +22623,8 @@ ${selected}
         const hint = normalizeRenderedText2(renderedMarkdownIdentityText(candidate)).slice(0, 240);
         let block = records.find((item) => item.path === path && item.lineStart === line && item.lineEnd === line && item.explicitLineGroup === group && item.textHint === hint);
         if (!block) {
-          const base = template || {
+          const pendingMember = this.pendingMarkdownIdentityRefresh?.expiresAt > Date.now() ? (this.pendingMarkdownIdentityRefresh.members || []).find((member) => member.path === path && Number(member.lineStart) === line) : null;
+          const defaultBase = {
             path,
             span: 12,
             noteFlowAutoSpan: false,
@@ -22640,6 +22641,12 @@ ${selected}
             locked: false,
             groupId: ""
           };
+          const base = template || (pendingMember ? {
+            ...defaultBase,
+            span: pendingMember.span,
+            widthScale: pendingMember.widthScale,
+            noteFlowAutoSpan: false
+          } : defaultBase);
           block = normalizeMarkdownBlocks([{
             ...base,
             id: `${base.id || `md-${Date.now().toString(36)}`}-${hashString(`${group}:${line}:${hint}`)}`,
@@ -23535,8 +23542,10 @@ ${selected}
         block.floating = false;
         block.floatingExplicit = false;
         block.floatBox = null;
-        block.span = 12;
-        block.widthScale = 1;
+        if (!(Number(block.span) >= 1 && Number(block.span) < 12)) {
+          block.span = 12;
+          block.widthScale = 1;
+        }
         element.removeClass("is-floating");
         this.applyMarkdownBlockFlowPresentation(block, element);
         for (const property of ["--notedraw-md-float-x", "--notedraw-md-float-y", "--notedraw-md-float-width"]) {
