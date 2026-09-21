@@ -1684,6 +1684,7 @@ var NoteDrawPlugin = class extends Plugin {
     });
     this.addSettingTab(new NoteDrawSettingTab(this.app, this));
     this.registerEvent(this.app.workspace.on("layout-change", () => {
+      this.openReadingProjectionGates(450);
       this.syncMarkdownModeSurfaces();
       window.requestAnimationFrame(() => this.syncMarkdownModeSurfaces());
       // Layout changes arrive in bursts while Obsidian is opening or switching
@@ -1692,7 +1693,10 @@ var NoteDrawPlugin = class extends Plugin {
       // surface repeatedly.
       this.scheduleSurfaceSync(120);
     }));
-    this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.scheduleSurfaceSync(40)));
+    this.registerEvent(this.app.workspace.on("active-leaf-change", () => {
+      this.openReadingProjectionGates(450);
+      this.scheduleSurfaceSync(40);
+    }));
     this.registerEvent(this.app.workspace.on("file-open", () => this.scheduleSurfaceSync(60)));
     this.registerEvent(this.app.vault.on("create", (file) => {
       this.handleVaultDrawingChange(file);
@@ -1925,6 +1929,16 @@ var NoteDrawPlugin = class extends Plugin {
       if (!controller.destroyed) {
         this.reconcileControllerActivation(controller);
         controller.syncFloatingControlClasses();
+      }
+    }
+  }
+  openReadingProjectionGates(duration = 450) {
+    // Layout bursts and leaf switches move every reading surface at once.
+    // Open the projection gate on each preview controller so strokes hold
+    // their authoritative placement instead of chasing transient frames.
+    for (const controller of this.liveControllers) {
+      if (!controller?.destroyed && controller.surfaceType === "preview") {
+        controller.openReadingProjectionGate?.(duration);
       }
     }
   }
@@ -6561,6 +6575,11 @@ var PreviewDrawingController = class {
     this.lastObservedSurfaceVisibility = null;
     this.lastObservedSurfaceActive = null;
     this.readingSurfaceSettling = false;
+    // View-transition guard: while a reading surface is switching views or
+    // toggling edit mode, its Markdown DOM frame is transient. Re-projecting
+    // strokes against that transient frame paints them at a position that is
+    // about to change again, which is the visible "doodles drift" glitch.
+    this.readingProjectionGateUntil = 0;
     this.surfaceStateGeneration = 0;
     this.readingTouchGuard = createReadingTouchGuardState();
     this.pendingEmbedTool = null;
@@ -7494,7 +7513,24 @@ var PreviewDrawingController = class {
       return;
     }
     this.readingSurfaceSettling = Boolean(settling);
+    // Deliberately NOT arming the projection gate here. Arming on settling
+    // deferred the wand-close re-projection past the reading settlement and
+    // that second pass used different line anchors, visibly drifting
+    // overlapping floating doodles after toggling the toolbar.
     this.previewEl?.toggleClass("is-notedraw-layout-settling", this.readingSurfaceSettling);
+  }
+  openReadingProjectionGate(duration = 450) {
+    if (this.surfaceType !== "preview" || this.destroyed) {
+      return;
+    }
+    const wait = Math.max(120, Number(duration) || 450);
+    this.readingProjectionGateUntil = Math.max(this.readingProjectionGateUntil, Date.now() + wait);
+  }
+  readingProjectionGated() {
+    return this.surfaceType === "preview"
+      && this.responsivePointsInitialized === true
+      && !this.destroyed
+      && Date.now() < this.readingProjectionGateUntil;
   }
   applySettings() {
     const settings = sanitizeSettings(this.plugin?.noteDrawSettings || {});
@@ -11735,6 +11771,15 @@ var PreviewDrawingController = class {
         if (this.viewportZoomProjectionLock) {
           this.scheduleViewportZoomSettle(this.viewportZoomProjectionGuardUntil - Date.now() + 60);
         }
+      } else if (this.readingProjectionGated()) {
+        // A view transition is still moving the Markdown frame. Projecting
+        // now would anchor strokes to a transient DOM state and visibly
+        // drift them; keep the current absolute placement and project once
+        // after the transition settles.
+        this.preserveAbsoluteStrokePlacement(previousCanvasWidth, previousCanvasHeight);
+        this.scheduleResponsiveProjectionSettle(this.readingProjectionGateUntil - Date.now() + 120, {
+          preserveNoteFlowAbsolute: options.preserveNoteFlowAbsolute === true && previousCanvasWidth > 1 && previousCanvasHeight > 1
+        });
       } else if (!this.responsivePointsInitialized || signature !== this.responsiveLayoutSignature) {
         this.responsiveLayoutContext = null;
         const context = this.getResponsiveLayoutContext(true);
