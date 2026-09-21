@@ -13010,6 +13010,7 @@ var PreviewDrawingController = class {
       members,
       expiresAt: Date.now() + 6000
     };
+    this.pendingIdentitySettlementQueued = false;
     // Reapply the frozen row after checkbox handlers replace the rendered
     // list item, including renderers that do not emit a child-list mutation.
     for (const delay of [0, 48, 180, 420, 900]) {
@@ -13019,23 +13020,82 @@ var PreviewDrawingController = class {
         }
         this.restorePendingMarkdownIdentityPresentation();
         this.syncMarkdownBlockPresentation();
+        // Fast path: the ladder usually restores the row within a frame. When
+        // the renderer replaced the members in a way the ladder cannot match,
+        // borrow the magic-wand close path (a full reading re-settle) right
+        // away instead of leaving the row collapsed until the user toggles
+        // the toolbar.
+        if (delay > 0 && this.pendingMarkdownIdentityRowCollapsed()) {
+          this.recoverPendingMarkdownIdentityRowWithSettlement();
+        }
       }, delay);
     }
     // Identity restore can still lose the row when the renderer replaces its
-    // members in a way the parent+index fallback cannot match; the row then
-    // stayed collapsed until the user toggled the toolbar (a full reading
-    // re-settle). Offer the same recovery automatically once the restore
-    // ladder ends. reconcileSettledReadingSurface is signature-guarded: it
-    // re-settles only when the sizer height really collapsed, and is a no-op
-    // when the ladder already restored the parallel presentation.
+    // members in a way the parent+index fallback cannot match. The magic-wand
+    // settlement above usually recovers it; keep the signature-guarded
+    // reconcile as a final backstop for geometry changes the settlement
+    // cannot cover.
     for (const delay of [1100, 2200]) {
       window.setTimeout(() => {
         if (this.destroyed) {
           return;
         }
+        this.restorePendingMarkdownIdentityPresentation();
+        this.syncMarkdownBlockPresentation();
+        if (this.pendingMarkdownIdentityRowCollapsed()) {
+          this.recoverPendingMarkdownIdentityRowWithSettlement();
+          return;
+        }
         this.reconcileSettledReadingSurface();
       }, delay);
     }
+  }
+  pendingMarkdownIdentityRowCollapsed() {
+    const pending = this.pendingMarkdownIdentityRefresh;
+    if (!pending || pending.expiresAt <= Date.now() || this.surfaceType !== "preview" || !this.previewEl?.isConnected) {
+      return false;
+    }
+    const records = new Map(this.markdownBlockRecords().map((item) => [item.id, item]));
+    for (const member of pending.members || []) {
+      const block = records.get(member.id);
+      if (!block || block.floating) {
+        continue;
+      }
+      const element = this.markdownBlockElement(block);
+      if (!element?.isConnected) {
+        return true;
+      }
+      const flowElement = this.markdownBlockFlowElement(element) || element;
+      if (!flowElement.classList?.contains("notedraw-md-inline-grid-item")) {
+        return true;
+      }
+      const liveSpan = Number.parseInt(flowElement.style?.getPropertyValue?.("--notedraw-md-inline-span"), 10);
+      if (!(liveSpan >= 1 && liveSpan < 12)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  recoverPendingMarkdownIdentityRowWithSettlement() {
+    if (this.destroyed || this.active || this.surfaceType !== "preview" || this.embeddedSurface) {
+      return false;
+    }
+    if (this.pendingIdentitySettlementQueued) {
+      return true;
+    }
+    const queue = () => {
+      if (this.destroyed || this.active) {
+        return;
+      }
+      this.pendingIdentitySettlementQueued = true;
+      this.queueReadingSurfaceSettlement();
+    };
+    if (this.drawingsLoaded) {
+      queue();
+      return true;
+    }
+    this.ensureDrawingsLoaded().then(queue).catch(() => {});
+    return true;
   }
   restorePendingMarkdownIdentityPresentation(mutations = []) {
     const pending = this.pendingMarkdownIdentityRefresh;
