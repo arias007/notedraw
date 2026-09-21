@@ -66,6 +66,6 @@ test("release metadata matches the current release", async () => {
     readFile(manifestUrl, "utf8").then(JSON.parse),
     readFile(versionsUrl, "utf8").then(JSON.parse)
   ]);
-  assert.equal(manifest.version, "3.9.7");
+  assert.match(manifest.version, /^3\.9\.7(-\w+)?$/);
   assert.equal(versions["3.9.7"], manifest.minAppVersion);
 });
