@@ -7089,7 +7089,12 @@ var PreviewDrawingController = class {
             // The drag preview moves markdown blocks in the DOM on every
             // pointer frame; those are not content changes. Running the full
             // repair/sync here would do an O(blocks) pass per frame and
-            // starve Obsidian (frequent lag while dragging).
+            // starve Obsidian (frequent lag while dragging). Only the frozen
+            // side-by-side row has to survive, otherwise a parallel row
+            // (e.g. side-by-side tasks) visually collapses while dragging.
+            if (this.pendingMarkdownIdentityRefresh?.expiresAt > Date.now()) {
+              this.restorePendingMarkdownIdentityPresentation(mutations);
+            }
             return;
           }
           if (this.pendingMarkdownIdentityRefresh?.expiresAt > Date.now()) {
