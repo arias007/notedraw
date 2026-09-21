@@ -7513,10 +7513,11 @@ var PreviewDrawingController = class {
       return;
     }
     this.readingSurfaceSettling = Boolean(settling);
-    // Deliberately NOT arming the projection gate here. Arming on settling
-    // deferred the wand-close re-projection past the reading settlement and
-    // that second pass used different line anchors, visibly drifting
-    // overlapping floating doodles after toggling the toolbar.
+    if (this.readingSurfaceSettling) {
+      // Every transition starts by marking the surface as settling. Hold the
+      // last authoritative stroke placement while the DOM frame moves.
+      this.openReadingProjectionGate(600);
+    }
     this.previewEl?.toggleClass("is-notedraw-layout-settling", this.readingSurfaceSettling);
   }
   openReadingProjectionGate(duration = 450) {
@@ -8172,6 +8173,11 @@ var PreviewDrawingController = class {
     const wasActive = this.active;
     this.active = Boolean(active);
     if (wasActive !== this.active) {
+      // Entering or leaving edit mode can shift the reading frame (toolbar,
+      // floating controls). Hold stroke placement while the frame settles.
+      if (this.surfaceType === "preview") {
+        this.openReadingProjectionGate(450);
+      }
       this.surfaceStateGeneration += 1;
       // Do not let a settlement started on the opposite surface block the
       // fresh reading pass queued below. Its generation checks make it inert.
