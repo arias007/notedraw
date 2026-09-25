@@ -4,6 +4,24 @@ NoteDraw is a plugin for editing rendered note text and drawing directly on note
 
 It is built as a surface layer: the same drawing and text-edit logic works on Obsidian reading view, source view, embedded note previews, and supported webview surfaces.
 
+## Demo
+
+**Brushes — pen, watercolor and marker.** Stroke width follows your hand speed.
+
+![NoteDraw brushes](gif/brushes.gif)
+
+**Shapes — magnetic rectangles, circles and three-point arrows.**
+
+![NoteDraw shapes](gif/shapes.gif)
+
+**Text — edit rendered Markdown in place, then restyle it.**
+
+![NoteDraw text editing](gif/text-edit.gif)
+
+**Draw without the wand — your ink becomes part of the note.**
+
+![NoteDraw without the magic wand](gif/wand-off.gif)
+
 ## Features
 
 - Magic-wand header button for entering NoteDraw mode.
