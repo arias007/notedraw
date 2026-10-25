@@ -5101,12 +5101,6 @@ var NoteDrawPlugin = class extends Plugin {
   legacyDrawingPathForFile(file) {
     return `${this.app.vault.configDir}/plugins/${LEGACY_DRAWING_DIR}/${this.legacyEncodedDrawingNameForFile(file)}`;
   }
-  selectionFrameVisible() {
-    return shouldShowSelectionFrame({
-      toolMode: this.toolMode,
-      dragging: Boolean(this.draggingStroke || this.resizingSelection)
-    });
-  }
   drawingLegacyCandidatePaths(file) {
     return [this.legacyNameDrawingPathForFile(file), this.legacyDrawingPathForFile(file)]
       .filter(Boolean)
@@ -18939,6 +18933,15 @@ var PreviewDrawingController = class {
     this.ctx.lineTo(to.x, to.y);
     this.ctx.stroke();
     this.ctx.restore();
+  }
+  // Selection frames and resize handles are editing affordances owned by the
+  // select tool. In draw mode they only get in the way of the ink, so they stay
+  // hidden there and appear only while a selected element is actually dragged.
+  selectionFrameVisible() {
+    return shouldShowSelectionFrame({
+      toolMode: this.toolMode,
+      dragging: Boolean(this.draggingStroke || this.resizingSelection)
+    });
   }
   drawSelection() {
     if (!this.hasHybridSelection()) {

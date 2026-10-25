@@ -359,7 +359,15 @@ The current package focuses on the local Obsidian plugin runtime. The API and DO
 
 ## Version
 
-Current version: `4.1.0`.
+Current version: `4.1.1`.
+
+### 4.1.1 — restore tools after 4.1.0
+
+- Fixes a regression in 4.1.0 that made every pointer press throw: the new
+  `selectionFrameVisible` helper was placed on the plugin class while the
+  drawing controller — the only caller — had it undefined, so pen, select and
+  text tools all stopped responding. A new test (`controller-scope.test.mjs`)
+  fails the build if the controller ever calls a helper that lives on the plugin.
 
 ### 4.1.0 — drawing identity and draw-tool selection
 
