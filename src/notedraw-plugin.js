@@ -5673,21 +5673,26 @@ var NoteDrawPlugin = class extends Plugin {
       // Pre-4.1 files lived in this same folder under a colliding name.  Only
       // adopt one when its own sourcePath (or its emptiness) proves this note
       // owns it — otherwise two same-length note names would keep trading ink.
-      for (const legacyNamePath of this.drawingLegacyCandidatePaths(file)) {
-        if (legacyNamePath === legacyPath || !await adapter.exists(legacyNamePath)) {
-          continue;
+      // Once the collision-free file exists it wins outright: an old shared
+      // file must never be able to overwrite ink this note already owns.
+      const hasOwnStorage = candidates.some((candidate) => candidate.kind === "selected" || candidate.kind === "config");
+      if (!hasOwnStorage) {
+        for (const legacyNamePath of this.drawingLegacyCandidatePaths(file)) {
+          if (legacyNamePath === legacyPath || !await adapter.exists(legacyNamePath)) {
+            continue;
+          }
+          const data = await this.readDrawingJsonAt(legacyNamePath);
+          if (!data || !drawingRecordBelongsToPath(data, file?.path || "")) {
+            continue;
+          }
+          candidates.push({
+            kind: "legacy-name",
+            priority: 1,
+            updatedAt: data?.updatedAt,
+            data,
+            path: legacyNamePath
+          });
         }
-        const data = await this.readDrawingJsonAt(legacyNamePath);
-        if (!data || !drawingRecordBelongsToPath(data, file?.path || "")) {
-          continue;
-        }
-        candidates.push({
-          kind: "legacy-name",
-          priority: 1,
-          updatedAt: data?.updatedAt,
-          data,
-          path: legacyNamePath
-        });
       }
       candidates.sort((a, b) => portableTimestamp(b.updatedAt) - portableTimestamp(a.updatedAt) || b.priority - a.priority);
       const selected = this.preferCommittedDrawingSnapshot(file, candidates[0] || null);
