@@ -359,7 +359,28 @@ The current package focuses on the local Obsidian plugin runtime. The API and DO
 
 ## Version
 
-Current version: `4.1.1`.
+Current version: `4.1.2`.
+
+### 4.1.2 — elements stop moving on their own
+
+Everything drawn floats in the note document, but the projection that maps saved
+geometry onto the current canvas treated it like text: it re-anchored elements to
+the nearest Markdown line and it scaled their height with the document and the
+viewport. So editing one element, opening a side pane, or the note simply getting
+taller moved ink that nobody touched.
+
+- Floating elements now project in absolute document coordinates: the Markdown
+  line map is ignored and their size follows the content-lane width only.
+- Text anchoring still runs — exactly once — when the note's own text changed or
+  the content lane really reflowed, then the result is captured as the new
+  absolute position. NoteFlow ink keeps its line anchors, since it genuinely
+  reserves space inside the Markdown flow.
+- "Text changed" is decided by hashing the note's text, not by file mtime/size:
+  NoteDraw writes hidden blocks into notes, so stats change without any edit.
+- A layout repair or geometry capture on a transient frame (mid view switch,
+  split pane, keyboard) is skipped instead of baking that frame into the drawing.
+- Element points additionally store their absolute document row (`docY`) next to
+  the relative anchor, so same-lane height changes cannot scale them.
 
 ### 4.1.1 — restore tools after 4.1.0
 

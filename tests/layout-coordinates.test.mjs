@@ -183,7 +183,9 @@ test("malformed anchors are normalized without escaping the supported lane", () 
     path: "",
     line: null,
     lineConfidence: null,
-    offsetY: 0
+    offsetY: 0,
+    docY: null,
+    docWidth: null
   });
 });
 

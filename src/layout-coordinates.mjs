@@ -133,7 +133,12 @@ export function normalizeResponsiveAnchor(anchor) {
     path: typeof anchor.path === "string" ? anchor.path : "",
     line: normalizeLinePosition(anchor.line),
     lineConfidence: normalizeLineConfidence(anchor.lineConfidence),
-    offsetY: Number.isFinite(Number(anchor.offsetY)) ? clamp(Number(anchor.offsetY), -100_000, 100_000) : 0
+    offsetY: Number.isFinite(Number(anchor.offsetY)) ? clamp(Number(anchor.offsetY), -100_000, 100_000) : 0,
+    // Absolute document row of the point at capture time. Without it the only
+    // fallback is a ratio of the document height, so ink moves whenever any
+    // other element makes the note taller or shorter.
+    docY: Number.isFinite(Number(anchor.docY)) ? clamp(Number(anchor.docY), -100_000, 2_000_000) : null,
+    docWidth: Number.isFinite(Number(anchor.docWidth)) ? clamp(Number(anchor.docWidth), 1, 100_000) : null
   };
 }
 
@@ -170,7 +175,9 @@ export function createResponsivePoint({
       path: typeof sourcePath === "string" ? sourcePath : "",
       line: normalizeLinePosition(linePosition),
       lineConfidence: normalizeLineConfidence(lineConfidence),
-      offsetY: Number.isFinite(Number(lineOffsetY)) ? clamp(Number(lineOffsetY), -100_000, 100_000) : 0
+      offsetY: Number.isFinite(Number(lineOffsetY)) ? clamp(Number(lineOffsetY), -100_000, 100_000) : 0,
+      docY: clamp(finite(canvasY, 0), -100_000, 2_000_000),
+      docWidth: normalizedFrame.width
     }
   };
 }
@@ -179,7 +186,8 @@ export function projectResponsivePoint(point, {
   canvasWidth,
   canvasHeight,
   frame,
-  lineToCanvasY
+  lineToCanvasY,
+  allowLineAnchor = true
 } = {}) {
   const width = Math.max(1, finite(canvasWidth, 1));
   const height = Math.max(1, finite(canvasHeight, 1));
@@ -196,11 +204,22 @@ export function projectResponsivePoint(point, {
     contentLeft: frame?.left,
     contentWidth: frame?.width
   });
-  const anchoredY = anchor.line !== null && typeof lineToCanvasY === "function"
+  const anchoredY = allowLineAnchor !== false && anchor.line !== null && typeof lineToCanvasY === "function"
     ? Number(lineToCanvasY(anchor.path, anchor.line))
     : NaN;
   const canvasX = normalizedFrame.left + anchor.x * normalizedFrame.width;
-  const fallbackCanvasY = anchor.y * height;
+  // Same content lane means the Markdown did not reflow: the note simply got
+  // taller or shorter (another element, a NoteFlow reservation, a view swap).
+  // Keep the ink on its absolute document row instead of scaling it. When the
+  // lane itself changed, the layout really did reflow, so the ratio is the only
+  // meaningful mapping left.
+  const laneScale = Number.isFinite(anchor.docWidth) && anchor.docWidth > 0
+    ? normalizedFrame.width / anchor.docWidth
+    : NaN;
+  const sameContentLane = Number.isFinite(laneScale) && laneScale >= 0.82 && laneScale <= 1.2;
+  const fallbackCanvasY = sameContentLane && Number.isFinite(anchor.docY)
+    ? clamp(anchor.docY, 0, height)
+    : anchor.y * height;
   // Versions 3.1.38-3.1.39 serialized a missing line as 0. Reject implausible
   // line-zero jumps while preserving real anchors created near the first line.
   const firstLineIsPlausible = anchor.line === null || anchor.line >= 1 || anchor.y <= 0.15;

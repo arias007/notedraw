@@ -276,13 +276,13 @@ export function elementLayoutExceedsTarget(layoutInput, targetDocumentHeight, {
   return layout.sourceFrame.documentHeight > threshold && layout.box.y + layout.box.height > threshold;
 }
 
-function projectCorner(corner, target, lineToCanvasY, sourceInput = null, preferDocumentFlow = null) {
+function projectCorner(corner, target, lineToCanvasY, sourceInput = null, preferDocumentFlow = null, options = {}) {
   if (!corner) {
     return null;
   }
   const frame = normalizeFrame(target);
   let fallbackY = corner.y * frame.documentHeight;
-  if (sourceInput && typeof preferDocumentFlow === "boolean") {
+  if (sourceInput && (typeof preferDocumentFlow === "boolean" || options.absoluteDocumentY === true)) {
     const source = normalizeFrame(sourceInput);
     const sourceY = corner.y * source.documentHeight;
     const widthScale = clamp(frame.contentWidth / source.contentWidth, 0.2, 5);
@@ -291,12 +291,17 @@ function projectCorner(corner, target, lineToCanvasY, sourceInput = null, prefer
     // viewport height without moving the Markdown content itself. Keep the note
     // coordinate fixed for the same lane and only follow reflow across real
     // content-width changes.
-    const fallbackScale = sameContentLane
+    // absoluteDocumentY goes one step further: the element keeps its document
+    // pixel row no matter how wide the lane becomes. Ink is not text reflow —
+    // halving the lane width must not halve every drawing's vertical position.
+    const fallbackScale = options.absoluteDocumentY === true
       ? 1
-      : clamp(1 / widthScale, 0.48, 2.2);
+      : sameContentLane
+        ? 1
+        : clamp(1 / widthScale, 0.48, 2.2);
     fallbackY = clamp(sourceY * fallbackScale, 0, frame.documentHeight);
   }
-  const lineY = corner.line !== null && typeof lineToCanvasY === "function"
+  const lineY = corner.line !== null && typeof lineToCanvasY === "function" && options.allowLineAnchor !== false
     ? Number(lineToCanvasY(corner.path, corner.line))
     : NaN;
   const firstLineIsPlausible = corner.line === null || corner.line >= 1 || corner.y <= 0.15;
@@ -425,7 +430,19 @@ export function projectElementLayout(layoutInput, {
   frame,
   viewportHeight,
   lineToCanvasY,
-  preferDocumentFlow = null
+  preferDocumentFlow = null,
+  // Text (line/block) anchoring is what glues NoteFlow ink to the paragraph it
+  // reserves space under. A floating annotation has no such relationship, and
+  // turning it off is what keeps it from being dragged around by every Markdown
+  // reflow, NoteFlow reservation, or view switch.
+  allowLineAnchor = true,
+  // Floating ink is absolute: no text anchor and no document-height scaling.
+  // Both switches move together unless a caller asks otherwise.
+  absoluteDocumentY = allowLineAnchor === false,
+  // Element size must not follow document or viewport height: those change when
+  // a different element grows or the keyboard opens, which used to resize every
+  // other element on the page.
+  sizeFollowsContentWidthOnly = false
 } = {}) {
   const layout = normalizeElementLayout(layoutInput);
   if (!layout) {
@@ -438,14 +455,15 @@ export function projectElementLayout(layoutInput, {
     viewportHeight: viewportHeight || canvasHeight,
     documentHeight: canvasHeight
   });
-  const primary = projectCorner(layout.corners.topLeft, targetFrame, lineToCanvasY, layout.sourceFrame, preferDocumentFlow);
+  const cornerOptions = { allowLineAnchor, absoluteDocumentY };
+  const primary = projectCorner(layout.corners.topLeft, targetFrame, lineToCanvasY, layout.sourceFrame, preferDocumentFlow, cornerOptions);
   if (!primary) {
     return null;
   }
   let { xScale, yScale, scale } = calculateElementScales(layout.sourceFrame, targetFrame, layout.box);
-  const projectedRight = projectCorner(layout.corners.topRight, targetFrame, lineToCanvasY, layout.sourceFrame, preferDocumentFlow);
-  const projectedBottom = projectCorner(layout.corners.bottomLeft, targetFrame, lineToCanvasY, layout.sourceFrame, preferDocumentFlow);
-  const projectedBottomRight = projectCorner(layout.corners.bottomRight, targetFrame, lineToCanvasY, layout.sourceFrame, preferDocumentFlow);
+  const projectedRight = projectCorner(layout.corners.topRight, targetFrame, lineToCanvasY, layout.sourceFrame, preferDocumentFlow, cornerOptions);
+  const projectedBottom = projectCorner(layout.corners.bottomLeft, targetFrame, lineToCanvasY, layout.sourceFrame, preferDocumentFlow, cornerOptions);
+  const projectedBottomRight = projectCorner(layout.corners.bottomRight, targetFrame, lineToCanvasY, layout.sourceFrame, preferDocumentFlow, cornerOptions);
   const cornerXScales = [];
   const cornerYScales = [];
   if (projectedRight && layout.box.width > 0.01) {
@@ -482,9 +500,21 @@ export function projectElementLayout(layoutInput, {
     yScale = contentWidthScale;
     scale = contentWidthScale;
   }
+  if (sizeFollowsContentWidthOnly) {
+    // Only the content lane width may resize an element. Document height and
+    // viewport height are not properties of the drawing, so letting them scale
+    // ink makes every other element twitch when one of them changes.
+    const laneScale = clamp(contentWidthScale, 0.34, 2.8);
+    xScale = laneScale;
+    yScale = laneScale;
+    scale = laneScale;
+  }
   const fitXScale = targetFrame.contentWidth * 0.98 / Math.max(1, layout.box.width);
   if (xScale > fitXScale) {
     xScale = fitXScale;
+    if (sizeFollowsContentWidthOnly) {
+      yScale = fitXScale;
+    }
     scale = calculateVisualScale(xScale, yScale, scale);
   }
   let x = primary.x;

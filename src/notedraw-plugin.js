@@ -84,6 +84,7 @@ import {
   drawingRecordBelongsToPath,
   legacyDrawingFileName
 } from "./drawing-file-identity.mjs";
+import { noteTextChanged, textContentHash } from "./note-text-hash.mjs";
 import {
   computeTextLayout,
   placeFloatingTextEditor
@@ -1612,6 +1613,7 @@ var NoteDrawPlugin = class extends Plugin {
     this.suppressedDrawingSaves = [];
     this.drawingStateCache = /* @__PURE__ */ new Map();
     this.drawingBodyHistory = /* @__PURE__ */ new Map();
+    this.sourceTextHashCache = /* @__PURE__ */ new Map();
     this.portableBundles = /* @__PURE__ */ new Map();
     this.portableBundleLoads = /* @__PURE__ */ new Map();
     this.portableResourceCache = /* @__PURE__ */ new Map();
@@ -4088,6 +4090,7 @@ var NoteDrawPlugin = class extends Plugin {
       }
       controller.externalDrawingRefreshPending = false;
       controller.markdownSourceRevisionChanged = Boolean(data?._notedrawSourceRevisionMismatch);
+      controller.textAnchorPassPending = Boolean(data?._notedrawTextChanged);
       controller.drawingData = normalizeDrawingData(data, file);
       controller.captureCanonicalProjectionSource();
       controller.rebuildElementRelations();
@@ -5611,6 +5614,33 @@ var NoteDrawPlugin = class extends Plugin {
       console.error(`[${PLUGIN_ID}] Failed to write debug log`, error);
     }
   }
+  async sourceTextHashForFile(file) {
+    if (!file?.path) {
+      return "";
+    }
+    const key = normalizeVaultPath(file.path);
+    const stamp = `${Number(file.stat?.mtime) || 0}:${Number(file.stat?.size) || 0}`;
+    const cached = this.sourceTextHashCache?.get(key);
+    if (cached && cached.stamp === stamp) {
+      return cached.hash;
+    }
+    let hash = "";
+    try {
+      const realFile = getVaultFileByPath(this.app.vault, file.path) || file;
+      const text = await this.app.vault.cachedRead(realFile);
+      hash = textContentHash(text);
+    } catch (error) {
+      console.warn(`[${PLUGIN_ID}] Could not hash note text`, file?.path, error);
+      return "";
+    }
+    if (this.sourceTextHashCache) {
+      this.sourceTextHashCache.set(key, { stamp, hash });
+      while (this.sourceTextHashCache.size > 64) {
+        this.sourceTextHashCache.delete(this.sourceTextHashCache.keys().next().value);
+      }
+    }
+    return hash;
+  }
   async readDrawings(file, options = {}) {
     const storageMode = this.drawingStorageModeForFile(file);
     const storageKey = this.drawingStorageKey(file, storageMode);
@@ -5712,6 +5742,18 @@ var NoteDrawPlugin = class extends Plugin {
         enumerable: false,
         value: sourceRevisionMismatch
       });
+      // Hash the note text itself, not its file stat: NoteDraw writes hidden
+      // link blocks into the note, so mtime/size change without the user's text
+      // changing. A real text edit is the only thing that may re-anchor ink.
+      const textHash = await this.sourceTextHashForFile(file);
+      const previousTextHash = normalizeSourceRevision(selected?.data?.sourceTextHash);
+      const textChanged = noteTextChanged(previousTextHash, textHash);
+      Object.defineProperty(data, "_notedrawTextChanged", {
+        configurable: true,
+        enumerable: false,
+        value: textChanged
+      });
+      data.sourceTextHash = textHash || previousTextHash;
       this.drawingStateCache.set(storageKey, normalizeDrawingData(data, file));
       const legacyMigration = Boolean(selected
         && (selected.kind === "legacy" || selected.kind === "legacy-name")
@@ -6923,6 +6965,8 @@ var PreviewDrawingController = class {
     this.responsiveLayoutSignature = "";
     this.responsivePointsInitialized = false;
     this.responsiveLayoutContext = null;
+    this.textAnchorPassPending = false;
+    this.lastProjectedContentWidth = 0;
     this.canonicalProjectionPoints = /* @__PURE__ */ new Map();
     this.renderFrameId = null;
     this.pendingDomRender = false;
@@ -8631,6 +8675,7 @@ var PreviewDrawingController = class {
         this.plugin.scheduleDrawingSave(file, this.drawingData, { userOperation: true, replace: true });
       }
       this.markdownSourceRevisionChanged = Boolean(data?._notedrawSourceRevisionMismatch);
+      this.textAnchorPassPending = Boolean(data?._notedrawTextChanged);
       const clearedUnboundRelations = this.rebuildElementRelations();
       if (clearedUnboundRelations) {
         this.plugin.scheduleDrawingSave(file, this.drawingData, { userOperation: true, replace: true });
@@ -11489,6 +11534,15 @@ var PreviewDrawingController = class {
     if (!bounds) {
       return null;
     }
+    const previousLayout = normalizeElementLayout(stroke.layout);
+    // Capturing rewrites the stored geometry from whatever is on screen. On a
+    // transient frame (mid view-switch, software keyboard, split pane barely
+    // laid out) that bakes the transient geometry into the drawing, which is
+    // how one edit used to shift every other element. Keep the last good
+    // geometry instead; only the first-ever capture is allowed through.
+    if (previousLayout && !isStableResponsiveCaptureFrame(this.canvasWidth(), context?.frame)) {
+      return previousLayout;
+    }
     const cornerPoints = {
       topLeft: { x: bounds.minX, y: bounds.minY },
       topRight: { x: bounds.maxX, y: bounds.minY },
@@ -11499,7 +11553,7 @@ var PreviewDrawingController = class {
       name,
       this.captureLineLocation(point.x, point.y, context, { maxDistance: 112 }) || { path: this.file?.path || "", line: null }
     ]));
-    const previous = normalizeElementLayout(stroke.layout);
+    const previous = previousLayout;
     const elementId = strokeElementId(stroke) || createElementLayoutId(index);
     stroke.layout = createElementLayout({
       id: previous?.id || elementId,
@@ -11636,6 +11690,15 @@ var PreviewDrawingController = class {
       return;
     }
     const lineToCanvasY = (path, line) => this.projectLineLocation(path, line, context);
+    // Text anchors are used by exactly two events that really move the text:
+    // the note's own words changed, or the content lane got wider/narrower
+    // enough that the Markdown reflowed. Everything else is absolute, so
+    // unrelated layout churn cannot move ink.
+    const previousLaneWidth = Number(this.lastProjectedContentWidth) || 0;
+    const currentLaneWidth = Number(context.frame?.width) || 0;
+    const laneReflowed = previousLaneWidth > 0 && currentLaneWidth > 0
+      && Math.abs(currentLaneWidth - previousLaneWidth) / previousLaneWidth > 0.08;
+    const allowTextAnchorsForPass = this.textAnchorPassPending === true || laneReflowed;
     for (const [index, stroke] of (this.drawingData?.strokes || []).entries()) {
       if (isConnectorStroke(stroke)) {
         continue;
@@ -11649,7 +11712,13 @@ var PreviewDrawingController = class {
         }
       }
       const existingLayout = normalizeElementLayout(stroke.layout);
-      const needsLayoutRepair = Boolean(existingLayout) && (
+      // Repairing a layout rewrites the element's stored geometry, so it may
+      // only run on a frame that is representative of the reading surface. A
+      // split pane, a keyboard, or a half-rendered view transition used to
+      // trigger a repair and bake that transient geometry into the drawing,
+      // which is what made elements drift after switching views.
+      const frameIsStable = isStableResponsiveCaptureFrame(this.canvasWidth(), context.frame);
+      const needsLayoutRepair = frameIsStable && Boolean(existingLayout) && (
         elementLayoutNeedsRepair(existingLayout) || elementLayoutExceedsTarget(existingLayout, this.canvasHeight())
       );
       const hasUniqueElementLayout = Boolean(existingLayout?.id) && !elementIds.has(existingLayout.id) && !needsLayoutRepair;
@@ -11698,7 +11767,15 @@ var PreviewDrawingController = class {
         frame: context.frame,
         viewportHeight: context.viewportHeight,
         lineToCanvasY,
-        preferDocumentFlow: isMobileRuntime()
+        preferDocumentFlow: isMobileRuntime(),
+        // Floating ink is absolute in the note document. Text anchors are for
+        // NoteFlow ink, which genuinely lives inside the Markdown flow; using
+        // them here let any reflow or NoteFlow reservation drag unrelated
+        // drawings around, and made every other element move when one changed.
+        // The one exception is a corrected pass right after the note text
+        // itself changed: then the ink must follow the paragraphs it annotated.
+        allowLineAnchor: allowTextAnchorsForPass,
+        sizeFollowsContentWidthOnly: true
       });
       if (layout?.id && box) {
         projected.push(box);
@@ -11944,6 +12021,18 @@ var PreviewDrawingController = class {
     this.responsivePointsInitialized = true;
     this.responsiveLayoutSignature = signature;
     this.responsiveProjectionPending = null;
+    this.lastProjectedContentWidth = currentLaneWidth || previousLaneWidth;
+    if (allowTextAnchorsForPass) {
+      // The corrective pass is done: adopt the projected rows as the new
+      // absolute positions and go back to ignoring the Markdown line map.
+      this.textAnchorPassPending = false;
+      const indexes = (this.drawingData?.strokes || [])
+        .map((stroke, index) => (isConnectorStroke(stroke) ? -1 : index))
+        .filter((index) => index >= 0);
+      if (indexes.length) {
+        this.captureResponsiveAnchorsForIndexes(indexes);
+      }
+    }
     return true;
   }
   resizeCanvas(options = {}) {
@@ -30659,6 +30748,7 @@ function normalizeDrawingData(data, file) {
     version: Math.max(1, Number.isFinite(data?.version) ? data.version : 1),
     sourcePath: file.path,
     sourceRevision: normalizeSourceRevision(data?.sourceRevision) || sourceRevisionForFile(file),
+    sourceTextHash: normalizeSourceRevision(data?.sourceTextHash),
     visible: !hiddenByUser,
     hiddenByUser,
     strokes: strokes.map(normalizeStroke).map((stroke) => ({
