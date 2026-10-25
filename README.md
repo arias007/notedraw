@@ -359,7 +359,25 @@ The current package focuses on the local Obsidian plugin runtime. The API and DO
 
 ## Version
 
-Current version: `4.1.2`.
+Current version: `4.1.3`.
+
+### 4.1.3 — reported issues and a smaller, faster bundle
+
+- Floating controls (toolbar, palette, brush/text panels, selection menu) are
+  hosted on `document.body` for note surfaces. Obsidian ships
+  `.workspace-leaf { contain: strict !important }`, which makes each leaf the
+  containing block for `position: fixed` children, so window-based coordinates
+  were shifted by the leaf offset and the toolbar rendered off-screen whenever a
+  sidebar or split was open (issue #6).
+- edit-md can drag to select: a press places the caret and every following move
+  extends the CodeMirror selection instead of being swallowed (issue #7).
+- The floating format bar no longer sits over the block being edited; it prefers
+  the free margin beside the note lane, then above, then below (issue #7).
+- The rule that lifts note content above the drawing layers no longer applies to
+  CodeMirror internals, which keeps its cursor layers intact (issue #5).
+- `main.js` is 34% smaller (1.31 MB → 0.86 MB): the bundled donation images were
+  re-encoded at the size they are actually displayed (256 px, 8/4 colours, QR
+  payload verified byte-identical by zbar).
 
 ### 4.1.2 — elements stop moving on their own
 
