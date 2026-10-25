@@ -108,6 +108,14 @@ If an older local prototype folder exists, NoteDraw can read its previous drawin
 
 ## Manual Install
 
+Download the three files from the latest release:
+
+```text
+https://github.com/arias007/notedraw/releases/latest/download/main.js
+https://github.com/arias007/notedraw/releases/latest/download/manifest.json
+https://github.com/arias007/notedraw/releases/latest/download/styles.css
+```
+
 Copy these files into:
 
 ```text
