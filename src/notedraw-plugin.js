@@ -13,8 +13,13 @@ import {
   requestUrl,
   setIcon
 } from "obsidian";
-import SUPPORT_CODE_ALIPAY_DATA_URL from "../extras/code-1.jpg";
-import SUPPORT_CODE_BINANCE_DATA_URL from "../extras/code-2.png";
+// Embedded fallback only. The full-resolution files live beside the plugin and
+// are preferred at runtime; shipping the originals inline cost ~467 KB of
+// base64 in every bundle, i.e. 36% of the whole plugin for two images that are
+// shown on one settings page. These slim copies are 448 px / 16 colours and
+// still decode to the same payment URLs.
+import SUPPORT_CODE_ALIPAY_DATA_URL from "../extras/code-1.slim.png";
+import SUPPORT_CODE_BINANCE_DATA_URL from "../extras/code-2.slim.png";
 import {
   calculateCanvasBackingStore,
   calculateCanvasWindow,
@@ -85,6 +90,12 @@ import {
   legacyDrawingFileName
 } from "./drawing-file-identity.mjs";
 import { noteTextChanged, textContentHash } from "./note-text-hash.mjs";
+import {
+  EDIT_MD_DRAG_THRESHOLD_PX,
+  editMdDragIsActive,
+  resolveEditMdDragSelection
+} from "./edit-md-drag.mjs";
+import { resolveFormatToolbarPlacement } from "./format-toolbar-placement.mjs";
 import {
   computeTextLayout,
   placeFloatingTextEditor
@@ -6967,6 +6978,7 @@ var PreviewDrawingController = class {
     this.responsiveLayoutContext = null;
     this.textAnchorPassPending = false;
     this.lastProjectedContentWidth = 0;
+    this.editMdDragSelection = null;
     this.canonicalProjectionPoints = /* @__PURE__ */ new Map();
     this.renderFrameId = null;
     this.pendingDomRender = false;
@@ -10598,21 +10610,19 @@ var PreviewDrawingController = class {
       if (!sourceRect) {
         return;
       }
-      const toolbarRect = this.formatToolbar.getBoundingClientRect();
-      const width = Math.max(180, toolbarRect.width || 280);
-      const height = Math.max(34, toolbarRect.height || 34);
-      const viewport = window.visualViewport;
-      const viewportTop = viewport?.offsetTop || 0;
-      const viewportLeft = viewport?.offsetLeft || 0;
-      const viewportHeight = Math.max(120, viewport?.height || window.innerHeight || 120);
-      const viewportWidth = Math.max(160, viewport?.width || window.innerWidth || 160);
-      const minTop = viewportTop + 8;
-      const maxTop = Math.max(minTop, viewportTop + viewportHeight - height - 8);
-      const left = clamp(Math.round((sourceRect.left + sourceRect.right - width) / 2), viewportLeft + 8, Math.max(viewportLeft + 8, viewportLeft + viewportWidth - width - 8));
-      const top = clamp(Math.round(sourceRect.bottom + 14), minTop, maxTop);
+      if (this.formatToolbarManualPosition) {
+        this.applyFormatToolbarManualPosition();
+        return;
+      }
+      const placement = resolveFormatToolbarPlacement({
+        anchor: sourceRect,
+        lane: this.formatToolbarLaneClientRect(),
+        size: this.formatToolbarSize(),
+        viewport: formatToolbarViewport()
+      });
       setNoteDrawCssProps(this.formatToolbar, {
-        "--notedraw-format-top": `${top}px`,
-        "--notedraw-format-left": `${left}px`
+        "--notedraw-format-top": `${placement.top}px`,
+        "--notedraw-format-left": `${placement.left}px`
       });
       return;
     }
@@ -10621,35 +10631,51 @@ var PreviewDrawingController = class {
     }
     const selection = window.getSelection?.();
     const range = selection?.rangeCount ? selection.getRangeAt(0) : this.currentTextRange;
-    const rect = range ? rangeLineRect(range) || this.currentEditor.getBoundingClientRect() : this.currentEditor.getBoundingClientRect();
-    const toolbarRect = this.formatToolbar.getBoundingClientRect();
-    const width = Math.max(180, toolbarRect.width || 280);
-    const height = Math.max(34, toolbarRect.height || 34);
-    const viewport = window.visualViewport;
-    const viewportTop = viewport?.offsetTop || 0;
-    const viewportLeft = viewport?.offsetLeft || 0;
-    const viewportHeight = Math.max(120, viewport?.height || window.innerHeight || 120);
-    const viewportWidth = Math.max(160, viewport?.width || window.innerWidth || 160);
-    const minTop = viewportTop + 8;
-    const maxTop = Math.max(minTop, viewportTop + viewportHeight - height - 8);
-    const gap = 14;
-    const preferredLeft = rect.left + rect.width / 2 - width / 2;
-    const left = clamp(Math.round(preferredLeft), viewportLeft + 8, Math.max(viewportLeft + 8, viewportLeft + viewportWidth - width - 8));
+    const blockRect = this.currentEditor.getBoundingClientRect();
+    const rect = range ? rangeLineRect(range) || blockRect : blockRect;
     if (this.formatToolbarManualPosition) {
-      const top = clamp(Math.round(this.formatToolbarManualPosition.top), minTop, maxTop);
-      const manualLeft = clamp(Math.round(this.formatToolbarManualPosition.left), viewportLeft + 8, Math.max(viewportLeft + 8, viewportLeft + viewportWidth - width - 8));
-      this.formatToolbarManualPosition = { top, left: manualLeft };
-      setNoteDrawCssProps(this.formatToolbar, {
-        "--notedraw-format-top": `${top}px`,
-        "--notedraw-format-left": `${manualLeft}px`
-      });
+      this.applyFormatToolbarManualPosition();
       return;
     }
-    const lineStep = Math.max(22, Math.round(rect.height + 6));
-    const belowOneLine = rect.bottom + gap + lineStep;
-    const above = rect.top - height - gap;
-    const below = rect.bottom + gap;
-    const top = belowOneLine <= maxTop ? belowOneLine : below <= maxTop ? below : above >= minTop ? above : clamp(Math.round(belowOneLine), minTop, maxTop);
+    // The bar must not cover the block being edited: a press on a line behind
+    // one of its buttons used to be swallowed by that button (issue #7).
+    const placement = resolveFormatToolbarPlacement({
+      anchor: rect,
+      block: blockRect,
+      lane: this.formatToolbarLaneClientRect(),
+      size: this.formatToolbarSize(),
+      viewport: formatToolbarViewport()
+    });
+    setNoteDrawCssProps(this.formatToolbar, {
+      "--notedraw-format-top": `${placement.top}px`,
+      "--notedraw-format-left": `${placement.left}px`
+    });
+  }
+  formatToolbarSize() {
+    const toolbarRect = this.formatToolbar?.getBoundingClientRect?.();
+    return {
+      width: Math.max(180, toolbarRect?.width || 280),
+      height: Math.max(34, toolbarRect?.height || 34)
+    };
+  }
+  formatToolbarLaneClientRect() {
+    const content = findResponsiveContentElement(this.previewEl, this.surfaceType);
+    const rect = content?.getBoundingClientRect?.();
+    if (!rect || rect.width <= 1) {
+      return null;
+    }
+    return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height };
+  }
+  applyFormatToolbarManualPosition() {
+    const size = this.formatToolbarSize();
+    const viewport = formatToolbarViewport();
+    const minTop = viewport.top + 8;
+    const maxTop = Math.max(minTop, viewport.top + viewport.height - size.height - 8);
+    const minLeft = viewport.left + 8;
+    const maxLeft = Math.max(minLeft, viewport.left + viewport.width - size.width - 8);
+    const top = clamp(Math.round(this.formatToolbarManualPosition.top), minTop, maxTop);
+    const left = clamp(Math.round(this.formatToolbarManualPosition.left), minLeft, maxLeft);
+    this.formatToolbarManualPosition = { top, left };
     setNoteDrawCssProps(this.formatToolbar, {
       "--notedraw-format-top": `${top}px`,
       "--notedraw-format-left": `${left}px`
@@ -11288,6 +11314,9 @@ var PreviewDrawingController = class {
     }
   }
   onDocumentPointerMove(event) {
+    if (this.editMdDragSelection && this.updateSourceDragSelection(event)) {
+      return;
+    }
     if (this.directMarkdownPointerId !== event.pointerId) {
       return;
     }
@@ -11599,7 +11628,9 @@ var PreviewDrawingController = class {
       const layout = normalizeElementLayout(stroke.layout);
       if (layout?.id) {
         const relations = (intersectionRelations.get(layout.id) || []).filter((relation) => relation.kind === "intersection");
-        if (JSON.stringify(layout.relations) !== JSON.stringify(relations)) {
+        // A string signature per stroke is enough to detect a change and avoids
+        // serializing both arrays on every projection pass.
+        if (elementRelationSignature(layout.relations) !== elementRelationSignature(relations)) {
           stroke.layout = { ...layout, relations };
           changed = true;
         }
@@ -11608,6 +11639,12 @@ var PreviewDrawingController = class {
     return changed;
   }
   onDocumentPointerFinish(event) {
+    if (this.editMdDragSelection && this.endSourceDragSelection(event)) {
+      event.preventDefault?.();
+      event.stopPropagation?.();
+      event.stopImmediatePropagation?.();
+      return;
+    }
     if (this.directMarkdownPointerId === event.pointerId) {
       this.directMarkdownTaskClickUntil = Date.now() + 600;
       this.onPointerUp(event);
@@ -12408,7 +12445,10 @@ var PreviewDrawingController = class {
         this.startTextEdit(editable, { x: event.clientX, y: event.clientY });
       } else if (sourceTextTarget) {
         this.endTextEdit();
-        this.focusSourceEditorAt({ x: event.clientX, y: event.clientY });
+        const clientPoint = { x: event.clientX, y: event.clientY };
+        if (!this.beginSourceDragSelection(event, clientPoint)) {
+          this.focusSourceEditorAt(clientPoint);
+        }
       } else {
         this.endTextEdit();
         this.render();
@@ -27075,6 +27115,97 @@ var PreviewDrawingController = class {
     this.hideSelectionMenu();
     return dispatchMouseClickThroughOverlay(this.canvas, point);
   }
+  /**
+   * edit-md owns presses but must not own drags: a press on source text places
+   * the caret, and every following move extends the CodeMirror selection. The
+   * gesture is tracked here (not on the canvas) because the canvas deliberately
+   * gave up the pointer so the editor keeps its native focus.
+   */
+  beginSourceDragSelection(event, clientPoint) {
+    const cmView = this.sourceCodeMirrorView();
+    if (!cmView || typeof cmView.posAtCoords !== "function" || !clientPoint) {
+      return false;
+    }
+    let anchor;
+    try {
+      anchor = cmView.posAtCoords(clientPoint, false) ?? cmView.posAtCoords(clientPoint);
+    } catch (error) {
+      return false;
+    }
+    if (!Number.isFinite(anchor)) {
+      return false;
+    }
+    cmView.focus?.();
+    cmView.dispatch?.({ selection: { anchor }, scrollIntoView: false });
+    this.editMdDragSelection = {
+      pointerId: event?.pointerId,
+      anchor,
+      startClient: { x: clientPoint.x, y: clientPoint.y },
+      moved: false
+    };
+    this.captureSelectionPointer(event?.pointerId);
+    return true;
+  }
+  captureSelectionPointer(pointerId) {
+    if (!Number.isInteger(pointerId)) {
+      return;
+    }
+    try {
+      this.canvas?.setPointerCapture?.(pointerId);
+    } catch (error) {
+      void error;
+    }
+  }
+  updateSourceDragSelection(event) {
+    const state = this.editMdDragSelection;
+    if (!editMdDragIsActive(state) || event?.pointerId !== state.pointerId) {
+      return false;
+    }
+    const cmView = this.sourceCodeMirrorView();
+    if (!cmView) {
+      return false;
+    }
+    const selection = resolveEditMdDragSelection({
+      anchor: state.anchor,
+      startClient: state.startClient,
+      clientPoint: { x: event.clientX, y: event.clientY },
+      threshold: EDIT_MD_DRAG_THRESHOLD_PX,
+      posAtCoords: (point) => {
+        try {
+          return cmView.posAtCoords(point, false) ?? cmView.posAtCoords(point);
+        } catch (error) {
+          return NaN;
+        }
+      }
+    });
+    if (!selection) {
+      return false;
+    }
+    state.moved = true;
+    cmView.dispatch?.({
+      selection: { anchor: selection.anchor, head: selection.head },
+      scrollIntoView: true
+    });
+    event.preventDefault?.();
+    event.stopPropagation?.();
+    return true;
+  }
+  endSourceDragSelection(event) {
+    const state = this.editMdDragSelection;
+    if (!state) {
+      return false;
+    }
+    if (event && Number.isInteger(state.pointerId) && event.pointerId !== state.pointerId) {
+      return false;
+    }
+    this.editMdDragSelection = null;
+    try {
+      this.canvas?.releasePointerCapture?.(state.pointerId);
+    } catch (error) {
+      void error;
+    }
+    return true;
+  }
   focusSourceEditorAt(clientPoint) {
     if (!clientPoint || !Number.isFinite(clientPoint.x) || !Number.isFinite(clientPoint.y)) {
       return false;
@@ -28215,11 +28346,31 @@ function bindNoteDrawControlTap(element, action) {
     action(event);
   });
 }
+function formatToolbarViewport() {
+  const viewport = window.visualViewport;
+  return {
+    left: viewport?.offsetLeft || 0,
+    top: viewport?.offsetTop || 0,
+    width: Math.max(160, viewport?.width || window.innerWidth || 160),
+    height: Math.max(120, viewport?.height || window.innerHeight || 120)
+  };
+}
 function shouldUseBodyFloatingControls(previewEl, surfaceType) {
-  if (surfaceType !== "preview") {
+  if (!previewEl) {
     return false;
   }
-  return isMobileRuntime() && Boolean(previewEl.closest?.(".markdown-preview-view"));
+  // Only plain note surfaces. Embedded previews, webviews, registered and
+  // workspace surfaces keep their controls inside their own element.
+  if (surfaceType !== "preview" && surfaceType !== "source") {
+    return false;
+  }
+  // Obsidian ships `.workspace-leaf { contain: strict !important }`, which makes
+  // every leaf the containing block for its `position: fixed` descendants.
+  // Controls appended inside the leaf are therefore laid out relative to the
+  // leaf, not the window: with a sidebar or a split open they are shifted by the
+  // leaf's own offset and end up off-screen. Hosting them on document.body
+  // restores true window coordinates on desktop and mobile alike.
+  return true;
 }
 function isMobileRuntime() {
   return Boolean(Platform.isMobileApp || activeDocument?.body?.classList?.contains("is-mobile"));
@@ -31694,6 +31845,19 @@ function needsElementLayoutMigration(strokes) {
     ids.add(id);
     return false;
   });
+}
+function elementRelationSignature(relations) {
+  if (!Array.isArray(relations) || !relations.length) {
+    return "";
+  }
+  let signature = "";
+  for (const relation of relations) {
+    if (!relation) {
+      continue;
+    }
+    signature += `${relation.kind || ""}|${relation.id || ""}|${Math.round(Number(relation.overlap) || 0)};`;
+  }
+  return signature;
 }
 function isStableResponsiveCaptureFrame(surfaceWidth, frame) {
   const width = Number(surfaceWidth) || 0;
