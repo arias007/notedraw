@@ -44,6 +44,10 @@ It is built as a surface layer: the same drawing and text-edit logic works on Ob
 - The palette has common color swatches plus an advanced color picker entry, and applies color changes to selected elements.
 - Toolbar positioning stays below the Obsidian view header while scrolling.
 - Lazy drawing-data loading to reduce note-open lag.
+- Drawing files are keyed by a hash of the full note path, so notes whose
+  names differ only in non-ASCII characters no longer share one drawing file.
+- The draw tool keeps the canvas free of selection frames and resize handles;
+  a press that misses the selected element releases it and draws in one gesture.
 - Viewport-windowed canvas rendering with mobile pixel budgets for stable long-note performance.
 - Inactive canvases stay out of the compositor, and stale view controllers are released on mode or file changes.
 - Hidden Obsidian embed copies are not mounted, and offscreen embeds pause scroll-driven layout work until they approach the viewport.
@@ -69,6 +73,15 @@ By default, new drawing files are stored here:
 ```text
 <vault>/.obsidian/plugins/notedraw/drawings/
 ```
+
+Drawing files are named after the note path plus a 64-bit hash of that path, for
+example `nd-1a2b3c4d5e6f7g.json`. The hash is what keeps one note's ink from
+appearing on another note: older builds derived the file name by replacing every
+non-ASCII character with `_`, so `生活/身体/舞蹈.md` and `生活/身体/运动.md` both
+became `____________.md.json` and shared a single drawing file. Names produced by
+those builds are still read, but only when the JSON's own `sourcePath` names the
+note being opened, and the data is copied to the new name on first access. The
+old files are left in place.
 
 The **NoteDraw data location** setting provides four choices:
 
@@ -346,4 +359,21 @@ The current package focuses on the local Obsidian plugin runtime. The API and DO
 
 ## Version
 
-Current version: `3.9.1`.
+Current version: `4.1.0`.
+
+### 4.1.0 — drawing identity and draw-tool selection
+
+- Drawing files are now named with a path hash. Before this, every note whose
+  name had the same number of non-ASCII characters shared one drawing file, so
+  ink drawn on one note appeared on unrelated notes and the last writer won.
+  Existing files are still read when their `sourcePath` matches, then copied to
+  the new name. Renaming or moving a note now carries its ink along.
+- The previous revision of a drawing file is kept beside it as `*.json.bak`, so
+  a half-finished write no longer reads back as an empty note.
+- The draw tool no longer paints the dashed element frame or its resize handles;
+  they belong to the select tool. Dragging a selected element still shows the
+  frame for feedback.
+- With an element selected, a press that misses it releases the selection and
+  keeps drawing in the same gesture. A plain tap on empty space simply
+  deselects, and with nothing selected every press inks as before.
+

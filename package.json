@@ -1,6 +1,6 @@
 {
   "name": "notedraw",
-  "version": "4.0.6",
+  "version": "4.1.0",
   "description": "Draw and edit directly on notes with an open API for AI-assisted workflows.",
   "main": "main.js",
   "scripts": {

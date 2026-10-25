@@ -74,8 +74,16 @@ import {
   SELECTED_DRAW_GESTURE_DRAW_OR_DESELECT,
   SELECTED_DRAW_GESTURE_MANIPULATE,
   fitSelectionFrameToCanvas,
-  resolveSelectedDrawGesture
+  resolveSelectedDrawGesture,
+  shouldDeselectOnBlankPress,
+  shouldShowSelectionFrame
 } from "./selection-draw-gesture.mjs";
+import {
+  drawingFileName,
+  drawingPathHash,
+  drawingRecordBelongsToPath,
+  legacyDrawingFileName
+} from "./drawing-file-identity.mjs";
 import {
   computeTextLayout,
   placeFloatingTextEditor
@@ -1603,6 +1611,7 @@ var NoteDrawPlugin = class extends Plugin {
     this.drawingCommitSnapshots = /* @__PURE__ */ new Map();
     this.suppressedDrawingSaves = [];
     this.drawingStateCache = /* @__PURE__ */ new Map();
+    this.drawingBodyHistory = /* @__PURE__ */ new Map();
     this.portableBundles = /* @__PURE__ */ new Map();
     this.portableBundleLoads = /* @__PURE__ */ new Map();
     this.portableResourceCache = /* @__PURE__ */ new Map();
@@ -1721,6 +1730,14 @@ var NoteDrawPlugin = class extends Plugin {
     this.registerEvent(this.app.vault.on("delete", (file) => {
       this.handleVaultFileDelete(file).catch((error) => {
         console.error(`[${PLUGIN_ID}] Failed to clear deleted file NoteDraw data`, error);
+      });
+    }));
+    // A rename changes the derived storage path. Without this the ink is
+    // stranded on the old path and the note opens blank — and, before 4.1,
+    // could even be re-adopted by another note whose name has the same length.
+    this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
+      this.handleVaultFileRename(file, oldPath).catch((error) => {
+        console.error(`[${PLUGIN_ID}] Failed to move NoteDraw data after rename`, error);
       });
     }));
     this.registerEvent(this.app.workspace.on("file-menu", (menu, file) => {
@@ -2014,7 +2031,7 @@ var NoteDrawPlugin = class extends Plugin {
     return [
       this.drawingPathForFile(file, storageMode),
       this.drawingPathForFile(file, DRAWING_STORAGE_CONFIG),
-      this.legacyDrawingPathForFile(file)
+      ...this.drawingLegacyCandidatePaths(file)
     ].some((path) => normalizeVaultPath(path) === normalizedChangedPath);
   }
   scheduleExternalDrawingRefresh(notePath, delay = 72) {
@@ -2352,6 +2369,7 @@ var NoteDrawPlugin = class extends Plugin {
     }
     this.noteDrawSettings.drawingStorageMode = nextMode;
     this.drawingStateCache.clear();
+    this.drawingBodyHistory?.clear();
     this.drawingCommitSnapshots.clear();
     await this.saveSettings();
     if (activeSnapshot) {
@@ -4099,6 +4117,112 @@ var NoteDrawPlugin = class extends Plugin {
     }
     return refreshed;
   }
+  async handleVaultFileRename(file, oldPath) {
+    const oldNormalized = normalizeVaultPath(oldPath || "");
+    const newNormalized = normalizeVaultPath(file?.path || "");
+    if (!oldNormalized || !newNormalized || oldNormalized === newNormalized) {
+      return;
+    }
+    const isMarkdown = String(file?.extension || "").toLowerCase() === "md";
+    if (!isMarkdown) {
+      return;
+    }
+    // Commit anything still queued for the old path before the file moves, so
+    // the move carries the newest ink instead of a stale snapshot.
+    await this.flushPendingDrawingSavesForPath(oldNormalized);
+    this.dropCachedDrawingForPath(oldNormalized, { cancelPendingSave: true });
+    const adapter = this.app.vault.adapter;
+    const modes = [DRAWING_STORAGE_CONFIG, DRAWING_STORAGE_NOTE_SUBFOLDER, DRAWING_STORAGE_NOTE_FOLDER];
+    for (const mode of modes) {
+      const fromPath = this.rawDrawingPathForFile(oldNormalized, mode);
+      const toPath = this.rawDrawingPathForFile(newNormalized, mode);
+      if (!fromPath || !toPath || fromPath === toPath) {
+        continue;
+      }
+      try {
+        if (!await adapter.exists(fromPath)) {
+          continue;
+        }
+        if (await adapter.exists(toPath)) {
+          // The destination already holds ink for the new path (typically a
+          // note deleted and recreated). Keep both: park the destination as an
+          // orphan sidecar instead of silently overwriting either side.
+          const orphanPath = `${toPath}.orphan-${Date.now()}.json`;
+          try {
+            await adapter.rename(toPath, orphanPath);
+            console.warn(`[${PLUGIN_ID}] Parked conflicting NoteDraw storage at`, orphanPath);
+          } catch (error) {
+            console.warn(`[${PLUGIN_ID}] Kept existing NoteDraw storage, skipped move`, toPath, error);
+            continue;
+          }
+        }
+        await this.ensureFolderForStoragePath(toPath);
+        if (typeof adapter.rename === "function") {
+          await adapter.rename(fromPath, toPath);
+        } else {
+          const body = await adapter.read(fromPath);
+          await adapter.write(toPath, body);
+          await adapter.remove(fromPath);
+        }
+        const stored = JSON.parse(await adapter.read(toPath));
+        if (stored && stored.sourcePath !== file.path) {
+          stored.sourcePath = file.path;
+          stored.updatedAt = stored.updatedAt || (/* @__PURE__ */ new Date()).toISOString();
+          await adapter.write(toPath, JSON.stringify(stored, null, 2));
+        }
+      } catch (error) {
+        console.error(`[${PLUGIN_ID}] Failed to move NoteDraw storage on rename`, fromPath, toPath, error);
+      }
+    }
+    for (const controller of this.getAllControllers()) {
+      if (normalizeVaultPath(controller.file?.path) === newNormalized) {
+        controller.externalDrawingRefreshPending = true;
+      }
+    }
+    this.scheduleExternalDrawingRefresh(newNormalized, 60);
+  }
+  async flushPendingDrawingSavesForPath(notePath) {
+    const normalized = normalizeVaultPath(notePath || "");
+    if (!normalized) {
+      return;
+    }
+    const suffix = `:${this.rawDrawingPathForFile(normalized)}`;
+    for (const key of Array.from(this.pendingDrawingSaves.keys())) {
+      if (!key.endsWith(suffix)) {
+        continue;
+      }
+      try {
+        await this.flushDrawingSave(key);
+      } catch (error) {
+        console.error(`[${PLUGIN_ID}] Failed to flush NoteDraw save before rename`, error);
+      }
+    }
+  }
+  async ensureFolderForStoragePath(path) {
+    const normalized = normalizeVaultPath(path || "");
+    const slash = normalized.lastIndexOf("/");
+    if (slash < 0) {
+      return;
+    }
+    await this.ensureFolder(normalized.slice(0, slash));
+  }
+  dropCachedDrawingForPath(notePath, options = {}) {
+    const normalized = normalizeVaultPath(notePath || "");
+    if (!normalized) {
+      return;
+    }
+    for (const mode of [DRAWING_STORAGE_CONFIG, DRAWING_STORAGE_NOTE_SUBFOLDER, DRAWING_STORAGE_NOTE_FOLDER, DRAWING_STORAGE_EMBEDDED]) {
+      const storageKey = `${mode}:${this.rawDrawingPathForFile(normalized, mode)}`;
+      if (options.cancelPendingSave !== false) {
+        this.cancelScheduledDrawingSave(storageKey);
+      }
+      this.pendingDrawingSaves.delete(storageKey);
+      this.drawingStateCache.delete(storageKey);
+      this.drawingCommitSnapshots.delete(storageKey);
+    }
+    this.portableBundles.delete(normalized);
+    this.portableBundleLoads.delete(normalized);
+  }
   async handleVaultFileDelete(deletedFile) {
     const deletedFiles = collectDeletedVaultFiles(deletedFile);
     const deletedPaths = new Set(deletedFiles.map((file) => normalizeVaultPath(file?.path)).filter(Boolean));
@@ -4167,12 +4291,14 @@ var NoteDrawPlugin = class extends Plugin {
       this.drawingWritePromises.delete(key);
     }
     for (const path of storagePaths) {
-      try {
-        if (await this.app.vault.adapter.exists(path)) {
-          await this.app.vault.adapter.remove(path);
+      for (const target of [path, `${path}.bak`]) {
+        try {
+          if (await this.app.vault.adapter.exists(target)) {
+            await this.app.vault.adapter.remove(target);
+          }
+        } catch (error) {
+          console.error(`[${PLUGIN_ID}] Failed to remove deleted file NoteDraw storage`, target, error);
         }
-      } catch (error) {
-        console.error(`[${PLUGIN_ID}] Failed to remove deleted file NoteDraw storage`, path, error);
       }
     }
   }
@@ -4909,8 +5035,19 @@ var NoteDrawPlugin = class extends Plugin {
     }
   }
   encodedDrawingNameForFile(file) {
-    const encoded = file.path.replace(/\\/g, "/").replace(/[^a-zA-Z0-9._/-]/g, "_").replace(/\//g, "__");
-    return `${encoded}.json`;
+    return drawingFileName(file?.path || "");
+  }
+  legacyEncodedDrawingNameForFile(file) {
+    return legacyDrawingFileName(file?.path || "");
+  }
+  /**
+   * Pre-4.1 drawing file for the same note.  Older builds wrote it into the
+   * current drawings folder, where it may be shared with every note whose name
+   * has the same character count — reading it is still useful for migration,
+   * but only when the record's own sourcePath proves the owner.
+   */
+  legacyNameDrawingPathForFile(file) {
+    return `${this.app.vault.configDir}/plugins/${PLUGIN_ID}/drawings/${this.legacyEncodedDrawingNameForFile(file)}`;
   }
   drawingStorageModeForFile(file, requestedMode = this.noteDrawSettings?.drawingStorageMode) {
     const mode = normalizeDrawingStorageMode(requestedMode);
@@ -4924,12 +5061,21 @@ var NoteDrawPlugin = class extends Plugin {
   }
   drawingPathForFile(file, requestedMode = this.noteDrawSettings?.drawingStorageMode) {
     const mode = this.drawingStorageModeForFile(file, requestedMode);
+    return this.rawDrawingPathForFile(file?.path || "", mode);
+  }
+  /**
+   * Path derivation that ignores vault existence. Needed while handling a
+   * rename: the old path is already gone, so drawingStorageModeForFile would
+   * silently coerce every mode to config and compute the same file three times.
+   */
+  rawDrawingPathForFile(filePath, mode = this.noteDrawSettings?.drawingStorageMode) {
+    const normalizedMode = normalizeDrawingStorageMode(mode);
     return resolveDrawingStoragePath({
-      filePath: file?.path || "",
+      filePath: filePath || "",
       configDir: this.app.vault.configDir,
       pluginId: PLUGIN_ID,
-      encodedName: this.encodedDrawingNameForFile(file),
-      mode
+      encodedName: drawingFileName(filePath || ""),
+      mode: normalizedMode
     });
   }
   drawingStorageKey(file, requestedMode = this.noteDrawSettings?.drawingStorageMode) {
@@ -4953,7 +5099,18 @@ var NoteDrawPlugin = class extends Plugin {
     return `${this.app.vault.configDir}/plugins/${ASSET_DIR}/${sanitizeAssetFileName(name)}`;
   }
   legacyDrawingPathForFile(file) {
-    return `${this.app.vault.configDir}/plugins/${LEGACY_DRAWING_DIR}/${this.encodedDrawingNameForFile(file)}`;
+    return `${this.app.vault.configDir}/plugins/${LEGACY_DRAWING_DIR}/${this.legacyEncodedDrawingNameForFile(file)}`;
+  }
+  selectionFrameVisible() {
+    return shouldShowSelectionFrame({
+      toolMode: this.toolMode,
+      dragging: Boolean(this.draggingStroke || this.resizingSelection)
+    });
+  }
+  drawingLegacyCandidatePaths(file) {
+    return [this.legacyNameDrawingPathForFile(file), this.legacyDrawingPathForFile(file)]
+      .filter(Boolean)
+      .filter((path, index, list) => list.indexOf(path) === index);
   }
   debugLogPath() {
     return `${this.app.vault.configDir}/plugins/${PLUGIN_ID}/${DEBUG_LOG_FILE}`;
@@ -5497,28 +5654,40 @@ var NoteDrawPlugin = class extends Plugin {
       }
       const storedPaths = Array.from(new Set([selectedPath, configPath].filter(Boolean)));
       for (const path of storedPaths) {
-        if (!await adapter.exists(path)) {
+        const data = await this.readDrawingJsonAt(path);
+        if (!data) {
           continue;
         }
-        try {
-          const data = JSON.parse(await adapter.read(path));
-          candidates.push({
-            kind: path === selectedPath ? "selected" : "config",
-            priority: path === selectedPath ? 5 : 2,
-            updatedAt: data?.updatedAt,
-            data
-          });
-        } catch (error) {
-          console.warn(`[${PLUGIN_ID}] Skipped invalid drawing data`, path, error);
-        }
+        candidates.push({
+          kind: path === selectedPath ? "selected" : "config",
+          priority: path === selectedPath ? 5 : 2,
+          updatedAt: data?.updatedAt,
+          data,
+          path
+        });
       }
-      if (await adapter.exists(legacyPath)) {
-        try {
-          const data = JSON.parse(await adapter.read(legacyPath));
-          candidates.push({ kind: "legacy", priority: 1, updatedAt: data?.updatedAt, data });
-        } catch (error) {
-          console.warn(`[${PLUGIN_ID}] Skipped invalid legacy drawing data`, legacyPath, error);
+      const legacyData = await this.readDrawingJsonAt(legacyPath);
+      if (legacyData) {
+        candidates.push({ kind: "legacy", priority: 1, updatedAt: legacyData?.updatedAt, data: legacyData, path: legacyPath });
+      }
+      // Pre-4.1 files lived in this same folder under a colliding name.  Only
+      // adopt one when its own sourcePath (or its emptiness) proves this note
+      // owns it — otherwise two same-length note names would keep trading ink.
+      for (const legacyNamePath of this.drawingLegacyCandidatePaths(file)) {
+        if (legacyNamePath === legacyPath || !await adapter.exists(legacyNamePath)) {
+          continue;
         }
+        const data = await this.readDrawingJsonAt(legacyNamePath);
+        if (!data || !drawingRecordBelongsToPath(data, file?.path || "")) {
+          continue;
+        }
+        candidates.push({
+          kind: "legacy-name",
+          priority: 1,
+          updatedAt: data?.updatedAt,
+          data,
+          path: legacyNamePath
+        });
       }
       candidates.sort((a, b) => portableTimestamp(b.updatedAt) - portableTimestamp(a.updatedAt) || b.priority - a.priority);
       const selected = this.preferCommittedDrawingSnapshot(file, candidates[0] || null);
@@ -5545,8 +5714,13 @@ var NoteDrawPlugin = class extends Plugin {
         value: sourceRevisionMismatch
       });
       this.drawingStateCache.set(storageKey, normalizeDrawingData(data, file));
-      if ((selected?.kind === "legacy" && options.migrateLegacy !== false)
-        || repairedMarkdownBlocks && options.repair !== false) {
+      const legacyMigration = Boolean(selected
+        && (selected.kind === "legacy" || selected.kind === "legacy-name")
+        && options.migrateLegacy !== false);
+      if (legacyMigration || repairedMarkdownBlocks && options.repair !== false) {
+        // Copy forward to the collision-free path.  The old file is left in
+        // place on purpose: if several notes used to share it, each one gets
+        // its own copy of the ink instead of silently losing it.
         await this.writeDrawings(file, data, { refresh: false });
       }
       return data;
@@ -5695,6 +5869,43 @@ var NoteDrawPlugin = class extends Plugin {
       }
     }
   }
+  async writeDrawingBodyAtomically(path, body) {
+    const adapter = this.app.vault.adapter;
+    // Keep the previous revision next to the file. A crash or a half-written
+    // adapter call used to leave invalid JSON, which reads back as "no ink at
+    // all"; now the last good revision is one read away. The body is kept in
+    // memory so this costs no extra disk read for a multi-megabyte drawing.
+    const history = this.drawingBodyHistory;
+    const previous = history.get(path);
+    if (typeof previous === "string" && previous && previous !== body) {
+      try {
+        await adapter.write(`${path}.bak`, previous);
+      } catch (error) {
+        console.warn(`[${PLUGIN_ID}] Could not back up drawing storage`, path, error);
+      }
+    }
+    await adapter.write(path, body);
+    history.delete(path);
+    history.set(path, body);
+    while (history.size > 24) {
+      history.delete(history.keys().next().value);
+    }
+  }
+  async readDrawingJsonAt(path) {
+    const adapter = this.app.vault.adapter;
+    const candidates = [path, `${path}.bak`];
+    for (const candidate of candidates) {
+      if (!await adapter.exists(candidate)) {
+        continue;
+      }
+      try {
+        return JSON.parse(await adapter.read(candidate));
+      } catch (error) {
+        console.warn(`[${PLUGIN_ID}] Skipped invalid drawing data`, candidate, error);
+      }
+    }
+    return null;
+  }
   async writeDrawings(file, data, options = {}) {
     const storageMode = this.drawingStorageModeForFile(file);
     const path = this.drawingPathForFile(file, storageMode);
@@ -5737,7 +5948,7 @@ var NoteDrawPlugin = class extends Plugin {
         sourcePath: file.path,
         updatedAt
       }, null, 2);
-      await this.app.vault.adapter.write(path, body);
+      await this.writeDrawingBodyAtomically(path, body);
       if (storageMode === DRAWING_STORAGE_CONFIG && this.noteDrawSettings.embedMarkdownLinks !== false) {
         await this.writeAttachmentLinkBlock(file, normalized, updatedAt);
       }
@@ -12057,7 +12268,7 @@ var PreviewDrawingController = class {
       ? this.findMarkdownBlockRecordForElement(markdownSelectionCandidate)
       : null;
     const markdownCandidateSelected = Boolean(markdownSelectionRecord && this.selectedMarkdownBlockIds.has(markdownSelectionRecord.id));
-    let resizeHandle = noteFlowPenActive ? null : this.findSelectionHandleAt(point);
+    let resizeHandle = noteFlowPenActive || !this.selectionFrameVisible() ? null : this.findSelectionHandleAt(point);
     const connectorEndpointHit = this.toolMode === TOOL_SELECT && !noteFlowPenActive
       ? this.findSelectedConnectorEndpointAt(point)
       : null;
@@ -12067,11 +12278,12 @@ var PreviewDrawingController = class {
         : this.findOwnedBlankSpaceStrokeAtClientPoint(event.clientX, event.clientY);
     }
     const hadSelection = this.hasHybridSelection();
+    const pointerInsideVisibleFrame = this.selectionFrameVisible() && this.selectedStrokeFrameContains(point);
     const selectedDrawGesture = resolveSelectedDrawGesture({
       toolMode: this.toolMode,
       hasSelection: hadSelection,
       hitStrokeIndex,
-      insideSelectionFrame: this.selectedStrokeFrameContains(point)
+      insideSelectionFrame: pointerInsideVisibleFrame
     });
     if (this.toolMode === TOOL_TEXT && this.textPreset === "arrow") {
       this.startConnectorGesture(event, point, routed);
@@ -12271,12 +12483,28 @@ var PreviewDrawingController = class {
         return;
       }
     }
-    if (selectedDrawGesture === SELECTED_DRAW_GESTURE_MANIPULATE && hitStrokeIndex >= 0 && !this.isStrokeSelected(hitStrokeIndex)) {
+    if (selectedDrawGesture === SELECTED_DRAW_GESTURE_MANIPULATE
+      && this.toolMode !== TOOL_DRAW
+      && hitStrokeIndex >= 0
+      && !this.isStrokeSelected(hitStrokeIndex)) {
       this.setSelectedStrokes(hitStrokeIndex);
       this.startSelectedStrokeDrag(event, point, hitStrokeIndex);
       return;
     }
-    if (this.hasHybridSelection() && !this.selectedStrokeFrameContains(point) && hitStrokeIndex < 0) {
+    if (shouldDeselectOnBlankPress({
+      toolMode: this.toolMode,
+      hasSelection: this.hasHybridSelection(),
+      hitStrokeIndex,
+      hitIsSelected: hitStrokeIndex >= 0 && this.isStrokeSelected(hitStrokeIndex),
+      insideSelectionFrame: pointerInsideVisibleFrame
+    })) {
+      // Draw tool, press that misses the selection → the selection is released
+      // here and the very same press keeps drawing, so inking never needs a
+      // second gesture and a plain tap simply deselects.
+      this.clearSelectedStrokes();
+      this.render();
+    }
+    if (this.hasHybridSelection() && !pointerInsideVisibleFrame && hitStrokeIndex < 0) {
       if (selectedDrawGesture !== SELECTED_DRAW_GESTURE_DRAW_OR_DESELECT) {
         this.clearSelectedStrokes();
         if (!editable && this.toolMode !== TOOL_SELECT && this.toolMode !== TOOL_TEXT) {
@@ -12996,7 +13224,7 @@ var PreviewDrawingController = class {
     // elements to their best-fit size: markdown blocks become full-row width
     // (span 12) at natural height, floating blocks return to the flow, and
     // side-by-side rows collapse back to a single column.
-    const resizeHandle = this.findSelectionHandleAt(point);
+    const resizeHandle = this.selectionFrameVisible() ? this.findSelectionHandleAt(point) : null;
     if (resizeHandle === "se" && this.resetSelectedElementsToBestFit()) {
       this.lastTextTap = null;
       event.preventDefault();
@@ -18709,6 +18937,11 @@ var PreviewDrawingController = class {
   }
   drawSelection() {
     if (!this.hasHybridSelection()) {
+      return;
+    }
+    if (!this.selectionFrameVisible()) {
+      // The draw tool deliberately runs without a persistent element frame;
+      // only an active drag/resize brings it back for feedback.
       return;
     }
     let frame = this.getVisibleSelectionFrameCanvasRect();

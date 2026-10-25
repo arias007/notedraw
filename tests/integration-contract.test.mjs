@@ -121,7 +121,7 @@ test("deleting a vault file clears NoteDraw controllers, DOM presentation, cache
   assert.match(source, /controller\.destroy\(\{ discardEdits: true \}\)/);
   assert.match(destroySource, /this\.clearMarkdownBlockPresentation\(\)/);
   assert.match(source, /this\.drawingStateCache\.delete\(key\)/);
-  assert.match(source, /this\.app\.vault\.adapter\.remove\(path\)/);
+  assert.match(source, /this\.app\.vault\.adapter\.remove\(target\)/);
   assert.match(source, /collectDeletedVaultFiles\(deletedFile\)/);
 });
 
@@ -471,7 +471,7 @@ test("note pen ignores element selection and selection-only gestures preserve Ma
   const selectionStateSource = source.slice(selectionStateStart, source.indexOf("  copySelectedElements(", selectionStateStart));
 
   assert.match(source, /isNoteFlowPenActive\(\) \{[\s\S]*this\.toolMode === TOOL_DRAW[\s\S]*this\.brushMode === BRUSH_PEN[\s\S]*this\.currentBrushVariant\(\) === PEN_VARIANT_NOTE/);
-  assert.match(pointerSource, /const noteFlowPenActive = this\.isNoteFlowPenActive\(\)[\s\S]*this\.clearSelectedStrokes\(\)[\s\S]*let hitStrokeIndex = noteFlowPenActive \? -1 : this\.findStrokeAt\(point, clientPoint\)[\s\S]*let resizeHandle = noteFlowPenActive \? null/);
+  assert.match(pointerSource, /const noteFlowPenActive = this\.isNoteFlowPenActive\(\)[\s\S]*this\.clearSelectedStrokes\(\)[\s\S]*let hitStrokeIndex = noteFlowPenActive \? -1 : this\.findStrokeAt\(point, clientPoint\)[\s\S]*let resizeHandle = noteFlowPenActive \|\| !this\.selectionFrameVisible\(\) \? null/);
   assert.doesNotMatch(pointerSource, /noteFlowOperationPending|scheduleMarkdownAnnotationRefresh/);
   assert.match(drawingMoveSource, /if \(this\.didMove && !wasDrawing\) \{[\s\S]*this\.currentStroke\.noteFlow\?\.enabled[\s\S]*this\.noteFlowOperationPending = true[\s\S]*this\.scheduleMarkdownAnnotationRefresh\(\{ layout: false \}\)/);
   assert.doesNotMatch(startSource, /prepareReadingBottomExtentForDrag|clearNoteFlowLayout|scheduleNoteFlowLayout/);
@@ -610,7 +610,7 @@ test("element movement promotes the tapped target and reserves resize for frame 
   const markdownSelection = pointerSource.slice(pointerSource.indexOf("if (this.toolMode === TOOL_SELECT && hitStrokeIndex < 0 && markdownSelectionCandidate)"), pointerSource.indexOf("if (this.toolMode === TOOL_SELECT && hitStrokeIndex < 0 && !markdownSelectionCandidate)"));
   const boxedSelection = pointerSource.slice(pointerSource.indexOf("if (this.toolMode === TOOL_SELECT && hitStrokeIndex < 0 && !markdownSelectionCandidate)"), pointerSource.indexOf("if (selectedDrawGesture ==="));
 
-  assert.match(pointerSource, /let resizeHandle = noteFlowPenActive \? null : this\.findSelectionHandleAt\(point\);/);
+  assert.match(pointerSource, /let resizeHandle = noteFlowPenActive \|\| !this\.selectionFrameVisible\(\) \? null : this\.findSelectionHandleAt\(point\);/);
   assert.match(pointerSource, /if \(resizeHandle\) \{\s*this\.startSelectedStrokeResize\(event, resizeHandle\);/);
   assert.match(strokeSelection, /const wasSelected = this\.isStrokeSelected\(hitStrokeIndex\);/);
   assert.match(strokeSelection, /if \(!wasSelected\) \{/);

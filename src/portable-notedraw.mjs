@@ -1,5 +1,6 @@
-export const DRAWING_STORAGE_CONFIG = "config";
-export const DRAWING_STORAGE_NOTE_SUBFOLDER = "note-subfolder";
+import { drawingFileName } from "./drawing-file-identity.mjs";
+
+export const DRAWING_STORAGE_CONFIG = "config";export const DRAWING_STORAGE_NOTE_SUBFOLDER = "note-subfolder";
 export const DRAWING_STORAGE_NOTE_FOLDER = "note-folder";
 export const DRAWING_STORAGE_EMBEDDED = "note-file";
 
@@ -31,7 +32,10 @@ export function resolveDrawingStoragePath({
 } = {}) {
   const normalizedPath = normalizePath(filePath);
   const normalizedMode = normalizeDrawingStorageMode(mode);
-  const fallbackEncoded = `${normalizedPath.replace(/[^a-zA-Z0-9._/-]/g, "_").replace(/\//g, "__")}.json`;
+  // Pre-4.1 derived the file name by squeezing every non-ASCII character into
+  // "_", which made same-length Chinese titles share one drawing file.  The
+  // fallback name is now hash-suffixed for the same reason as the caller's.
+  const fallbackEncoded = drawingFileName(normalizedPath);
   if (normalizedMode === DRAWING_STORAGE_CONFIG) {
     return `${normalizePath(configDir)}/plugins/${normalizePath(pluginId)}/drawings/${encodedName || fallbackEncoded}`;
   }

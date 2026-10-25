@@ -50,3 +50,39 @@ export function resolveSelectedDrawGesture({
   }
   return SELECTED_DRAW_GESTURE_DRAW_OR_DESELECT;
 }
+
+/**
+ * The dashed element frame (plus its resize handles) is an editing affordance:
+ * it belongs to the select tool.  While drawing it only obstructs the ink, so
+ * it stays hidden there and is shown just long enough to give feedback while a
+ * selected element is actually being dragged.
+ */
+export function shouldShowSelectionFrame({ toolMode, dragging = false } = {}) {
+  if (toolMode !== "draw") {
+    return true;
+  }
+  return dragging === true;
+}
+
+/**
+ * Draw tool + something selected + press that is not on that selection:
+ * the press releases the selection instead of leaving the element selected
+ * forever.  A press on the selected element itself still starts its drag, and
+ * with nothing selected the same press keeps drawing — so inking never needs a
+ * mode switch, and a tap on empty space is the deselect gesture.
+ */
+export function shouldDeselectOnBlankPress({
+  toolMode,
+  hasSelection,
+  hitStrokeIndex = -1,
+  hitIsSelected = false,
+  insideSelectionFrame = false
+} = {}) {
+  if (toolMode !== "draw" || !hasSelection) {
+    return false;
+  }
+  if (hitStrokeIndex >= 0 && hitIsSelected) {
+    return false;
+  }
+  return !insideSelectionFrame;
+}

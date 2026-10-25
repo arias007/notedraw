@@ -972,7 +972,7 @@ test("Double-clicking the bottom-right resize handle resets elements to best fit
   const doubleClickSource = source.slice(source.indexOf("  onCanvasDoubleClick("), source.indexOf("  onPreviewDoubleClick("));
   const resetSource = source.slice(source.indexOf("  resetSelectedElementsToBestFit()"), source.indexOf("  cancelSelectedStrokeResize("));
 
-  assert.match(doubleClickSource, /const resizeHandle = this\.findSelectionHandleAt\(point\);[\s\S]*if \(resizeHandle === "se" && this\.resetSelectedElementsToBestFit\(\)\)/);
+  assert.match(doubleClickSource, /const resizeHandle = this\.selectionFrameVisible\(\) \? this\.findSelectionHandleAt\(point\) : null;[\s\S]*if \(resizeHandle === "se" && this\.resetSelectedElementsToBestFit\(\)\)/);
   assert.match(resetSource, /block\.span = 12;[\s\S]*block\.widthScale = 1;[\s\S]*block\.minHeight = null;[\s\S]*block\.floating = false;[\s\S]*block\.floatingExplicit = false;[\s\S]*block\.floatBox = null;/);
   assert.match(resetSource, /refreshMarkdownBlockPresentation\(blocks\.map\(\(block\) => block\.id\)\)/);
   assert.match(source, /effectiveSelectionFramePaddingPx\(\)[\s\S]*const shrunk =[\s\S]*return Math\.max\(3, shrunk\);/);
