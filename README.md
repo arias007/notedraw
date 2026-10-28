@@ -1,5 +1,8 @@
 # NoteDraw
 
+<!-- hire-line -->
+> **Need this adapted, extended, or built from scratch?** I wrote this plugin — [custom work available](https://github.com/arias007/arias007#hire-me). Working proof first, payment after.
+
 NoteDraw is a plugin for editing rendered note text and drawing directly on notes.
 
 It is built as a surface layer: the same drawing and text-edit logic works on Obsidian reading view, source view, embedded note previews, and supported webview surfaces.
